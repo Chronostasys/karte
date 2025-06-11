@@ -1,0 +1,19 @@
+[package]
+name = "karte-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Command-line interface for Karte compiler"
+license.workspace = true
+
+[[bin]]
+name = "karte"
+path = "src/main.rs"
+
+[dependencies]
+karte-lexer = { path = "../karte-lexer" }
+karte-parser = { path = "../karte-parser" }
+karte-diagnostics = { path = "../karte-diagnostics" }
+karte-codegen = { path = "../karte-codegen" }
+env_logger.workspace = true
+log.workspace = true

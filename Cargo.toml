@@ -1,0 +1,47 @@
+[workspace]
+resolver = "2"
+members = [
+    "karte-lexer",
+    "karte-cli", "karte-codegen", "karte-diagnostics", "karte-hir", "karte-lir", "karte-mir", "karte-lsp", "karte-parser", "karte-tests",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = []
+description = "A modern compiler with rich documentation and professional design"
+license = "MIT"
+
+[workspace.dependencies]
+# 错误处理
+thiserror = "1.0"
+anyhow = "1.0"
+miette = { version = "5.10", features = ["fancy"] }
+
+# 解析相关
+nom = "7.1"
+logos = "0.13"
+
+# LSP 相关
+tower-lsp = "0.20"
+tokio = { version = "1.0", features = ["full"] }
+
+# 通用工具
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+log = "0.4"
+env_logger = "0.10"
+
+# 类型推断
+ena = "0.14"
+
+[profile.release]
+strip = true
+lto = true
+opt-level = 3
+codegen-units = 1
+
+[profile.dev]
+debug = true
+opt-level = 0
+

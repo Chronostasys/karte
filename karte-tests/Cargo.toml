@@ -1,0 +1,19 @@
+[package]
+name = "karte-tests"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+karte-lexer = { path = "../karte-lexer" }
+karte-parser = { path = "../karte-parser" }
+karte-hir = { path = "../karte-hir" }
+karte-codegen = { path = "../karte-codegen" }
+karte-diagnostics = { path = "../karte-diagnostics" }
+
+# 测试相关依赖
+tokio = { version = "1.0", features = ["full"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "parser_benchmarks"
+harness = false 

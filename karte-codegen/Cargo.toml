@@ -1,0 +1,11 @@
+[package]
+name = "karte-codegen"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+
+[dependencies]
+karte-hir = { path = "../karte-hir" }
+karte-diagnostics = { path = "../karte-diagnostics" }

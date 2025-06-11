@@ -1,0 +1,14 @@
+[package]
+name = "karte-diagnostics"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Diagnostic system for Karte compiler"
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+miette.workspace = true
+
+[lib]

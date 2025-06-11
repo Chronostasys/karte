@@ -1,0 +1,19 @@
+[package]
+name = "karte-hir"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+
+[dependencies]
+karte-diagnostics = { path = "../karte-diagnostics" }
+ena.workspace = true
+
+[[example]]
+name = "type_inference_demo"
+path = "examples/type_inference_demo.rs"
+
+[[example]]
+name = "advanced_type_inference"
+path = "examples/advanced_type_inference.rs"

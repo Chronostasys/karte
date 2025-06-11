@@ -1,0 +1,17 @@
+[package]
+name = "karte-lexer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Lexical analyzer for Karte compiler"
+license.workspace = true
+
+[dependencies]
+logos.workspace = true
+thiserror.workspace = true
+karte-diagnostics = { path = "../karte-diagnostics" }
+
+[dev-dependencies]
+criterion = "0.5"
+
+[lib]

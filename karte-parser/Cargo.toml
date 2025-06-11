@@ -1,0 +1,16 @@
+[package]
+name = "karte-parser"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Parser for Karte compiler"
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+karte-lexer = { path = "../karte-lexer" }
+karte-diagnostics = { path = "../karte-diagnostics" }
+karte-hir = { path = "../karte-hir" }
+
+[dev-dependencies]
+karte-codegen = { path = "../karte-codegen" }
