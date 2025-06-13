@@ -1,7 +1,10 @@
 pub mod codegen_tests;
+pub mod control_flow_tests;
+pub mod custom_types_tests;
 pub mod integration_tests;
 pub mod lexer_tests;
 pub mod parser_tests;
+pub mod sum_types_tests;
 pub mod type_checker_tests;
 
 use karte_diagnostics::Span;

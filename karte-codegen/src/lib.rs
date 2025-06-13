@@ -11,6 +11,11 @@ pub enum Value {
         body: Expr,
         closure: HashMap<String, Value>, // 闭包捕获的变量
     },
+    /// 加法类型的值 (Sum Type Value)
+    Constructor {
+        name: String,
+        value: Option<Box<Value>>,
+    },
 }
 
 impl std::fmt::Display for Value {
@@ -19,6 +24,13 @@ impl std::fmt::Display for Value {
             Value::Number(n) => write!(f, "{}", n),
             Value::Unit => write!(f, "()"),
             Value::Function { params, .. } => write!(f, "fn({})", params.join(", ")),
+            Value::Constructor { name, value } => {
+                if let Some(v) = value {
+                    write!(f, "{}({})", name, v)
+                } else {
+                    write!(f, "{}", name)
+                }
+            }
         }
     }
 }
@@ -148,6 +160,100 @@ fn evaluate_with_env(expr: &Expr, env: &Environment) -> Result<Value, String> {
                 Ok(Value::Unit)
             }
         }
+
+        Expr::Boolean { value, .. } => Ok(Value::Constructor {
+            name: if *value { "True".to_string() } else { "False".to_string() },
+            value: None,
+        }),
+
+        Expr::Constructor { name, arg, .. } => {
+            if let Some(arg_expr) = arg {
+                let arg_value = evaluate_with_env(arg_expr, env)?;
+                Ok(Value::Constructor {
+                    name: name.clone(),
+                    value: Some(Box::new(arg_value)),
+                })
+            } else {
+                Ok(Value::Constructor {
+                    name: name.clone(),
+                    value: None,
+                })
+            }
+        }
+
+        Expr::QualifiedConstructor { type_name: _, constructor_name, arg, .. } => {
+            // 对于求值来说，限定构造器和普通构造器的行为相同
+            // 类型检查已经确保了构造器的正确性
+            if let Some(arg_expr) = arg {
+                let arg_value = evaluate_with_env(arg_expr, env)?;
+                Ok(Value::Constructor {
+                    name: constructor_name.clone(),
+                    value: Some(Box::new(arg_value)),
+                })
+            } else {
+                Ok(Value::Constructor {
+                    name: constructor_name.clone(),
+                    value: None,
+                })
+            }
+        }
+
+        Expr::If { condition, then_branch, else_branch, .. } => {
+            let condition_val = evaluate_with_env(condition, env)?;
+            
+            // 检查条件是否为真
+            let is_true = match condition_val {
+                Value::Constructor { name, .. } => name == "True",
+                Value::Number(n) => n != 0, // 数字非0为真
+                Value::Unit => false, // Unit为假
+                _ => false,
+            };
+            
+            if is_true {
+                evaluate_with_env(then_branch, env)
+            } else if let Some(else_branch) = else_branch {
+                evaluate_with_env(else_branch, env)
+            } else {
+                Ok(Value::Unit)
+            }
+        }
+
+        Expr::While { condition, body, .. } => {
+            loop {
+                let condition_val = evaluate_with_env(condition, env)?;
+                
+                // 检查条件是否为真
+                let is_true = match condition_val {
+                    Value::Constructor { name, .. } => name == "True",
+                    Value::Number(n) => n != 0, // 数字非0为真
+                    Value::Unit => false, // Unit为假
+                    _ => false,
+                };
+                
+                if !is_true {
+                    break;
+                }
+                
+                // 执行循环体
+                evaluate_with_env(body, env)?;
+            }
+            
+            // while表达式返回unit
+            Ok(Value::Unit)
+        }
+
+        Expr::Match { expr, arms, .. } => {
+            let value = evaluate_with_env(expr, env)?;
+            
+            for arm in arms {
+                let mut match_env = env.clone();
+                if pattern_matches(&arm.pattern, &value, &mut match_env) {
+                    return evaluate_with_env(&arm.body, &match_env);
+                }
+            }
+            
+            Err("No pattern matched in match expression".to_string())
+        }
     }
 }
 
@@ -163,6 +269,105 @@ fn evaluate_statement(stmt: &Statement, env: &mut Environment) -> Result<Value, 
             // 表达式语句：求值但丢弃结果
             evaluate_with_env(expr, env)?;
             Ok(Value::Unit)
+        }
+        Statement::TypeDef { name: _, variants, .. } => {
+            // 将枚举构造器添加到环境中
+            for variant in variants {
+                if variant.data_type.is_some() {
+                    // 带参数的构造器，创建一个函数值
+                    let constructor_fn = Value::Function {
+                        params: vec!["arg".to_string()],
+                        body: karte_hir::Expr::Constructor {
+                            name: variant.name.clone(),
+                            arg: Some(Box::new(karte_hir::Expr::Identifier {
+                                name: "arg".to_string(),
+                                span: variant.span,
+                            })),
+                            span: variant.span,
+                        },
+                        closure: HashMap::new(),
+                    };
+                    env.insert(variant.name.clone(), constructor_fn);
+                } else {
+                    // 无参数的构造器，直接创建构造器值
+                    let constructor_value = Value::Constructor {
+                        name: variant.name.clone(),
+                        value: None,
+                    };
+                    env.insert(variant.name.clone(), constructor_value);
+                }
+            }
+            Ok(Value::Unit)
+        }
+    }
+}
+
+/// 检查模式是否匹配值，并更新环境
+fn pattern_matches(
+    pattern: &karte_hir::Pattern,
+    value: &Value,
+    env: &mut Environment,
+) -> bool {
+    match pattern {
+        karte_hir::Pattern::Wildcard { .. } => true,
+        
+        karte_hir::Pattern::Variable { name, .. } => {
+            env.insert(name.clone(), value.clone());
+            true
+        }
+        
+        karte_hir::Pattern::Number { value: pattern_value, .. } => {
+            matches!(value, Value::Number(n) if n == pattern_value)
+        }
+        
+        karte_hir::Pattern::Boolean { value: pattern_value, .. } => {
+            match value {
+                Value::Constructor { name, value: None } => {
+                    (name == "True" && *pattern_value) || (name == "False" && !*pattern_value)
+                }
+                _ => false,
+            }
+        }
+        
+        karte_hir::Pattern::Constructor { name: pattern_name, arg: pattern_arg, .. } => {
+            // Constructor patterns
+            match value {
+                Value::Constructor { name, value } => {
+                    if name == pattern_name {
+                        match (pattern_arg, value) {
+                            (Some(arg_pattern), Some(arg_value)) => {
+                                pattern_matches(arg_pattern, arg_value, env)
+                            }
+                            (None, None) => true,
+                            _ => false,
+                        }
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            }
+        }
+
+        karte_hir::Pattern::QualifiedConstructor { type_name: _, constructor_name, arg: pattern_arg, .. } => {
+            // 限定构造器模式，行为与普通构造器模式相同
+            // 类型检查阶段已经确保了类型的正确性
+            match value {
+                Value::Constructor { name, value } => {
+                    if name == constructor_name {
+                        match (pattern_arg, value) {
+                            (Some(arg_pattern), Some(arg_value)) => {
+                                pattern_matches(arg_pattern, arg_value, env)
+                            }
+                            (None, None) => true,
+                            _ => false,
+                        }
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            }
         }
     }
 }

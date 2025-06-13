@@ -137,7 +137,7 @@ impl<'a> Parser<'a> {
     fn starts_with_statement(&self) -> bool {
         if let Some(token) = self.peek() {
             if let Token::Identifier(name) = &token.token {
-                return name == "let";
+                return matches!(name.as_str(), "let" | "enum");
             }
         }
         false
@@ -152,7 +152,7 @@ impl<'a> Parser<'a> {
         while let Some(token) = self.peek() {
             // 检查是否为语句
             if let Token::Identifier(name) = &token.token {
-                if name == "let" {
+                if matches!(name.as_str(), "let" | "enum") {
                     statements.push(self.parse_statement()?);
                     continue;
                 }
@@ -186,6 +186,8 @@ impl<'a> Parser<'a> {
             if let Token::Identifier(name) = &token.token {
                 if name == "let" {
                     return self.parse_let_statement();
+                } else if name == "enum" {
+                    return self.parse_enum_statement();
                 }
             }
         }
@@ -277,6 +279,172 @@ impl<'a> Parser<'a> {
         Ok(Statement::Let { name, value, span })
     }
 
+    /// 解析enum语句
+    fn parse_enum_statement(&mut self) -> Result<Statement, ParseError> {
+        let start_span = self.peek().unwrap().span;
+        self.advance(); // consume 'enum'
+
+        // 解析类型名
+        let type_name = if let Some(token) = self.peek() {
+            if let Token::Identifier(name) = &token.token {
+                let name = name.clone();
+                self.advance();
+                name
+            } else {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "type name".to_string(),
+                    found: token.token.clone(),
+                    span: token.span,
+                });
+            }
+        } else {
+            return Err(ParseError::UnexpectedEof {
+                expected: "type name".to_string(),
+            });
+        };
+
+        // 期望 '{'
+        if let Some(token) = self.peek() {
+            if matches!(token.token, Token::LeftBrace) {
+                self.advance();
+            } else {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "'{'".to_string(),
+                    found: token.token.clone(),
+                    span: token.span,
+                });
+            }
+        } else {
+            return Err(ParseError::UnexpectedEof {
+                expected: "'{'".to_string(),
+            });
+        }
+
+        // 解析变体列表
+        let mut variants = Vec::new();
+        while let Some(token) = self.peek() {
+            if matches!(token.token, Token::RightBrace) {
+                break;
+            }
+
+            // 解析变体名
+            let variant_name = if let Token::Identifier(name) = &token.token {
+                let name = name.clone();
+                let variant_span = token.span;
+                self.advance();
+                
+                // 检查是否有数据类型 (暂时只支持单个类型名)
+                let data_type = if let Some(next_token) = self.peek() {
+                    if matches!(next_token.token, Token::LeftParen) {
+                        self.advance(); // consume '('
+                        
+                        if let Some(type_token) = self.peek() {
+                            if let Token::Identifier(type_name) = &type_token.token {
+                                let type_name = type_name.clone();
+                                self.advance();
+                                
+                                // 期望 ')'
+                                if let Some(close_token) = self.peek() {
+                                    if matches!(close_token.token, Token::RightParen) {
+                                        self.advance();
+                                        Some(type_name)
+                                    } else {
+                                        return Err(ParseError::UnexpectedToken {
+                                            expected: "')'".to_string(),
+                                            found: close_token.token.clone(),
+                                            span: close_token.span,
+                                        });
+                                    }
+                                } else {
+                                    return Err(ParseError::UnexpectedEof {
+                                        expected: "')'".to_string(),
+                                    });
+                                }
+                            } else {
+                                return Err(ParseError::UnexpectedToken {
+                                    expected: "type name".to_string(),
+                                    found: type_token.token.clone(),
+                                    span: type_token.span,
+                                });
+                            }
+                        } else {
+                            return Err(ParseError::UnexpectedEof {
+                                expected: "type name".to_string(),
+                            });
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                karte_hir::ast::TypeVariant {
+                    name,
+                    data_type,
+                    span: variant_span,
+                }
+            } else {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "variant name".to_string(),
+                    found: token.token.clone(),
+                    span: token.span,
+                });
+            };
+
+            variants.push(variant_name);
+
+            // 检查是否有逗号
+            if let Some(token) = self.peek() {
+                if matches!(token.token, Token::Comma) {
+                    self.advance(); // consume ','
+                } else if matches!(token.token, Token::RightBrace) {
+                    break;
+                } else {
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "',' or '}'".to_string(),
+                        found: token.token.clone(),
+                        span: token.span,
+                    });
+                }
+            }
+        }
+
+        // 期望 '}'
+        if let Some(token) = self.peek() {
+            if matches!(token.token, Token::RightBrace) {
+                let end_span = token.span;
+                self.advance();
+                
+                // 期望分号（在块表达式中）
+                if let Some(token) = self.peek() {
+                    if matches!(token.token, Token::Semicolon) {
+                        self.advance();
+                    }
+                    // 注意：不强制要求分号，因为enum可能是程序的最后一个语句
+                }
+                
+                let span = Span::new(start_span.start, end_span.end);
+                
+                Ok(Statement::TypeDef {
+                    name: type_name,
+                    variants,
+                    span,
+                })
+            } else {
+                Err(ParseError::UnexpectedToken {
+                    expected: "'}'".to_string(),
+                    found: token.token.clone(),
+                    span: token.span,
+                })
+            }
+        } else {
+            Err(ParseError::UnexpectedEof {
+                expected: "'}'".to_string(),
+            })
+        }
+    }
+
     pub fn diagnostics(&self) -> &DiagnosticBag {
         &self.diagnostics
     }
@@ -320,6 +488,13 @@ impl<'a> Parser<'a> {
                 self.diagnostics.add_error(error.to_string(), span);
             }
         }
+    }
+
+    /// 检查标识符是否为已知的构造器
+    fn is_constructor(&self, name: &str) -> bool {
+        // 识别内置构造器和可能的自定义构造器（首字母大写）
+        matches!(name, "None" | "Some" | "Left" | "Right" | "Ok" | "Err" | "True" | "False") ||
+        (name.chars().next().map_or(false, |c| c.is_uppercase()) && name.chars().all(|c| c.is_alphanumeric()))
     }
 
     // expression = term (('+' | '-') term)*
@@ -438,11 +613,174 @@ impl<'a> Parser<'a> {
                     Ok(Expr::Number { value, span })
                 }
                 Token::Identifier(name) => {
-                    // 在表达式上下文中，let不应该出现
                     let name = name.clone();
                     let span = token.span;
                     self.advance();
-                    Ok(Expr::Identifier { name, span })
+
+                    // 检查是否为布尔字面量
+                    if name == "true" {
+                        Ok(Expr::Boolean { value: true, span })
+                    } else if name == "false" {
+                        Ok(Expr::Boolean { value: false, span })
+                    } else if name == "match" {
+                        // 回退并解析match表达式
+                        self.position -= 1;
+                        self.parse_match()
+                    } else if name == "if" {
+                        // 回退并解析if表达式
+                        self.position -= 1;
+                        self.parse_if()
+                    } else if name == "while" {
+                        // 回退并解析while表达式
+                        self.position -= 1;
+                        self.parse_while()
+                    } else {
+                        // 检查是否为限定构造器 TypeName::Constructor
+                        if let Some(next_token) = self.peek() {
+                            if matches!(next_token.token, Token::DoubleColon) {
+                                self.advance(); // consume '::'
+                                
+                                // 期望构造器名
+                                if let Some(constructor_token) = self.peek() {
+                                    if let Token::Identifier(constructor_name) = &constructor_token.token {
+                                        let constructor_name = constructor_name.clone();
+                                        let constructor_span = constructor_token.span;
+                                        self.advance();
+                                        
+                                        // 检查是否有参数
+                                        if let Some(arg_token) = self.peek() {
+                                            if matches!(arg_token.token, Token::LeftParen) {
+                                                self.advance(); // consume '('
+                                                let arg = if let Some(peeked) = self.peek() {
+                                                    if matches!(peeked.token, Token::RightParen) {
+                                                        None
+                                                    } else {
+                                                        Some(Box::new(self.parse_expression()?))
+                                                    }
+                                                } else {
+                                                    return Err(ParseError::UnexpectedEof {
+                                                        expected: "expression or ')'".to_string(),
+                                                    });
+                                                };
+                                                
+                                                if let Some(close_token) = self.peek() {
+                                                    if matches!(close_token.token, Token::RightParen) {
+                                                        let end_span = close_token.span;
+                                                        self.advance(); // consume ')'
+                                                        let full_span = Span::new(span.start, end_span.end);
+                                                        Ok(Expr::QualifiedConstructor {
+                                                            type_name: name,
+                                                            constructor_name,
+                                                            arg,
+                                                            span: full_span,
+                                                        })
+                                                    } else {
+                                                        Err(ParseError::UnexpectedToken {
+                                                            expected: "')'".to_string(),
+                                                            found: close_token.token.clone(),
+                                                            span: close_token.span,
+                                                        })
+                                                    }
+                                                } else {
+                                                    Err(ParseError::UnexpectedEof {
+                                                        expected: "')'".to_string(),
+                                                    })
+                                                }
+                                            } else {
+                                                // 无参数限定构造器
+                                                let full_span = Span::new(span.start, constructor_span.end);
+                                                Ok(Expr::QualifiedConstructor {
+                                                    type_name: name,
+                                                    constructor_name,
+                                                    arg: None,
+                                                    span: full_span,
+                                                })
+                                            }
+                                        } else {
+                                            // 无参数限定构造器
+                                            let full_span = Span::new(span.start, constructor_span.end);
+                                            Ok(Expr::QualifiedConstructor {
+                                                type_name: name,
+                                                constructor_name,
+                                                arg: None,
+                                                span: full_span,
+                                            })
+                                        }
+                                    } else {
+                                        Err(ParseError::UnexpectedToken {
+                                            expected: "constructor name".to_string(),
+                                            found: constructor_token.token.clone(),
+                                            span: constructor_token.span,
+                                        })
+                                    }
+                                } else {
+                                    Err(ParseError::UnexpectedEof {
+                                        expected: "constructor name".to_string(),
+                                    })
+                                }
+                            } else if matches!(next_token.token, Token::LeftParen) && self.is_constructor(&name) {
+                                // 只有已知构造器才处理构造器调用 Constructor(arg)
+                                self.advance(); // consume '('
+                                let arg = if let Some(peeked) = self.peek() {
+                                    if matches!(peeked.token, Token::RightParen) {
+                                        // 无参数构造器
+                                        None
+                                    } else {
+                                        Some(Box::new(self.parse_expression()?))
+                                    }
+                                } else {
+                                    return Err(ParseError::UnexpectedEof {
+                                        expected: "expression or ')'".to_string(),
+                                    });
+                                };
+
+                                if let Some(token) = self.peek() {
+                                    if matches!(token.token, Token::RightParen) {
+                                        let end_span = token.span;
+                                        self.advance(); // consume ')'
+                                        let full_span = Span::new(span.start, end_span.end);
+                                        Ok(Expr::Constructor {
+                                            name,
+                                            arg,
+                                            span: full_span,
+                                        })
+                                    } else {
+                                        Err(ParseError::UnexpectedToken {
+                                            expected: "')'".to_string(),
+                                            found: token.token.clone(),
+                                            span: token.span,
+                                        })
+                                    }
+                                } else {
+                                    Err(ParseError::UnexpectedEof {
+                                        expected: "')'".to_string(),
+                                    })
+                                }
+                            } else {
+                                // 检查是否为已知的无参数构造器
+                                if self.is_constructor(&name) {
+                                    Ok(Expr::Constructor {
+                                        name,
+                                        arg: None,
+                                        span,
+                                    })
+                                } else {
+                                    Ok(Expr::Identifier { name, span })
+                                }
+                            }
+                        } else {
+                            // 检查是否为已知的无参数构造器
+                            if self.is_constructor(&name) {
+                                Ok(Expr::Constructor {
+                                    name,
+                                    arg: None,
+                                    span,
+                                })
+                            } else {
+                                Ok(Expr::Identifier { name, span })
+                            }
+                        }
+                    }
                 }
                 Token::Pipe => {
                     // 解析lambda表达式: |param1, param2| body
@@ -469,8 +807,84 @@ impl<'a> Parser<'a> {
                         })
                     }
                 }
+                Token::LeftBrace => {
+                    // 解析块表达式: { stmt1; stmt2; expr }
+                    let start_span = token.span;
+                    self.advance(); // consume '{'
+
+                    let mut statements = Vec::new();
+                    let mut final_expr = None;
+
+                    while let Some(token) = self.peek() {
+                        if matches!(token.token, Token::RightBrace) {
+                            break;
+                        }
+
+                        // 检查是否为语句
+                        if let Token::Identifier(name) = &token.token {
+                            if matches!(name.as_str(), "let" | "enum") {
+                                statements.push(self.parse_statement()?);
+                                continue;
+                            }
+                        }
+
+                        // 尝试解析表达式
+                        let expr = self.parse_expression()?;
+                        
+                        // 检查是否有分号
+                        if let Some(next_token) = self.peek() {
+                            if matches!(next_token.token, Token::Semicolon) {
+                                self.advance(); // consume ';'
+                                // 这是一个表达式语句
+                                let expr_span = expr.span();
+                                statements.push(Statement::Expression {
+                                    expr,
+                                    span: expr_span,
+                                });
+                            } else if matches!(next_token.token, Token::RightBrace) {
+                                // 没有分号，这是最终表达式
+                                final_expr = Some(Box::new(expr));
+                                break;
+                            } else {
+                                return Err(ParseError::UnexpectedToken {
+                                    expected: "';' or '}'".to_string(),
+                                    found: next_token.token.clone(),
+                                    span: next_token.span,
+                                });
+                            }
+                        } else {
+                            return Err(ParseError::UnexpectedEof {
+                                expected: "';' or '}'".to_string(),
+                            });
+                        }
+                    }
+
+                    // 期望 '}'
+                    if let Some(token) = self.peek() {
+                        if matches!(token.token, Token::RightBrace) {
+                            let end_span = token.span;
+                            self.advance(); // consume '}'
+                            let span = Span::new(start_span.start, end_span.end);
+                            Ok(Expr::Block {
+                                statements,
+                                final_expr,
+                                span,
+                            })
+                        } else {
+                            Err(ParseError::UnexpectedToken {
+                                expected: "'}'".to_string(),
+                                found: token.token.clone(),
+                                span: token.span,
+                            })
+                        }
+                    } else {
+                        Err(ParseError::UnexpectedEof {
+                            expected: "'}'".to_string(),
+                        })
+                    }
+                }
                 _ => Err(ParseError::UnexpectedToken {
-                    expected: "number, identifier, lambda, or '('".to_string(),
+                    expected: "number, identifier, lambda, '{', or '('".to_string(),
                     found: token.token.clone(),
                     span: token.span,
                 }),
@@ -533,6 +947,272 @@ impl<'a> Parser<'a> {
         }
 
         Ok(expr)
+    }
+
+    /// 解析match表达式: match expr { pattern1 -> expr1, pattern2 -> expr2, ... }
+    fn parse_match(&mut self) -> Result<Expr, ParseError> {
+        let start_span = self.peek().unwrap().span;
+        self.advance(); // consume 'match'
+
+        // 解析被匹配的表达式
+        let expr = Box::new(self.parse_expression()?);
+
+        // 期望 '{'
+        if let Some(token) = self.peek() {
+            if matches!(token.token, Token::LeftBrace) {
+                self.advance(); // consume '{'
+            } else {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "'{'".to_string(),
+                    found: token.token.clone(),
+                    span: token.span,
+                });
+            }
+        } else {
+            return Err(ParseError::UnexpectedEof {
+                expected: "'{'".to_string(),
+            });
+        }
+
+        // 解析match分支
+        let mut arms = Vec::new();
+        while let Some(token) = self.peek() {
+            if matches!(token.token, Token::RightBrace) {
+                break;
+            }
+
+            // 解析模式
+            let pattern = self.parse_pattern()?;
+
+            // 期望 '->'
+            if let Some(token) = self.peek() {
+                if matches!(token.token, Token::Arrow) {
+                    self.advance(); // consume '->'
+                } else {
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "'->'".to_string(),
+                        found: token.token.clone(),
+                        span: token.span,
+                    });
+                }
+            } else {
+                return Err(ParseError::UnexpectedEof {
+                    expected: "'->'".to_string(),
+                });
+            }
+
+            // 解析分支体
+            let body = self.parse_expression()?;
+            let arm_span = Span::new(pattern.span().start, body.span().end);
+
+            arms.push(karte_hir::MatchArm {
+                pattern,
+                body,
+                span: arm_span,
+            });
+
+            // 检查是否有更多分支
+            if let Some(token) = self.peek() {
+                if matches!(token.token, Token::Comma) {
+                    self.advance(); // consume ','
+                } else if matches!(token.token, Token::RightBrace) {
+                    break;
+                } else {
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "',' or '}'".to_string(),
+                        found: token.token.clone(),
+                        span: token.span,
+                    });
+                }
+            }
+        }
+
+        // 期望 '}'
+        if let Some(token) = self.peek() {
+            if matches!(token.token, Token::RightBrace) {
+                let end_span = token.span;
+                self.advance(); // consume '}'
+                let span = Span::new(start_span.start, end_span.end);
+                Ok(Expr::Match { expr, arms, span })
+            } else {
+                Err(ParseError::UnexpectedToken {
+                    expected: "'}'".to_string(),
+                    found: token.token.clone(),
+                    span: token.span,
+                })
+            }
+        } else {
+            Err(ParseError::UnexpectedEof {
+                expected: "'}'".to_string(),
+            })
+        }
+    }
+
+    /// 解析模式
+    fn parse_pattern(&mut self) -> Result<karte_hir::Pattern, ParseError> {
+        if let Some(token) = self.peek() {
+            match &token.token {
+                Token::Underscore => {
+                    let span = token.span;
+                    self.advance();
+                    Ok(karte_hir::Pattern::Wildcard { span })
+                }
+                Token::Number(value) => {
+                    let value = *value;
+                    let span = token.span;
+                    self.advance();
+                    Ok(karte_hir::Pattern::Number { value, span })
+                }
+                Token::Identifier(name) => {
+                    let name = name.clone();
+                    let span = token.span;
+                    self.advance();
+
+                    if name == "true" {
+                        Ok(karte_hir::Pattern::Boolean { value: true, span })
+                    } else if name == "false" {
+                        Ok(karte_hir::Pattern::Boolean { value: false, span })
+                    } else {
+                        // 检查是否为限定构造器模式 TypeName::Constructor
+                        if let Some(next_token) = self.peek() {
+                            if matches!(next_token.token, Token::DoubleColon) {
+                                self.advance(); // consume '::'
+                                
+                                // 期望构造器名
+                                if let Some(constructor_token) = self.peek() {
+                                    if let Token::Identifier(constructor_name) = &constructor_token.token {
+                                        let constructor_name = constructor_name.clone();
+                                        let constructor_span = constructor_token.span;
+                                        self.advance();
+                                        
+                                        // 检查是否有参数模式
+                                        if let Some(arg_token) = self.peek() {
+                                            if matches!(arg_token.token, Token::LeftParen) {
+                                                self.advance(); // consume '('
+                                                let arg = if let Some(peeked) = self.peek() {
+                                                    if matches!(peeked.token, Token::RightParen) {
+                                                        None
+                                                    } else {
+                                                        Some(Box::new(self.parse_pattern()?))
+                                                    }
+                                                } else {
+                                                    return Err(ParseError::UnexpectedEof {
+                                                        expected: "pattern or ')'".to_string(),
+                                                    });
+                                                };
+                                                
+                                                if let Some(close_token) = self.peek() {
+                                                    if matches!(close_token.token, Token::RightParen) {
+                                                        let end_span = close_token.span;
+                                                        self.advance(); // consume ')'
+                                                        let full_span = Span::new(span.start, end_span.end);
+                                                        Ok(karte_hir::Pattern::QualifiedConstructor {
+                                                            type_name: name,
+                                                            constructor_name,
+                                                            arg,
+                                                            span: full_span,
+                                                        })
+                                                    } else {
+                                                        Err(ParseError::UnexpectedToken {
+                                                            expected: "')'".to_string(),
+                                                            found: close_token.token.clone(),
+                                                            span: close_token.span,
+                                                        })
+                                                    }
+                                                } else {
+                                                    Err(ParseError::UnexpectedEof {
+                                                        expected: "')'".to_string(),
+                                                    })
+                                                }
+                                            } else {
+                                                // 无参数限定构造器模式
+                                                let full_span = Span::new(span.start, constructor_span.end);
+                                                Ok(karte_hir::Pattern::QualifiedConstructor {
+                                                    type_name: name,
+                                                    constructor_name,
+                                                    arg: None,
+                                                    span: full_span,
+                                                })
+                                            }
+                                        } else {
+                                            // 无参数限定构造器模式
+                                            let full_span = Span::new(span.start, constructor_span.end);
+                                            Ok(karte_hir::Pattern::QualifiedConstructor {
+                                                type_name: name,
+                                                constructor_name,
+                                                arg: None,
+                                                span: full_span,
+                                            })
+                                        }
+                                    } else {
+                                        Err(ParseError::UnexpectedToken {
+                                            expected: "constructor name".to_string(),
+                                            found: constructor_token.token.clone(),
+                                            span: constructor_token.span,
+                                        })
+                                    }
+                                } else {
+                                    Err(ParseError::UnexpectedEof {
+                                        expected: "constructor name".to_string(),
+                                    })
+                                }
+                            } else if matches!(next_token.token, Token::LeftParen) {
+                                // 检查是否为构造器模式
+                                self.advance(); // consume '('
+                                let arg = if let Some(peeked) = self.peek() {
+                                    if matches!(peeked.token, Token::RightParen) {
+                                        None
+                                    } else {
+                                        Some(Box::new(self.parse_pattern()?))
+                                    }
+                                } else {
+                                    return Err(ParseError::UnexpectedEof {
+                                        expected: "pattern or ')'".to_string(),
+                                    });
+                                };
+
+                                if let Some(token) = self.peek() {
+                                    if matches!(token.token, Token::RightParen) {
+                                        let end_span = token.span;
+                                        self.advance(); // consume ')'
+                                        let full_span = Span::new(span.start, end_span.end);
+                                        Ok(karte_hir::Pattern::Constructor {
+                                            name,
+                                            arg,
+                                            span: full_span,
+                                        })
+                                    } else {
+                                        Err(ParseError::UnexpectedToken {
+                                            expected: "')'".to_string(),
+                                            found: token.token.clone(),
+                                            span: token.span,
+                                        })
+                                    }
+                                } else {
+                                    Err(ParseError::UnexpectedEof {
+                                        expected: "')'".to_string(),
+                                    })
+                                }
+                            } else {
+                                // 变量模式或简单构造器
+                                Ok(karte_hir::Pattern::Variable { name, span })
+                            }
+                        } else {
+                            Ok(karte_hir::Pattern::Variable { name, span })
+                        }
+                    }
+                }
+                _ => Err(ParseError::UnexpectedToken {
+                    expected: "pattern".to_string(),
+                    found: token.token.clone(),
+                    span: token.span,
+                }),
+            }
+        } else {
+            Err(ParseError::UnexpectedEof {
+                expected: "pattern".to_string(),
+            })
+        }
     }
 
     /// 解析lambda表达式: |param1, param2| body
@@ -606,6 +1286,174 @@ impl<'a> Parser<'a> {
 
         Ok(Expr::Lambda {
             params,
+            body: Box::new(body),
+            span,
+        })
+    }
+
+    /// 解析if表达式: if condition then branch else branch
+    fn parse_if(&mut self) -> Result<Expr, ParseError> {
+        let start_span = self.peek().unwrap().span;
+        
+        // 期望 'if'
+        if let Some(token) = self.peek() {
+            if let Token::Identifier(name) = &token.token {
+                if name == "if" {
+                    self.advance(); // consume 'if'
+                } else {
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "'if'".to_string(),
+                        found: token.token.clone(),
+                        span: token.span,
+                    });
+                }
+            } else {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "'if'".to_string(),
+                    found: token.token.clone(),
+                    span: token.span,
+                });
+            }
+        } else {
+            return Err(ParseError::UnexpectedEof {
+                expected: "'if'".to_string(),
+            });
+        }
+
+        // 解析条件表达式
+        let condition = self.parse_expression()?;
+
+        // 期望 'then' 或 '{' 
+        if let Some(token) = self.peek() {
+            if let Token::Identifier(name) = &token.token {
+                if name == "then" {
+                    self.advance(); // consume 'then'
+                } else if matches!(token.token, Token::LeftBrace) {
+                    // 允许 if condition { ... } 语法
+                } else {
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "'then' or '{'".to_string(),
+                        found: token.token.clone(),
+                        span: token.span,
+                    });
+                }
+            } else if matches!(token.token, Token::LeftBrace) {
+                // 允许 if condition { ... } 语法
+            } else {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "'then' or '{'".to_string(),
+                    found: token.token.clone(),
+                    span: token.span,
+                });
+            }
+        } else {
+            return Err(ParseError::UnexpectedEof {
+                expected: "'then' or '{'".to_string(),
+            });
+        }
+
+        // 解析then分支
+        let then_branch = self.parse_expression()?;
+
+        // 检查是否有else分支
+        let else_branch = if let Some(token) = self.peek() {
+            if let Token::Identifier(name) = &token.token {
+                if name == "else" {
+                    self.advance(); // consume 'else'
+                    Some(Box::new(self.parse_expression()?))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let end_span = if let Some(else_branch) = &else_branch {
+            else_branch.span()
+        } else {
+            then_branch.span()
+        };
+
+        let span = Span::new(start_span.start, end_span.end);
+        Ok(Expr::If {
+            condition: Box::new(condition),
+            then_branch: Box::new(then_branch),
+            else_branch,
+            span,
+        })
+    }
+
+    /// 解析while表达式: while condition do body
+    fn parse_while(&mut self) -> Result<Expr, ParseError> {
+        let start_span = self.peek().unwrap().span;
+        
+        // 期望 'while'
+        if let Some(token) = self.peek() {
+            if let Token::Identifier(name) = &token.token {
+                if name == "while" {
+                    self.advance(); // consume 'while'
+                } else {
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "'while'".to_string(),
+                        found: token.token.clone(),
+                        span: token.span,
+                    });
+                }
+            } else {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "'while'".to_string(),
+                    found: token.token.clone(),
+                    span: token.span,
+                });
+            }
+        } else {
+            return Err(ParseError::UnexpectedEof {
+                expected: "'while'".to_string(),
+            });
+        }
+
+        // 解析条件表达式
+        let condition = self.parse_expression()?;
+
+        // 期望 'do' 或 '{'
+        if let Some(token) = self.peek() {
+            if let Token::Identifier(name) = &token.token {
+                if name == "do" {
+                    self.advance(); // consume 'do'
+                } else if matches!(token.token, Token::LeftBrace) {
+                    // 允许 while condition { ... } 语法
+                } else {
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "'do' or '{'".to_string(),
+                        found: token.token.clone(),
+                        span: token.span,
+                    });
+                }
+            } else if matches!(token.token, Token::LeftBrace) {
+                // 允许 while condition { ... } 语法
+            } else {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "'do' or '{'".to_string(),
+                    found: token.token.clone(),
+                    span: token.span,
+                });
+            }
+        } else {
+            return Err(ParseError::UnexpectedEof {
+                expected: "'do' or '{'".to_string(),
+            });
+        }
+
+        // 解析循环体
+        let body = self.parse_expression()?;
+        let end_span = body.span();
+        let span = Span::new(start_span.start, end_span.end);
+
+        Ok(Expr::While {
+            condition: Box::new(condition),
             body: Box::new(body),
             span,
         })

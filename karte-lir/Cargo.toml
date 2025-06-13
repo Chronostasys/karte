@@ -7,3 +7,5 @@ description.workspace = true
 license.workspace = true
 
 [dependencies]
+karte-diagnostics = { path = "../karte-diagnostics" }
+karte-mir = { path = "../karte-mir" }

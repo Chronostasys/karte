@@ -14,6 +14,10 @@ Karte 是一个使用 Rust 实现的函数式编程语言编译器。这个项�
 - **函数调用**：支持函数调用和闭包 (`f(1, 2)`, `(|x| x + 1)(5)`)
 - **语句序列**：支持多语句程序 (`;` 分隔)
 - **块表达式**：支持嵌套作用域和变量绑定
+- **加法类型 (Sum Types)**：支持代数数据类型和构造器 (`Some(42)`, `None`, `true`, `false`)
+- **模式匹配**：支持 match 表达式和模式绑定 (`match expr { pattern -> result }`)
+- **布尔类型**：支持布尔字面量，实现为加法类型 (`true`, `false`)
+- **控制流**：支持条件表达式和循环表达式 (`if...then...else`, `while...do`)
 
 ### 编译器特性
 
@@ -26,6 +30,7 @@ Karte 是一个使用 Rust 实现的函数式编程语言编译器。这个项�
   - 类型兼容性检查
 - **语法检查**：编译时错误检测和诊断
 - **代码生成**：AST 解释器，支持运行时求值
+- **中间表示**：支持MIR和LIR多层级中间表示，控制流转换为基本块
 - **诊断系统**：结构化的错误报告和警告
 
 ### 工具链
@@ -40,11 +45,11 @@ karte/
 ├── karte-lexer/       # 词法分析器
 ├── karte-parser/      # 语法分析器 + 类型检查器
 ├── karte-hir/         # 高级中间表示 + 类型系统
+├── karte-mir/         # 中级中间表示 (基本块和控制流图)
+├── karte-lir/         # 低级中间表示 (类汇编指令)
 ├── karte-codegen/     # 代码生成器 (解释器)
 ├── karte-diagnostics/ # 诊断系统
 ├── karte-cli/         # 命令行工具
-├── karte-mir/         # 中级中间表示 (未实现)
-├── karte-lir/         # 低级中间表示 (未实现)
 └── karte-lsp/         # 语言服务器协议 (未实现)
 ```
 
@@ -68,6 +73,10 @@ cargo run -- "let x = 5; let f = |y| x + y; f(10)"
 # 复杂表达式
 cargo run -- "let x = 3; let y = 4; let multiply = |a, b| a * b; multiply(x, y)"
 
+# 控制流
+cargo run -- "if true then 42 else 0"
+cargo run -- "while false do 42"
+
 # 交互模式
 cargo run
 ```
@@ -83,6 +92,14 @@ cargo run
 
 // 单元类型 (语句返回值)
 let x = 5;  // 返回 ()
+
+// 布尔类型
+true
+false
+
+// Option 类型 (可选值)
+Some(42)    // 有值的选项
+None        // 空选项
 ```
 
 ### 变量和语句
@@ -126,6 +143,63 @@ add(3, 4)     // 结果: 7
 (1 + 2) * (3 - 4)
 ```
 
+### 控制流
+
+```rust
+// if表达式
+if true then 42 else 0
+if x > 5 then "big" else "small"
+
+// 没有else的if表达式
+if condition then side_effect
+
+// while循环
+while false do side_effect
+
+// 嵌套控制流
+if true then (if false then 1 else 2) else 3
+```
+
+### 模式匹配
+
+```rust
+// 布尔匹配
+match true {
+    true -> 1,
+    false -> 0
+}
+
+// Option 匹配
+match Some(42) {
+    Some(x) -> x,
+    None -> 0
+}
+
+// 通配符模式
+match Some(42) {
+    _ -> 123
+}
+
+// 数字模式匹配
+match 42 {
+    42 -> "found it",
+    _ -> "not found"
+}
+```
+
+### 构造器
+
+```rust
+// 无参数构造器
+None
+true
+false
+
+// 有参数构造器
+Some(42)
+Some(Some(10))  // 嵌套构造器
+```
+
 ## 类型系统
 
 ### 支持的类型
@@ -133,6 +207,31 @@ add(3, 4)     // 结果: 7
 - `number`: 数字类型，用于所有数值计算
 - `()`: 单元类型，用于语句的返回值
 - `fn(T1, T2, ...) -> R`: 函数类型，表示从参数类型到返回类型的映射
+- `Bool = True | False`: 布尔类型，由两个构造器组成
+- `Option<T> = Some(T) | None`: 可选类型，表示可能有值或无值
+- **自定义类型**: 用户定义的加法类型（枚举）
+
+### 自定义类型
+
+Karte 支持定义自己的加法类型（Sum Types），也称为枚举类型：
+
+```rust
+// 简单枚举
+enum Color { Red, Green, Blue }
+
+// 带数据的枚举
+enum Option { Some(number), None }
+
+// 使用自定义类型
+{ 
+    enum Color { Red, Green, Blue };
+    match Red {
+        Red -> 1,
+        Green -> 2, 
+        Blue -> 3
+    }
+}
+```
 
 ### 类型检查功能
 
@@ -168,6 +267,9 @@ cargo test -p karte-codegen
 
 # 运行类型检查测试
 cargo test test_type_check
+
+# 运行加法类型和模式匹配测试
+cargo test sum_types
 ```
 
 ## 示例程序
@@ -196,6 +298,78 @@ Type: number
 Result: 12
 ```
 
+### 控制流示例
+
+```rust
+Input: if true then 42 else 0
+Type: number
+Result: 42
+
+Input: if false then 1
+Type: ()
+Result: ()
+
+Input: while false do 42
+Type: ()
+Result: ()
+
+Input: if true then (if false then 1 else 2) else 3
+Type: number
+Result: 2
+```
+
+### 布尔类型和模式匹配
+
+```rust
+Input: true
+Type: Bool = True | False
+Result: True
+
+Input: match true { true -> 42, false -> 0 }
+Type: number
+Result: 42
+```
+
+### Option 类型
+
+```rust
+Input: Some(42)
+Type: Option = Some(number) | None
+Result: Some(42)
+
+Input: match Some(42) { Some(x) -> x, None -> 0 }
+Type: number
+Result: 42
+```
+
+### 函数式编程风格
+
+```rust
+Input: let map_option = |opt, f| match opt { Some(x) -> Some(f(x)), None -> None }; map_option(Some(21), |x| x * 2)
+Type: Option = Some(number) | None
+Result: Some(42)
+```
+
+### 自定义类型示例
+
+```rust
+Input: { enum Color { Red, Green, Blue }; Red }
+Type: Color = Red | Green | Blue
+Result: Red
+
+Input: { enum Option { Some(number), None }; Some(42) }
+Type: Option = Some(number) | None
+Result: Some(42)
+
+Input: { enum Color { Red, Green, Blue }; match Red { Red -> 1, Green -> 2, Blue -> 3 } }
+Type: number
+Result: 1
+
+Input: { enum Option { Some(number), None }; match Some(42) { Some(x) -> x + 1, None -> 0 } }
+Type: number
+Result: 43
+```
+
 ### 错误检测
 
 ```rust
@@ -216,6 +390,8 @@ Error: Arity mismatch: expected 2 arguments, found 1
 - ✅ 类型系统
 - ✅ 语法检查
 - ✅ 代码生成 (解释器)
+- ✅ 中间表示 (MIR/LIR)
+- ✅ 控制流 (if/while)
 - ✅ 诊断系统
 - ✅ CLI 工具
 - ⏳ 语言服务器 (LSP)

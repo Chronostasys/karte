@@ -1,6 +1,30 @@
 use karte_diagnostics::Span;
 use std::fmt;
 
+/// 格式化模式用于显示
+fn format_pattern(pattern: &Pattern) -> String {
+    match pattern {
+        Pattern::Wildcard { .. } => "_".to_string(),
+        Pattern::Variable { name, .. } => name.clone(),
+        Pattern::Constructor { name, arg, .. } => {
+            if let Some(arg) = arg {
+                format!("{}({})", name, format_pattern(arg))
+            } else {
+                name.clone()
+            }
+        }
+        Pattern::QualifiedConstructor { type_name, constructor_name, arg, .. } => {
+            if let Some(arg) = arg {
+                format!("{}::{}({})", type_name, constructor_name, format_pattern(arg))
+            } else {
+                format!("{}::{}", type_name, constructor_name)
+            }
+        }
+        Pattern::Number { value, .. } => value.to_string(),
+        Pattern::Boolean { value, .. } => value.to_string(),
+    }
+}
+
 /// 抽象语法树节点
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
@@ -54,6 +78,50 @@ pub enum Expr {
         final_expr: Option<Box<Expr>>, // 最后的表达式作为返回值
         span: Span,
     },
+
+    // 加法类型相关
+    /// 构造器调用 (例如: Some(42), None, Left(value))
+    Constructor {
+        name: String,
+        arg: Option<Box<Expr>>, // Some constructors don't take arguments
+        span: Span,
+    },
+
+    /// 限定构造器调用 (例如: Color::Red, Option::Some(42))
+    QualifiedConstructor {
+        type_name: String,
+        constructor_name: String,
+        arg: Option<Box<Expr>>,
+        span: Span,
+    },
+
+    /// 模式匹配表达式
+    Match {
+        expr: Box<Expr>,
+        arms: Vec<MatchArm>,
+        span: Span,
+    },
+
+    /// 布尔字面量 (语法糖，实际对应True/False构造器)
+    Boolean {
+        value: bool,
+        span: Span,
+    },
+
+    /// If表达式 - 条件表达式
+    If {
+        condition: Box<Expr>,
+        then_branch: Box<Expr>,
+        else_branch: Option<Box<Expr>>,
+        span: Span,
+    },
+
+    /// While表达式 - 循环表达式
+    While {
+        condition: Box<Expr>,
+        body: Box<Expr>,
+        span: Span,
+    },
 }
 
 /// 语句类型
@@ -70,6 +138,54 @@ pub enum Statement {
         expr: Expr,
         span: Span,
     },
+    // 类型定义语句 (enum定义)
+    TypeDef {
+        name: String,
+        variants: Vec<TypeVariant>,
+        span: Span,
+    },
+}
+
+/// 模式匹配的分支
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: Expr,
+    pub span: Span,
+}
+
+/// 模式
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pattern {
+    /// 通配符模式 _
+    Wildcard { span: Span },
+    /// 变量绑定模式
+    Variable { name: String, span: Span },
+    /// 构造器模式 (例如: Some(x), None)
+    Constructor {
+        name: String,
+        arg: Option<Box<Pattern>>,
+        span: Span,
+    },
+    /// 数字字面量模式
+    Number { value: i64, span: Span },
+    /// 布尔字面量模式
+    Boolean { value: bool, span: Span },
+    /// 限定构造器模式 (例如: Color::Red, Option::Some(x))
+    QualifiedConstructor {
+        type_name: String,
+        constructor_name: String,
+        arg: Option<Box<Pattern>>,
+        span: Span,
+    },
+}
+
+/// 类型定义中的变体
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeVariant {
+    pub name: String,
+    pub data_type: Option<String>, // 简化版本，只支持类型名字符串
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -111,6 +227,20 @@ impl fmt::Display for Statement {
         match self {
             Statement::Let { name, value, .. } => write!(f, "let {} = {};", name, value),
             Statement::Expression { expr, .. } => write!(f, "{};", expr),
+            Statement::TypeDef { name, variants, .. } => {
+                let variants_str = variants
+                    .iter()
+                    .map(|v| {
+                        if let Some(data_type) = &v.data_type {
+                            format!("{}({})", v.name, data_type)
+                        } else {
+                            v.name.clone()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                write!(f, "enum {} = {};", name, variants_str)
+            }
         }
     }
 }
@@ -120,28 +250,21 @@ impl fmt::Display for Expr {
         match self {
             Expr::Number { value, .. } => write!(f, "{}", value),
             Expr::Unit { .. } => write!(f, "()"),
-            Expr::BinaryOp {
-                left, op, right, ..
-            } => {
-                write!(f, "({} {} {})", left, op, right)
-            }
-            Expr::UnaryOp { op, operand, .. } => {
-                write!(f, "({}{})", op, operand)
-            }
             Expr::Identifier { name, .. } => write!(f, "{}", name),
+            Expr::BinaryOp { left, op, right, .. } => write!(f, "({} {} {})", left, op, right),
+            Expr::UnaryOp { op, operand, .. } => write!(f, "({} {})", op, operand),
             Expr::Lambda { params, body, .. } => {
-                write!(f, "lambda ({}) -> {}", params.join(", "), body)
+                write!(f, "|{}| {}", params.join(", "), body)
             }
             Expr::FunctionCall { function, args, .. } => {
-                write!(
-                    f,
-                    "{}({})",
-                    function,
-                    args.iter()
-                        .map(|e| e.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
+                write!(f, "{}(", function)?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", arg)?;
+                }
+                write!(f, ")")
             }
             Expr::Statement { stmt, .. } => {
                 write!(f, "{}", stmt)
@@ -151,16 +274,48 @@ impl fmt::Display for Expr {
                 final_expr,
                 ..
             } => {
-                let mut result = String::from("{ ");
+                write!(f, "{{ ")?;
                 for stmt in statements {
-                    result.push_str(&stmt.to_string());
-                    result.push(' ');
+                    write!(f, "{}; ", stmt)?;
                 }
                 if let Some(expr) = final_expr {
-                    result.push_str(&expr.to_string());
+                    write!(f, "{}", expr)?;
                 }
-                result.push_str(" }");
-                write!(f, "{}", result)
+                write!(f, " }}")
+            }
+            Expr::Match { expr, arms, .. } => {
+                write!(f, "match {} {{ ", expr)?;
+                for arm in arms {
+                    write!(f, "{} -> {}, ", format_pattern(&arm.pattern), arm.body)?;
+                }
+                write!(f, "}}")
+            }
+            Expr::Constructor { name, arg, .. } => {
+                if let Some(arg) = arg {
+                    write!(f, "{}({})", name, arg)
+                } else {
+                    write!(f, "{}", name)
+                }
+            }
+            Expr::QualifiedConstructor { type_name, constructor_name, arg, .. } => {
+                if let Some(arg) = arg {
+                    write!(f, "{}::{}({})", type_name, constructor_name, arg)
+                } else {
+                    write!(f, "{}::{}", type_name, constructor_name)
+                }
+            }
+            Expr::Boolean { value, .. } => {
+                write!(f, "{}", if *value { "true" } else { "false" })
+            }
+                         Expr::If { condition, then_branch, else_branch, .. } => {
+                 if let Some(else_branch) = else_branch {
+                     write!(f, "if {} then {} else {}", condition, then_branch, else_branch)
+                 } else {
+                     write!(f, "if {} then {}", condition, then_branch)
+                 }
+             }
+            Expr::While { condition, body, .. } => {
+                write!(f, "while {} do {}", condition, body)
             }
         }
     }
@@ -171,13 +326,19 @@ impl Expr {
         match self {
             Expr::Number { span, .. } => *span,
             Expr::Unit { span, .. } => *span,
+            Expr::Identifier { span, .. } => *span,
             Expr::BinaryOp { span, .. } => *span,
             Expr::UnaryOp { span, .. } => *span,
-            Expr::Identifier { span, .. } => *span,
             Expr::Lambda { span, .. } => *span,
             Expr::FunctionCall { span, .. } => *span,
             Expr::Statement { span, .. } => *span,
             Expr::Block { span, .. } => *span,
+            Expr::Match { span, .. } => *span,
+            Expr::Constructor { span, .. } => *span,
+            Expr::QualifiedConstructor { span, .. } => *span,
+            Expr::Boolean { span, .. } => *span,
+            Expr::If { span, .. } => *span,
+            Expr::While { span, .. } => *span,
         }
     }
 }
@@ -187,6 +348,20 @@ impl Statement {
         match self {
             Statement::Let { span, .. } => *span,
             Statement::Expression { span, .. } => *span,
+            Statement::TypeDef { span, .. } => *span,
+        }
+    }
+}
+
+impl Pattern {
+    pub fn span(&self) -> Span {
+        match self {
+            Pattern::Wildcard { span } => *span,
+            Pattern::Variable { span, .. } => *span,
+            Pattern::Constructor { span, .. } => *span,
+            Pattern::Number { span, .. } => *span,
+            Pattern::Boolean { span, .. } => *span,
+            Pattern::QualifiedConstructor { span, .. } => *span,
         }
     }
 }

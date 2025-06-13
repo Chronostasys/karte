@@ -31,6 +31,17 @@ pub enum TypeCheckError {
         ty: Type,
         span: Span,
     },
+    InvalidConstructor {
+        name: String,
+        span: Span,
+    },
+    InvalidPattern {
+        message: String,
+        span: Span,
+    },
+    EmptyMatch {
+        span: Span,
+    },
 }
 
 impl fmt::Display for TypeCheckError {
@@ -62,6 +73,15 @@ impl fmt::Display for TypeCheckError {
             TypeCheckError::InfiniteType { .. } => {
                 write!(f, "Infinite type")
             }
+            TypeCheckError::InvalidConstructor { name, .. } => {
+                write!(f, "Invalid constructor: {}", name)
+            }
+            TypeCheckError::InvalidPattern { message, .. } => {
+                write!(f, "Invalid pattern: {}", message)
+            }
+            TypeCheckError::EmptyMatch { .. } => {
+                write!(f, "Empty match expression")
+            }
         }
     }
 }
@@ -74,7 +94,10 @@ impl TypeCheckError {
             | TypeCheckError::ArityMismatch { span, .. }
             | TypeCheckError::NotCallable { span, .. }
             | TypeCheckError::CannotInferType { span }
-            | TypeCheckError::InfiniteType { span, .. } => *span,
+            | TypeCheckError::InfiniteType { span, .. }
+            | TypeCheckError::InvalidConstructor { span, .. }
+            | TypeCheckError::InvalidPattern { span, .. }
+            | TypeCheckError::EmptyMatch { span } => *span,
         }
     }
 }

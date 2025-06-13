@@ -22,6 +22,7 @@ pub struct TypeChecker {
     unification_table: InPlaceUnificationTable<TypeVar>,
     next_type_var: u32,
     constraints: Vec<Constraint>,
+    custom_types: HashMap<String, Type>, // 存储自定义类型
 }
 
 impl Default for TypeChecker {
@@ -37,6 +38,7 @@ impl TypeChecker {
             unification_table: InPlaceUnificationTable::new(),
             next_type_var: 0,
             constraints: Vec::new(),
+            custom_types: HashMap::new(),
         }
     }
 
@@ -119,6 +121,36 @@ impl TypeChecker {
 
                 // 统一返回类型
                 self.unify(r1, r2, span, orig_t1, orig_t2)
+            }
+
+            (
+                Type::Sum {
+                    name: n1,
+                    variants: v1,
+                },
+                Type::Sum {
+                    name: n2,
+                    variants: v2,
+                },
+            ) => {
+                if n1 == n2 && v1.len() == v2.len() && v1.iter().zip(v2.iter()).all(|(v1, v2)| {
+                    v1.name == v2.name && match (&v1.data_type, &v2.data_type) {
+                        (None, None) => true,
+                        (Some(t1), Some(t2)) => t1.structural_eq(t2),
+                        _ => false,
+                    }
+                }) {
+                    Ok(())
+                } else {
+                    let expected = self.apply_substitution(orig_t1.clone());
+                    let found = self.apply_substitution(orig_t2.clone());
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected,
+                        found,
+                        span,
+                    });
+                    Err(())
+                }
             }
 
             (Type::Unknown, _) | (_, Type::Unknown) => Ok(()),
@@ -313,6 +345,187 @@ impl TypeChecker {
                     Type::Unit
                 }
             }
+
+            Expr::Boolean { .. } => Type::bool(),
+
+            Expr::Constructor { name, arg, span } => {
+                // 首先检查是否是已知的内置构造器
+                match name.as_str() {
+                    "True" | "False" => Type::bool(),
+                    "Some" | "None" => {
+                        // 根据参数推断Option的内部类型
+                        if let Some(arg_expr) = arg {
+                            let arg_type = self.infer_expr(arg_expr, env);
+                            Type::option(arg_type)
+                        } else {
+                            Type::option(Type::Var(self.fresh_type_var()))
+                        }
+                    }
+                    _ => {
+                        // 检查是否是环境中的构造器
+                        if let Some(constructor_type) = env.get(name) {
+                            // 如果是函数类型（有参数的构造器），需要应用参数
+                            match constructor_type {
+                                Type::Function { params, return_type } => {
+                                    if let Some(arg_expr) = arg {
+                                        if params.len() == 1 {
+                                            let arg_type = self.infer_expr(arg_expr, env);
+                                            self.add_constraint(arg_type, params[0].clone(), arg_expr.span());
+                                            (**return_type).clone()
+                                        } else {
+                                            self.add_error(TypeCheckError::InvalidConstructor {
+                                                name: name.clone(),
+                                                span: *span,
+                                            });
+                                            Type::Unknown
+                                        }
+                                    } else {
+                                        self.add_error(TypeCheckError::InvalidConstructor {
+                                            name: name.clone(),
+                                            span: *span,
+                                        });
+                                        Type::Unknown
+                                    }
+                                }
+                                _ => {
+                                    // 无参数构造器
+                                    if arg.is_some() {
+                                        self.add_error(TypeCheckError::InvalidConstructor {
+                                            name: name.clone(),
+                                            span: *span,
+                                        });
+                                        Type::Unknown
+                                    } else {
+                                        constructor_type.clone()
+                                    }
+                                }
+                            }
+                        } else {
+                            // 对于未知构造器，创建一个类型变量
+                            self.add_error(TypeCheckError::InvalidConstructor {
+                                name: name.clone(),
+                                span: *span,
+                            });
+                            Type::Unknown
+                        }
+                    }
+                }
+            }
+
+            Expr::QualifiedConstructor { type_name, constructor_name, arg, span } => {
+                // 检查类型是否存在
+                if let Some(sum_type) = self.custom_types.get(type_name).cloned() {
+                    if let Type::Sum { name: _, variants } = &sum_type {
+                        // 查找对应的构造器
+                        if let Some(variant) = variants.iter().find(|v| v.name == *constructor_name) {
+                            if let Some(arg_expr) = arg {
+                                // 有参数的构造器
+                                if let Some(expected_type) = &variant.data_type {
+                                    let arg_type = self.infer_expr(arg_expr, env);
+                                    let expected_type_clone = expected_type.clone();
+                                    self.add_constraint(arg_type, expected_type_clone, arg_expr.span());
+                                    sum_type.clone()
+                                } else {
+                                    self.add_error(TypeCheckError::InvalidConstructor {
+                                        name: format!("{}::{}", type_name, constructor_name),
+                                        span: *span,
+                                    });
+                                    Type::Unknown
+                                }
+                            } else {
+                                // 无参数的构造器
+                                if variant.data_type.is_none() {
+                                    sum_type.clone()
+                                } else {
+                                    self.add_error(TypeCheckError::InvalidConstructor {
+                                        name: format!("{}::{}", type_name, constructor_name),
+                                        span: *span,
+                                    });
+                                    Type::Unknown
+                                }
+                            }
+                        } else {
+                            self.add_error(TypeCheckError::InvalidConstructor {
+                                name: format!("{}::{}", type_name, constructor_name),
+                                span: *span,
+                            });
+                            Type::Unknown
+                        }
+                    } else {
+                        self.add_error(TypeCheckError::InvalidConstructor {
+                            name: format!("{}::{}", type_name, constructor_name),
+                            span: *span,
+                        });
+                        Type::Unknown
+                    }
+                } else {
+                    self.add_error(TypeCheckError::InvalidConstructor {
+                        name: format!("{}::{}", type_name, constructor_name),
+                        span: *span,
+                    });
+                    Type::Unknown
+                }
+            }
+
+            Expr::Match { expr, arms, span } => {
+                let expr_type = self.infer_expr(expr, env);
+                
+                if arms.is_empty() {
+                    self.add_error(TypeCheckError::EmptyMatch { span: *span });
+                    return Type::Unknown;
+                }
+
+                // 推断第一个分支的类型作为返回类型
+                let first_arm = &arms[0];
+                let mut result_env = env.clone();
+                self.check_pattern(&first_arm.pattern, &expr_type, &mut result_env);
+                let result_type = self.infer_expr(&first_arm.body, &result_env);
+
+                // 检查所有其他分支的类型是否兼容
+                for arm in &arms[1..] {
+                    let mut arm_env = env.clone();
+                    self.check_pattern(&arm.pattern, &expr_type, &mut arm_env);
+                    let arm_type = self.infer_expr(&arm.body, &arm_env);
+                    
+                    // 约束：所有分支的类型必须兼容
+                    self.add_constraint(result_type.clone(), arm_type, arm.body.span());
+                }
+
+                result_type
+            }
+
+            Expr::If { condition, then_branch, else_branch, span } => {
+                // 推断条件的类型，条件必须是布尔类型
+                let condition_type = self.infer_expr(condition, env);
+                self.add_constraint(condition_type, Type::bool(), condition.span());
+
+                // 推断then分支的类型
+                let then_type = self.infer_expr(then_branch, env);
+
+                // 推断else分支的类型（如果存在）
+                if let Some(else_branch) = else_branch {
+                    let else_type = self.infer_expr(else_branch, env);
+                    // 约束：then和else分支的类型必须兼容
+                    self.add_constraint(then_type.clone(), else_type, else_branch.span());
+                    then_type
+                } else {
+                    // 如果没有else分支，if表达式返回unit类型
+                    // 但不强制then分支必须是unit（允许表达式求值但丢弃结果）
+                    Type::Unit
+                }
+            }
+
+            Expr::While { condition, body, span: _ } => {
+                // 推断条件的类型，条件必须是布尔类型
+                let condition_type = self.infer_expr(condition, env);
+                self.add_constraint(condition_type, Type::bool(), condition.span());
+
+                // 推断循环体的类型（可以是任何类型，但while表达式本身返回unit）
+                let _body_type = self.infer_expr(body, env);
+
+                // while表达式总是返回unit类型
+                Type::Unit
+            }
         }
     }
 
@@ -325,6 +538,199 @@ impl TypeChecker {
             }
             Statement::Expression { expr, .. } => {
                 self.infer_expr(expr, env);
+            }
+            Statement::TypeDef { name, variants, .. } => {
+                // 将变体转换为SumVariant
+                let sum_variants: Vec<crate::types::SumVariant> = variants
+                    .iter()
+                    .map(|v| crate::types::SumVariant {
+                        name: v.name.clone(),
+                        data_type: v.data_type.as_ref().map(|type_name| {
+                            // 简单起见，这里只支持基本类型名字映射
+                            match type_name.as_str() {
+                                "number" => Type::Number,
+                                "unit" => Type::Unit,
+                                _ => {
+                                    // 检查是否是已定义的自定义类型
+                                    if let Some(custom_type) = self.custom_types.get(type_name) {
+                                        custom_type.clone()
+                                    } else {
+                                        // 未知类型，暂时用Unknown表示
+                                        Type::Unknown
+                                    }
+                                }
+                            }
+                        }),
+                    })
+                    .collect();
+
+                let sum_type = Type::Sum {
+                    name: name.clone(),
+                    variants: sum_variants,
+                };
+
+                // 将新类型添加到自定义类型环境中
+                self.custom_types.insert(name.clone(), sum_type.clone());
+
+                // 将每个构造器作为函数添加到类型环境中
+                for variant in variants {
+                    if let Some(data_type) = &variant.data_type {
+                        // 有参数的构造器：data_type -> sum_type
+                        let param_type = match data_type.as_str() {
+                            "number" => Type::Number,
+                            "unit" => Type::Unit,
+                            _ => {
+                                if let Some(custom_type) = self.custom_types.get(data_type) {
+                                    custom_type.clone()
+                                } else {
+                                    Type::Unknown
+                                }
+                            }
+                        };
+                        
+                        let constructor_type = Type::Function {
+                            params: vec![param_type],
+                            return_type: Box::new(sum_type.clone()),
+                        };
+                        env.insert(variant.name.clone(), constructor_type);
+                    } else {
+                        // 没有参数的构造器：直接是sum_type
+                        env.insert(variant.name.clone(), sum_type.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    /// 检查模式并更新环境
+    fn check_pattern(&mut self, pattern: &crate::ast::Pattern, expected_type: &Type, env: &mut TypeEnvironment) {
+        match pattern {
+            crate::ast::Pattern::Wildcard { .. } => {
+                // 通配符模式匹配任何类型，不绑定变量
+            }
+            crate::ast::Pattern::Variable { name, .. } => {
+                // 变量模式绑定整个值
+                env.insert(name.clone(), expected_type.clone());
+            }
+            crate::ast::Pattern::Number { value: _, span } => {
+                // 数字模式必须匹配数字类型
+                self.add_constraint(expected_type.clone(), Type::Number, *span);
+            }
+            crate::ast::Pattern::Boolean { value: _, span } => {
+                // 布尔模式必须匹配布尔类型
+                self.add_constraint(expected_type.clone(), Type::bool(), *span);
+            }
+            crate::ast::Pattern::Constructor { name, arg, span } => {
+                match name.as_str() {
+                    "True" | "False" => {
+                        self.add_constraint(expected_type.clone(), Type::bool(), *span);
+                    }
+                    "Some" => {
+                        if let Some(arg_pattern) = arg {
+                            // Some(x) 模式，从 expected_type 中提取内部类型
+                            match expected_type {
+                                Type::Sum { name, variants } if name == "Option" => {
+                                    // 期望是 Option<T>，找到 Some 变体的类型
+                                    if let Some(some_variant) = variants.iter().find(|v| v.name == "Some") {
+                                        if let Some(inner_type) = &some_variant.data_type {
+                                            self.check_pattern(arg_pattern, inner_type, env);
+                                        } else {
+                                            self.add_error(TypeCheckError::InvalidPattern {
+                                                message: "Some variant should have data type".to_string(),
+                                                span: *span,
+                                            });
+                                        }
+                                    } else {
+                                        self.add_error(TypeCheckError::InvalidPattern {
+                                            message: "Expected Option type with Some variant".to_string(),
+                                            span: *span,
+                                        });
+                                    }
+                                }
+                                _ => {
+                                    // 如果 expected_type 不是具体的 Option，创建一个约束
+                                    let inner_type = Type::Var(self.fresh_type_var());
+                                    let option_type = Type::option(inner_type.clone());
+                                    self.add_constraint(expected_type.clone(), option_type, *span);
+                                    self.check_pattern(arg_pattern, &inner_type, env);
+                                }
+                            }
+                        } else {
+                            self.add_error(TypeCheckError::InvalidPattern {
+                                message: "Some constructor requires an argument".to_string(),
+                                span: *span,
+                            });
+                        }
+                    }
+                    "None" => {
+                        // None 模式，确保 expected_type 是 Option 类型
+                        match expected_type {
+                            Type::Sum { name, .. } if name == "Option" => {
+                                // 已经是 Option 类型，直接匹配
+                            }
+                            _ => {
+                                // 如果不是具体的 Option，创建约束
+                                let inner_type = Type::Var(self.fresh_type_var());
+                                let option_type = Type::option(inner_type);
+                                self.add_constraint(expected_type.clone(), option_type, *span);
+                            }
+                        }
+                    }
+                    _ => {
+                        self.add_error(TypeCheckError::InvalidPattern {
+                            message: format!("Unknown constructor: {}", name),
+                            span: *span,
+                        });
+                    }
+                }
+            }
+
+            crate::ast::Pattern::QualifiedConstructor { type_name, constructor_name, arg, span } => {
+                // 检查类型是否存在
+                if let Some(sum_type) = self.custom_types.get(type_name).cloned() {
+                    if let Type::Sum { name: _, variants } = &sum_type {
+                        // 查找对应的构造器
+                        if let Some(variant) = variants.iter().find(|v| v.name == *constructor_name) {
+                            // 约束expected_type必须是这个sum type
+                            self.add_constraint(expected_type.clone(), sum_type.clone(), *span);
+                            
+                            if let Some(arg_pattern) = arg {
+                                // 有参数的构造器模式
+                                if let Some(expected_arg_type) = &variant.data_type {
+                                    self.check_pattern(arg_pattern, expected_arg_type, env);
+                                } else {
+                                    self.add_error(TypeCheckError::InvalidPattern {
+                                        message: format!("{}::{} doesn't take arguments", type_name, constructor_name),
+                                        span: *span,
+                                    });
+                                }
+                            } else {
+                                // 无参数的构造器模式
+                                if variant.data_type.is_some() {
+                                    self.add_error(TypeCheckError::InvalidPattern {
+                                        message: format!("{}::{} requires an argument", type_name, constructor_name),
+                                        span: *span,
+                                    });
+                                }
+                            }
+                        } else {
+                            self.add_error(TypeCheckError::InvalidPattern {
+                                message: format!("Constructor {}::{} not found", type_name, constructor_name),
+                                span: *span,
+                            });
+                        }
+                    } else {
+                        self.add_error(TypeCheckError::InvalidPattern {
+                            message: format!("{} is not a sum type", type_name),
+                            span: *span,
+                        });
+                    }
+                } else {
+                    self.add_error(TypeCheckError::InvalidPattern {
+                        message: format!("Type {} not found", type_name),
+                        span: *span,
+                    });
+                }
             }
         }
     }
@@ -361,6 +767,16 @@ impl TypeChecker {
                     .map(|p| self.apply_substitution(p))
                     .collect(),
                 return_type: Box::new(self.apply_substitution(*return_type)),
+            },
+            Type::Sum { name, variants } => Type::Sum {
+                name,
+                variants: variants
+                    .into_iter()
+                    .map(|v| crate::types::SumVariant {
+                        name: v.name,
+                        data_type: v.data_type.map(|t| self.apply_substitution(t)),
+                    })
+                    .collect(),
             },
             _ => ty,
         }

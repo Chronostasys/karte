@@ -59,6 +59,13 @@ pub enum Token {
     #[token(";")]
     Semicolon,
 
+    // 模式匹配相关
+    #[token("::")]
+    DoubleColon,
+
+    #[token("_")]
+    Underscore,
+
     // 跳过空白字符
     #[regex(r"[ \t\n\f]+", logos::skip)]
     // Error token - handled automatically by Logos 0.13+
@@ -83,6 +90,8 @@ impl fmt::Display for Token {
             Token::Identifier(s) => write!(f, "{}", s),
             Token::Comma => write!(f, ","),
             Token::Semicolon => write!(f, ";"),
+            Token::DoubleColon => write!(f, "::"),
+            Token::Underscore => write!(f, "_"),
             Token::Error => write!(f, "<error>"),
         }
     }
@@ -144,6 +153,16 @@ impl<'a> Lexer<'a> {
     pub fn into_diagnostics(self) -> DiagnosticBag {
         self.diagnostics
     }
+}
+
+/// 关键字识别器
+pub fn is_keyword(ident: &str) -> bool {
+    matches!(ident, "let" | "match" | "enum" | "true" | "false" | "if" | "else" | "while")
+}
+
+/// 从标识符创建关键字或标识符token
+pub fn keyword_or_identifier(s: String) -> Token {
+    Token::Identifier(s)
 }
 
 /// 便捷的词法分析函数
