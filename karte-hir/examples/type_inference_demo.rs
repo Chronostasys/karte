@@ -1,5 +1,5 @@
 use karte_diagnostics::Span;
-use karte_hir::{type_check, Expr};
+use karte_hir::{type_check, Expr, Parameter};
 
 fn main() {
     // 创建一个示例span
@@ -8,7 +8,7 @@ fn main() {
     // 示例1: 简单的lambda表达式 - 现在支持所有类型
     // lambda (x) -> x + 1
     let lambda_expr = Expr::Lambda {
-        params: vec!["x".to_string()],
+        params: vec![Parameter::simple("x".to_string())],
         body: Box::new(Expr::BinaryOp {
             left: Box::new(Expr::Identifier {
                 name: "x".to_string(),
@@ -31,7 +31,7 @@ fn main() {
     // 示例2: 高阶函数示例
     // lambda (f) -> f(42)
     let higher_order = Expr::Lambda {
-        params: vec!["f".to_string()],
+        params: vec![Parameter::simple("f".to_string())],
         body: Box::new(Expr::FunctionCall {
             function: Box::new(Expr::Identifier {
                 name: "f".to_string(),
@@ -53,9 +53,9 @@ fn main() {
     // 示例3: 复杂的函数组合
     // lambda (x) -> lambda (y) -> x + y
     let curried_add = Expr::Lambda {
-        params: vec!["x".to_string()],
+        params: vec![Parameter::simple("x".to_string())],
         body: Box::new(Expr::Lambda {
-            params: vec!["y".to_string()],
+            params: vec![Parameter::simple("y".to_string())],
             body: Box::new(Expr::BinaryOp {
                 left: Box::new(Expr::Identifier {
                     name: "x".to_string(),

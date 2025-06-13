@@ -15,5 +15,8 @@ karte-lexer = { path = "../karte-lexer" }
 karte-parser = { path = "../karte-parser" }
 karte-diagnostics = { path = "../karte-diagnostics" }
 karte-codegen = { path = "../karte-codegen" }
+karte-mir = { path = "../karte-mir" }
+karte-hir = { path = "../karte-hir" }
+karte-lir = { path = "../karte-lir" }
 env_logger.workspace = true
 log.workspace = true

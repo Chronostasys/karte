@@ -59,6 +59,15 @@ pub enum Type {
         name: String,
         variants: Vec<SumVariant>,
     },
+    /// 结构体类型 (Product Type)
+    Struct {
+        name: String,
+        fields: Vec<StructField>,
+    },
+    /// 不可变引用类型
+    Reference {
+        inner: Box<Type>,
+    },
     /// 类型变量，用于类型推断
     Var(TypeVar),
     /// 未知类型，用于错误恢复
@@ -87,6 +96,19 @@ impl SumVariant {
             name,
             data_type: Some(data_type),
         }
+    }
+}
+
+/// 结构体字段类型
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructField {
+    pub name: String,
+    pub field_type: Type,
+}
+
+impl StructField {
+    pub fn new(name: String, field_type: Type) -> Self {
+        Self { name, field_type }
     }
 }
 
@@ -137,6 +159,28 @@ impl Type {
                                 }
                         })
             }
+            (
+                Type::Struct {
+                    name: n1,
+                    fields: f1,
+                },
+                Type::Struct {
+                    name: n2,
+                    fields: f2,
+                },
+            ) => {
+                n1 == n2
+                    && f1.len() == f2.len()
+                    && f1
+                        .iter()
+                        .zip(f2.iter())
+                        .all(|(field1, field2)| {
+                            field1.name == field2.name && field1.field_type.structural_eq(&field2.field_type)
+                        })
+            }
+            (Type::Reference { inner: i1 }, Type::Reference { inner: i2 }) => {
+                i1.structural_eq(i2)
+            }
             (Type::Var(v1), Type::Var(v2)) => v1 == v2,
             (Type::Unknown, Type::Unknown) => true,
             _ => false,
@@ -178,6 +222,17 @@ impl fmt::Display for Type {
                     .join(" | ");
                 write!(f, "{} = {}", name, variants_str)
             }
+            Type::Struct { name, fields } => {
+                let fields_str = fields
+                    .iter()
+                    .map(|f| format!("{}: {}", f.name, f.field_type))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "{} = {{ {} }}", name, fields_str)
+            }
+            Type::Reference { inner } => {
+                write!(f, "&{}", inner)
+            }
             Type::Var(var) => write!(f, "t{}", var.0),
             Type::Unknown => write!(f, "?"),
         }
@@ -207,7 +262,19 @@ impl Type {
         Type::Sum { name, variants }
     }
 
-    /// 创建简单的布尔类型
+    /// 创建结构体类型
+    pub fn struct_type(name: String, fields: Vec<StructField>) -> Self {
+        Type::Struct { name, fields }
+    }
+
+    /// 创建引用类型
+    pub fn reference(inner: Type) -> Self {
+        Type::Reference {
+            inner: Box::new(inner),
+        }
+    }
+
+    /// 创建布尔类型
     pub fn bool() -> Self {
         Type::Sum {
             name: "Bool".to_string(),
@@ -244,15 +311,9 @@ impl Type {
     /// 替换类型中的类型变量
     pub fn substitute(&self, subst: &[(TypeVar, Type)]) -> Type {
         match self {
-            Type::Var(var) => subst
-                .iter()
-                .find(|(v, _)| v == var)
-                .map(|(_, t)| t.clone())
-                .unwrap_or_else(|| self.clone()),
-            Type::Function {
-                params,
-                return_type,
-            } => Type::Function {
+            Type::Number => Type::Number,
+            Type::Unit => Type::Unit,
+            Type::Function { params, return_type } => Type::Function {
                 params: params.iter().map(|p| p.substitute(subst)).collect(),
                 return_type: Box::new(return_type.substitute(subst)),
             },
@@ -266,25 +327,41 @@ impl Type {
                     })
                     .collect(),
             },
-            _ => self.clone(),
+            Type::Struct { name, fields } => Type::Struct {
+                name: name.clone(),
+                fields: fields
+                    .iter()
+                    .map(|f| StructField {
+                        name: f.name.clone(),
+                        field_type: f.field_type.substitute(subst),
+                    })
+                    .collect(),
+            },
+            Type::Reference { inner } => Type::Reference {
+                inner: Box::new(inner.substitute(subst)),
+            },
+            Type::Var(var) => {
+                for (v, t) in subst {
+                    if v == var {
+                        return t.clone();
+                    }
+                }
+                self.clone()
+            }
+            Type::Unknown => Type::Unknown,
         }
     }
 
     /// 获取类型中所有的自由类型变量
     pub fn free_vars(&self) -> Vec<TypeVar> {
         match self {
-            Type::Var(var) => vec![*var],
-            Type::Function {
-                params,
-                return_type,
-            } => {
+            Type::Number | Type::Unit | Type::Unknown => vec![],
+            Type::Function { params, return_type } => {
                 let mut vars = Vec::new();
                 for param in params {
                     vars.extend(param.free_vars());
                 }
                 vars.extend(return_type.free_vars());
-                vars.sort_unstable_by_key(|v| v.0);
-                vars.dedup();
                 vars
             }
             Type::Sum { variants, .. } => {
@@ -294,11 +371,17 @@ impl Type {
                         vars.extend(data_type.free_vars());
                     }
                 }
-                vars.sort_unstable_by_key(|v| v.0);
-                vars.dedup();
                 vars
             }
-            _ => Vec::new(),
+            Type::Struct { fields, .. } => {
+                let mut vars = Vec::new();
+                for field in fields {
+                    vars.extend(field.field_type.free_vars());
+                }
+                vars
+            }
+            Type::Reference { inner } => inner.free_vars(),
+            Type::Var(var) => vec![*var],
         }
     }
 }

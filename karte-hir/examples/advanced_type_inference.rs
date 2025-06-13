@@ -1,5 +1,5 @@
 use karte_diagnostics::Span;
-use karte_hir::{type_check, BinaryOperator, Expr, Statement};
+use karte_hir::{type_check, BinaryOperator, Expr, Parameter, Statement};
 
 fn main() {
     let span = Span::new(0, 10);
@@ -9,7 +9,7 @@ fn main() {
     // 示例1: Identity函数 - 泛型函数
     // lambda (x) -> x
     let identity = Expr::Lambda {
-        params: vec!["x".to_string()],
+        params: vec![Parameter::simple("x".to_string())],
         body: Box::new(Expr::Identifier {
             name: "x".to_string(),
             span,
@@ -24,11 +24,11 @@ fn main() {
     // 示例2: 函数组合
     // lambda (f) -> lambda (g) -> lambda (x) -> f(g(x))
     let compose = Expr::Lambda {
-        params: vec!["f".to_string()],
+        params: vec![Parameter::simple("f".to_string())],
         body: Box::new(Expr::Lambda {
-            params: vec!["g".to_string()],
+            params: vec![Parameter::simple("g".to_string())],
             body: Box::new(Expr::Lambda {
-                params: vec!["x".to_string()],
+                params: vec![Parameter::simple("x".to_string())],
                 body: Box::new(Expr::FunctionCall {
                     function: Box::new(Expr::Identifier {
                         name: "f".to_string(),
@@ -64,7 +64,7 @@ fn main() {
             Statement::Let {
                 name: "add_one".to_string(),
                 value: Expr::Lambda {
-                    params: vec!["n".to_string()],
+                    params: vec![Parameter::simple("n".to_string())],
                     body: Box::new(Expr::BinaryOp {
                         left: Box::new(Expr::Identifier {
                             name: "n".to_string(),
@@ -81,7 +81,7 @@ fn main() {
             Statement::Let {
                 name: "double".to_string(),
                 value: Expr::Lambda {
-                    params: vec!["x".to_string()],
+                    params: vec![Parameter::simple("x".to_string())],
                     body: Box::new(Expr::BinaryOp {
                         left: Box::new(Expr::Identifier {
                             name: "x".to_string(),
@@ -97,7 +97,7 @@ fn main() {
             },
         ],
         final_expr: Some(Box::new(Expr::Lambda {
-            params: vec!["y".to_string()],
+            params: vec![Parameter::simple("y".to_string())],
             body: Box::new(Expr::FunctionCall {
                 function: Box::new(Expr::Identifier {
                     name: "add_one".to_string(),

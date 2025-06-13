@@ -42,6 +42,25 @@ pub enum TypeCheckError {
     EmptyMatch {
         span: Span,
     },
+    MissingFields {
+        struct_name: String,
+        expected: usize,
+        found: usize,
+        span: Span,
+    },
+    UnknownField {
+        struct_name: String,
+        field_name: String,
+        span: Span,
+    },
+    NotAStruct {
+        name: String,
+        span: Span,
+    },
+    UndefinedType {
+        name: String,
+        span: Span,
+    },
 }
 
 impl fmt::Display for TypeCheckError {
@@ -82,6 +101,26 @@ impl fmt::Display for TypeCheckError {
             TypeCheckError::EmptyMatch { .. } => {
                 write!(f, "Empty match expression")
             }
+            TypeCheckError::MissingFields {
+                struct_name, expected, found, ..
+            } => {
+                write!(
+                    f,
+                    "Struct {} missing fields: expected {} fields, found {}",
+                    struct_name, expected, found
+                )
+            }
+            TypeCheckError::UnknownField {
+                struct_name, field_name, ..
+            } => {
+                write!(f, "Unknown field {} in struct {}", field_name, struct_name)
+            }
+            TypeCheckError::NotAStruct { name, .. } => {
+                write!(f, "{} is not a struct", name)
+            }
+            TypeCheckError::UndefinedType { name, .. } => {
+                write!(f, "Undefined type: {}", name)
+            }
         }
     }
 }
@@ -98,6 +137,10 @@ impl TypeCheckError {
             | TypeCheckError::InvalidConstructor { span, .. }
             | TypeCheckError::InvalidPattern { span, .. }
             | TypeCheckError::EmptyMatch { span } => *span,
+            | TypeCheckError::MissingFields { span, .. }
+            | TypeCheckError::UnknownField { span, .. }
+            | TypeCheckError::NotAStruct { span, .. }
+            | TypeCheckError::UndefinedType { span, .. } => *span,
         }
     }
 }

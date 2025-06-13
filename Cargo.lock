@@ -343,7 +343,10 @@ dependencies = [
  "env_logger",
  "karte-codegen",
  "karte-diagnostics",
+ "karte-hir",
  "karte-lexer",
+ "karte-lir",
+ "karte-mir",
  "karte-parser",
  "log",
 ]
@@ -354,6 +357,8 @@ version = "0.1.0"
 dependencies = [
  "karte-diagnostics",
  "karte-hir",
+ "karte-lir",
+ "karte-mir",
 ]
 
 [[package]]
@@ -423,6 +428,8 @@ dependencies = [
  "karte-diagnostics",
  "karte-hir",
  "karte-lexer",
+ "karte-lir",
+ "karte-mir",
  "karte-parser",
  "tokio",
 ]

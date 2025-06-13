@@ -1,9 +1,10 @@
-use crate::ast::{Expr, Statement};
+use crate::ast::{BinaryOperator, Expr, FieldDef, Statement};
 use crate::errors::TypeCheckError;
 use crate::types::{Type, TypeValue, TypeVar};
 use ena::unify::InPlaceUnificationTable;
 use karte_diagnostics::DiagnosticBag;
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 /// 类型环境 - 存储变量的类型信息
 type TypeEnvironment = HashMap<String, Type>;
@@ -66,6 +67,19 @@ impl TypeChecker {
         orig_t1: &Type,
         orig_t2: &Type,
     ) -> Result<(), ()> {
+        let mut visited = HashSet::new();
+        self.unify_recursive(t1, t2, span, orig_t1, orig_t2, &mut visited)
+    }
+
+    fn unify_recursive(
+        &mut self,
+        t1: &Type,
+        t2: &Type,
+        span: karte_diagnostics::Span,
+        orig_t1: &Type,
+        orig_t2: &Type,
+        visited: &mut HashSet<(String, String)>,
+    ) -> Result<(), ()> {
         match (t1, t2) {
             (Type::Number, Type::Number) => Ok(()),
             (Type::Unit, Type::Unit) => Ok(()),
@@ -91,7 +105,7 @@ impl TypeChecker {
                             .union_value(*var, TypeValue(Some(ty.clone())));
                         Ok(())
                     }
-                    Some(existing) => self.unify(existing, ty, span, orig_t1, orig_t2),
+                    Some(existing) => self.unify_recursive(existing, ty, span, orig_t1, orig_t2, visited),
                 }
             }
 
@@ -116,11 +130,11 @@ impl TypeChecker {
 
                 // 统一参数类型
                 for (param1, param2) in p1.iter().zip(p2.iter()) {
-                    self.unify(param1, param2, span, orig_t1, orig_t2)?;
+                    self.unify_recursive(param1, param2, span, orig_t1, orig_t2, visited)?;
                 }
 
                 // 统一返回类型
-                self.unify(r1, r2, span, orig_t1, orig_t2)
+                self.unify_recursive(r1, r2, span, orig_t1, orig_t2, visited)
             }
 
             (
@@ -133,13 +147,103 @@ impl TypeChecker {
                     variants: v2,
                 },
             ) => {
-                if n1 == n2 && v1.len() == v2.len() && v1.iter().zip(v2.iter()).all(|(v1, v2)| {
-                    v1.name == v2.name && match (&v1.data_type, &v2.data_type) {
-                        (None, None) => true,
-                        (Some(t1), Some(t2)) => t1.structural_eq(t2),
-                        _ => false,
+                let key = if n1 < n2 { (n1.clone(), n2.clone()) } else { (n2.clone(), n1.clone()) };
+                if visited.contains(&key) {
+                    return Ok(());
+                }
+
+                if n1 == n2 && v1.len() == v2.len() {
+                    visited.insert(key);
+                    // 检查每个变体的名称和数据类型是否能够统一
+                    let mut all_unified = true;
+                    for (variant1, variant2) in v1.iter().zip(v2.iter()) {
+                        if variant1.name != variant2.name {
+                            all_unified = false;
+                            break;
+                        }
+                        match (&variant1.data_type, &variant2.data_type) {
+                            (None, None) => {
+                                // 两个都没有数据类型，匹配
+                            }
+                            (Some(t1), Some(t2)) => {
+                                // 尝试统一数据类型
+                                if self.unify_recursive(t1, t2, span, orig_t1, orig_t2, visited).is_err() {
+                                    all_unified = false;
+                                    break;
+                                }
+                            }
+                            _ => {
+                                // 一个有数据类型，一个没有，不匹配
+                                all_unified = false;
+                                break;
+                            }
+                        }
                     }
-                }) {
+                    
+                    if all_unified {
+                        Ok(())
+                    } else {
+                        let expected = self.apply_substitution(orig_t1.clone());
+                        let found = self.apply_substitution(orig_t2.clone());
+                        self.add_error(TypeCheckError::TypeMismatch {
+                            expected,
+                            found,
+                            span,
+                        });
+                        Err(())
+                    }
+                } else {
+                    let expected = self.apply_substitution(orig_t1.clone());
+                    let found = self.apply_substitution(orig_t2.clone());
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected,
+                        found,
+                        span,
+                    });
+                    Err(())
+                }
+            }
+
+            (Type::Reference { inner: i1 }, Type::Reference { inner: i2 }) => {
+                // 统一引用的内部类型
+                self.unify_recursive(i1, i2, span, orig_t1, orig_t2, visited)
+            }
+
+            (Type::Struct { name: n1, fields: f1 }, Type::Struct { name: n2, fields: f2 }) => {
+                let key = if n1 < n2 { (n1.clone(), n2.clone()) } else { (n2.clone(), n1.clone()) };
+                if visited.contains(&key) {
+                    return Ok(());
+                }
+
+                if n1 != n2 {
+                    let expected = self.apply_substitution(orig_t1.clone());
+                    let found = self.apply_substitution(orig_t2.clone());
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected,
+                        found,
+                        span,
+                    });
+                    return Err(());
+                }
+
+                visited.insert(key);
+
+                if f1.len() == f2.len() {
+                    // 检查每个字段的类型是否匹配
+                    for (field1, field2) in f1.iter().zip(f2.iter()) {
+                        if field1.name != field2.name {
+                            let expected = self.apply_substitution(orig_t1.clone());
+                            let found = self.apply_substitution(orig_t2.clone());
+                            self.add_error(TypeCheckError::TypeMismatch {
+                                expected,
+                                found,
+                                span,
+                            });
+                            return Err(());
+                        }
+                        // 递归统一字段类型
+                        self.unify_recursive(&field1.field_type, &field2.field_type, span, orig_t1, orig_t2, visited)?;
+                    }
                     Ok(())
                 } else {
                     let expected = self.apply_substitution(orig_t1.clone());
@@ -187,6 +291,9 @@ impl TypeChecker {
 
     /// 检查整个程序
     pub fn check_program(&mut self, expr: &Expr) -> Type {
+        // 首先收集所有结构体定义
+        self.collect_struct_definitions(expr);
+
         let env = TypeEnvironment::new();
         let result_type = self.infer_expr(expr, &env);
 
@@ -202,6 +309,135 @@ impl TypeChecker {
         } else {
             final_type
         }
+    }
+
+    /// 递归收集所有结构体定义并预处理它们
+    fn collect_struct_definitions(&mut self, expr: &Expr) {
+        // 先收集所有结构体定义的名称和字段信息
+        let mut struct_defs = HashMap::new();
+        self.gather_struct_defs(expr, &mut struct_defs);
+
+        // 现在解析这些结构体定义，支持相互引用和自引用
+        self.process_struct_definitions(struct_defs);
+    }
+
+    /// 递归遍历AST收集结构体定义
+    fn gather_struct_defs(&self, expr: &Expr, struct_defs: &mut HashMap<String, Vec<FieldDef>>) {
+        match expr {
+            Expr::Block { statements, final_expr, .. } => {
+                for stmt in statements {
+                    self.gather_struct_defs_from_statement(stmt, struct_defs);
+                }
+                if let Some(final_expr) = final_expr {
+                    self.gather_struct_defs(final_expr, struct_defs);
+                }
+            }
+            Expr::Statement { stmt, .. } => {
+                self.gather_struct_defs_from_statement(stmt, struct_defs);
+            }
+            // 其他表达式可能包含嵌套的语句/块
+            Expr::If { condition, then_branch, else_branch, .. } => {
+                self.gather_struct_defs(condition, struct_defs);
+                self.gather_struct_defs(then_branch, struct_defs);
+                if let Some(else_branch) = else_branch {
+                    self.gather_struct_defs(else_branch, struct_defs);
+                }
+            }
+            Expr::While { condition, body, .. } => {
+                self.gather_struct_defs(condition, struct_defs);
+                self.gather_struct_defs(body, struct_defs);
+            }
+            Expr::Match { expr, arms, .. } => {
+                self.gather_struct_defs(expr, struct_defs);
+                for arm in arms {
+                    self.gather_struct_defs(&arm.body, struct_defs);
+                }
+            }
+            Expr::FunctionCall { function, args, .. } => {
+                self.gather_struct_defs(function, struct_defs);
+                for arg in args {
+                    self.gather_struct_defs(arg, struct_defs);
+                }
+            }
+            Expr::Lambda { body, .. } => {
+                self.gather_struct_defs(body, struct_defs);
+            }
+            // ... 其他表达式类型（它们不包含结构体定义）
+            _ => {}
+        }
+    }
+
+    /// 从语句中收集结构体定义
+    fn gather_struct_defs_from_statement(&self, stmt: &Statement, struct_defs: &mut HashMap<String, Vec<FieldDef>>) {
+        if let Statement::StructDef { name, fields, .. } = stmt {
+            struct_defs.insert(name.clone(), fields.clone());
+        }
+    }
+
+    /// 处理收集到的结构体定义，解析字段类型并检测循环引用
+    fn process_struct_definitions(&mut self, struct_defs: HashMap<String, Vec<FieldDef>>) {
+        // 先创建所有结构体的骨架（只有名字，没有字段）
+        for name in struct_defs.keys() {
+            let placeholder_type = Type::struct_type(name.clone(), vec![]);
+            self.custom_types.insert(name.clone(), placeholder_type);
+        }
+
+        // 现在解析字段类型
+        let struct_defs_copy = struct_defs.clone();
+        for (name, fields) in struct_defs {
+            let struct_fields: Vec<crate::types::StructField> = fields
+                .iter()
+                .map(|field| {
+                    let field_type = self.resolve_struct_field_type(&field.field_type, &struct_defs_copy);
+                    crate::types::StructField {
+                        name: field.name.clone(),
+                        field_type,
+                    }
+                })
+                .collect();
+
+            // 检查是否有非法的递归（没有通过引用的递归）
+            if self.has_illegal_recursion(&name, &struct_fields, &mut vec![]) {
+                self.add_error(TypeCheckError::InvalidPattern {
+                    message: format!("Illegal recursion in struct {}: recursive types must use references", name),
+                    span: karte_diagnostics::Span::new(0, 0), // 临时span
+                });
+            }
+
+            let struct_type = Type::struct_type(name.clone(), struct_fields);
+            self.custom_types.insert(name, struct_type);
+        }
+    }
+
+    /// 检查结构体是否有非法的递归（没有通过引用的递归）
+    fn has_illegal_recursion(&self, struct_name: &str, fields: &[crate::types::StructField], visited: &mut Vec<String>) -> bool {
+        if visited.contains(&struct_name.to_string()) {
+            return true; // 找到循环
+        }
+
+        visited.push(struct_name.to_string());
+
+        for field in fields {
+            match &field.field_type {
+                Type::Reference { .. } => {
+                    // 引用类型打破了递归，这是合法的
+                    continue;
+                }
+                Type::Struct { name: field_struct_name, fields: field_struct_fields } => {
+                    if self.has_illegal_recursion(field_struct_name, field_struct_fields, visited) {
+                        visited.pop();
+                        return true;
+                    }
+                }
+                _ => {
+                    // 其他类型不会导致递归
+                    continue;
+                }
+            }
+        }
+
+        visited.pop();
+        false
     }
 
     /// 推断表达式的类型
@@ -225,7 +461,7 @@ impl TypeChecker {
 
             Expr::BinaryOp {
                 left,
-                op: _,
+                op,
                 right,
                 span: _,
             } => {
@@ -236,7 +472,14 @@ impl TypeChecker {
                 self.add_constraint(left_type, Type::Number, left.span());
                 self.add_constraint(right_type, Type::Number, right.span());
 
-                Type::Number
+                // 根据操作符类型返回不同的结果类型
+                match op {
+                    BinaryOperator::Add | BinaryOperator::Subtract | 
+                    BinaryOperator::Multiply | BinaryOperator::Divide => Type::Number,
+                    BinaryOperator::Equal | BinaryOperator::GreaterEqual | 
+                    BinaryOperator::LessEqual | BinaryOperator::Greater |
+                    BinaryOperator::Less => Type::bool(),
+                }
             }
 
             Expr::UnaryOp { operand, .. } => {
@@ -257,8 +500,14 @@ impl TypeChecker {
                 let param_types: Vec<Type> = params
                     .iter()
                     .map(|param| {
-                        let param_type = Type::Var(self.fresh_type_var());
-                        new_env.insert(param.clone(), param_type.clone());
+                        let param_type = if let Some(ref type_ann) = param.type_annotation {
+                            // 如果有类型注解，解析类型注解
+                            self.parse_field_type(type_ann)
+                        } else {
+                            // 否则创建类型变量进行推断
+                            Type::Var(self.fresh_type_var())
+                        };
+                        new_env.insert(param.name.clone(), param_type.clone());
                         param_type
                     })
                     .collect();
@@ -494,7 +743,7 @@ impl TypeChecker {
                 result_type
             }
 
-            Expr::If { condition, then_branch, else_branch, span } => {
+            Expr::If { condition, then_branch, else_branch, span: _ } => {
                 // 推断条件的类型，条件必须是布尔类型
                 let condition_type = self.infer_expr(condition, env);
                 self.add_constraint(condition_type, Type::bool(), condition.span());
@@ -515,21 +764,138 @@ impl TypeChecker {
                 }
             }
 
-            Expr::While { condition, body, span: _ } => {
-                // 推断条件的类型，条件必须是布尔类型
+            Expr::While { condition, body, .. } => {
+                // 条件必须是布尔类型
                 let condition_type = self.infer_expr(condition, env);
                 self.add_constraint(condition_type, Type::bool(), condition.span());
 
-                // 推断循环体的类型（可以是任何类型，但while表达式本身返回unit）
-                let _body_type = self.infer_expr(body, env);
-
-                // while表达式总是返回unit类型
+                // while循环的body可以是任何类型，但while表达式本身返回Unit
+                self.infer_expr(body, env);
                 Type::Unit
+            }
+
+            Expr::StructLiteral { name, fields, span } => {
+                // 查找结构体类型定义
+                if let Some(struct_type) = self.custom_types.get(name).cloned() {
+                    match struct_type {
+                        Type::Struct { name: struct_name, fields: field_defs } => {
+                            // 检查字段是否完整匹配
+                            if fields.len() != field_defs.len() {
+                                self.add_error(TypeCheckError::MissingFields {
+                                    struct_name: struct_name.clone(),
+                                    expected: field_defs.len(),
+                                    found: fields.len(),
+                                    span: *span,
+                                });
+                                return Type::Unknown;
+                            }
+
+                            // 检查每个字段的类型
+                            for field_init in fields {
+                                if let Some(field_def) = field_defs.iter().find(|f| f.name == field_init.name) {
+                                    let field_value_type = self.infer_expr(&field_init.value, env);
+                                    self.add_constraint(
+                                        field_def.field_type.clone(),
+                                        field_value_type,
+                                        field_init.span
+                                    );
+                                } else {
+                                    self.add_error(TypeCheckError::UnknownField {
+                                        struct_name: struct_name.clone(),
+                                        field_name: field_init.name.clone(),
+                                        span: field_init.span,
+                                    });
+                                }
+                            }
+
+                            // 返回结构体类型
+                            Type::Struct {
+                                name: struct_name,
+                                fields: field_defs,
+                            }
+                        }
+                        _ => {
+                            self.add_error(TypeCheckError::NotAStruct {
+                                name: name.clone(),
+                                span: *span,
+                            });
+                            Type::Unknown
+                        }
+                    }
+                } else {
+                    self.add_error(TypeCheckError::UndefinedType {
+                        name: name.clone(),
+                        span: *span,
+                    });
+                    Type::Unknown
+                }
+            }
+
+            Expr::FieldAccess { object, field, span } => {
+                let object_type = self.infer_expr(object, env);
+                
+                // 如果是引用类型，提取内部类型
+                let actual_type = match &object_type {
+                    Type::Reference { inner } => inner.as_ref(),
+                    _ => &object_type,
+                };
+                
+                match actual_type {
+                    Type::Struct { fields, .. } => {
+                        if let Some(field_def) = fields.iter().find(|f| f.name == *field) {
+                            field_def.field_type.clone()
+                        } else {
+                            self.add_error(TypeCheckError::UnknownField {
+                                struct_name: "unknown".to_string(), // 这里我们没有名字，用unknown代替
+                                field_name: field.clone(),
+                                span: *span,
+                            });
+                            Type::Unknown
+                        }
+                    }
+                    Type::Var(_) => {
+                        // 对于类型变量，我们不能立即确定字段类型，需要更复杂的约束求解
+                        // 简化处理：返回一个新的类型变量
+                        Type::Var(self.fresh_type_var())
+                    }
+                    Type::Unknown => Type::Unknown,
+                    _ => {
+                        self.add_error(TypeCheckError::NotAStruct {
+                            name: "".to_string(),
+                            span: *span,
+                        });
+                        Type::Unknown
+                    }
+                }
+            }
+
+            Expr::Reference { expr, .. } => {
+                // 引用表达式的类型是对内部表达式类型的引用
+                let inner_type = self.infer_expr(expr, env);
+                Type::reference(inner_type)
+            }
+
+            Expr::Dereference { expr, span } => {
+                // 解引用表达式：从引用类型中提取内部类型
+                let expr_type = self.infer_expr(expr, env);
+                match expr_type {
+                    Type::Reference { inner } => *inner,
+                    _ => {
+                        // 创建一个占位符引用类型用于错误报告
+                        let expected_ref_type = Type::reference(Type::Unknown);
+                        self.add_error(TypeCheckError::TypeMismatch {
+                            expected: expected_ref_type,
+                            found: expr_type,
+                            span: *span,
+                        });
+                        Type::Unknown
+                    }
+                }
             }
         }
     }
 
-    /// 推断语句
+    /// 推断语句并更新环境
     fn infer_statement(&mut self, stmt: &Statement, env: &mut TypeEnvironment) {
         match stmt {
             Statement::Let { name, value, .. } => {
@@ -540,64 +906,65 @@ impl TypeChecker {
                 self.infer_expr(expr, env);
             }
             Statement::TypeDef { name, variants, .. } => {
-                // 将变体转换为SumVariant
+                // 构建加法类型的变体
                 let sum_variants: Vec<crate::types::SumVariant> = variants
                     .iter()
-                    .map(|v| crate::types::SumVariant {
-                        name: v.name.clone(),
-                        data_type: v.data_type.as_ref().map(|type_name| {
-                            // 简单起见，这里只支持基本类型名字映射
+                    .map(|variant| {
+                        let data_type = variant.data_type.as_ref().map(|type_name| {
+                            // 简单的类型名解析，这里可以扩展为更复杂的类型解析
                             match type_name.as_str() {
                                 "number" => Type::Number,
                                 "unit" => Type::Unit,
                                 _ => {
-                                    // 检查是否是已定义的自定义类型
-                                    if let Some(custom_type) = self.custom_types.get(type_name) {
-                                        custom_type.clone()
-                                    } else {
-                                        // 未知类型，暂时用Unknown表示
-                                        Type::Unknown
-                                    }
-                                }
-                            }
-                        }),
-                    })
-                    .collect();
-
-                let sum_type = Type::Sum {
-                    name: name.clone(),
-                    variants: sum_variants,
-                };
-
-                // 将新类型添加到自定义类型环境中
-                self.custom_types.insert(name.clone(), sum_type.clone());
-
-                // 将每个构造器作为函数添加到类型环境中
-                for variant in variants {
-                    if let Some(data_type) = &variant.data_type {
-                        // 有参数的构造器：data_type -> sum_type
-                        let param_type = match data_type.as_str() {
-                            "number" => Type::Number,
-                            "unit" => Type::Unit,
-                            _ => {
-                                if let Some(custom_type) = self.custom_types.get(data_type) {
-                                    custom_type.clone()
-                                } else {
+                                    // 暂时假设未知类型名为已定义类型
                                     Type::Unknown
                                 }
                             }
-                        };
-                        
-                        let constructor_type = Type::Function {
-                            params: vec![param_type],
-                            return_type: Box::new(sum_type.clone()),
-                        };
+                        });
+
+                        crate::types::SumVariant {
+                            name: variant.name.clone(),
+                            data_type,
+                        }
+                    })
+                    .collect();
+
+                let sum_type = Type::sum(name.clone(), sum_variants.clone());
+
+                // 将类型添加到自定义类型表中
+                self.custom_types.insert(name.clone(), sum_type.clone());
+
+                // 为每个构造器添加类型到环境中
+                for variant in &sum_variants {
+                    if let Some(data_type) = &variant.data_type {
+                        // 有数据的构造器是函数类型
+                        let constructor_type = Type::function(vec![data_type.clone()], sum_type.clone());
                         env.insert(variant.name.clone(), constructor_type);
                     } else {
-                        // 没有参数的构造器：直接是sum_type
+                        // 无数据的构造器直接是该类型
                         env.insert(variant.name.clone(), sum_type.clone());
                     }
                 }
+            }
+            Statement::StructDef { name, fields, .. } => {
+                // 构建结构体类型的字段
+                let struct_fields: Vec<crate::types::StructField> = fields
+                    .iter()
+                    .map(|field| {
+                        // 类型名解析，支持引用类型
+                        let field_type = self.parse_field_type(&field.field_type);
+
+                        crate::types::StructField {
+                            name: field.name.clone(),
+                            field_type,
+                        }
+                    })
+                    .collect();
+
+                let struct_type = Type::struct_type(name.clone(), struct_fields);
+
+                // 将类型添加到自定义类型表中
+                self.custom_types.insert(name.clone(), struct_type);
             }
         }
     }
@@ -780,6 +1147,152 @@ impl TypeChecker {
             },
             _ => ty,
         }
+    }
+
+    /// 解析字段类型字符串，支持引用类型、结构体名称引用和泛型类型
+    fn parse_field_type(&self, type_str: &str) -> Type {
+        self.parse_generic_type(type_str)
+    }
+
+    /// 解析泛型类型字符串，例如 "Option<&Node>" 或 "&Option<number>"
+    fn parse_generic_type(&self, type_str: &str) -> Type {
+        // 检查是否是引用类型
+        if let Some(inner_type_str) = type_str.strip_prefix('&') {
+            let inner_type = self.parse_generic_type(inner_type_str);
+            return Type::reference(inner_type);
+        }
+
+        // 检查是否是泛型类型
+        if let Some(open_bracket) = type_str.find('<') {
+            if let Some(close_bracket) = type_str.rfind('>') {
+                let base_type = &type_str[..open_bracket];
+                let args_str = &type_str[open_bracket + 1..close_bracket];
+                
+                // 解析泛型参数
+                let generic_args = self.parse_generic_args(args_str);
+                
+                match base_type {
+                    "Option" => {
+                        if generic_args.len() == 1 {
+                            Type::option(generic_args[0].clone())
+                        } else {
+                            Type::Unknown // 错误的参数数量
+                        }
+                    }
+                    _ => {
+                        // 其他泛型类型可以在将来支持
+                        Type::Unknown
+                    }
+                }
+            } else {
+                Type::Unknown // 没有匹配的 >
+            }
+        } else {
+            // 非泛型类型
+            match type_str {
+                "number" => Type::Number,
+                "unit" => Type::Unit,
+                _ => {
+                    // 检查是否是已定义的类型
+                    if let Some(custom_type) = self.custom_types.get(type_str) {
+                        custom_type.clone()
+                    } else {
+                        // 对于未知类型名称，创建一个类型变量作为占位符
+                        // 这允许前向引用和相互引用
+                        Type::Var(TypeVar(0)) // 临时占位符，稍后会被正确解析
+                    }
+                }
+            }
+        }
+    }
+
+    /// 解析泛型参数列表，例如 "&Node" 或 "number, string"
+    fn parse_generic_args(&self, args_str: &str) -> Vec<Type> {
+        if args_str.trim().is_empty() {
+            return vec![];
+        }
+
+        // 简单的参数分割（不处理嵌套的 <> ）
+        let args: Vec<&str> = args_str.split(',').map(|s| s.trim()).collect();
+        args.into_iter()
+            .map(|arg| self.parse_generic_type(arg))
+            .collect()
+    }
+
+    /// 解析结构体字段类型，支持延迟解析、循环检测和泛型类型
+    fn resolve_struct_field_type(&self, type_str: &str, struct_defs: &HashMap<String, Vec<FieldDef>>) -> Type {
+        self.resolve_generic_type(type_str, struct_defs)
+    }
+
+    /// 解析泛型类型字符串，在结构体定义解析阶段使用
+    fn resolve_generic_type(&self, type_str: &str, struct_defs: &HashMap<String, Vec<FieldDef>>) -> Type {
+        // 检查是否是引用类型
+        if let Some(inner_type_str) = type_str.strip_prefix('&') {
+            let inner_type = self.resolve_generic_type(inner_type_str, struct_defs);
+            return Type::reference(inner_type);
+        }
+
+        // 检查是否是泛型类型
+        if let Some(open_bracket) = type_str.find('<') {
+            if let Some(close_bracket) = type_str.rfind('>') {
+                let base_type = &type_str[..open_bracket];
+                let args_str = &type_str[open_bracket + 1..close_bracket];
+                
+                // 解析泛型参数
+                let generic_args = self.resolve_generic_args(args_str, struct_defs);
+                
+                match base_type {
+                    "Option" => {
+                        if generic_args.len() == 1 {
+                            Type::option(generic_args[0].clone())
+                        } else {
+                            Type::Unknown // 错误的参数数量
+                        }
+                    }
+                    _ => {
+                        // 其他泛型类型可以在将来支持
+                        Type::Unknown
+                    }
+                }
+            } else {
+                Type::Unknown // 没有匹配的 >
+            }
+        } else {
+            // 非泛型类型
+            match type_str {
+                "number" => Type::Number,
+                "unit" => Type::Unit,
+                _ => {
+                    // 检查是否是已定义的结构体类型
+                    if struct_defs.contains_key(type_str) {
+                        // 获取已经创建的结构体类型骨架
+                        if let Some(struct_type) = self.custom_types.get(type_str) {
+                            struct_type.clone()
+                        } else {
+                            // 如果还没有创建骨架，创建一个临时的
+                            Type::struct_type(type_str.to_string(), vec![])
+                        }
+                    } else if let Some(custom_type) = self.custom_types.get(type_str) {
+                        custom_type.clone()
+                    } else {
+                        Type::Unknown
+                    }
+                }
+            }
+        }
+    }
+
+    /// 解析泛型参数列表，在结构体定义解析阶段使用
+    fn resolve_generic_args(&self, args_str: &str, struct_defs: &HashMap<String, Vec<FieldDef>>) -> Vec<Type> {
+        if args_str.trim().is_empty() {
+            return vec![];
+        }
+
+        // 简单的参数分割（不处理嵌套的 <> ）
+        let args: Vec<&str> = args_str.split(',').map(|s| s.trim()).collect();
+        args.into_iter()
+            .map(|arg| self.resolve_generic_type(arg, struct_defs))
+            .collect()
     }
 
     /// 添加类型检查错误

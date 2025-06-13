@@ -25,6 +25,22 @@ pub enum Token {
     #[token("=")]
     Equal,
 
+    // 比较操作符（需要在单字符比较符号之前定义）
+    #[token("==")]
+    EqualEqual,
+
+    #[token(">=")]
+    GreaterEqual,
+
+    #[token("<=")]
+    LessEqual,
+
+    #[token(">")]
+    Greater,
+
+    #[token("<")]
+    Less,
+
     // 括号
     #[token("(")]
     LeftParen,
@@ -59,10 +75,23 @@ pub enum Token {
     #[token(";")]
     Semicolon,
 
-    // 模式匹配相关
+    // 添加点操作符用于字段访问
+    #[token(".")]
+    Dot,
+
+    // 添加冒号用于结构体字段
+    #[token(":")]
+    Colon,
+
+    // 引用符号
+    #[token("&")]
+    Ampersand,
+
+    // 泛型类型符号（单独定义，避免冲突）
     #[token("::")]
     DoubleColon,
 
+    // 模式匹配相关
     #[token("_")]
     Underscore,
 
@@ -81,6 +110,11 @@ impl fmt::Display for Token {
             Token::Multiply => write!(f, "*"),
             Token::Divide => write!(f, "/"),
             Token::Equal => write!(f, "="),
+            Token::EqualEqual => write!(f, "=="),
+            Token::GreaterEqual => write!(f, ">="),
+            Token::LessEqual => write!(f, "<="),
+            Token::Greater => write!(f, ">"),
+            Token::Less => write!(f, "<"),
             Token::LeftParen => write!(f, "("),
             Token::RightParen => write!(f, ")"),
             Token::LeftBrace => write!(f, "{{"),
@@ -90,6 +124,9 @@ impl fmt::Display for Token {
             Token::Identifier(s) => write!(f, "{}", s),
             Token::Comma => write!(f, ","),
             Token::Semicolon => write!(f, ";"),
+            Token::Dot => write!(f, "."),
+            Token::Colon => write!(f, ":"),
+            Token::Ampersand => write!(f, "&"),
             Token::DoubleColon => write!(f, "::"),
             Token::Underscore => write!(f, "_"),
             Token::Error => write!(f, "<error>"),
@@ -157,7 +194,7 @@ impl<'a> Lexer<'a> {
 
 /// 关键字识别器
 pub fn is_keyword(ident: &str) -> bool {
-    matches!(ident, "let" | "match" | "enum" | "true" | "false" | "if" | "else" | "while")
+    matches!(ident, "let" | "match" | "enum" | "struct" | "true" | "false" | "if" | "else" | "while")
 }
 
 /// 从标识符创建关键字或标识符token

@@ -56,7 +56,7 @@ pub enum Expr {
 
     // 函数相关
     Lambda {
-        params: Vec<String>,
+        params: Vec<Parameter>,
         body: Box<Expr>,
         span: Span,
     },
@@ -122,6 +122,32 @@ pub enum Expr {
         body: Box<Expr>,
         span: Span,
     },
+
+    /// 结构体字面量 - 创建结构体实例
+    StructLiteral {
+        name: String,
+        fields: Vec<FieldInit>,
+        span: Span,
+    },
+
+    /// 字段访问 - 访问结构体的字段
+    FieldAccess {
+        object: Box<Expr>,
+        field: String,
+        span: Span,
+    },
+
+    /// 引用表达式 - 创建对表达式的不可变引用
+    Reference {
+        expr: Box<Expr>,
+        span: Span,
+    },
+
+    /// 解引用表达式 - 显式解引用操作
+    Dereference {
+        expr: Box<Expr>,
+        span: Span,
+    },
 }
 
 /// 语句类型
@@ -142,6 +168,13 @@ pub enum Statement {
     TypeDef {
         name: String,
         variants: Vec<TypeVariant>,
+        span: Span,
+    },
+
+    // 结构体定义语句
+    StructDef {
+        name: String,
+        fields: Vec<FieldDef>,
         span: Span,
     },
 }
@@ -188,12 +221,61 @@ pub struct TypeVariant {
     pub span: Span,
 }
 
+/// 结构体字段初始化
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldInit {
+    pub name: String,
+    pub value: Expr,
+    pub span: Span,
+}
+
+/// 结构体字段定义
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldDef {
+    pub name: String,
+    pub field_type: String, // 简化版本，只支持类型名字符串
+    pub span: Span,
+}
+
+/// Lambda参数定义（支持类型注解）
+#[derive(Debug, Clone, PartialEq)]
+pub struct Parameter {
+    pub name: String,
+    pub type_annotation: Option<String>, // 可选的类型注解
+    pub span: Span,
+}
+
+impl Parameter {
+    /// 创建一个简单的参数（无类型注解）
+    pub fn simple(name: String) -> Self {
+        Self {
+            name,
+            type_annotation: None,
+            span: Span::new(0, 0),
+        }
+    }
+
+    /// 创建一个带类型注解的参数
+    pub fn typed(name: String, type_annotation: String) -> Self {
+        Self {
+            name,
+            type_annotation: Some(type_annotation),
+            span: Span::new(0, 0),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum BinaryOperator {
     Add,
     Subtract,
     Multiply,
     Divide,
+    Equal,
+    GreaterEqual,
+    LessEqual,
+    Greater,
+    Less,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -209,6 +291,11 @@ impl fmt::Display for BinaryOperator {
             BinaryOperator::Subtract => write!(f, "-"),
             BinaryOperator::Multiply => write!(f, "*"),
             BinaryOperator::Divide => write!(f, "/"),
+            BinaryOperator::Equal => write!(f, "=="),
+            BinaryOperator::GreaterEqual => write!(f, ">="),
+            BinaryOperator::LessEqual => write!(f, "<="),
+            BinaryOperator::Greater => write!(f, ">"),
+            BinaryOperator::Less => write!(f, "<"),
         }
     }
 }
@@ -241,6 +328,14 @@ impl fmt::Display for Statement {
                     .join(" | ");
                 write!(f, "enum {} = {};", name, variants_str)
             }
+            Statement::StructDef { name, fields, .. } => {
+                let fields_str = fields
+                    .iter()
+                    .map(|f| format!("{}: {}", f.name, f.field_type))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "struct {} = {{ {} }};", name, fields_str)
+            }
         }
     }
 }
@@ -254,7 +349,18 @@ impl fmt::Display for Expr {
             Expr::BinaryOp { left, op, right, .. } => write!(f, "({} {} {})", left, op, right),
             Expr::UnaryOp { op, operand, .. } => write!(f, "({} {})", op, operand),
             Expr::Lambda { params, body, .. } => {
-                write!(f, "|{}| {}", params.join(", "), body)
+                let params_str = params
+                    .iter()
+                    .map(|p| {
+                        if let Some(ref type_ann) = p.type_annotation {
+                            format!("{}: {}", p.name, type_ann)
+                        } else {
+                            p.name.clone()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "|{}| {}", params_str, body)
             }
             Expr::FunctionCall { function, args, .. } => {
                 write!(f, "{}(", function)?;
@@ -307,15 +413,32 @@ impl fmt::Display for Expr {
             Expr::Boolean { value, .. } => {
                 write!(f, "{}", if *value { "true" } else { "false" })
             }
-                         Expr::If { condition, then_branch, else_branch, .. } => {
-                 if let Some(else_branch) = else_branch {
-                     write!(f, "if {} then {} else {}", condition, then_branch, else_branch)
-                 } else {
-                     write!(f, "if {} then {}", condition, then_branch)
-                 }
-             }
+            Expr::If { condition, then_branch, else_branch, .. } => {
+                if let Some(else_branch) = else_branch {
+                    write!(f, "if {} then {} else {}", condition, then_branch, else_branch)
+                } else {
+                    write!(f, "if {} then {}", condition, then_branch)
+                }
+            }
             Expr::While { condition, body, .. } => {
                 write!(f, "while {} do {}", condition, body)
+            }
+            Expr::StructLiteral { name, fields, .. } => {
+                let fields_str = fields
+                    .iter()
+                    .map(|f| format!("{}: {}", f.name, f.value))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "{} = {{ {} }};", name, fields_str)
+            }
+            Expr::FieldAccess { object, field, .. } => {
+                write!(f, "{}.{}", object, field)
+            }
+            Expr::Reference { expr, .. } => {
+                write!(f, "&{}", expr)
+            }
+            Expr::Dereference { expr, .. } => {
+                write!(f, "*{}", expr)
             }
         }
     }
@@ -339,6 +462,10 @@ impl Expr {
             Expr::Boolean { span, .. } => *span,
             Expr::If { span, .. } => *span,
             Expr::While { span, .. } => *span,
+            Expr::StructLiteral { span, .. } => *span,
+            Expr::FieldAccess { span, .. } => *span,
+            Expr::Reference { span, .. } => *span,
+            Expr::Dereference { span, .. } => *span,
         }
     }
 }
@@ -349,6 +476,7 @@ impl Statement {
             Statement::Let { span, .. } => *span,
             Statement::Expression { span, .. } => *span,
             Statement::TypeDef { span, .. } => *span,
+            Statement::StructDef { span, .. } => *span,
         }
     }
 }

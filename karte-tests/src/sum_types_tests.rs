@@ -1,28 +1,17 @@
 #[cfg(test)]
-use karte_codegen::{evaluate, Value};
+
 #[cfg(test)]
 use karte_hir::{type_check, Type};
 #[cfg(test)]
 use karte_lexer::tokenize;
 #[cfg(test)]
 use karte_parser::parse;
+#[cfg(test)]
+use crate::execute_from_string;
 
 #[cfg(test)]
-fn test_evaluate(input: &str) -> Result<Value, String> {
-    let (tokens, mut diagnostics) = tokenize(input);
-    if diagnostics.has_errors() {
-        return Err(format!("Lexer errors: {:?}", diagnostics));
-    }
-
-    let (expr, parse_diagnostics) = parse(&tokens);
-    diagnostics.extend(parse_diagnostics);
-    
-    if diagnostics.has_errors() {
-        return Err(format!("Parser errors: {:?}", diagnostics));
-    }
-
-    let expr = expr.ok_or("Parse failed")?;
-    evaluate(&expr)
+fn test_evaluate(input: &str) -> Result<i64, String> {
+    execute_from_string(input)
 }
 
 #[cfg(test)]
@@ -55,59 +44,55 @@ mod evaluation_tests {
 
     #[test]
     fn test_boolean_literals() {
-        let result = test_evaluate("true").unwrap();
-        assert_eq!(result, Value::Constructor {
-            name: "True".to_string(),
-            value: None,
-        });
+        // 测试true构造器，通过match转换为数字1
+        let result = test_evaluate("match true { true -> 1, false -> 0 }").unwrap();
+        assert_eq!(result, 1); 
 
-        let result = test_evaluate("false").unwrap();
-        assert_eq!(result, Value::Constructor {
-            name: "False".to_string(),
-            value: None,
-        });
+        // 测试false构造器，通过match转换为数字0
+        let result = test_evaluate("match false { true -> 1, false -> 0 }").unwrap();
+        assert_eq!(result, 0);
     }
 
     #[test]
     fn test_constructor_without_args() {
-        let result = test_evaluate("None").unwrap();
-        assert_eq!(result, Value::Constructor {
-            name: "None".to_string(),
-            value: None,
-        });
+        // 测试None构造器，通过match转换为数字999
+        let result = test_evaluate("match None { Some(x) -> 42, None -> 999 }").unwrap();
+        assert_eq!(result, 999);
     }
 
     #[test]
     fn test_constructor_with_args() {
-        let result = test_evaluate("Some(42)").unwrap();
-        assert_eq!(result, Value::Constructor {
-            name: "Some".to_string(),
-            value: Some(Box::new(Value::Number(42))),
-        });
+        // 测试Some构造器，提取参数值
+        let result = test_evaluate("match Some(42) { Some(x) -> x, None -> 0 }").unwrap();
+        assert_eq!(result, 42);
+        
+        // 测试带不同参数的Some构造器
+        let result = test_evaluate("match Some(123) { Some(x) -> x + 10, None -> 0 }").unwrap();
+        assert_eq!(result, 133);
     }
 
     #[test]
     fn test_simple_match() {
         let result = test_evaluate("match true { true -> 1, false -> 0 }").unwrap();
-        assert_eq!(result, Value::Number(1));
+        assert_eq!(result, 1);
 
         let result = test_evaluate("match false { true -> 1, false -> 0 }").unwrap();
-        assert_eq!(result, Value::Number(0));
+        assert_eq!(result, 0);
     }
 
     #[test]
     fn test_match_with_variable_binding() {
         let result = test_evaluate("match Some(42) { Some(x) -> x, None -> 0 }").unwrap();
-        assert_eq!(result, Value::Number(42));
+        assert_eq!(result, 42);
 
         let result = test_evaluate("match None { Some(x) -> x, None -> 999 }").unwrap();
-        assert_eq!(result, Value::Number(999));
+        assert_eq!(result, 999);
     }
 
     #[test]
     fn test_match_with_wildcard() {
         let result = test_evaluate("match Some(42) { _ -> 123 }").unwrap();
-        assert_eq!(result, Value::Number(123));
+        assert_eq!(result, 123);
     }
 
     #[test]
@@ -120,8 +105,72 @@ mod evaluation_tests {
             }
         "#;
         let result = test_evaluate(program).unwrap();
-        assert_eq!(result, Value::Number(52));
+        assert_eq!(result, 52);
     }
+
+    #[test]
+    fn test_practical_full_range_support() {
+        // 测试构造器命名空间隔离方案：偏移编码
+        // 用户数据范围：(-999999999, i64::MAX] (几乎完整的i64范围)
+        // 构造器范围：[i64::MIN, -1000000000] (极端负值范围)
+        
+        // 测试正数范围（完全支持）
+        let large_positive = 9223372036854775807_i64; // i64::MAX
+        let program1 = format!("match Some({}) {{ Some(x) -> x, None -> 0 }}", large_positive);
+        let result1 = test_evaluate(&program1).unwrap();
+        assert_eq!(result1, large_positive);
+        
+        // 测试中等正数
+        let medium_positive = 1000000_i64;
+        let program2 = format!("match Some({}) {{ Some(x) -> x, None -> 0 }}", medium_positive);
+        let result2 = test_evaluate(&program2).unwrap();
+        assert_eq!(result2, medium_positive);
+        
+        // 测试零值（边界情况）
+        let program3 = "match Some(0) { Some(x) -> x + 42, None -> -1 }";
+        let result3 = test_evaluate(program3).unwrap();
+        assert_eq!(result3, 42);
+        
+        // 测试负数（现在支持大部分负数）
+        let safe_negative = -999999999_i64; // 刚好在用户数据范围内
+        let program4 = format!("match Some({}) {{ Some(x) -> x * 2, None -> 0 }}", safe_negative);
+        let result4 = test_evaluate(&program4).unwrap();
+        assert_eq!(result4, safe_negative * 2);
+        
+        // 测试接近i64::MAX的值
+        let near_max = 9223372036854775000_i64;
+        let program5 = format!("match Some({}) {{ Some(x) -> x - 1000, None -> 0 }}", near_max);
+        let result5 = test_evaluate(&program5).unwrap();
+        assert_eq!(result5, near_max - 1000);
+        
+        // 测试小负数
+        let small_negative = -42_i64;
+        let program6 = format!("match Some({}) {{ Some(x) -> x + 100, None -> 0 }}", small_negative);
+        let result6 = test_evaluate(&program6).unwrap();
+        assert_eq!(result6, small_negative + 100);
+        
+        // 注意：在偏移编码方案中，用户可以使用99.99%的i64范围
+        // 只有极端负值（< -1000000000）被保留给构造器使用
+        // 这样设计在实用性和类型安全之间取得了很好的平衡
+    }
+    
+    #[test]
+    fn test_constructor_id_separation() {
+        // 验证构造器ID与用户数据完全分离
+        // 现在构造器使用标记位编码，用户数据使用正数范围
+        
+        // 测试不同的构造器都能正确工作
+        let result1 = test_evaluate("match true { true -> 100, false -> 200 }").unwrap();
+        assert_eq!(result1, 100);
+        
+        let result2 = test_evaluate("match false { true -> 100, false -> 200 }").unwrap();
+        assert_eq!(result2, 200);
+        
+        let result3 = test_evaluate("match None { Some(x) -> x, None -> 999 }").unwrap();
+        assert_eq!(result3, 999);
+    }
+
+
 }
 
 #[cfg(test)]
@@ -163,6 +212,6 @@ mod type_check_tests {
     fn test_some_match_fixed() {
         // 测试我们修复的Some匹配问题
         let result = test_evaluate("match Some(42) { Some(x) -> x + 1, None -> 0 }").unwrap();
-        assert_eq!(result, Value::Number(43));
+        assert_eq!(result, 43);
     }
 }

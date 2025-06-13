@@ -151,7 +151,7 @@ mod tests {
 
         if let Some(Expr::Lambda { params, body, .. }) = expr {
             assert_eq!(params.len(), 1);
-            assert_eq!(params[0], "x");
+            assert_eq!(params[0].name, "x");
             assert!(matches!(body.as_ref(), Expr::BinaryOp { .. }));
         } else {
             panic!("Expected lambda expression");
@@ -168,8 +168,8 @@ mod tests {
 
         if let Some(Expr::Lambda { params, body, .. }) = expr {
             assert_eq!(params.len(), 2);
-            assert_eq!(params[0], "x");
-            assert_eq!(params[1], "y");
+            assert_eq!(params[0].name, "x");
+            assert_eq!(params[1].name, "y");
             assert!(matches!(
                 body.as_ref(),
                 Expr::BinaryOp {
@@ -302,21 +302,164 @@ mod tests {
 
     #[test]
     fn test_parse_and_evaluate_let() {
-        use karte_codegen::evaluate;
+        use crate::execute_from_string;
 
-        let (tokens, _) = tokenize("let x = 10; x + 5");
+        let input = "let x = 10; x + 5";
+        let result = execute_from_string(input).unwrap();
+        assert_eq!(result, 15);
+    }
+
+    #[test]
+    fn test_parse_comparison_equal() {
+        let (tokens, _) = tokenize("5 == 3");
         let (expr, diagnostics) = parse(&tokens);
 
         assert!(diagnostics.is_empty());
         assert!(expr.is_some());
 
-        if let Some(expr) = expr {
-            let result = evaluate(&expr).unwrap();
-            if let karte_codegen::Value::Number(n) = result {
-                assert_eq!(n, 15);
-            } else {
-                panic!("Expected number result");
-            }
+        if let Some(Expr::BinaryOp {
+            left, op, right, ..
+        }) = expr
+        {
+            assert!(matches!(left.as_ref(), Expr::Number { value: 5, .. }));
+            assert_eq!(op, BinaryOperator::Equal);
+            assert!(matches!(right.as_ref(), Expr::Number { value: 3, .. }));
+        } else {
+            panic!("Expected binary operation for ==");
+        }
+    }
+
+    #[test]
+    fn test_parse_comparison_greater_equal() {
+        let (tokens, _) = tokenize("10 >= 7");
+        let (expr, diagnostics) = parse(&tokens);
+
+        assert!(diagnostics.is_empty());
+        assert!(expr.is_some());
+
+        if let Some(Expr::BinaryOp {
+            left, op, right, ..
+        }) = expr
+        {
+            assert!(matches!(left.as_ref(), Expr::Number { value: 10, .. }));
+            assert_eq!(op, BinaryOperator::GreaterEqual);
+            assert!(matches!(right.as_ref(), Expr::Number { value: 7, .. }));
+        } else {
+            panic!("Expected binary operation for >=");
+        }
+    }
+
+    #[test]
+    fn test_parse_comparison_less_equal() {
+        let (tokens, _) = tokenize("3 <= 8");
+        let (expr, diagnostics) = parse(&tokens);
+
+        assert!(diagnostics.is_empty());
+        assert!(expr.is_some());
+
+        if let Some(Expr::BinaryOp {
+            left, op, right, ..
+        }) = expr
+        {
+            assert!(matches!(left.as_ref(), Expr::Number { value: 3, .. }));
+            assert_eq!(op, BinaryOperator::LessEqual);
+            assert!(matches!(right.as_ref(), Expr::Number { value: 8, .. }));
+        } else {
+            panic!("Expected binary operation for <=");
+        }
+    }
+
+    #[test]
+    fn test_parse_comparison_precedence() {
+        let (tokens, _) = tokenize("1 + 2 == 3");
+        let (expr, diagnostics) = parse(&tokens);
+
+        assert!(diagnostics.is_empty());
+        assert!(expr.is_some());
+
+        // Should parse as (1 + 2) == 3
+        if let Some(Expr::BinaryOp {
+            left, op, right, ..
+        }) = expr
+        {
+            assert!(matches!(
+                left.as_ref(),
+                Expr::BinaryOp {
+                    op: BinaryOperator::Add,
+                    ..
+                }
+            ));
+            assert_eq!(op, BinaryOperator::Equal);
+            assert!(matches!(right.as_ref(), Expr::Number { value: 3, .. }));
+        } else {
+            panic!("Expected binary operation with correct precedence for comparison");
+        }
+    }
+
+    #[test]
+    fn test_parse_comparison_chain() {
+        let (tokens, _) = tokenize("5 >= 3 == true");
+        let (expr, diagnostics) = parse(&tokens);
+
+        assert!(diagnostics.is_empty());
+        assert!(expr.is_some());
+
+        // Should parse as (5 >= 3) == true
+        if let Some(Expr::BinaryOp {
+            left, op, right, ..
+        }) = expr
+        {
+            assert!(matches!(
+                left.as_ref(),
+                Expr::BinaryOp {
+                    op: BinaryOperator::GreaterEqual,
+                    ..
+                }
+            ));
+            assert_eq!(op, BinaryOperator::Equal);
+            assert!(matches!(right.as_ref(), Expr::Boolean { value: true, .. }));
+        } else {
+            panic!("Expected chained comparison operation");
+        }
+    }
+
+    #[test]
+    fn test_parse_comparison_greater() {
+        let (tokens, _) = tokenize("10 > 7");
+        let (expr, diagnostics) = parse(&tokens);
+
+        assert!(diagnostics.is_empty());
+        assert!(expr.is_some());
+
+        if let Some(Expr::BinaryOp {
+            left, op, right, ..
+        }) = expr
+        {
+            assert!(matches!(left.as_ref(), Expr::Number { value: 10, .. }));
+            assert_eq!(op, BinaryOperator::Greater);
+            assert!(matches!(right.as_ref(), Expr::Number { value: 7, .. }));
+        } else {
+            panic!("Expected binary operation for >");
+        }
+    }
+
+    #[test]
+    fn test_parse_comparison_less() {
+        let (tokens, _) = tokenize("3 < 8");
+        let (expr, diagnostics) = parse(&tokens);
+
+        assert!(diagnostics.is_empty());
+        assert!(expr.is_some());
+
+        if let Some(Expr::BinaryOp {
+            left, op, right, ..
+        }) = expr
+        {
+            assert!(matches!(left.as_ref(), Expr::Number { value: 3, .. }));
+            assert_eq!(op, BinaryOperator::Less);
+            assert!(matches!(right.as_ref(), Expr::Number { value: 8, .. }));
+        } else {
+            panic!("Expected binary operation for <");
         }
     }
 }

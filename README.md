@@ -18,6 +18,8 @@ Karte 是一个使用 Rust 实现的函数式编程语言编译器。这个项�
 - **模式匹配**：支持 match 表达式和模式绑定 (`match expr { pattern -> result }`)
 - **布尔类型**：支持布尔字面量，实现为加法类型 (`true`, `false`)
 - **控制流**：支持条件表达式和循环表达式 (`if...then...else`, `while...do`)
+- **结构体类型 (Product Types)**：支持自定义结构体和字段访问 (`struct Point { x: number, y: number }`)
+- **引用类型**：支持不可变引用和显式解引用 (`&x`, `*ref_x`)
 
 ### 编译器特性
 
@@ -200,6 +202,60 @@ Some(42)
 Some(Some(10))  // 嵌套构造器
 ```
 
+### 结构体类型
+
+```rust
+// 结构体定义
+struct Point {
+    x: number,
+    y: number
+}
+
+// 带引用字段的结构体
+struct RefStruct {
+    data: number,
+    ref_data: &number
+}
+
+// 结构体字面量
+let p = Point { x: 10, y: 20 };
+
+// 字段访问
+p.x           // 访问 x 字段
+p.y           // 访问 y 字段
+
+// 结构体与引用的组合
+let value = 42;
+let ref_value = &value;
+let s = RefStruct { data: 10, ref_data: ref_value };
+s.data + *s.ref_data  // 结果: 52
+```
+
+### 引用类型
+
+```rust
+// 创建引用
+let x = 42;
+let ref_x = &x;
+
+// 显式解引用
+let value = *ref_x;  // 获取引用指向的值
+
+// 引用运算
+let y = 10;
+let ref_y = &y;
+*ref_x + *ref_y     // 结果: 52
+
+// 嵌套引用
+let ref_ref_x = &ref_x;
+let inner = *ref_ref_x;  // 得到 &number
+let final_value = *inner; // 得到 number
+
+// ❌ 错误示例：不能对引用直接运算
+ref_x + 10          // 错误：类型不匹配
+*42                 // 错误：不能解引用非引用类型
+```
+
 ## 类型系统
 
 ### 支持的类型
@@ -209,7 +265,9 @@ Some(Some(10))  // 嵌套构造器
 - `fn(T1, T2, ...) -> R`: 函数类型，表示从参数类型到返回类型的映射
 - `Bool = True | False`: 布尔类型，由两个构造器组成
 - `Option<T> = Some(T) | None`: 可选类型，表示可能有值或无值
-- **自定义类型**: 用户定义的加法类型（枚举）
+- `&T`: 引用类型，表示对类型T的不可变引用
+- **自定义结构体**: 用户定义的产品类型 (`struct Name { field1: Type1, field2: Type2 }`)
+- **自定义枚举**: 用户定义的加法类型（枚举）
 
 ### 自定义类型
 
@@ -370,6 +428,34 @@ Type: number
 Result: 43
 ```
 
+### 结构体示例
+
+```rust
+Input: struct Point { x: number, y: number }; let p = Point { x: 10, y: 20 }; p.x + p.y
+Type: number
+Result: 30
+
+Input: struct Person { name: number, age: number }; let person = Person { name: 1, age: 25 }; person.age
+Type: number
+Result: 25
+```
+
+### 引用类型示例
+
+```rust
+Input: let x = 42; let ref_x = &x; *ref_x
+Type: number
+Result: 42
+
+Input: let x = 42; let y = 10; let ref_x = &x; let ref_y = &y; *ref_x + *ref_y
+Type: number
+Result: 52
+
+Input: struct RefStruct { data: number, ref_data: &number }; let x = 42; let ref_x = &x; let s = RefStruct { data: 10, ref_data: ref_x }; s.data + *s.ref_data
+Type: number
+Result: 52
+```
+
 ### 错误检测
 
 ```rust
@@ -381,6 +467,12 @@ Error: Cannot call value of type number
 
 Input: let f = |x, y| x + y; f(1)
 Error: Arity mismatch: expected 2 arguments, found 1
+
+Input: let x = 42; *x
+Error: Type mismatch: expected &?, found number
+
+Input: let x = 42; let ref_x = &x; ref_x + 10
+Error: Binary operations are only supported on numbers
 ```
 
 ## 开发状态
@@ -392,6 +484,8 @@ Error: Arity mismatch: expected 2 arguments, found 1
 - ✅ 代码生成 (解释器)
 - ✅ 中间表示 (MIR/LIR)
 - ✅ 控制流 (if/while)
+- ✅ 结构体类型 (Product Types)
+- ✅ 引用类型 (不可变引用与显式解引用)
 - ✅ 诊断系统
 - ✅ CLI 工具
 - ⏳ 语言服务器 (LSP)

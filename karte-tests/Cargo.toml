@@ -7,6 +7,8 @@ edition = "2021"
 karte-lexer = { path = "../karte-lexer" }
 karte-parser = { path = "../karte-parser" }
 karte-hir = { path = "../karte-hir" }
+karte-mir = { path = "../karte-mir" }
+karte-lir = { path = "../karte-lir" }
 karte-codegen = { path = "../karte-codegen" }
 karte-diagnostics = { path = "../karte-diagnostics" }
 

@@ -24,6 +24,10 @@ impl Span {
     pub fn is_empty(&self) -> bool {
         self.start == self.end
     }
+
+    pub fn dummy() -> Self {
+        Self { start: 0, end: 0 }
+    }
 }
 
 impl From<Span> for SourceSpan {
