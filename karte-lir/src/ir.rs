@@ -9,6 +9,43 @@ pub struct RegisterId(pub usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LabelId(pub usize);
 
+/// 结构体类型标识符
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct StructTypeId(pub usize);
+
+/// 内存地址标识符
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MemoryId(pub usize);
+
+/// 结构体字段定义
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructField {
+    pub name: String,
+    pub offset: usize,
+    pub size: usize,
+    pub alignment: usize,
+}
+
+/// 结构体布局信息
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructLayout {
+    pub name: String,
+    pub fields: Vec<StructField>,
+    pub total_size: usize,
+    pub alignment: usize,
+}
+
+/// 内存分配类型
+#[derive(Debug, Clone, PartialEq)]
+pub enum AllocationType {
+    /// 栈分配
+    Stack,
+    /// 堆分配
+    Heap,
+    /// 静态分配
+    Static,
+}
+
 /// LIR操作数
 #[derive(Debug, Clone, PartialEq)]
 pub enum Operand {
@@ -18,8 +55,15 @@ pub enum Operand {
     Immediate { value: i64 },
     /// 标签引用
     Label { id: LabelId },
-    /// 内存地址（简化版）
+    /// 内存地址（基址 + 偏移）
     Memory { base: RegisterId, offset: i64 },
+    /// 结构体字段地址
+    StructField { 
+        struct_addr: RegisterId, 
+        field_offset: usize 
+    },
+    /// 内存ID引用
+    MemoryRef { id: MemoryId },
 }
 
 /// LIR指令
@@ -145,6 +189,79 @@ pub enum Instruction {
     Nop {
         span: Span,
     },
+
+    // ====== 新增的结构体操作指令 ======
+
+    /// 分配结构体内存
+    StructAlloc {
+        dst: RegisterId,
+        struct_type: StructTypeId,
+        allocation_type: AllocationType,
+        span: Span,
+    },
+
+    /// 加载结构体字段
+    StructFieldLoad {
+        dst: RegisterId,
+        struct_addr: RegisterId,
+        field_offset: usize,
+        span: Span,
+    },
+
+    /// 存储结构体字段
+    StructFieldStore {
+        struct_addr: RegisterId,
+        field_offset: usize,
+        src: Operand,
+        span: Span,
+    },
+
+    /// 获取结构体字段地址
+    StructFieldAddr {
+        dst: RegisterId,
+        struct_addr: RegisterId,
+        field_offset: usize,
+        span: Span,
+    },
+
+    /// 内存拷贝指令（用于结构体赋值）
+    MemCopy {
+        dst: RegisterId,
+        src: RegisterId,
+        size: usize,
+        span: Span,
+    },
+
+    /// 内存分配指令
+    Alloc {
+        dst: RegisterId,
+        size: usize,
+        alignment: usize,
+        allocation_type: AllocationType,
+        span: Span,
+    },
+
+    /// 内存释放指令
+    Free {
+        addr: RegisterId,
+        span: Span,
+    },
+
+    /// 加载内存值（8字节）
+    Load64 {
+        dst: RegisterId,
+        addr: RegisterId,
+        offset: i64,
+        span: Span,
+    },
+
+    /// 存储内存值（8字节）
+    Store64 {
+        addr: RegisterId,
+        offset: i64,
+        src: Operand,
+        span: Span,
+    },
 }
 
 /// LIR函数
@@ -154,6 +271,10 @@ pub struct LirFunction {
     pub instructions: Vec<Instruction>,
     pub next_register: usize,
     pub next_label: usize,
+    /// 函数使用的结构体类型
+    pub struct_types: HashMap<StructTypeId, StructLayout>,
+    /// 栈帧大小（用于局部变量分配）
+    pub stack_frame_size: usize,
 }
 
 impl LirFunction {
@@ -163,6 +284,8 @@ impl LirFunction {
             instructions: Vec::new(),
             next_register: 0,
             next_label: 0,
+            struct_types: HashMap::new(),
+            stack_frame_size: 0,
         }
     }
 
@@ -181,6 +304,23 @@ impl LirFunction {
     pub fn add_instruction(&mut self, instruction: Instruction) {
         self.instructions.push(instruction);
     }
+
+    pub fn add_struct_type(&mut self, struct_type: StructLayout) -> StructTypeId {
+        let id = StructTypeId(self.struct_types.len());
+        self.struct_types.insert(id, struct_type);
+        id
+    }
+
+    pub fn get_struct_layout(&self, type_id: StructTypeId) -> Option<&StructLayout> {
+        self.struct_types.get(&type_id)
+    }
+
+    pub fn reserve_stack_space(&mut self, size: usize, alignment: usize) -> usize {
+        // 对齐栈帧大小
+        let aligned_offset = (self.stack_frame_size + alignment - 1) & !(alignment - 1);
+        self.stack_frame_size = aligned_offset + size;
+        aligned_offset
+    }
 }
 
 /// LIR程序
@@ -188,6 +328,10 @@ impl LirFunction {
 pub struct LirProgram {
     pub functions: HashMap<String, LirFunction>,
     pub main_function: Option<String>,
+    /// 全局结构体类型定义
+    pub global_struct_types: HashMap<String, StructLayout>,
+    /// 全局变量定义
+    pub global_variables: HashMap<String, MemoryId>,
 }
 
 impl LirProgram {
@@ -195,6 +339,8 @@ impl LirProgram {
         Self {
             functions: HashMap::new(),
             main_function: None,
+            global_struct_types: HashMap::new(),
+            global_variables: HashMap::new(),
         }
     }
 
@@ -204,5 +350,17 @@ impl LirProgram {
 
     pub fn set_main(&mut self, name: String) {
         self.main_function = Some(name);
+    }
+
+    pub fn add_global_struct_type(&mut self, name: String, layout: StructLayout) {
+        self.global_struct_types.insert(name, layout);
+    }
+
+    pub fn get_global_struct_layout(&self, name: &str) -> Option<&StructLayout> {
+        self.global_struct_types.get(name)
+    }
+
+    pub fn add_global_variable(&mut self, name: String, memory_id: MemoryId) {
+        self.global_variables.insert(name, memory_id);
     }
 } 

@@ -13,6 +13,28 @@ impl fmt::Display for LabelId {
     }
 }
 
+impl fmt::Display for StructTypeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "struct{}", self.0)
+    }
+}
+
+impl fmt::Display for MemoryId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "mem{}", self.0)
+    }
+}
+
+impl fmt::Display for AllocationType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AllocationType::Stack => write!(f, "stack"),
+            AllocationType::Heap => write!(f, "heap"),
+            AllocationType::Static => write!(f, "static"),
+        }
+    }
+}
+
 impl fmt::Display for Operand {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -26,6 +48,10 @@ impl fmt::Display for Operand {
                     write!(f, "[{} + {}]", base, offset)
                 }
             }
+            Operand::StructField { struct_addr, field_offset } => {
+                write!(f, "[{} + field{}]", struct_addr, field_offset)
+            }
+            Operand::MemoryRef { id } => write!(f, "{}", id),
         }
     }
 }
@@ -117,13 +143,70 @@ impl fmt::Display for Instruction {
             }
             Instruction::Label { id, .. } => write!(f, "{}:", id),
             Instruction::Nop { .. } => write!(f, "nop"),
+            
+            // 结构体相关指令
+            Instruction::StructAlloc { dst, struct_type, allocation_type, .. } => {
+                write!(f, "alloc_struct {}, {}, {}", dst, struct_type, allocation_type)
+            }
+            Instruction::StructFieldLoad { dst, struct_addr, field_offset, .. } => {
+                write!(f, "load_field {}, [{}].{}", dst, struct_addr, field_offset)
+            }
+            Instruction::StructFieldStore { struct_addr, field_offset, src, .. } => {
+                write!(f, "store_field [{}].{}, {}", struct_addr, field_offset, src)
+            }
+            Instruction::StructFieldAddr { dst, struct_addr, field_offset, .. } => {
+                write!(f, "field_addr {}, [{}].{}", dst, struct_addr, field_offset)
+            }
+            Instruction::MemCopy { dst, src, size, .. } => {
+                write!(f, "memcpy {}, {}, #{}", dst, src, size)
+            }
+            Instruction::Alloc { dst, size, alignment, allocation_type, .. } => {
+                write!(f, "alloc {}, #{}, #{}, {}", dst, size, alignment, allocation_type)
+            }
+            Instruction::Free { addr, .. } => {
+                write!(f, "free {}", addr)
+            }
+            Instruction::Load64 { dst, addr, offset, .. } => {
+                if *offset == 0 {
+                    write!(f, "load64 {}, [{}]", dst, addr)
+                } else {
+                    write!(f, "load64 {}, [{} + {}]", dst, addr, offset)
+                }
+            }
+            Instruction::Store64 { addr, offset, src, .. } => {
+                if *offset == 0 {
+                    write!(f, "store64 [{}], {}", addr, src)
+                } else {
+                    write!(f, "store64 [{} + {}], {}", addr, offset, src)
+                }
+            }
         }
+    }
+}
+
+impl fmt::Display for StructLayout {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "struct {} (size: {}, align: {}) {{", self.name, self.total_size, self.alignment)?;
+        for field in &self.fields {
+            writeln!(f, "  {} @ {} (size: {}, align: {})", field.name, field.offset, field.size, field.alignment)?;
+        }
+        writeln!(f, "}}")
     }
 }
 
 impl fmt::Display for LirFunction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "{}:", self.name)?;
+        writeln!(f, "function {} (stack_frame: {}):", self.name, self.stack_frame_size)?;
+        
+        // 显示结构体类型定义
+        if !self.struct_types.is_empty() {
+            writeln!(f, "  # Struct types:")?;
+            for (type_id, layout) in &self.struct_types {
+                writeln!(f, "  # {}: {}", type_id, layout.name)?;
+            }
+            writeln!(f)?;
+        }
+        
         for instr in &self.instructions {
             if let Instruction::Label { .. } = instr {
                 writeln!(f, "{}", instr)?;

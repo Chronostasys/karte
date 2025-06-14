@@ -104,6 +104,13 @@ pub enum Statement {
         arg_index: usize,
         span: Span,
     },
+    /// 字段赋值语句
+    FieldAssign {
+        object: Value,
+        field: String,
+        value: Value,
+        span: Span,
+    },
 }
 
 /// 终结语句 - 控制基本块的跳转
@@ -273,6 +280,9 @@ pub enum BinaryOperator {
     LessEqual,
     GreaterThan,
     GreaterEqual,
+    // 逻辑运算符
+    And,
+    Or,
 }
 
 /// 一元运算符

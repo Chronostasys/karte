@@ -76,79 +76,153 @@ fn evaluate_with_env(expr: &Expr, env: &Environment) -> Result<Value, String> {
             .cloned()
             .ok_or_else(|| format!("Undefined variable: {}", name)),
 
-        Expr::BinaryOp {
-            left, op, right, ..
-        } => {
-            let left_val = evaluate_with_env(left, env)?;
-            let right_val = evaluate_with_env(right, env)?;
-
-            match (left_val, right_val) {
-                (Value::Number(l), Value::Number(r)) => {
-                    match op {
-                        // 算术操作符返回数字
-                        BinaryOperator::Add => Ok(Value::Number(l + r)),
-                        BinaryOperator::Subtract => Ok(Value::Number(l - r)),
-                        BinaryOperator::Multiply => Ok(Value::Number(l * r)),
-                        BinaryOperator::Divide => {
-                            if r == 0 {
-                                return Err("Division by zero".to_string());
-                            }
-                            Ok(Value::Number(l / r))
-                        }
-                        // 比较操作符返回布尔值
-                        BinaryOperator::Equal => {
-                            let result = l == r;
-                            Ok(Value::Constructor {
-                                name: if result { "True".to_string() } else { "False".to_string() },
-                                value: None,
-                            })
-                        }
-                        BinaryOperator::GreaterEqual => {
-                            let result = l >= r;
-                            Ok(Value::Constructor {
-                                name: if result { "True".to_string() } else { "False".to_string() },
-                                value: None,
-                            })
-                        }
-                        BinaryOperator::LessEqual => {
-                            let result = l <= r;
-                            Ok(Value::Constructor {
-                                name: if result { "True".to_string() } else { "False".to_string() },
-                                value: None,
-                            })
-                        }
-                        BinaryOperator::Greater => {
-                            let result = l > r;
-                            Ok(Value::Constructor {
-                                name: if result { "True".to_string() } else { "False".to_string() },
-                                value: None,
-                            })
-                        }
-                        BinaryOperator::Less => {
-                            let result = l < r;
-                            Ok(Value::Constructor {
-                                name: if result { "True".to_string() } else { "False".to_string() },
-                                value: None,
-                            })
-                        }
+            Expr::BinaryOp {
+        left, op, right, ..
+    } => {
+        // 处理逻辑运算符的短路求值
+        match op {
+            BinaryOperator::LogicalAnd => {
+                let left_val = evaluate_with_env(left, env)?;
+                let left_is_true = match left_val {
+                    Value::Constructor { name, .. } => name == "True",
+                    _ => return Err("Logical AND requires boolean operands".to_string()),
+                };
+                
+                if left_is_true {
+                    // 左操作数为真，计算右操作数
+                    let right_val = evaluate_with_env(right, env)?;
+                                         match &right_val {
+                        Value::Constructor { name, .. } if name == "True" || name == "False" => Ok(right_val),
+                        _ => Err("Logical AND requires boolean operands".to_string()),
+                    }
+                } else {
+                    // 左操作数为假，短路返回false
+                    Ok(Value::Constructor {
+                        name: "False".to_string(),
+                        value: None,
+                    })
+                }
+            }
+            BinaryOperator::LogicalOr => {
+                let left_val = evaluate_with_env(left, env)?;
+                let left_is_true = match left_val {
+                    Value::Constructor { name, .. } => name == "True",
+                    _ => return Err("Logical OR requires boolean operands".to_string()),
+                };
+                
+                if left_is_true {
+                    // 左操作数为真，短路返回true
+                    Ok(Value::Constructor {
+                        name: "True".to_string(),
+                        value: None,
+                    })
+                } else {
+                    // 左操作数为假，计算右操作数
+                    let right_val = evaluate_with_env(right, env)?;
+                                         match &right_val {
+                        Value::Constructor { name, .. } if name == "True" || name == "False" => Ok(right_val),
+                        _ => Err("Logical OR requires boolean operands".to_string()),
                     }
                 }
-                _ => Err("Binary operations are only supported on numbers".to_string()),
+            }
+            _ => {
+                // 其他运算符需要计算两个操作数
+                let left_val = evaluate_with_env(left, env)?;
+                let right_val = evaluate_with_env(right, env)?;
+
+                match (left_val, right_val) {
+                    (Value::Number(l), Value::Number(r)) => {
+                        match op {
+                            // 算术操作符返回数字
+                            BinaryOperator::Add => Ok(Value::Number(l + r)),
+                            BinaryOperator::Subtract => Ok(Value::Number(l - r)),
+                            BinaryOperator::Multiply => Ok(Value::Number(l * r)),
+                            BinaryOperator::Divide => {
+                                if r == 0 {
+                                    return Err("Division by zero".to_string());
+                                }
+                                Ok(Value::Number(l / r))
+                            }
+                            // 比较操作符返回布尔值
+                            BinaryOperator::Equal => {
+                                let result = l == r;
+                                Ok(Value::Constructor {
+                                    name: if result { "True".to_string() } else { "False".to_string() },
+                                    value: None,
+                                })
+                            }
+                            BinaryOperator::GreaterEqual => {
+                                let result = l >= r;
+                                Ok(Value::Constructor {
+                                    name: if result { "True".to_string() } else { "False".to_string() },
+                                    value: None,
+                                })
+                            }
+                            BinaryOperator::LessEqual => {
+                                let result = l <= r;
+                                Ok(Value::Constructor {
+                                    name: if result { "True".to_string() } else { "False".to_string() },
+                                    value: None,
+                                })
+                            }
+                            BinaryOperator::Greater => {
+                                let result = l > r;
+                                Ok(Value::Constructor {
+                                    name: if result { "True".to_string() } else { "False".to_string() },
+                                    value: None,
+                                })
+                            }
+                            BinaryOperator::Less => {
+                                let result = l < r;
+                                Ok(Value::Constructor {
+                                    name: if result { "True".to_string() } else { "False".to_string() },
+                                    value: None,
+                                })
+                            }
+                            BinaryOperator::LogicalAnd | BinaryOperator::LogicalOr => {
+                                unreachable!("Logical operators should be handled above")
+                            }
+                        }
+                    }
+                    _ => Err("Binary operations are only supported on numbers".to_string()),
+                }
             }
         }
+    }
 
         Expr::UnaryOp { op, operand, .. } => {
             let operand_val = evaluate_with_env(operand, env)?;
 
-            match operand_val {
-                Value::Number(n) => {
-                    let result = match op {
-                        UnaryOperator::Plus => n,
-                        UnaryOperator::Minus => -n,
-                    };
-                    Ok(Value::Number(result))
+            match op {
+                UnaryOperator::Plus | UnaryOperator::Minus => {
+                    match operand_val {
+                        Value::Number(n) => {
+                            let result = match op {
+                                UnaryOperator::Plus => n,
+                                UnaryOperator::Minus => -n,
+                                UnaryOperator::LogicalNot => unreachable!(),
+                            };
+                            Ok(Value::Number(result))
+                        }
+                        _ => Err("Unary +/- operations are only supported on numbers".to_string()),
+                    }
                 }
-                _ => Err("Unary operations are only supported on numbers".to_string()),
+                UnaryOperator::LogicalNot => {
+                    match operand_val {
+                        Value::Constructor { name, .. } => {
+                            let result = match name.as_str() {
+                                "True" => "False",
+                                "False" => "True",
+                                _ => return Err("Logical NOT requires boolean operand".to_string()),
+                            };
+                            Ok(Value::Constructor {
+                                name: result.to_string(),
+                                value: None,
+                            })
+                        }
+                        _ => Err("Logical NOT requires boolean operand".to_string()),
+                    }
+                }
             }
         }
 
@@ -195,6 +269,17 @@ fn evaluate_with_env(expr: &Expr, env: &Environment) -> Result<Value, String> {
         Expr::Statement { stmt, .. } => {
             let mut env_copy = env.clone();
             evaluate_statement(stmt, &mut env_copy)
+        }
+
+        Expr::Assignment { target, value, .. } => {
+            // 赋值表达式：对于解释器来说，赋值通常返回被赋的值或单元类型
+            // 但是由于我们的环境是不可变的，这里只能检查赋值的有效性
+            let _target_val = evaluate_with_env(target, env)?;
+            let _value_val = evaluate_with_env(value, env)?;
+            
+            // 在实际的解释器中，这里需要修改环境，但我们当前的设计不支持
+            // 暂时返回单元类型
+            Ok(Value::Unit)
         }
 
         Expr::Block {
@@ -366,6 +451,39 @@ fn evaluate_statement(stmt: &Statement, env: &mut Environment) -> Result<Value, 
         Statement::TypeDef { .. } => {
             // 在求值时，枚举定义不产生任何值或行为
             Ok(Value::Unit)
+        }
+        Statement::Assignment { target, value, .. } => {
+            // 赋值语句：计算右值并更新目标
+            let value_result = evaluate_with_env(value, env)?;
+            
+            match target {
+                Expr::Identifier { name, .. } => {
+                    // 变量赋值：更新环境
+                    env.insert(name.clone(), value_result);
+                    Ok(Value::Unit)
+                }
+                Expr::FieldAccess { object, field, .. } => {
+                    // 字段赋值：需要修改结构体
+                    // 注意：这是一个简化实现，真实的赋值需要更复杂的逻辑
+                    match object.as_ref() {
+                        Expr::Identifier { name, .. } => {
+                            if let Some(Value::Struct { name: struct_name, mut fields }) = env.get(name).cloned() {
+                                fields.insert(field.clone(), value_result);
+                                let updated_struct = Value::Struct {
+                                    name: struct_name,
+                                    fields,
+                                };
+                                env.insert(name.clone(), updated_struct);
+                                Ok(Value::Unit)
+                            } else {
+                                Err(format!("Cannot assign to field '{}' of non-struct variable '{}'", field, name))
+                            }
+                        }
+                        _ => Err("Complex field assignment not yet supported".to_string())
+                    }
+                }
+                _ => Err("Invalid assignment target".to_string())
+            }
         }
     }
 }

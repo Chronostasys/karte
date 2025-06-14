@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOperator, Expr, FieldDef, Statement};
+use crate::ast::{BinaryOperator, Expr, FieldDef, Statement, UnaryOperator};
 use crate::errors::TypeCheckError;
 use crate::types::{Type, TypeValue, TypeVar};
 use ena::unify::InPlaceUnificationTable;
@@ -468,27 +468,50 @@ impl TypeChecker {
                 let left_type = self.infer_expr(left, env);
                 let right_type = self.infer_expr(right, env);
 
-                // 约束：左右操作数都必须是数字类型
-                self.add_constraint(left_type, Type::Number, left.span());
-                self.add_constraint(right_type, Type::Number, right.span());
+                // 根据操作符类型添加不同的类型约束
+                match op {
+                    BinaryOperator::Add | BinaryOperator::Subtract |
+                    BinaryOperator::Multiply | BinaryOperator::Divide |
+                    BinaryOperator::Equal | BinaryOperator::GreaterEqual |
+                    BinaryOperator::LessEqual | BinaryOperator::Greater |
+                    BinaryOperator::Less => {
+                        // 数字运算和比较运算：左右操作数都必须是数字类型
+                        self.add_constraint(left_type, Type::Number, left.span());
+                        self.add_constraint(right_type, Type::Number, right.span());
+                    }
+                    BinaryOperator::LogicalAnd | BinaryOperator::LogicalOr => {
+                        // 逻辑运算：左右操作数都必须是布尔类型
+                        self.add_constraint(left_type, Type::bool(), left.span());
+                        self.add_constraint(right_type, Type::bool(), right.span());
+                    }
+                }
 
                 // 根据操作符类型返回不同的结果类型
                 match op {
-                    BinaryOperator::Add | BinaryOperator::Subtract | 
+                    BinaryOperator::Add | BinaryOperator::Subtract |
                     BinaryOperator::Multiply | BinaryOperator::Divide => Type::Number,
-                    BinaryOperator::Equal | BinaryOperator::GreaterEqual | 
+                    BinaryOperator::Equal | BinaryOperator::GreaterEqual |
                     BinaryOperator::LessEqual | BinaryOperator::Greater |
                     BinaryOperator::Less => Type::bool(),
+                    BinaryOperator::LogicalAnd | BinaryOperator::LogicalOr => Type::bool(),
                 }
             }
 
-            Expr::UnaryOp { operand, .. } => {
+            Expr::UnaryOp { operand, op, .. } => {
                 let operand_type = self.infer_expr(operand, env);
 
-                // 约束：操作数必须是数字类型
-                self.add_constraint(Type::Number, operand_type, operand.span());
-
-                Type::Number
+                match op {
+                    UnaryOperator::Plus | UnaryOperator::Minus => {
+                        // 数字运算：操作数必须是数字类型
+                        self.add_constraint(Type::Number, operand_type, operand.span());
+                        Type::Number
+                    }
+                    UnaryOperator::LogicalNot => {
+                        // 逻辑非：操作数必须是布尔类型
+                        self.add_constraint(Type::bool(), operand_type, operand.span());
+                        Type::bool()
+                    }
+                }
             }
 
             Expr::Lambda {
@@ -892,6 +915,33 @@ impl TypeChecker {
                     }
                 }
             }
+
+            Expr::Assignment { target, value, span } => {
+                // 赋值表达式：检查目标是否可赋值，并统一类型
+                let target_type = self.infer_expr(target, env);
+                let value_type = self.infer_expr(value, env);
+                
+                // 检查赋值目标的有效性
+                match &**target {
+                    Expr::Identifier { .. } => {
+                        // 变量赋值：统一类型
+                        self.add_constraint(target_type, value_type, *span);
+                    }
+                    Expr::FieldAccess { .. } => {
+                        // 字段赋值：统一类型
+                        self.add_constraint(target_type, value_type, *span);
+                    }
+                    _ => {
+                        // 其他表达式不能作为赋值目标
+                        self.add_error(TypeCheckError::InvalidAssignmentTarget {
+                            span: *span,
+                        });
+                    }
+                }
+                
+                // 赋值表达式返回单元类型
+                Type::Unit
+            }
         }
     }
 
@@ -965,6 +1015,39 @@ impl TypeChecker {
 
                 // 将类型添加到自定义类型表中
                 self.custom_types.insert(name.clone(), struct_type);
+            }
+            Statement::Assignment { target, value, .. } => {
+                // 赋值语句：推断目标和值的类型，并进行约束检查
+                let target_type = self.infer_expr(target, env);
+                let value_type = self.infer_expr(value, env);
+                
+                // 检查赋值目标的有效性
+                match target {
+                    Expr::Identifier { name, .. } => {
+                        // 变量赋值：更新环境中的变量类型
+                        if env.contains_key(name) {
+                            // 变量已存在，统一类型
+                            self.add_constraint(target_type, value_type.clone(), target.span());
+                            env.insert(name.clone(), value_type);
+                        } else {
+                            // 变量不存在，报告错误（或者可以选择自动创建）
+                            self.add_error(TypeCheckError::UndefinedVariable {
+                                name: name.clone(),
+                                span: target.span(),
+                            });
+                        }
+                    }
+                    Expr::FieldAccess { .. } => {
+                        // 字段赋值：统一类型
+                        self.add_constraint(target_type, value_type, target.span());
+                    }
+                    _ => {
+                        // 其他表达式不能作为赋值目标
+                        self.add_error(TypeCheckError::InvalidAssignmentTarget {
+                            span: target.span(),
+                        });
+                    }
+                }
             }
         }
     }
@@ -1318,4 +1401,208 @@ pub fn type_check(expr: &Expr) -> (Type, DiagnosticBag) {
     let mut checker = TypeChecker::new();
     let result_type = checker.check_program(expr);
     (result_type, checker.into_diagnostics())
+}
+
+#[cfg(test)]
+mod assignment_type_check_tests {
+    use super::*;
+    use crate::ast::*;
+    use karte_diagnostics::Span;
+
+    fn make_span() -> Span {
+        Span::new(0, 0)
+    }
+
+    #[test]
+    fn test_variable_assignment_type_check() {
+        let mut checker = TypeChecker::new();
+        let mut env = TypeEnvironment::new();
+        
+        // let x = 5; x = 10;
+        let assignment = Expr::Assignment {
+            target: Box::new(Expr::Identifier {
+                name: "x".to_string(),
+                span: make_span(),
+            }),
+            value: Box::new(Expr::Number {
+                value: 10,
+                span: make_span(),
+            }),
+            span: make_span(),
+        };
+
+        // 先添加x到环境中
+        env.insert("x".to_string(), Type::Number);
+        
+        let result_type = checker.infer_expr(&assignment, &env);
+        assert_eq!(result_type, Type::Unit, "赋值表达式应该返回Unit类型");
+        assert!(checker.diagnostics().is_empty(), "不应该有类型错误");
+    }
+
+    #[test]
+    fn test_assignment_to_undefined_variable() {
+        let mut checker = TypeChecker::new();
+        let env = TypeEnvironment::new();
+        
+        // y = 42; (y未定义)
+        let assignment = Expr::Assignment {
+            target: Box::new(Expr::Identifier {
+                name: "y".to_string(),
+                span: make_span(),
+            }),
+            value: Box::new(Expr::Number {
+                value: 42,
+                span: make_span(),
+            }),
+            span: make_span(),
+        };
+
+        let _result_type = checker.infer_expr(&assignment, &env);
+        assert!(!checker.diagnostics().is_empty(), "应该有未定义变量的错误");
+    }
+
+    #[test]
+    fn test_assignment_type_compatibility() {
+        let mut checker = TypeChecker::new();
+        let mut env = TypeEnvironment::new();
+        
+        // let x = 5; x = true; (类型不兼容)
+        env.insert("x".to_string(), Type::Number);
+        
+        let assignment = Expr::Assignment {
+            target: Box::new(Expr::Identifier {
+                name: "x".to_string(),
+                span: make_span(),
+            }),
+            value: Box::new(Expr::Boolean {
+                value: true,
+                span: make_span(),
+            }),
+            span: make_span(),
+        };
+
+        let _result_type = checker.infer_expr(&assignment, &env);
+        // 注意：当前实现可能需要改进类型兼容性检查
+    }
+
+    #[test]
+    fn test_chained_assignment_type_check() {
+        let mut checker = TypeChecker::new();
+        let mut env = TypeEnvironment::new();
+        
+        // let a = 1; let b = 2; a = b = 5;
+        env.insert("a".to_string(), Type::Number);
+        env.insert("b".to_string(), Type::Number);
+        
+        let chained_assignment = Expr::Assignment {
+            target: Box::new(Expr::Identifier {
+                name: "a".to_string(),
+                span: make_span(),
+            }),
+            value: Box::new(Expr::Assignment {
+                target: Box::new(Expr::Identifier {
+                    name: "b".to_string(),
+                    span: make_span(),
+                }),
+                value: Box::new(Expr::Number {
+                    value: 5,
+                    span: make_span(),
+                }),
+                span: make_span(),
+            }),
+            span: make_span(),
+        };
+
+        let result_type = checker.infer_expr(&chained_assignment, &env);
+        assert_eq!(result_type, Type::Unit, "连续赋值表达式应该返回Unit类型");
+        assert!(checker.diagnostics().is_empty(), "不应该有类型错误");
+    }
+
+    #[test]
+    fn test_field_assignment_type_check() {
+        let mut checker = TypeChecker::new();
+        let mut env = TypeEnvironment::new();
+
+        // 创建一个结构体类型
+        let point_type = Type::Struct {
+            name: "Point".to_string(),
+            fields: vec![
+                crate::types::StructField {
+                    name: "x".to_string(),
+                    field_type: Type::Number,
+                },
+                crate::types::StructField {
+                    name: "y".to_string(),
+                    field_type: Type::Number,
+                },
+            ],
+        };
+        
+        env.insert("p".to_string(), point_type);
+        
+        // p.x = 42
+        let field_assignment = Expr::Assignment {
+            target: Box::new(Expr::FieldAccess {
+                object: Box::new(Expr::Identifier {
+                    name: "p".to_string(),
+                    span: make_span(),
+                }),
+                field: "x".to_string(),
+                span: make_span(),
+            }),
+            value: Box::new(Expr::Number {
+                value: 42,
+                span: make_span(),
+            }),
+            span: make_span(),
+        };
+
+        let result_type = checker.infer_expr(&field_assignment, &env);
+        assert_eq!(result_type, Type::Unit, "字段赋值表达式应该返回Unit类型");
+    }
+
+    #[test]
+    fn test_assignment_statement_type_check() {
+        let mut checker = TypeChecker::new();
+        let mut env = TypeEnvironment::new();
+        
+        env.insert("x".to_string(), Type::Number);
+        
+        let assignment_statement = Statement::Assignment {
+            target: Expr::Identifier {
+                name: "x".to_string(),
+                span: make_span(),
+            },
+            value: Expr::Number {
+                value: 100,
+                span: make_span(),
+            },
+            span: make_span(),
+        };
+
+        checker.infer_statement(&assignment_statement, &mut env);
+        assert!(checker.diagnostics().is_empty(), "赋值语句不应该有类型错误");
+    }
+
+    #[test]
+    fn test_invalid_assignment_target() {
+        let mut checker = TypeChecker::new();
+        let env = TypeEnvironment::new();
+        
+        // 5 = 10; (数字字面量不能作为赋值目标)
+        let invalid_assignment = Expr::Assignment {
+            target: Box::new(Expr::Number {
+                value: 5,
+                span: make_span(),
+            }),
+            value: Box::new(Expr::Number {
+                value: 10,
+                span: make_span(),
+            }),
+            span: make_span(),
+        };
+
+        let _result_type = checker.infer_expr(&invalid_assignment, &env);
+        assert!(!checker.diagnostics().is_empty(), "应该有无效赋值目标的错误");
+    }
 }

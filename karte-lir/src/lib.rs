@@ -13,9 +13,20 @@
 //! 从 MIR 到 LIR 的降低（lowering）过程（见 `lower` 模块）会将 MIR 的基本块结构
 //! "线性化"为一个指令流，将 `Value` 映射到寄存器或栈上的位置，并将控制流
 //! 转换为显式的跳转指令。这个阶段是为最终的代码生成做准备的关键一步。
+//!
+//! ## 结构体支持
+//!
+//! 新的LIR设计包含了专业的结构体支持：
+//! - **`StructLayoutManager`**: 管理结构体的内存布局
+//! - **结构体专用指令**: 如 `StructAlloc`, `StructFieldLoad`, `StructFieldStore`
+//! - **内存管理**: 支持栈分配和堆分配
+//! - **对齐优化**: 自动计算字段对齐和填充
 
 pub mod lower;
 pub mod ir;
 pub mod display;
+pub mod struct_layout;
+pub mod tagged_union;
 
 pub use ir::*;
+pub use struct_layout::*;

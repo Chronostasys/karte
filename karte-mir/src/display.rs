@@ -76,6 +76,8 @@ impl fmt::Display for BinaryOperator {
             BinaryOperator::LessEqual => write!(f, "<="),
             BinaryOperator::GreaterThan => write!(f, ">"),
             BinaryOperator::GreaterEqual => write!(f, ">="),
+            BinaryOperator::And => write!(f, "&&"),
+            BinaryOperator::Or => write!(f, "||"),
         }
     }
 }
@@ -138,6 +140,12 @@ impl fmt::Display for Statement {
                 arg_index,
                 ..
             } => write!(f, "{} = constructor_arg_extract {} {}", target, constructor, arg_index),
+            Statement::FieldAssign {
+                object,
+                field,
+                value,
+                ..
+            } => write!(f, "{}.{} = {}", object, field, value),
         }
     }
 }

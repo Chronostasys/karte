@@ -1,8 +1,10 @@
+pub mod assignment_integration_tests;
 pub mod codegen_tests;
 pub mod control_flow_tests;
 pub mod custom_types_tests;
 pub mod integration_tests;
 pub mod lexer_tests;
+pub mod logical_operators_tests;
 pub mod parser_tests;
 pub mod reference_tests;
 pub mod struct_tests;

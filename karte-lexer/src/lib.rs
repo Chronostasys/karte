@@ -87,6 +87,16 @@ pub enum Token {
     #[token("&")]
     Ampersand,
 
+    // 添加逻辑运算符
+    #[token("&&")]
+    LogicalAnd,
+
+    #[token("||")]
+    LogicalOr,
+
+    #[token("!")]
+    LogicalNot,
+
     // 泛型类型符号（单独定义，避免冲突）
     #[token("::")]
     DoubleColon,
@@ -127,6 +137,9 @@ impl fmt::Display for Token {
             Token::Dot => write!(f, "."),
             Token::Colon => write!(f, ":"),
             Token::Ampersand => write!(f, "&"),
+            Token::LogicalAnd => write!(f, "&&"),
+            Token::LogicalOr => write!(f, "||"),
+            Token::LogicalNot => write!(f, "!"),
             Token::DoubleColon => write!(f, "::"),
             Token::Underscore => write!(f, "_"),
             Token::Error => write!(f, "<error>"),

@@ -156,6 +156,17 @@ impl<'a> Parser<'a> {
                     statements.push(self.parse_statement()?);
                     continue;
                 }
+                
+                // 检查是否为赋值语句 (identifier = ...)
+                if self.position + 1 < self.tokens.len() {
+                    if let Some(next_token) = self.tokens.get(self.position + 1) {
+                        if matches!(next_token.token, Token::Equal) {
+                            // 这是一个赋值语句
+                            statements.push(self.parse_statement()?);
+                            continue;
+                        }
+                    }
+                }
             }
 
             // 不是语句，尝试解析表达式作为最终表达式
@@ -194,8 +205,37 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // 表达式语句
+        // 表达式语句 - 这里可能是赋值或其他表达式
         let expr = self.parse_expression()?;
+        
+        // 如果是赋值表达式，将其转换为赋值语句
+        match expr {
+            Expr::Assignment { target, value, span } => {
+                // 期望分号
+                if let Some(token) = self.peek() {
+                    if matches!(token.token, Token::Semicolon) {
+                        self.advance();
+                    } else {
+                        return Err(ParseError::UnexpectedToken {
+                            expected: "';'".to_string(),
+                            found: token.token.clone(),
+                            span: token.span,
+                        });
+                    }
+                } else {
+                    return Err(ParseError::UnexpectedEof {
+                        expected: "';'".to_string(),
+                    });
+                }
+                
+                Ok(Statement::Assignment {
+                    target: *target,
+                    value: *value,
+                    span,
+                })
+            }
+            _ => {
+                // 普通表达式语句
         let span = expr.span();
 
         // 期望分号
@@ -216,6 +256,8 @@ impl<'a> Parser<'a> {
         }
 
         Ok(Statement::Expression { expr, span })
+            }
+        }
     }
 
     /// 解析let语句
@@ -759,9 +801,75 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // expression = comparison
+    // expression = assignment
     fn parse_expression(&mut self) -> Result<Expr, ParseError> {
-        self.parse_comparison()
+        self.parse_assignment()
+    }
+
+    // assignment = logical_or ('=' assignment)?
+    fn parse_assignment(&mut self) -> Result<Expr, ParseError> {
+        let expr = self.parse_logical_or()?;
+
+        if let Some(token) = self.peek() {
+            if matches!(token.token, Token::Equal) {
+                self.advance(); // consume '='
+                let value = self.parse_assignment()?; // 右结合
+                let span = Span::new(expr.span().start, value.span().end);
+                return Ok(Expr::Assignment {
+                    target: Box::new(expr),
+                    value: Box::new(value),
+                    span,
+                });
+            }
+        }
+
+        Ok(expr)
+    }
+
+    // logical_or = logical_and ('||' logical_and)*
+    fn parse_logical_or(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_logical_and()?;
+
+        while let Some(token) = self.peek() {
+            if matches!(token.token, Token::LogicalOr) {
+                self.advance();
+                let right = self.parse_logical_and()?;
+                let span = Span::new(left.span().start, right.span().end);
+                left = Expr::BinaryOp {
+                    left: Box::new(left),
+                    op: BinaryOperator::LogicalOr,
+                    right: Box::new(right),
+                    span,
+                };
+            } else {
+                break;
+            }
+        }
+
+        Ok(left)
+    }
+
+    // logical_and = comparison ('&&' comparison)*
+    fn parse_logical_and(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_comparison()?;
+
+        while let Some(token) = self.peek() {
+            if matches!(token.token, Token::LogicalAnd) {
+                self.advance();
+                let right = self.parse_comparison()?;
+                let span = Span::new(left.span().start, right.span().end);
+                left = Expr::BinaryOp {
+                    left: Box::new(left),
+                    op: BinaryOperator::LogicalAnd,
+                    right: Box::new(right),
+                    span,
+                };
+            } else {
+                break;
+            }
+        }
+
+        Ok(left)
     }
 
     // comparison = additive (('==' | '>=' | '<=' | '>' | '<') additive)*
@@ -902,7 +1010,7 @@ impl<'a> Parser<'a> {
         Ok(left)
     }
 
-    // factor = ('+' | '-' | '&' | '*')? primary
+    // factor = ('+' | '-' | '&' | '*' | '!')? primary
     fn parse_factor(&mut self) -> Result<Expr, ParseError> {
         if let Some(token) = self.peek() {
             match token.token {
@@ -924,6 +1032,17 @@ impl<'a> Parser<'a> {
                     let span = Span::new(op_span.start, operand.span().end);
                     Ok(Expr::UnaryOp {
                         op: UnaryOperator::Minus,
+                        operand: Box::new(operand),
+                        span,
+                    })
+                }
+                Token::LogicalNot => {
+                    let op_span = token.span;
+                    self.advance();
+                    let operand = self.parse_primary()?;
+                    let span = Span::new(op_span.start, operand.span().end);
+                    Ok(Expr::UnaryOp {
+                        op: UnaryOperator::LogicalNot,
                         operand: Box::new(operand),
                         span,
                     })
@@ -1248,6 +1367,10 @@ impl<'a> Parser<'a> {
                     // 解析lambda表达式: |param1, param2| body
                     self.parse_lambda()
                 }
+                Token::LogicalOr => {
+                    // 解析空参数lambda表达式: || body
+                    self.parse_lambda_no_params()
+                }
                 Token::LeftParen => {
                     self.advance(); // consume '('
                     let expr = self.parse_expression()?;
@@ -1344,6 +1467,10 @@ impl<'a> Parser<'a> {
                             expected: "'}'".to_string(),
                         })
                     }
+                }
+                Token::LogicalNot => {
+                    // 处理连续的否定操作符，如 !!true, !!!false
+                    self.parse_factor()
                 }
                 _ => Err(ParseError::UnexpectedToken {
                     expected: "number, identifier, lambda, '{', or '('".to_string(),
@@ -1712,6 +1839,23 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// 解析空参数lambda表达式: || body
+    fn parse_lambda_no_params(&mut self) -> Result<Expr, ParseError> {
+        let start_span = self.peek().unwrap().span;
+        self.advance(); // consume '||'
+
+        // 解析lambda体
+        let body = self.parse_expression()?;
+        let end_span = body.span();
+        let span = Span::new(start_span.start, end_span.end);
+
+        Ok(Expr::Lambda {
+            params: Vec::new(), // 空参数列表
+            body: Box::new(body),
+            span,
+        })
+    }
+
     /// 解析lambda表达式: |param1, param2| body 或 |param1: type1, param2: type2| body
     fn parse_lambda(&mut self) -> Result<Expr, ParseError> {
         let start_span = self.peek().unwrap().span;
@@ -2068,5 +2212,179 @@ pub fn parse_with_type_check(tokens: &[TokenWithSpan]) -> (Option<ParseResult>, 
         (Some(ParseResult { expr, result_type }), diagnostics)
     } else {
         (None, diagnostics)
+    }
+}
+
+#[cfg(test)]
+mod assignment_tests {
+    use super::*;
+    use karte_lexer::tokenize;
+    use karte_hir::*;
+
+    #[test]
+    fn test_assignment_expression() {
+        let input = "x = 42";
+        let (tokens, _) = tokenize(input);
+        let (expr, diagnostics) = parse(&tokens);
+
+        assert!(diagnostics.is_empty(), "解析应该没有错误");
+        assert!(expr.is_some(), "应该成功解析表达式");
+
+        if let Some(Expr::Assignment { target, value, .. }) = expr {
+            match target.as_ref() {
+                Expr::Identifier { name, .. } => {
+                    assert_eq!(name, "x");
+                }
+                _ => panic!("赋值目标应该是标识符"),
+            }
+            match value.as_ref() {
+                Expr::Number { value, .. } => {
+                    assert_eq!(*value, 42);
+                }
+                _ => panic!("赋值值应该是数字"),
+            }
+        } else {
+            panic!("应该解析为赋值表达式");
+        }
+    }
+
+    #[test]
+    fn test_chained_assignment() {
+        let input = "a = b = 5";
+        let (tokens, _) = tokenize(input);
+        let (expr, diagnostics) = parse(&tokens);
+
+        assert!(diagnostics.is_empty(), "解析应该没有错误");
+        assert!(expr.is_some(), "应该成功解析表达式");
+
+        if let Some(Expr::Assignment { target, value, .. }) = expr {
+            // 外层赋值：a = (b = 5)
+            match target.as_ref() {
+                Expr::Identifier { name, .. } => {
+                    assert_eq!(name, "a");
+                }
+                _ => panic!("外层赋值目标应该是标识符 a"),
+            }
+
+            // 内层赋值：b = 5
+            match value.as_ref() {
+                Expr::Assignment { target: inner_target, value: inner_value, .. } => {
+                    match inner_target.as_ref() {
+                        Expr::Identifier { name, .. } => {
+                            assert_eq!(name, "b");
+                        }
+                        _ => panic!("内层赋值目标应该是标识符 b"),
+                    }
+                    match inner_value.as_ref() {
+                        Expr::Number { value, .. } => {
+                            assert_eq!(*value, 5);
+                        }
+                        _ => panic!("内层赋值值应该是数字 5"),
+                    }
+                }
+                _ => panic!("右侧应该是另一个赋值表达式"),
+            }
+        } else {
+            panic!("应该解析为赋值表达式");
+        }
+    }
+
+    #[test]
+    fn test_assignment_with_expression() {
+        let input = "x = y + 1";
+        let (tokens, _) = tokenize(input);
+        let (expr, diagnostics) = parse(&tokens);
+
+        assert!(diagnostics.is_empty(), "解析应该没有错误");
+        assert!(expr.is_some(), "应该成功解析表达式");
+
+        if let Some(Expr::Assignment { target, value, .. }) = expr {
+            match target.as_ref() {
+                Expr::Identifier { name, .. } => {
+                    assert_eq!(name, "x");
+                }
+                _ => panic!("赋值目标应该是标识符"),
+            }
+            match value.as_ref() {
+                Expr::BinaryOp { op: BinaryOperator::Add, .. } => {
+                    // 正确，是加法表达式
+                }
+                _ => panic!("赋值值应该是加法表达式"),
+            }
+        } else {
+            panic!("应该解析为赋值表达式");
+        }
+    }
+
+    #[test]
+    fn test_field_assignment_syntax() {
+        let input = "obj.field = 100";
+        let (tokens, _) = tokenize(input);
+        let (expr, diagnostics) = parse(&tokens);
+
+        assert!(diagnostics.is_empty(), "解析应该没有错误");
+        assert!(expr.is_some(), "应该成功解析表达式");
+
+        if let Some(Expr::Assignment { target, value, .. }) = expr {
+            match target.as_ref() {
+                Expr::FieldAccess { object, field, .. } => {
+                    match object.as_ref() {
+                        Expr::Identifier { name, .. } => {
+                            assert_eq!(name, "obj");
+                        }
+                        _ => panic!("字段访问的对象应该是标识符"),
+                    }
+                    assert_eq!(field, "field");
+                }
+                _ => panic!("赋值目标应该是字段访问"),
+            }
+            match value.as_ref() {
+                Expr::Number { value, .. } => {
+                    assert_eq!(*value, 100);
+                }
+                _ => panic!("赋值值应该是数字"),
+            }
+        } else {
+            panic!("应该解析为赋值表达式");
+        }
+    }
+
+    #[test]
+    fn test_assignment_precedence() {
+        let input = "x = y + z * 2";
+        let (tokens, _) = tokenize(input);
+        let (expr, diagnostics) = parse(&tokens);
+
+        assert!(diagnostics.is_empty(), "解析应该没有错误");
+        assert!(expr.is_some(), "应该成功解析表达式");
+
+        if let Some(Expr::Assignment { target, value, .. }) = expr {
+            match target.as_ref() {
+                Expr::Identifier { name, .. } => {
+                    assert_eq!(name, "x");
+                }
+                _ => panic!("赋值目标应该是标识符"),
+            }
+            // 右侧应该是 y + (z * 2)，不是 (y + z) * 2
+            match value.as_ref() {
+                Expr::BinaryOp { op: BinaryOperator::Add, left, right, .. } => {
+                    match left.as_ref() {
+                        Expr::Identifier { name, .. } => {
+                            assert_eq!(name, "y");
+                        }
+                        _ => panic!("加法左侧应该是标识符 y"),
+                    }
+                    match right.as_ref() {
+                        Expr::BinaryOp { op: BinaryOperator::Multiply, .. } => {
+                            // 正确，乘法有更高优先级
+                        }
+                        _ => panic!("加法右侧应该是乘法表达式"),
+                    }
+                }
+                _ => panic!("赋值值应该是加法表达式"),
+            }
+        } else {
+            panic!("应该解析为赋值表达式");
+        }
     }
 }

@@ -393,6 +393,7 @@ name = "karte-lir"
 version = "0.1.0"
 dependencies = [
  "karte-diagnostics",
+ "karte-hir",
  "karte-mir",
 ]
 

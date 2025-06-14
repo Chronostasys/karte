@@ -61,6 +61,9 @@ pub enum TypeCheckError {
         name: String,
         span: Span,
     },
+    InvalidAssignmentTarget {
+        span: Span,
+    },
 }
 
 impl fmt::Display for TypeCheckError {
@@ -121,6 +124,9 @@ impl fmt::Display for TypeCheckError {
             TypeCheckError::UndefinedType { name, .. } => {
                 write!(f, "Undefined type: {}", name)
             }
+            TypeCheckError::InvalidAssignmentTarget { .. } => {
+                write!(f, "Invalid assignment target")
+            }
         }
     }
 }
@@ -136,11 +142,12 @@ impl TypeCheckError {
             | TypeCheckError::InfiniteType { span, .. }
             | TypeCheckError::InvalidConstructor { span, .. }
             | TypeCheckError::InvalidPattern { span, .. }
-            | TypeCheckError::EmptyMatch { span } => *span,
+            | TypeCheckError::EmptyMatch { span }
             | TypeCheckError::MissingFields { span, .. }
             | TypeCheckError::UnknownField { span, .. }
             | TypeCheckError::NotAStruct { span, .. }
-            | TypeCheckError::UndefinedType { span, .. } => *span,
+            | TypeCheckError::UndefinedType { span, .. }
+            | TypeCheckError::InvalidAssignmentTarget { span } => *span,
         }
     }
 }

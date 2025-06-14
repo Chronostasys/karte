@@ -148,6 +148,13 @@ pub enum Expr {
         expr: Box<Expr>,
         span: Span,
     },
+
+    /// 赋值表达式 - 为变量或字段赋值
+    Assignment {
+        target: Box<Expr>,
+        value: Box<Expr>,
+        span: Span,
+    },
 }
 
 /// 语句类型
@@ -175,6 +182,13 @@ pub enum Statement {
     StructDef {
         name: String,
         fields: Vec<FieldDef>,
+        span: Span,
+    },
+
+    // 赋值语句
+    Assignment {
+        target: Expr,
+        value: Expr,
         span: Span,
     },
 }
@@ -276,12 +290,17 @@ pub enum BinaryOperator {
     LessEqual,
     Greater,
     Less,
+    // 逻辑运算符
+    LogicalAnd,
+    LogicalOr,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOperator {
     Plus,
     Minus,
+    // 逻辑非运算符
+    LogicalNot,
 }
 
 impl fmt::Display for BinaryOperator {
@@ -296,6 +315,8 @@ impl fmt::Display for BinaryOperator {
             BinaryOperator::LessEqual => write!(f, "<="),
             BinaryOperator::Greater => write!(f, ">"),
             BinaryOperator::Less => write!(f, "<"),
+            BinaryOperator::LogicalAnd => write!(f, "&&"),
+            BinaryOperator::LogicalOr => write!(f, "||"),
         }
     }
 }
@@ -305,6 +326,7 @@ impl fmt::Display for UnaryOperator {
         match self {
             UnaryOperator::Plus => write!(f, "+"),
             UnaryOperator::Minus => write!(f, "-"),
+            UnaryOperator::LogicalNot => write!(f, "!"),
         }
     }
 }
@@ -335,6 +357,9 @@ impl fmt::Display for Statement {
                     .collect::<Vec<_>>()
                     .join(", ");
                 write!(f, "struct {} = {{ {} }};", name, fields_str)
+            }
+            Statement::Assignment { target, value, .. } => {
+                write!(f, "{} = {};", target, value)
             }
         }
     }
@@ -440,6 +465,9 @@ impl fmt::Display for Expr {
             Expr::Dereference { expr, .. } => {
                 write!(f, "*{}", expr)
             }
+            Expr::Assignment { target, value, .. } => {
+                write!(f, "{} = {}", target, value)
+            }
         }
     }
 }
@@ -466,6 +494,7 @@ impl Expr {
             Expr::FieldAccess { span, .. } => *span,
             Expr::Reference { span, .. } => *span,
             Expr::Dereference { span, .. } => *span,
+            Expr::Assignment { span, .. } => *span,
         }
     }
 }
@@ -477,6 +506,7 @@ impl Statement {
             Statement::Expression { span, .. } => *span,
             Statement::TypeDef { span, .. } => *span,
             Statement::StructDef { span, .. } => *span,
+            Statement::Assignment { span, .. } => *span,
         }
     }
 }
