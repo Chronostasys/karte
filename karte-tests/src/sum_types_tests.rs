@@ -128,7 +128,9 @@ mod evaluation_tests {
         
         // 测试零值（边界情况）
         let program3 = "match Some(0) { Some(x) -> x + 42, None -> -1 }";
+        println!("DEBUG: Testing program3: {}", program3);
         let result3 = test_evaluate(program3).unwrap();
+        println!("DEBUG: result3 = {}, expected = 42", result3);
         assert_eq!(result3, 42);
         
         // 测试负数（现在支持大部分负数）

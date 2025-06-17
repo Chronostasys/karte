@@ -164,15 +164,10 @@ fn lower_expression(
         }
         
         Expr::Boolean { value, .. } => {
-            // 使用构造器表示boolean值，保持与控制流和模式匹配的兼容性
-            let constructor_value = Value::Constructor {
-                name: if *value { "True".to_string() } else { "False".to_string() },
-                arg: None,
-            };
-            
+            // 使用新的Boolean值表示，用于简化逻辑操作符处理
             ctx.add_statement(Statement::Assign {
                 target: destination.clone(),
-                source: constructor_value,
+                source: Value::Boolean { value: *value },
                 span,
             });
         }

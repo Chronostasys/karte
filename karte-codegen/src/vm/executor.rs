@@ -2,7 +2,7 @@
 //! 
 //! 实现LIR指令的执行逻辑，包括算术运算、控制流、内存访问等
 
-use super::{VirtualMachine, JumpCondition, MemoryManager, RegisterAllocator, NUM_REGISTERS};
+use super::{VirtualMachine, JumpCondition, MemoryManager};
 use karte_lir::{Instruction, LabelId, LirProgram, Operand, RegisterId};
 use std::collections::HashMap;
 
@@ -88,7 +88,7 @@ impl InstructionExecutor {
         if let Some(main_fn_name) = &program.main_function {
             if let Some(function) = program.functions.get(main_fn_name) {
                 // 创建寄存器分配器并分析生命周期
-                let mut allocator = RegisterAllocator::new();
+                let mut allocator = super::register_allocator::RegisterAllocator::new();
                 allocator.analyze_lifetimes(function);
                 
                 // 总是使用溢出分配来避免寄存器冲突问题

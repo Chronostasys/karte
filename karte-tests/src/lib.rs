@@ -27,7 +27,7 @@ pub fn execute_with_pipeline_debug(expr: &Expr, debug: bool) -> Result<i64, Stri
     
     if debug {
         println!("=== MIR Program ===");
-        println!("{:#?}", mir_program);
+        println!("{}", mir_program);
     }
     
     // 2. MIR -> LIR
@@ -36,11 +36,11 @@ pub fn execute_with_pipeline_debug(expr: &Expr, debug: bool) -> Result<i64, Stri
     
     if debug {
         println!("=== LIR Program ===");
-        println!("{:#?}", lir_program);
+        println!("{}", lir_program);
     }
     
     // 3. 执行LIR，直接返回i64结果
-    let result = karte_codegen::lir_interpreter::execute_with_debug(&lir_program, debug)
+    let result = karte_codegen::lir_interpreter::execute_professional(&lir_program, debug)
         .map_err(|e| format!("Execution error: {}", e))?;
     
     Ok(result)
@@ -48,7 +48,7 @@ pub fn execute_with_pipeline_debug(expr: &Expr, debug: bool) -> Result<i64, Stri
 
 /// 简化的执行函数，直接返回i64结果
 pub fn execute_with_pipeline(expr: &Expr) -> Result<i64, String> {
-    execute_with_pipeline_debug(expr, false)
+    execute_with_pipeline_debug(expr, true)
 }
 
 /// 从字符串输入执行完整流程的便利函数，返回i64

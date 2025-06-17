@@ -395,7 +395,15 @@ mod qualified_constructors {
                 }
             }
         "#;
-        let result = test_evaluate(program).unwrap();
+        println!("开始执行test_qualified_constructor_with_arg");
+        // 解析表达式
+        let (tokens, mut diagnostics) = tokenize(program);
+        assert!(!diagnostics.has_errors());
+        let (expr, parse_diagnostics) = parse(&tokens);
+        let expr = expr.unwrap();
+        
+        let result = crate::execute_with_pipeline_debug(&expr, true).unwrap();
+        println!("执行结果: {}", result);
         assert_eq!(result, 42); // 简化为数字比较
     }
 
@@ -447,13 +455,17 @@ mod nested_sum_types {
                 Result::Ok(Color::Red)
             }
         "#;
-        let result = test_evaluate(program);
-        // 这个测试目前可能会失败，因为我们还没有完全支持嵌套类型
-        // 但是我们先写下期望的行为
-        if let Ok(value) = result {
-            // 简化测试：只验证没有错误，构造器现在返回负数
-            assert!(value != 0); // 只要不是0就说明有值
-        }
+        println!("开始执行test_nested_sum_type_definition");
+        // 解析表达式
+        let (tokens, mut diagnostics) = tokenize(program);
+        assert!(!diagnostics.has_errors());
+        let (expr, parse_diagnostics) = parse(&tokens);
+        let expr = expr.unwrap();
+        
+        let result = crate::execute_with_pipeline_debug(&expr, true).unwrap();
+        println!("执行结果: {}", result);
+        // 简化测试：只验证没有错误，构造器现在返回负数
+        assert!(result != 0); // 只要不是0就说明有值
     }
 
     #[test] 
