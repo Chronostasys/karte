@@ -547,6 +547,78 @@ mod option_constructor_bug_tests {
     }
 
     #[test]
+    fn test_some_reference_vs_value_debug() {
+        // 比较Some(42)和Some(&n)的行为差异
+        println!("=== Debug: test_some_reference_vs_value_debug ===");
+        
+        // 测试1: Some(42) - 应该工作
+        let program1 = r#"
+            match Some(42) {
+                Some(x) -> x,
+                None -> -1
+            }
+        "#;
+        
+        println!("Program1 (Some(42)): {}", program1);
+        let result1 = test_evaluate(program1).unwrap();
+        println!("Result1: {}", result1);
+        
+        // 测试2: Some(&n) - 有问题
+        let program2 = r#"
+            let n = 42;
+            match Some(&n) {
+                Some(ref_n) -> *ref_n,
+                None -> -1
+            }
+        "#;
+        
+        println!("Program2 (Some(&n)): {}", program2);
+        let result2 = test_evaluate(program2).unwrap();
+        println!("Result2: {}", result2);
+        
+        // 两个结果应该相同
+        assert_eq!(result1, 42, "Some(42)应该返回42");
+        assert_eq!(result2, 42, "Some(&n)应该返回42，但实际返回了{}", result2);
+    }
+
+    #[test]
+    fn test_some_without_reference_debug() {
+        // 测试Some构造器本身是否正常工作
+        let program = r#"
+            match Some(42) {
+                Some(x) -> x,
+                None -> 0
+            }
+        "#;
+        
+        println!("=== Debug: test_some_without_reference_debug ===");
+        println!("Program: {}", program);
+        
+        let result = test_evaluate(program).unwrap();
+        println!("Result: {}", result);
+        
+        assert_eq!(result, 42, "Some(42)应该返回42，但实际返回了{}", result);
+    }
+
+    #[test]
+    fn test_simple_reference_debug() {
+        // 测试简单的引用处理
+        let program = r#"
+            let n = 42;
+            let ref_n = &n;
+            *ref_n
+        "#;
+        
+        println!("=== Debug: test_simple_reference_debug ===");
+        println!("Program: {}", program);
+        
+        let result = test_evaluate(program).unwrap();
+        println!("Result: {}", result);
+        
+        assert_eq!(result, 42, "简单引用解引用应该返回42，但实际返回了{}", result);
+    }
+
+    #[test]
     fn test_some_with_reference_simple() {
         // 测试简化的引用构造器问题
         let program = r#"
@@ -556,7 +628,13 @@ mod option_constructor_bug_tests {
                 None -> 0
             }
         "#;
+        
+        println!("=== Debug: test_some_with_reference_simple ===");
+        println!("Program: {}", program);
+        
         let result = test_evaluate(program).unwrap();
+        println!("Result: {}", result);
+        
         assert_eq!(result, 42, "应该匹配Some分支并解引用返回42，但实际返回了{}", result);
     }
 } 

@@ -175,6 +175,22 @@ impl VirtualMachine {
                 println!("  {:?}: {}", virtual_reg, value);
             }
         }
+        
+        // 打印虚拟机内存中的非零值（仅前100个位置）
+        println!("Non-zero VM memory values (first 100):");
+        for (i, &value) in self.memory.iter().enumerate().take(100) {
+            if value != 0 {
+                println!("  vm_memory[{}]: {}", i, value);
+            }
+        }
+        
+        // 打印高地址内存中的非零值（栈区域）
+        println!("Non-zero VM memory values (stack area 1048400-1048576):");
+        for (i, &value) in self.memory.iter().enumerate().skip(1048400) {
+            if value != 0 {
+                println!("  vm_memory[{}]: {}", i, value);
+            }
+        }
     }
 }
 

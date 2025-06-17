@@ -7,7 +7,7 @@
 //! - 完整的内存管理
 //! - 专业的指令执行引擎
 
-use crate::vm::{InstructionExecutor, RegisterAllocator, NUM_REGISTERS};
+use crate::vm::{InstructionExecutor, NUM_REGISTERS, ProfessionalVMManager, ProfessionalExecutor};
 use crate::vm;
 use karte_lir::LirProgram;
 
@@ -23,7 +23,7 @@ use karte_lir::LirProgram;
 /// # 错误
 /// 如果程序执行过程中发生错误，返回错误信息
 pub fn execute(program: &LirProgram) -> Result<i64, String> {
-    execute_with_debug(program, false)
+    execute_professional(program, false)
 }
 
 /// 执行LIR程序并启用调试模式
@@ -64,6 +64,60 @@ pub fn execute_with_debug(program: &LirProgram, debug: bool) -> Result<i64, Stri
     Ok(result)
 }
 
+/// 使用专业执行器执行LIR程序
+/// 
+/// 这个函数使用新的 ProfessionalExecutor，提供：
+/// - 更好的寄存器分配
+/// - 专业的栈管理
+/// - 规范的调用约定
+/// 
+/// # 参数
+/// - `program`: 要执行的LIR程序
+/// - `debug`: 是否启用调试输出
+/// 
+/// # 返回值
+/// 返回程序的执行结果，通常是main函数的返回值
+/// 
+/// # 错误
+/// 如果程序执行过程中发生错误，返回错误信息
+pub fn execute_professional(program: &LirProgram, debug: bool) -> Result<i64, String> {
+    let mut executor = ProfessionalExecutor::new(debug);
+    
+    if debug {
+        println!("=== 使用专业执行器执行LIR程序 ===");
+        println!("专业虚拟机配置:");
+        println!("  - 通用寄存器数量: {}", NUM_REGISTERS);
+        println!("  - 内存大小: {} bytes", vm::MEMORY_SIZE);
+        println!("  - 栈大小: {} entries", vm::STACK_SIZE);
+        println!("  - 调用约定: System V ABI inspired");
+        println!("  - 寄存器分配: Linear Scan with Spilling");
+        println!();
+    }
+    
+    let result = executor.execute_program(program)?;
+    
+    if debug {
+        println!("=== 专业执行器程序执行完成 ===");
+        println!("返回值: {}", result);
+        println!();
+        
+        // 打印最终的虚拟机状态
+        executor.get_vm().print_state();
+        executor.get_memory().print_memory_state();
+        executor.get_stack_manager().print_state();
+    }
+    
+    Ok(result)
+}
+
+/// 使用专业虚拟机管理器执行LIR程序
+/// 
+/// 这提供了更高级的接口，包装了专业执行器
+pub fn execute_with_professional_vm(program: &LirProgram, debug: bool) -> Result<i64, String> {
+    let mut vm_manager = ProfessionalVMManager::new(debug)?;
+    vm_manager.execute_program(program)
+}
+
 /// 分析程序的寄存器使用情况
 /// 
 /// 这个函数可以用来分析程序的寄存器压力，帮助优化寄存器分配
@@ -73,7 +127,7 @@ pub fn analyze_register_usage(program: &LirProgram) -> Result<RegisterUsageAnaly
     let mut function_stats = Vec::new();
     
     for (func_name, function) in &program.functions {
-        let mut allocator = RegisterAllocator::new();
+        let mut allocator = vm::register_allocator::RegisterAllocator::new();
         allocator.analyze_lifetimes(function);
         
         let stats = allocator.get_allocation_stats();

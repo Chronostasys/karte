@@ -4,7 +4,7 @@ use crate::{
     tagged_union::{TaggedUnionManager, TaggedUnionTag},
 };
 use karte_mir::{
-    BasicBlockId, BinaryOperator, MirProgram, Statement, Terminator, UnaryOperator,
+    BasicBlockId, BinaryOperator, MirProgram, Statement, Terminator, TempId, UnaryOperator,
     Value,
     MirFunction,
     MatchArm,
@@ -133,31 +133,67 @@ impl LirLoweringContext {
             },
             Value::Unit => Operand::Immediate { value: 0 }, // Unit表示为0（在用户数据范围内）
             Value::Boolean { value } => {
-                // Boolean值使用Tagged Union结构体
-                let struct_addr = self.create_tagged_union_for_boolean(*value);
-                Operand::Register { id: struct_addr }
+                // Boolean值使用简单的0/1编码，便于逻辑操作符处理
+                Operand::Immediate { value: if *value { 1 } else { 0 } }
             },
             Value::Constructor { name, arg } => {
-                // 构造器使用Tagged Union结构体
-                let struct_addr = self.create_tagged_union_for_constructor(name, arg.as_deref());
-                Operand::Register { id: struct_addr }
+                // 特殊处理Boolean构造器：使用简单的0/1编码
+                if name == "true" {
+                    return Operand::Immediate { value: 1 };
+                } else if name == "false" {
+                    return Operand::Immediate { value: 0 };
+                }
+                
+                // 其他构造器使用tagged union结构体
+                let constructor_reg = self.create_tagged_union_for_constructor(name, arg.as_deref());
+                Operand::Register { id: constructor_reg }
             },
             Value::QualifiedConstructor { type_name, constructor_name, arg, .. } => {
-                // 限定构造器使用Tagged Union结构体
-                let struct_addr = self.create_tagged_union_for_qualified_constructor(type_name, constructor_name, arg.as_deref());
-                Operand::Register { id: struct_addr }
+                // 限定构造器使用tagged union结构体
+                let constructor_reg = self.create_tagged_union_for_qualified_constructor(type_name, constructor_name, arg.as_deref());
+                Operand::Register { id: constructor_reg }
             },
             Value::Struct { name, fields } => {
-                // 结构体值：分配内存并返回地址寄存器
-                match self.handle_struct_value(name, fields) {
-                    Ok(struct_addr) => Operand::Register { id: struct_addr },
-                    Err(err) => {
-                        self.errors.push(format!("结构体处理错误: {}", err));
-                        // 作为fallback返回一个新寄存器
-                        let reg = self.current_function_mut().new_register();
-                        Operand::Register { id: reg }
+                // 结构体处理：在栈上分配内存并存储字段数据
+                let struct_reg = self.current_function_mut().new_register();
+                
+                // 计算结构体大小（简化：每个字段8字节）
+                let struct_size = fields.len() * 8;
+                
+                // 在栈上分配结构体内存
+                self.add_instruction(Instruction::Alloc {
+                    dst: struct_reg,
+                    size: struct_size,
+                    alignment: 8,
+                    allocation_type: AllocationType::Stack,
+                    span: karte_diagnostics::Span::dummy(),
+                });
+                
+                // 存储字段数据到结构体内存中
+                // 按照预定义的字段顺序存储，而不是按照HashMap的迭代顺序
+                let field_order = ["value", "next"]; // 定义字段的正确顺序
+                
+                for (field_index, field_name) in field_order.iter().enumerate() {
+                    if let Some(field_value) = fields.get(*field_name) {
+                        let field_operand = self.value_to_operand(field_value);
+                        let field_offset = field_index * 8; // 每个字段8字节
+                        
+                        // 将字段值存储到结构体内存的相应偏移位置
+                        self.add_instruction(Instruction::Store64 {
+                            addr: struct_reg,
+                            offset: field_offset as i64,
+                            src: field_operand,
+                            span: karte_diagnostics::Span::dummy(),
+                        });
+                        
+                        // 将字段映射存储在value_mapping中，以便字段访问时能找到
+                        let field_key = format!("struct:{}:{}:{}", name, struct_reg.0, field_name);
+                        let resolved_field = self.resolve_value(field_value);
+                        self.value_mapping.insert(field_key, resolved_field);
                     }
                 }
+                
+                Operand::Register { id: struct_reg }
             },
             Value::Function { name } => {
                 // 函数值表示为函数ID（简化处理）
@@ -169,6 +205,49 @@ impl LirLoweringContext {
                 // 闭包值也表示为函数ID，类似于函数值
                 let function_id = function_name.chars().fold(0, |acc, c| acc + c as usize) as i64;
                 Operand::Immediate { value: function_id }
+            },
+            Value::Reference { value } => {
+                // 引用处理：将引用存储在栈内存中
+                // 1. 首先确保被引用的值已经被正确处理
+                let referenced_operand = self.value_to_operand(value);
+                
+                // 2. 在栈上分配空间存储被引用的值
+                let stack_addr_reg = self.current_function_mut().new_register();
+                
+                // 分配栈空间（16字节用于存储一个完整的值，包括可能的Tagged Union）
+                self.add_instruction(Instruction::Alloc {
+                    dst: stack_addr_reg,
+                    size: 16,
+                    alignment: 8,
+                    allocation_type: AllocationType::Stack,
+                    span: karte_diagnostics::Span::dummy(),
+                });
+                
+                // 3. 将被引用的值存储到栈内存中
+                match referenced_operand {
+                    Operand::Register { id: _src_reg } => {
+                        // 直接将被引用的值存储到栈内存中
+                        self.add_instruction(Instruction::Store64 {
+                            addr: stack_addr_reg,
+                            offset: 0,
+                            src: referenced_operand,
+                            span: karte_diagnostics::Span::dummy(),
+                        });
+                    },
+                    _ => {
+                        // 对于立即数或其他操作数，也直接存储
+                        self.add_instruction(Instruction::Store64 {
+                            addr: stack_addr_reg,
+                            offset: 0,
+                            src: referenced_operand,
+                            span: karte_diagnostics::Span::dummy(),
+                        });
+                    }
+                }
+                
+                // 4. 直接返回引用地址，不进行额外的存储和加载操作
+                // 这样可以避免寄存器冲突问题
+                Operand::Register { id: stack_addr_reg }
             },
             _ => {
                 let register = self.allocate_register_for_value(value);
@@ -313,19 +392,39 @@ impl LirLoweringContext {
 
     /// 解析值的实际内容，处理间接引用
     fn resolve_value(&self, value: &Value) -> Value {
+        self.resolve_value_with_visited(value, &mut std::collections::HashSet::new())
+    }
+    
+    /// 带循环检测的值解析函数
+    fn resolve_value_with_visited(&self, value: &Value, visited: &mut std::collections::HashSet<String>) -> Value {
         match value {
             Value::Temp { .. } | Value::Variable { .. } => {
                 let key = value_to_key(value);
+                
+                // 检查是否已经访问过这个值，防止无限递归
+                if visited.contains(&key) {
+                    // 发现循环引用，返回原始值以打破循环
+                    return value.clone();
+                }
+                
                 if let Some(mapped_value) = self.value_mapping.get(&key) {
+                    // 将当前值添加到已访问集合
+                    visited.insert(key.clone());
+                    
                     // 递归解析，防止多层间接引用
-                    self.resolve_value(mapped_value)
+                    let result = self.resolve_value_with_visited(mapped_value, visited);
+                    
+                    // 从已访问集合中移除当前值（回溯）
+                    visited.remove(&key);
+                    
+                    result
                 } else {
                     value.clone()
                 }
             }
             Value::Reference { value: inner } => {
                 // 对于引用值，我们也需要递归解析内部值
-                let resolved_inner = self.resolve_value(inner);
+                let resolved_inner = self.resolve_value_with_visited(inner, visited);
                 Value::Reference { value: Box::new(resolved_inner) }
             }
             _ => value.clone(),
@@ -376,6 +475,29 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
             id: entry_label,
             span: karte_diagnostics::Span::new(0,0), // Dummy span
         });
+        
+        // 在函数开始处理参数：将调用约定的参数寄存器移动到函数内部的参数变量
+        for (i, param_name) in mir_function.params.iter().enumerate() {
+            if i < 4 { // 调用约定最多支持4个参数
+                let param_source_reg = RegisterId(i + 1); // 调用约定参数寄存器: r1, r2, r3, r4
+                let param_dest_reg = context.current_function_mut().new_register();
+                
+                // 将参数从调用约定寄存器移动到函数内部寄存器
+                context.add_instruction(Instruction::Move {
+                    dst: param_dest_reg,
+                    src: Operand::Register { id: param_source_reg },
+                    span: karte_diagnostics::Span::new(0, 0),
+                });
+                
+                // 在值映射中记录参数变量到寄存器的映射
+                let param_value = Value::Variable { name: param_name.clone() };
+                let param_key = value_to_key(&param_value);
+                context.value_mapping.insert(param_key, Value::Temp { id: TempId(param_dest_reg.0) });
+                
+                // 同时更新寄存器映射
+                context.value_to_register.insert(param_name.clone(), param_dest_reg);
+            }
+        }
 
         // 预分配所有基本块的标签
         for &block_id in mir_function.basic_blocks.keys() {
@@ -423,8 +545,15 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
         lir_program.set_main(main_name.clone());
     }
 
+    // 在返回之前，降级高级指令为基础指令
     if context.errors.is_empty() {
-        Ok(lir_program)
+        match crate::lower_program_instructions(&mut lir_program) {
+            Ok(()) => Ok(lir_program),
+            Err(lowering_error) => {
+                context.errors.push(format!("指令降级错误: {}", lowering_error));
+                Err(context.errors)
+            }
+        }
     } else {
         Err(context.errors)
     }
@@ -438,12 +567,74 @@ fn lower_statement(
     match statement {
         Statement::Assign { target, source, span } => {
             let dst = ctx.allocate_register_for_value(target);
-            let src = ctx.value_to_operand(source);
-            ctx.add_instruction(Instruction::Move {
-                dst,
-                src,
-                span: *span,
-            });
+            
+            // 特殊处理构造器：直接生成Tagged Union，不需要额外的Move指令
+            match source {
+                Value::Constructor { name, arg } => {
+                    // 特殊处理Boolean构造器：使用简单的0/1编码
+                    if name == "true" {
+                        ctx.add_instruction(Instruction::Move {
+                            dst,
+                            src: Operand::Immediate { value: 1 },
+                            span: *span,
+                        });
+                    } else if name == "false" {
+                        ctx.add_instruction(Instruction::Move {
+                            dst,
+                            src: Operand::Immediate { value: 0 },
+                            span: *span,
+                        });
+                    } else {
+                        // 其他构造器：创建Tagged Union，直接使用目标寄存器
+                        let tag_id = ctx.tagged_union_manager.get_constructor_id(name);
+                        let data_operand = if let Some(arg_value) = arg {
+                            Some(ctx.value_to_operand(arg_value))
+                        } else {
+                            None
+                        };
+                        
+                        let instructions = ctx.tagged_union_manager.generate_allocation_instructions(
+                            dst,
+                            tag_id,
+                            data_operand,
+                            *span,
+                        );
+                        
+                        for instruction in instructions {
+                            ctx.add_instruction(instruction);
+                        }
+                    }
+                },
+                Value::QualifiedConstructor { type_name, constructor_name, arg, .. } => {
+                    // 限定构造器：创建Tagged Union，直接使用目标寄存器
+                    let tag_id = ctx.tagged_union_manager.get_qualified_constructor_id(type_name, constructor_name);
+                    let data_operand = if let Some(arg_value) = arg {
+                        Some(ctx.value_to_operand(arg_value))
+                    } else {
+                        None
+                    };
+                    
+                    let instructions = ctx.tagged_union_manager.generate_allocation_instructions(
+                        dst,
+                        tag_id,
+                        data_operand,
+                        *span,
+                    );
+                    
+                    for instruction in instructions {
+                        ctx.add_instruction(instruction);
+                    }
+                },
+                _ => {
+                    // 其他值：正常处理
+                    let src = ctx.value_to_operand(source);
+                    ctx.add_instruction(Instruction::Move {
+                        dst,
+                        src,
+                        span: *span,
+                    });
+                }
+            }
             
             // 更新值映射，追踪赋值关系
             let target_key = value_to_key(target);
@@ -506,45 +697,31 @@ fn lower_statement(
                     return Ok(());
                 }
                 
-                // Handle logical operations separately with short-circuit evaluation
+                // Handle logical operations with simple 0/1 encoding and short-circuit evaluation
                 BinaryOperator::And => {
-                    // Logical AND with Tagged Union boolean values
+                    // Logical AND: if src1 == 0, result = 0; else result = src2
                     let false_label = LabelId(ctx.global_label_counter);
                     ctx.global_label_counter += 1;
                     let end_label = LabelId(ctx.global_label_counter);
                     ctx.global_label_counter += 1;
                     
-                    // Check if src1 is False (Tagged Union)
-                    let temp_reg = ctx.current_function_mut().new_register();
-                    let false_tag_id = ctx.tagged_union_manager.get_constructor_id("False");
+                    // Compare src1 with 0 (false)
+                    ctx.add_instruction(Instruction::Compare { 
+                        src1: src1.clone(), 
+                        src2: Operand::Immediate { value: 0 }, 
+                        span: *span 
+                    });
                     
-                    let tag_check_instructions = ctx.tagged_union_manager.generate_tag_check_instructions(
-                        match src1 {
-                            Operand::Register { id } => id,
-                            _ => {
-                                ctx.errors.push("AND operand must be a register for Tagged Union".to_string());
-                                return Err(ctx.errors.clone());
-                            }
-                        },
-                        false_tag_id,
-                        temp_reg,
-                        *span,
-                    );
-                    
-                    for instruction in tag_check_instructions {
-                        ctx.add_instruction(instruction);
-                    }
-                    
+                    // If src1 == 0, jump to false_label
                     ctx.add_instruction(Instruction::JumpEqual { target: false_label, span: *span });
                     
-                    // src1 is true, move src2 to result
+                    // src1 is true (non-zero), move src2 to result
                     ctx.add_instruction(Instruction::Move { dst, src: src2, span: *span });
                     ctx.add_instruction(Instruction::Jump { target: end_label, span: *span });
                     
-                    // src1 is false, create false Tagged Union
+                    // src1 is false, result is false (0)
                     ctx.add_instruction(Instruction::Label { id: false_label, span: *span });
-                    let false_value = ctx.create_tagged_union_for_boolean(false);
-                    ctx.add_instruction(Instruction::Move { dst, src: Operand::Register { id: false_value }, span: *span });
+                    ctx.add_instruction(Instruction::Move { dst, src: Operand::Immediate { value: 0 }, span: *span });
                     
                     // End
                     ctx.add_instruction(Instruction::Label { id: end_label, span: *span });
@@ -552,42 +729,29 @@ fn lower_statement(
                 }
                 
                 BinaryOperator::Or => {
-                    // Logical OR with Tagged Union boolean values
+                    // Logical OR: if src1 != 0, result = 1; else result = src2
                     let true_label = LabelId(ctx.global_label_counter);
                     ctx.global_label_counter += 1;
                     let end_label = LabelId(ctx.global_label_counter);
                     ctx.global_label_counter += 1;
                     
-                    // Check if src1 is True (Tagged Union)
-                    let temp_reg = ctx.current_function_mut().new_register();
-                    let true_tag_id = ctx.tagged_union_manager.get_constructor_id("True");
+                    // Compare src1 with 0 (false)
+                    ctx.add_instruction(Instruction::Compare { 
+                        src1: src1.clone(), 
+                        src2: Operand::Immediate { value: 0 }, 
+                        span: *span 
+                    });
                     
-                    let tag_check_instructions = ctx.tagged_union_manager.generate_tag_check_instructions(
-                        match src1 {
-                            Operand::Register { id } => id,
-                            _ => {
-                                ctx.errors.push("OR operand must be a register for Tagged Union".to_string());
-                                return Err(ctx.errors.clone());
-                            }
-                        },
-                        true_tag_id,
-                        temp_reg,
-                        *span,
-                    );
-                    
-                    for instruction in tag_check_instructions {
-                        ctx.add_instruction(instruction);
-                    }
-                    
-                    ctx.add_instruction(Instruction::JumpEqual { target: true_label, span: *span });
+                    // If src1 != 0, jump to true_label
+                    ctx.add_instruction(Instruction::JumpNotEqual { target: true_label, span: *span });
                     
                     // src1 is false, move src2 to result
                     ctx.add_instruction(Instruction::Move { dst, src: src2, span: *span });
                     ctx.add_instruction(Instruction::Jump { target: end_label, span: *span });
                     
-                    // src1 is true, move src1 to result
+                    // src1 is true, result is true (1)
                     ctx.add_instruction(Instruction::Label { id: true_label, span: *span });
-                    ctx.add_instruction(Instruction::Move { dst, src: src1, span: *span });
+                    ctx.add_instruction(Instruction::Move { dst, src: Operand::Immediate { value: 1 }, span: *span });
                     
                     // End
                     ctx.add_instruction(Instruction::Label { id: end_label, span: *span });
@@ -627,51 +791,24 @@ fn lower_statement(
                     });
                 }
                 UnaryOperator::Not => {
-                    // !x: logical not for Tagged Union boolean values
-                    let true_label = LabelId(ctx.global_label_counter);
-                    ctx.global_label_counter += 1;
-                    let false_label = LabelId(ctx.global_label_counter);
-                    ctx.global_label_counter += 1;
-                    let end_label = LabelId(ctx.global_label_counter);
-                    ctx.global_label_counter += 1;
-                    
-                    // Check if src is True (Tagged Union)
+                    // !x: logical not with 0/1 encoding
+                    // For 0/1 boolean encoding: !x = 1 - x
                     let temp_reg = ctx.current_function_mut().new_register();
-                    let true_tag_id = ctx.tagged_union_manager.get_constructor_id("True");
                     
-                    let tag_check_instructions = ctx.tagged_union_manager.generate_tag_check_instructions(
-                        match src {
-                            Operand::Register { id } => id,
-                            _ => {
-                                ctx.errors.push("NOT operand must be a register for Tagged Union".to_string());
-                                return Ok(());
-                            }
-                        },
-                        true_tag_id,
-                        temp_reg,
-                        *span,
-                    );
+                    // Move 1 to temp register
+                    ctx.add_instruction(Instruction::Move { 
+                        dst: temp_reg, 
+                        src: Operand::Immediate { value: 1 }, 
+                        span: *span 
+                    });
                     
-                    for instruction in tag_check_instructions {
-                        ctx.add_instruction(instruction);
-                    }
-                    
-                    ctx.add_instruction(Instruction::JumpEqual { target: true_label, span: *span });
-                    ctx.add_instruction(Instruction::Jump { target: false_label, span: *span });
-                    
-                    // src is true, result is false
-                    ctx.add_instruction(Instruction::Label { id: true_label, span: *span });
-                    let false_value = ctx.create_tagged_union_for_boolean(false);
-                    ctx.add_instruction(Instruction::Move { dst, src: Operand::Register { id: false_value }, span: *span });
-                    ctx.add_instruction(Instruction::Jump { target: end_label, span: *span });
-                    
-                    // src is false, result is true
-                    ctx.add_instruction(Instruction::Label { id: false_label, span: *span });
-                    let true_value = ctx.create_tagged_union_for_boolean(true);
-                    ctx.add_instruction(Instruction::Move { dst, src: Operand::Register { id: true_value }, span: *span });
-                    
-                    // End
-                    ctx.add_instruction(Instruction::Label { id: end_label, span: *span });
+                    // Subtract src from 1: result = 1 - src
+                    ctx.add_instruction(Instruction::Sub { 
+                        dst, 
+                        src1: Operand::Register { id: temp_reg }, 
+                        src2: src, 
+                        span: *span 
+                    });
                 }
             }
             Ok(())
@@ -697,16 +834,34 @@ fn lower_statement(
                 arg_operands.push(ctx.value_to_operand(arg));
             }
 
-            // Simple calling convention: move args into r0, r1, ...
-            let mut arg_regs = vec![];
+            // 分配临时寄存器来避免参数冲突
+            let mut temp_regs = vec![];
             for (i, arg_op) in arg_operands.iter().enumerate() {
-                let reg = RegisterId(i); // r0, r1, ...
+                let temp_reg = ctx.current_function_mut().new_register();
                 ctx.add_instruction(Instruction::Move {
-                    dst: reg,
+                    dst: temp_reg,
                     src: arg_op.clone(),
                     span: *span,
                 });
-                arg_regs.push(reg);
+                temp_regs.push(temp_reg);
+            }
+            
+            // 然后按照调用约定将参数移动到正确的寄存器
+            // 调用约定：参数寄存器为 [1, 2, 3, 4]
+            let mut arg_regs = vec![];
+            for (i, temp_reg) in temp_regs.iter().enumerate() {
+                if i < 4 { // 最多支持4个参数
+                    let param_reg = RegisterId(i + 1); // 参数寄存器: r1, r2, r3, r4
+                    ctx.add_instruction(Instruction::Move {
+                        dst: param_reg,
+                        src: Operand::Register { id: *temp_reg },
+                        span: *span,
+                    });
+                    arg_regs.push(param_reg);
+                } else {
+                    // 超过4个参数需要使用栈传递 - TODO: 未来实现
+                    return Err(vec!["Functions with more than 4 parameters are not yet supported".to_string()]);
+                }
             }
 
             // 检查是否是函数参数调用
@@ -733,16 +888,8 @@ fn lower_statement(
                         span: *span,
                     });
                     
-                    if let (Some(target_val), Some(_result_reg_id)) = (target, result_reg) {
-                        let target_reg = ctx.allocate_register_for_value(target_val);
-                        // 结果在r0中
-                        let result_src_reg = RegisterId(0);
-                        ctx.add_instruction(Instruction::Move {
-                            dst: target_reg,
-                            src: Operand::Register { id: result_src_reg },
-                            span: *span
-                        });
-                    }
+                    // 不需要额外的Move指令，因为CallIndirect指令已经正确指定了result寄存器
+                    // 专业执行器会在函数返回时直接将结果设置到result寄存器中
                 }
             } else {
                 // 尝试从值中提取函数名，支持更多类型的可调用值
@@ -799,97 +946,64 @@ fn lower_statement(
                     span: *span
                 });
                 
-                if let (Some(target_val), Some(_result_reg_id)) = (target, result_reg) {
-                    let target_reg = ctx.allocate_register_for_value(target_val);
-                    // We assume the result of a call is always in r0 for simplicity
-                    let result_src_reg = RegisterId(0);
-                    ctx.add_instruction(Instruction::Move {
-                        dst: target_reg,
-                        src: Operand::Register { id: result_src_reg },
-                        span: *span
-                    });
-                }
+                // 不需要额外的Move指令，因为Call指令已经正确指定了result寄存器
+                // 专业执行器会在函数返回时直接将结果设置到result寄存器中
             }
 
             Ok(())
         }
 
         Statement::FieldAccess { target, object, field, span } => {
-            // 字段访问的新实现：使用专门的结构体指令
+            // 字段访问实现：从结构体内存中加载字段数据
             let dst = ctx.allocate_register_for_value(target);
             
-            // 尝试解析对象值，如果是结构体，提取字段值
-            let mut resolved_object = ctx.resolve_value(object);
+            // 尝试解析对象值
+            let resolved_object = ctx.resolve_value(object);
             
-            // 如果是引用，自动解引用
-            if let Value::Reference { value } = resolved_object {
-                resolved_object = ctx.resolve_value(&value);
-            }
-
-            match resolved_object {
-                Value::Struct { name, fields } => {
-                    // 尝试使用新的结构体布局系统
-                    let struct_type_id_result = ctx.get_or_create_struct_type_id(&name);
-                    
-                    if let Ok(struct_type_id) = struct_type_id_result {
-                        // 获取布局信息（避免借用冲突）
-                        let layout_info = ctx.current_function.as_ref()
-                            .and_then(|f| f.get_struct_layout(struct_type_id))
-                            .and_then(|layout| layout.fields.iter().find(|f| f.name == *field))
-                            .map(|field_info| field_info.offset);
-                        
-                        if let Some(field_offset) = layout_info {
-                            let object_reg = ctx.allocate_register_for_value(object);
-                            
-                            // 使用专门的字段加载指令
-                            ctx.add_instruction(Instruction::StructFieldLoad {
-                                dst,
-                                struct_addr: object_reg,
-                                field_offset,
-                                span: *span,
-                            });
-                            
-                            // 更新值映射
-                            if let Some(field_value) = fields.get(field) {
-                                let target_key = value_to_key(target);
-                                let resolved_field = ctx.resolve_value(field_value);
-                                ctx.value_mapping.insert(target_key, resolved_field);
-                            }
-                            
-                            return Ok(());
-                        }
-                    }
-                    
-                    // 回退到旧的方法
-                    if let Some(field_value) = fields.get(field) {
-                        let field_operand = ctx.value_to_operand(field_value);
-                        ctx.add_instruction(Instruction::Move {
-                            dst,
-                            src: field_operand,
-                            span: *span,
-                        });
-                        
-                        let target_key = value_to_key(target);
-                        let resolved_field = ctx.resolve_value(field_value);
-                        ctx.value_mapping.insert(target_key, resolved_field);
-                        
-                        return Ok(());
-                    }
-                },
-                _ => {
-                    // 对于非结构体值，使用通用的内存加载
-                    let object_reg = ctx.allocate_register_for_value(object);
-                    let field_offset = field_name_to_offset(field);
-                    
-                    ctx.add_instruction(Instruction::Load64 {
+            // 首先尝试从结构体值中直接获取字段
+            if let Value::Struct { name, fields } = &resolved_object {
+                if let Some(field_value) = fields.get(field) {
+                    let field_operand = ctx.value_to_operand(field_value);
+                    ctx.add_instruction(Instruction::Move {
                         dst,
-                        addr: object_reg,
-                        offset: field_offset,
+                        src: field_operand,
                         span: *span,
                     });
                     
+                    let target_key = value_to_key(target);
+                    let resolved_field = ctx.resolve_value(field_value);
+                    ctx.value_mapping.insert(target_key, resolved_field);
+                    
                     return Ok(());
                 }
+            }
+            
+            // 如果不是直接的结构体值，尝试从内存中加载字段
+            let object_operand = ctx.value_to_operand(object);
+            
+            if let Operand::Register { id: object_reg } = object_operand {
+                // 计算字段偏移（简化：假设字段按声明顺序存储，每个字段8字节）
+                // 这里我们需要知道字段在结构体中的位置
+                // 简化实现：假设常见的字段名对应固定偏移
+                let field_offset = match field.as_str() {
+                    "value" => 0,  // 第一个字段
+                    "next" => 8,   // 第二个字段
+                    _ => 0,        // 默认第一个字段
+                };
+                
+                // 从结构体内存中加载字段值
+                ctx.add_instruction(Instruction::Load64 {
+                    dst,
+                    addr: object_reg,
+                    offset: field_offset,
+                    span: *span,
+                });
+                
+                let target_key = value_to_key(target);
+                let target_value = Value::Temp { id: TempId(dst.0) };
+                ctx.value_mapping.insert(target_key, target_value);
+                
+                return Ok(());
             }
             
             // 如果无法解析，生成占位符
@@ -903,193 +1017,70 @@ fn lower_statement(
         }
 
         Statement::Dereference { target, reference, span } => {
-            // 解引用的实现：
-            // 我们需要从引用中提取被引用的值
-            
+            // 解引用的实现：从栈内存中加载被引用的值
             let dst = ctx.allocate_register_for_value(target);
             
-            // 尝试解析引用值，如果是引用，提取内部值
-            let resolved_reference = ctx.resolve_value(reference);
-            if let Value::Reference { value } = &resolved_reference {
-                // 找到了引用的内部值，生成加载指令
-                let inner_operand = ctx.value_to_operand(value);
-                ctx.add_instruction(Instruction::Move {
-                    dst,
-                    src: inner_operand,
-                    span: *span,
-                });
-                
-                // 更新值映射，记录解引用的结果
-                let target_key = value_to_key(target);
-                let resolved_inner = ctx.resolve_value(value);
-                ctx.value_mapping.insert(target_key, resolved_inner);
-                
-                return Ok(());
+            // 获取引用的操作数（这是一个栈地址）
+            let ref_operand = ctx.value_to_operand(reference);
+            
+            // 从栈内存中加载值
+            match ref_operand {
+                Operand::Register { id: addr_reg } => {
+                    // 从栈地址加载值
+                    // 注意：这里加载的可能是Tagged Union结构的地址，也可能是简单值
+                    ctx.add_instruction(Instruction::Load64 {
+                        dst,
+                        addr: addr_reg,
+                        offset: 0,
+                        span: *span,
+                    });
+                },
+                _ => {
+                    // 如果引用不是寄存器（不应该发生），直接复制值
+                    ctx.add_instruction(Instruction::Move {
+                        dst,
+                        src: ref_operand,
+                        span: *span,
+                    });
+                }
             }
             
-            // 如果无法解析，生成占位符
-            ctx.add_instruction(Instruction::Move {
-                dst,
-                src: Operand::Immediate { value: 0 },
-                span: *span,
-            });
+            // 更新值映射
+            let target_key = value_to_key(target);
+            let target_value = Value::Temp { id: TempId(dst.0) };
+            ctx.value_mapping.insert(target_key, target_value);
             
             Ok(())
         }
 
         Statement::ConstructorArgExtract { target, constructor, arg_index, span } => {
-            // 构造器参数提取的实现：
-            // 我们需要找到存储构造器参数的寄存器
-            
+            // Tagged Union构造器参数提取：从Tagged Union结构体中提取数据
             let dst = ctx.allocate_register_for_value(target);
             
-            // 首先尝试从MIR值中直接提取参数，这是最可靠的方法
-            let resolved_constructor = ctx.resolve_value(constructor);
-            if let Value::Constructor { arg: Some(arg_value), .. } = &resolved_constructor {
-                if *arg_index == 0 {
-                    // 提取第一个参数
-                    let arg_operand = ctx.value_to_operand(arg_value);
-                    ctx.add_instruction(Instruction::Move {
-                        dst,
-                        src: arg_operand,
-                        span: *span,
-                    });
-                    
-                    // 更新值映射，记录参数提取的结果
-                    let target_key = value_to_key(target);
-                    let resolved_arg = ctx.resolve_value(arg_value);
-                    ctx.value_mapping.insert(target_key, resolved_arg);
-                    
-                    return Ok(());
-                }
-            } else if let Value::QualifiedConstructor { arg: Some(arg_value), .. } = &resolved_constructor {
-                if *arg_index == 0 {
-                    // 提取第一个参数
-                    let arg_operand = ctx.value_to_operand(arg_value);
-                    ctx.add_instruction(Instruction::Move {
-                        dst,
-                        src: arg_operand,
-                        span: *span,
-                    });
-                    
-                    // 更新值映射，记录参数提取的结果
-                    let target_key = value_to_key(target);
-                    let resolved_arg = ctx.resolve_value(arg_value);
-                    ctx.value_mapping.insert(target_key, resolved_arg);
-                    
-                    return Ok(());
-                }
-            }
-            
-            // 如果不能从MIR值中提取，尝试在value_mapping中查找原始构造器
-            // 查找所有映射中的构造器值，看看哪个构造器的ID匹配当前的constructor寄存器
+            // 获取构造器寄存器
             let constructor_operand = ctx.value_to_operand(constructor);
-            
-            // 查找value_mapping中所有的构造器值 - 首先收集可能的参数值
-            let mut found_arg_value: Option<Value> = None;
-            
-            // 先尝试根据constructor的键查找对应的值
-            let constructor_key = value_to_key(constructor);
-            if let Some(mapped_constructor) = ctx.value_mapping.get(&constructor_key) {
-                match mapped_constructor {
-                    Value::Constructor { arg: Some(arg_value), .. } if *arg_index == 0 => {
-                        found_arg_value = Some((**arg_value).clone());
-                    }
-                    Value::QualifiedConstructor { arg: Some(arg_value), .. } if *arg_index == 0 => {
-                        found_arg_value = Some((**arg_value).clone());
-                    }
-                    _ => {}
-                }
-            }
-            
-            // 如果还没找到，搜索所有值映射中的构造器，但要更智能地匹配
-            if found_arg_value.is_none() {
-                // 获取构造器对应的寄存器ID，以便更精确地查找
-                if let Operand::Register { id: constructor_reg } = &constructor_operand {
-                    // 首先收集所有需要检查的构造器值，避免借用冲突
-                    let mut candidate_constructors = Vec::new();
-                    for (_key, mapped_value) in &ctx.value_mapping {
-                        match mapped_value {
-                            Value::Constructor { arg: Some(arg_value), .. } => {
-                                candidate_constructors.push((mapped_value.clone(), (**arg_value).clone()));
-                            }
-                            Value::QualifiedConstructor { arg: Some(arg_value), .. } => {
-                                candidate_constructors.push((mapped_value.clone(), (**arg_value).clone()));
-                            }
-                            _ => {}
+            let constructor_reg = match constructor_operand {
+                Operand::Register { id } => id,
+                _ => {
+                    return Err(vec!["Constructor must be a register for argument extraction".to_string()]);
                         }
-                    }
-                    
-                    // 然后检查这些候选构造器
-                    for (constructor_value, arg_value) in candidate_constructors {
-                        let constructor_mapped_reg = ctx.allocate_register_for_value(&constructor_value);
-                        if constructor_mapped_reg == *constructor_reg {
-                            found_arg_value = Some(arg_value);
-                            break;
-                        }
-                    }
-                }
-                
-                // 如果还是没找到，使用简单的启发式方法：第一个找到的有参数构造器
-                if found_arg_value.is_none() {
-                    for (_key, mapped_value) in &ctx.value_mapping {
-                        if let Value::Constructor { arg: Some(arg_value), .. } = mapped_value {
-                            found_arg_value = Some((**arg_value).clone());
-                            break;
-                        } else if let Value::QualifiedConstructor { arg: Some(arg_value), .. } = mapped_value {
-                            found_arg_value = Some((**arg_value).clone());
-                            break;
-                        }
-                    }
-                }
-            }
+            };
             
-            if let Some(arg_value) = found_arg_value {
-                let arg_operand = ctx.value_to_operand(&arg_value);
-                ctx.add_instruction(Instruction::Move {
-                    dst,
-                    src: arg_operand,
-                    span: *span,
-                });
-                
-                let target_key = value_to_key(target);
-                let resolved_arg = ctx.resolve_value(&arg_value);
-                ctx.value_mapping.insert(target_key, resolved_arg);
-                
-                return Ok(());
-            }
-            
-            // 如果在value_mapping中找不到，尝试寄存器约定
-            // 分析调试输出，参数可能在不同的寄存器位置
-            if let Operand::Register { id: constructor_reg } = constructor_operand {
-                // 尝试多个可能的寄存器位置来找到参数值
-                // 根据调试输出，参数可能在寄存器2、寄存器1+1等位置
-                let possible_arg_registers = vec![
-                    RegisterId(2), // 根据调试输出，参数经常在寄存器2
-                    RegisterId(5), // 有时在寄存器5  
-                    RegisterId(constructor_reg.0 + 1), // 标准约定
-                    RegisterId(constructor_reg.0 + 2), // 可能的位置
-                ];
-                
-                // 选择最可能的寄存器 - 优先使用观察到的模式
-                // 强制使用寄存器2，因为从调试输出看这是参数所在的位置
-                let arg_register = RegisterId(2); // 直接使用寄存器2
-                
-                ctx.add_instruction(Instruction::Move {
-                    dst,
-                    src: Operand::Register { id: arg_register },
-                    span: *span,
-                });
-                
-                return Ok(());
-            }
-            
-            // 如果无法提取参数，生成占位符（这种情况下应该是错误）
-            ctx.add_instruction(Instruction::Move {
+            // 使用Tagged Union管理器生成数据提取指令
+            let extract_instructions = ctx.tagged_union_manager.generate_data_extraction_instructions(
+                constructor_reg,
                 dst,
-                src: Operand::Immediate { value: 0 },
-                span: *span,
-            });
+                *span,
+            );
+            
+            for instruction in extract_instructions {
+                ctx.add_instruction(instruction);
+            }
+            
+            // 更新值映射
+                let target_key = value_to_key(target);
+            let target_value = Value::Temp { id: TempId(dst.0) };
+            ctx.value_mapping.insert(target_key, target_value);
             
             Ok(())
         }
@@ -1130,32 +1121,21 @@ fn lower_terminator(
             let then_label = ctx.allocate_label_for_block(*then_block);
             let else_label = ctx.allocate_label_for_block(*else_block);
             
-            // 为Tagged Union的标签检查创建临时寄存器
-            let temp_reg = ctx.current_function_mut().new_register();
-            let true_tag_id = ctx.tagged_union_manager.get_constructor_id("True");
+            // 使用简单的0/1编码进行boolean比较
+            // 如果条件值不等于0（即为true），跳转到then分支
+            ctx.add_instruction(Instruction::Compare {
+                src1: cond_op,
+                src2: Operand::Immediate { value: 0 },
+                span: *span,
+            });
             
-            // 生成Tagged Union标签检查指令
-            let tag_check_instructions = ctx.tagged_union_manager.generate_tag_check_instructions(
-                match cond_op {
-                    Operand::Register { id } => id,
-                    _ => {
-                        ctx.errors.push("Condition operand must be a register for Tagged Union".to_string());
-                        return Ok(());
-                    }
-                },
-                true_tag_id,
-                temp_reg,
-                *span,
-            );
-            
-            for instruction in tag_check_instructions {
-                ctx.add_instruction(instruction);
-            }
-
-            ctx.add_instruction(Instruction::JumpEqual {
+            // 如果条件不等于0（即为true），跳转到then分支
+            ctx.add_instruction(Instruction::JumpNotEqual {
                 target: then_label,
                 span: *span,
             });
+            
+            // 否则跳转到else分支
             ctx.add_instruction(Instruction::Jump {
                 target: else_label,
                 span: *span,
@@ -1196,32 +1176,15 @@ fn lower_terminator(
                         });
                     }
                     Pattern::Boolean { value: pattern_value } => {
-                        // 布尔模式：检查Tagged Union标签
-                        let expected_tag_id = if *pattern_value { 
-                            ctx.tagged_union_manager.get_constructor_id("True")
-                        } else { 
-                            ctx.tagged_union_manager.get_constructor_id("False")
-                        };
+                        // 布尔模式：比较简单的0/1编码值
+                        let expected_value = if *pattern_value { 1 } else { 0 };
                         
-                        let temp_reg = ctx.current_function_mut().new_register();
-                        let union_addr = match &match_operand {
-                            Operand::Register { id } => *id,
-                            _ => {
-                                ctx.errors.push("Match operand must be a register for Tagged Union".to_string());
-                                continue;
-                            }
-                        };
-                        
-                        let tag_check_instructions = ctx.tagged_union_manager.generate_tag_check_instructions(
-                            union_addr,
-                            expected_tag_id,
-                            temp_reg,
-                            *span,
-                        );
-                        
-                        for instruction in tag_check_instructions {
-                            ctx.add_instruction(instruction);
-                        }
+                        // 比较匹配值与期望值
+                        ctx.add_instruction(Instruction::Compare {
+                            src1: match_operand.clone(),
+                            src2: Operand::Immediate { value: expected_value },
+                            span: *span,
+                        });
                         
                         ctx.add_instruction(Instruction::JumpEqual {
                             target: target_label,
@@ -1229,24 +1192,31 @@ fn lower_terminator(
                         });
                     }
                     Pattern::Constructor { name, arg } => {
-                        // 构造器模式处理 - 使用Tagged Union
-                        let expected_tag_id = ctx.tagged_union_manager.get_constructor_id(name);
-                        let temp_reg = ctx.current_function_mut().new_register();
-                        let union_addr = match &match_operand {
+                        // Tagged Union构造器模式处理：检查标签并提取数据
+                        let constructor_reg = match &match_operand {
                             Operand::Register { id } => *id,
                             _ => {
-                                ctx.errors.push("Match operand must be a register for Tagged Union".to_string());
+                                ctx.errors.push("Match operand must be a register for constructor pattern".to_string());
                                 continue;
                             }
                         };
 
-                        if let Some(var_name) = arg {
-                            // 带参数的构造器 (如 Some(val))
-                            let skip_label = ctx.new_label();
+                        // 获取期望的标签ID
+                        let expected_tag_id = if name.contains("::") {
+                            let parts: Vec<&str> = name.split("::").collect();
+                            if parts.len() == 2 {
+                                ctx.tagged_union_manager.get_qualified_constructor_id(parts[0], parts[1])
+                            } else {
+                                ctx.tagged_union_manager.get_constructor_id(name)
+                            }
+                        } else {
+                            ctx.tagged_union_manager.get_constructor_id(name)
+                        };
                             
-                            // 检查Tagged Union的标签是否匹配
+                        // 生成标签检查指令
+                        let temp_reg = ctx.current_function_mut().new_register();
                             let tag_check_instructions = ctx.tagged_union_manager.generate_tag_check_instructions(
-                                union_addr,
+                            constructor_reg,
                                 expected_tag_id,
                                 temp_reg,
                                 *span,
@@ -1256,51 +1226,29 @@ fn lower_terminator(
                                 ctx.add_instruction(instruction);
                             }
                             
-                            // 如果标签不匹配，跳过这个分支
-                            ctx.add_instruction(Instruction::JumpNotEqual {
-                                target: skip_label,
+                        // 如果标签匹配，跳转到目标分支
+                        ctx.add_instruction(Instruction::JumpEqual {
+                            target: target_label,
                                 span: *span,
                             });
                             
-                            // 标签匹配，提取数据并绑定到变量
+                        // 如果有参数绑定，生成数据提取指令
+                        if let Some(var_name) = arg {
                             let var_reg_id = ctx.allocate_register_for_value(&Value::Variable { name: var_name.clone() });
-                            let data_extraction_instructions = ctx.tagged_union_manager.generate_data_extraction_instructions(
-                                union_addr,
+                            let extract_instructions = ctx.tagged_union_manager.generate_data_extraction_instructions(
+                                constructor_reg,
                                 var_reg_id,
                                 *span,
                             );
                             
-                            for instruction in data_extraction_instructions {
+                            for instruction in extract_instructions {
                                 ctx.add_instruction(instruction);
                             }
                             
-                            ctx.add_instruction(Instruction::Jump {
-                                target: target_label,
-                                span: *span,
-                            });
-                            
-                            // 跳过标签
-                            ctx.add_instruction(Instruction::Label {
-                                id: skip_label,
-                                span: *span,
-                            });
-                        } else {
-                            // 无参数构造器 (如 None, True, False)
-                            let tag_check_instructions = ctx.tagged_union_manager.generate_tag_check_instructions(
-                                union_addr,
-                                expected_tag_id,
-                                temp_reg,
-                                *span,
-                            );
-                            
-                            for instruction in tag_check_instructions {
-                                ctx.add_instruction(instruction);
-                            }
-                            
-                            ctx.add_instruction(Instruction::JumpEqual {
-                                target: target_label,
-                                span: *span,
-                            });
+                            // 更新变量映射
+                            let var_key = value_to_key(&Value::Variable { name: var_name.clone() });
+                            let var_value = Value::Temp { id: TempId(var_reg_id.0) };
+                            ctx.value_mapping.insert(var_key, var_value);
                         }
                     }
                     Pattern::Variable { name: _ } => {

@@ -289,10 +289,87 @@ impl LirFunction {
         }
     }
 
+    /// 分配一个新的寄存器，跳过栈指针寄存器(RegisterId(6))
     pub fn new_register(&mut self) -> RegisterId {
+        // 栈指针寄存器是RegisterId(6)，我们需要跳过它
+        const STACK_POINTER_REG: usize = 6;
+        
         let id = RegisterId(self.next_register);
         self.next_register += 1;
+        
+        // 如果分配到了栈指针寄存器，跳过它
+        if self.next_register == STACK_POINTER_REG {
+            self.next_register += 1;
+        }
+        
         id
+    }
+    
+    /// 专门用于栈操作的寄存器分配（只返回栈指针寄存器）
+    pub fn get_stack_pointer_register(&self) -> RegisterId {
+        RegisterId(6) // 栈指针寄存器
+    }
+    
+    /// 检查一个寄存器是否是栈指针寄存器
+    pub fn is_stack_pointer_register(&self, reg: &RegisterId) -> bool {
+        reg.0 == 6
+    }
+
+    /// 验证指令是否违反栈指针寄存器使用规则
+    /// 栈指针寄存器(RegisterId(6))只能用于栈操作(Alloc, Sub等栈相关操作)
+    pub fn validate_stack_pointer_usage(&self) -> Result<(), String> {
+        // 简化验证逻辑，只检查最关键的违规情况
+        for (index, instruction) in self.instructions.iter().enumerate() {
+            match instruction {
+                // 允许的栈操作
+                Instruction::Alloc { .. } => {
+                    // 栈分配操作允许使用栈指针
+                }
+                Instruction::Sub { dst, src1, src2, .. } => {
+                    // 只有当目标是栈指针且操作数也是栈指针时才允许
+                    if self.is_stack_pointer_register(dst) {
+                        match (src1, src2) {
+                            (Operand::Register { id }, _) if self.is_stack_pointer_register(id) => {
+                                // 允许：SP = SP - size
+                            }
+                            _ => {
+                                return Err(format!(
+                                    "指令 {} 违反栈指针使用规则: 栈指针寄存器只能用于栈操作",
+                                    index
+                                ));
+                            }
+                        }
+                    }
+                }
+                Instruction::Move { dst, src, .. } => {
+                    // 检查是否有非栈操作使用栈指针
+                    if self.is_stack_pointer_register(dst) {
+                        match src {
+                            Operand::Register { id } if self.is_stack_pointer_register(id) => {
+                                // 允许：dst = SP (栈分配结果)
+                            }
+                            _ => {
+                                return Err(format!(
+                                    "指令 {} 违反栈指针使用规则: 栈指针寄存器只能用于栈操作",
+                                    index
+                                ));
+                            }
+                        }
+                    }
+                    // 允许将栈指针值复制到其他寄存器（栈分配结果）
+                    if let Operand::Register { id } = src {
+                        if self.is_stack_pointer_register(id) && !self.is_stack_pointer_register(dst) {
+                            // 允许：将栈指针值复制到其他寄存器
+                        }
+                    }
+                }
+                // 其他指令暂时不进行严格验证，避免复杂性
+                _ => {
+                    // 简化：不进行复杂的寄存器使用检查
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn new_label(&mut self) -> LabelId {
