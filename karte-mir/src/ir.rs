@@ -80,7 +80,7 @@ pub enum Statement {
     },
     /// 存储语句（用于赋值）
     Store {
-        target: String,
+        target: Value,
         value: Value,
         span: Span,
     },
@@ -109,6 +109,13 @@ pub enum Statement {
         object: Value,
         field: String,
         value: Value,
+        span: Span,
+    },
+    /// 堆分配语句
+    HeapAlloc {
+        target: Value,
+        size: usize,
+        object_type: String,
         span: Span,
     },
 }

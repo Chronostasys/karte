@@ -64,6 +64,8 @@ impl LirLoweringContext {
         // 清理函数相关的状态
         self.value_to_register.clear();
         self.pending_instructions.clear();
+        // 清空基本块到标签的映射，确保每个函数的标签都是唯一的
+        self.block_to_label.clear();
     }
 
     /// 完成当前函数
@@ -145,12 +147,17 @@ impl LirLoweringContext {
                 }
                 
                 // 其他构造器使用tagged union结构体
+                // 创建Tagged Union并返回寄存器地址
                 let constructor_reg = self.create_tagged_union_for_constructor(name, arg.as_deref());
+                
+                // 直接返回寄存器，这个寄存器包含Tagged Union结构体的地址
                 Operand::Register { id: constructor_reg }
             },
             Value::QualifiedConstructor { type_name, constructor_name, arg, .. } => {
                 // 限定构造器使用tagged union结构体
                 let constructor_reg = self.create_tagged_union_for_qualified_constructor(type_name, constructor_name, arg.as_deref());
+                
+                // 直接返回寄存器，这个寄存器包含Tagged Union结构体的地址
                 Operand::Register { id: constructor_reg }
             },
             Value::Struct { name, fields } => {
@@ -1085,6 +1092,68 @@ fn lower_statement(
             Ok(())
         }
 
+        Statement::HeapAlloc { target, size, object_type, span } => {
+            // 堆分配：生成一个简化的堆分配指令
+            let dst = ctx.allocate_register_for_value(target);
+            
+            // 简化实现：使用Move指令生成一个模拟的堆地址
+            // 实际实现中应该调用堆分配器
+            let heap_addr = 0x1000 + (*size as i64); // 简化的堆地址计算
+            ctx.add_instruction(Instruction::Move {
+                dst,
+                src: Operand::Immediate { value: heap_addr },
+                span: *span,
+            });
+            
+            // 更新值映射
+            let target_key = value_to_key(target);
+            let target_value = Value::Temp { id: TempId(dst.0) };
+            ctx.value_mapping.insert(target_key, target_value);
+            
+            Ok(())
+        }
+
+        Statement::Store { target, value, span } => {
+            // Store语句：将值存储到指定位置
+            // target现在是一个Value，表示目标地址
+            
+            let value_operand = ctx.value_to_operand(value);
+            let target_operand = ctx.value_to_operand(target);
+            
+            // 生成Store64指令：将值存储到目标地址
+            match target_operand {
+                Operand::Register { id: addr_reg } => {
+                    ctx.add_instruction(Instruction::Store64 {
+                        addr: addr_reg,
+                        offset: 0,
+                        src: value_operand,
+                        span: *span,
+                    });
+                }
+                Operand::Immediate { value: addr } => {
+                    // 如果目标是立即数地址，先移动到寄存器
+                    let addr_reg = ctx.current_function_mut().new_register();
+                    ctx.add_instruction(Instruction::Move {
+                        dst: addr_reg,
+                        src: Operand::Immediate { value: addr },
+                        span: *span,
+                    });
+                    
+                    ctx.add_instruction(Instruction::Store64 {
+                        addr: addr_reg,
+                        offset: 0,
+                        src: value_operand,
+                        span: *span,
+                    });
+                }
+                _ => {
+                    return Err(vec!["Store target must be an address".to_string()]);
+                }
+            }
+            
+            Ok(())
+        }
+
         _ => Err(vec!["Statement type not yet implemented".to_string()]),
     }
 }
@@ -1289,6 +1358,7 @@ fn value_to_key(value: &Value) -> String {
             let captured_str = captured_values.iter().map(|v| value_to_key(v)).collect::<Vec<_>>().join(",");
             format!("closure:{}:({})", function_name, captured_str)
         },
+        Value::Function { name } => format!("fn:{}", name),
         // Note: This is a simplification. Hash of constructor/struct would be better
         Value::Constructor { name, arg } => format!("ctor:{}({:?})", name, arg),
         Value::QualifiedConstructor { type_name, constructor_name, arg } => format!("qctor:{}::{}({:?})", type_name, constructor_name, arg),

@@ -2,7 +2,7 @@
 //! 
 //! 负责管理虚拟机状态、内存和栈，提供基本的执行环境
 
-use super::ProgramManager;
+use super::{ProgramManager, HeapAllocator};
 use crate::vm::{VirtualMachine, MemoryManager, CallingConvention, StackManager, ComparisonFlags, JumpCondition};
 use karte_lir::{RegisterId, Operand};
 
@@ -32,6 +32,8 @@ pub struct ExecutionEngine {
     debug_mode: bool,
     /// 调用栈
     call_stack: Vec<CallFrame>,
+    /// 堆分配器
+    heap_allocator: HeapAllocator,
 }
 
 impl ExecutionEngine {
@@ -40,6 +42,10 @@ impl ExecutionEngine {
         let calling_convention = CallingConvention::standard();
         let stack_base = 1024 * 1024; // 1MB 栈基址
         
+        // 堆从内存的前512KB开始
+        let heap_start = 0x1000; // 4KB开始，避免NULL指针区域
+        let heap_size = 512 * 1024; // 512KB堆空间
+        
         Self {
             vm: VirtualMachine::new(),
             memory: MemoryManager::new(),
@@ -47,6 +53,7 @@ impl ExecutionEngine {
             calling_convention,
             debug_mode,
             call_stack: Vec::new(),
+            heap_allocator: HeapAllocator::new(heap_start, heap_size),
         }
     }
 
@@ -252,6 +259,62 @@ impl ExecutionEngine {
         Ok(frame)
     }
 
+    /// 分配闭包环境
+    pub fn allocate_closure_env(&mut self, field_count: usize) -> Result<i64, String> {
+        let addr = self.heap_allocator.allocate_closure_env(field_count)?;
+        Ok(addr as i64)
+    }
+
+    /// 分配堆内存
+    pub fn allocate_heap(&mut self, size: usize, object_type: &str) -> Result<i64, String> {
+        let addr = match object_type {
+            "closure_env" => {
+                // 计算字段数量（每个字段8字节，减去8字节头部）
+                let field_count = if size > 8 { (size - 8) / 8 } else { 0 };
+                self.heap_allocator.allocate_closure_env(field_count)?
+            }
+            "struct" => {
+                let field_count = if size > 8 { (size - 8) / 8 } else { 0 };
+                self.heap_allocator.allocate_struct(object_type.to_string(), field_count, size)?
+            }
+            _ => {
+                self.heap_allocator.allocate_raw(size)?
+            }
+        };
+        Ok(addr as i64)
+    }
+
+    /// 存储值到堆地址
+    pub fn store_heap(&mut self, address: i64, offset: usize, value: i64) -> Result<(), String> {
+        let heap_addr = address as usize + offset;
+        if heap_addr < self.vm.memory.len() {
+            self.vm.memory[heap_addr] = value;
+            Ok(())
+        } else {
+            Err(format!("堆地址越界: 0x{:x}", heap_addr))
+        }
+    }
+
+    /// 从堆地址加载值
+    pub fn load_heap(&self, address: i64, offset: usize) -> Result<i64, String> {
+        let heap_addr = address as usize + offset;
+        if heap_addr < self.vm.memory.len() {
+            Ok(self.vm.memory[heap_addr])
+        } else {
+            Err(format!("堆地址越界: 0x{:x}", heap_addr))
+        }
+    }
+
+    /// 获取堆分配器的引用
+    pub fn get_heap_allocator(&self) -> &HeapAllocator {
+        &self.heap_allocator
+    }
+
+    /// 获取堆分配器的可变引用
+    pub fn get_heap_allocator_mut(&mut self) -> &mut HeapAllocator {
+        &mut self.heap_allocator
+    }
+
     /// 打印执行状态（调试用）
     pub fn print_state(&self) {
         if self.debug_mode {
@@ -261,6 +324,13 @@ impl ExecutionEngine {
             self.vm.print_state();
             self.memory.print_memory_state();
             self.stack_manager.print_state();
+            
+            println!("堆分配统计:");
+            let heap_stats = self.heap_allocator.get_allocation_stats();
+            println!("  分配对象数: {}", heap_stats.active_objects);
+            println!("  总分配字节: {}", heap_stats.total_allocated);
+            println!("  峰值使用: {}", heap_stats.peak_usage);
+            println!("  堆利用率: {:.1}%", heap_stats.heap_utilization);
         }
     }
 } 

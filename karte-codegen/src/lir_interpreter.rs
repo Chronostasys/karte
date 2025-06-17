@@ -23,7 +23,7 @@ use karte_lir::LirProgram;
 /// # 错误
 /// 如果程序执行过程中发生错误，返回错误信息
 pub fn execute(program: &LirProgram) -> Result<i64, String> {
-    execute_professional(program, false)
+    execute_professional(program, true)
 }
 
 /// 执行LIR程序并启用调试模式
