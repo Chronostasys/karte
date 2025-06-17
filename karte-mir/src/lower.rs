@@ -174,11 +174,24 @@ fn lower_expression(
         
         Expr::Identifier { name, .. } => {
             if let Some(value) = ctx.variables.get(name) {
-                ctx.add_statement(Statement::Assign {
-                    target: destination.clone(),
-                    source: value.clone(),
-                    span,
-                });
+                match value {
+                    Value::Reference { value: ref_target } => {
+                        // 引用变量读取：生成解引用指令
+                        ctx.add_statement(Statement::Dereference {
+                            target: destination.clone(),
+                            reference: *ref_target.clone(),
+                            span,
+                        });
+                    }
+                    _ => {
+                        // 普通变量读取
+                        ctx.add_statement(Statement::Assign {
+                            target: destination.clone(),
+                            source: value.clone(),
+                            span,
+                        });
+                    }
+                }
             } else {
                 ctx.errors.push(format!("Undefined variable: {}", name));
                 return Err(ctx.errors.clone());
@@ -293,7 +306,7 @@ fn lower_expression(
         Expr::Lambda { params, body, .. } => {
             // 1. 分析Lambda体中使用的自由变量（闭包捕获）
             let mut free_vars = Vec::new();
-            let mut captured_values = Vec::new();
+            let mut captured_var_locations = Vec::new();
             
             // 收集Lambda体中引用的所有变量
             let referenced_vars = collect_referenced_variables(body);
@@ -302,9 +315,31 @@ fn lower_expression(
             // 找出不是参数的变量（即需要捕获的自由变量）
             for var_name in referenced_vars {
                 if !param_names.contains(&var_name) {
-                    if let Some(value) = ctx.variables.get(&var_name) {
+                    if let Some(value) = ctx.variables.get(&var_name).cloned() {
                         free_vars.push(var_name.clone());
-                        captured_values.push(value.clone());
+                        
+                        // 为每个捕获的变量在堆上分配共享内存位置
+                        let shared_location = ctx.new_temp();
+                        ctx.add_statement(Statement::HeapAlloc {
+                            target: shared_location.clone(),
+                            size: 8, // 一个变量8字节
+                            object_type: "shared_var".to_string(),
+                            span,
+                        });
+                        
+                        // 将当前变量值存储到共享位置
+                        ctx.add_statement(Statement::Store {
+                            target: shared_location.clone(),
+                            value: value.clone(),
+                            span,
+                        });
+                        
+                        // 更新外部变量映射为共享内存的引用
+                        ctx.variables.insert(var_name.clone(), Value::Reference {
+                            value: Box::new(shared_location.clone())
+                        });
+                        
+                        captured_var_locations.push(shared_location);
                     }
                 }
             }
@@ -313,8 +348,69 @@ fn lower_expression(
             let lambda_name = format!("lambda${}", ctx.lambda_counter);
             ctx.lambda_counter += 1;
 
-            // 3. 创建函数参数列表：捕获的变量 + 原始参数
-            let mut all_params = free_vars.clone();
+            // 3. 创建闭包结构体
+            if captured_var_locations.is_empty() {
+                // 无捕获变量，创建简单的函数闭包
+                let mut closure_fields = std::collections::HashMap::new();
+                closure_fields.insert("function_ptr".to_string(), Value::Function { name: lambda_name.clone() });
+                closure_fields.insert("env_ptr".to_string(), Value::Number { value: 0 }); // 空环境
+                
+                ctx.add_statement(Statement::Assign {
+                    target: destination.clone(),
+                    source: Value::Struct { 
+                        name: "Closure".to_string(),
+                        fields: closure_fields,
+                    },
+                    span,
+                });
+            } else {
+                // 有捕获变量，需要分配堆环境存储共享位置指针
+                let env_temp = ctx.new_temp();
+                ctx.add_statement(Statement::HeapAlloc {
+                    target: env_temp.clone(),
+                    size: captured_var_locations.len() * 8, // 每个位置指针8字节
+                    object_type: "closure_env".to_string(),
+                    span,
+                });
+
+                // 将共享变量位置存储到环境中
+                for (i, shared_location) in captured_var_locations.iter().enumerate() {
+                    let offset_temp = ctx.new_temp();
+                    ctx.add_statement(Statement::BinaryOp {
+                        target: offset_temp.clone(),
+                        left: env_temp.clone(),
+                        op: crate::ir::BinaryOperator::Add,
+                        right: Value::Number { value: (i * 8) as i64 },
+                        span,
+                    });
+                    ctx.add_statement(Statement::Store {
+                        target: offset_temp.clone(),
+                        value: shared_location.clone(),
+                        span,
+                    });
+                }
+
+                // 创建闭包结构体
+                let mut closure_fields = std::collections::HashMap::new();
+                closure_fields.insert("function_ptr".to_string(), Value::Function { name: lambda_name.clone() });
+                closure_fields.insert("env_ptr".to_string(), env_temp);
+                
+                ctx.add_statement(Statement::Assign {
+                    target: destination.clone(),
+                    source: Value::Struct { 
+                        name: "Closure".to_string(),
+                        fields: closure_fields,
+                    },
+                    span,
+                });
+            }
+
+            // 4. 创建lambda函数，参数包含env（如果有）+ 原始参数
+            let mut all_params = if !captured_var_locations.is_empty() {
+                vec!["__env".to_string()] // 环境参数
+            } else {
+                vec![]
+            };
             all_params.extend(param_names.clone());
             
             // 暂存当前函数上下文
@@ -322,8 +418,34 @@ fn lower_expression(
             let original_block = ctx.current_block;
             let original_vars = ctx.variables.clone();
 
-            // 4. 开始新函数，包含捕获的变量作为参数
+            // 5. 开始新函数
             ctx.start_function(lambda_name.clone(), all_params);
+            
+            // 如果有环境参数，需要从环境中恢复捕获变量的共享位置
+            if !captured_var_locations.is_empty() {
+                let env_var = Value::Variable { name: "__env".to_string() };
+                for (i, var_name) in free_vars.iter().enumerate() {
+                    let shared_location_temp = ctx.new_temp();
+                    let offset_temp = ctx.new_temp();
+                    ctx.add_statement(Statement::BinaryOp {
+                        target: offset_temp.clone(),
+                        left: env_var.clone(),
+                        op: crate::ir::BinaryOperator::Add,
+                        right: Value::Number { value: (i * 8) as i64 },
+                        span,
+                    });
+                    ctx.add_statement(Statement::Dereference {
+                        target: shared_location_temp.clone(),
+                        reference: offset_temp.clone(),
+                        span,
+                    });
+                    
+                    // 在lambda内部，变量也映射为共享内存的引用
+                    ctx.variables.insert(var_name.clone(), Value::Reference {
+                        value: Box::new(shared_location_temp)
+                    });
+                }
+            }
             
             let return_val = ctx.new_temp();
             lower_expression(ctx, body, &return_val)?;
@@ -333,41 +455,148 @@ fn lower_expression(
             ctx.current_function_name = original_function_name;
             ctx.current_block = original_block;
             ctx.variables = original_vars;
-
-            // 5. 在当前位置，创建闭包值（包含函数名和捕获的值）
-            ctx.add_statement(Statement::Assign {
-                target: destination.clone(),
-                source: Value::Closure { 
-                    function_name: lambda_name,
-                    captured_values,
-                },
-                span,
-            });
         }
         
         Expr::FunctionCall { function, args, .. } => {
-            let func_val = lower_expression_to_temp(ctx, function)?;
-
-            let mut all_args: Vec<Value> = Vec::new();
-            
-            // 如果是闭包调用，需要先传递捕获的值
-            if let Value::Closure { captured_values, .. } = &func_val {
-                all_args.extend(captured_values.clone());
+            // 特殊处理：如果是直接lambda调用且没有捕获，生成优化的调用
+            if let Expr::Lambda { .. } = function.as_ref() {
+                let captured_vars = collect_referenced_variables(function);
+                if captured_vars.is_empty() {
+                    // 无捕获的lambda调用，直接生成函数调用
+                    let func_val = lower_expression_to_temp(ctx, function)?;
+                    let arg_vals: Vec<Value> = args
+                        .iter()
+                        .map(|arg| lower_expression_to_temp(ctx, arg))
+                        .collect::<Result<_, _>>()?;
+                    
+                    // 提取function_ptr并直接调用
+                    let function_ptr_temp = ctx.new_temp();
+                    ctx.add_statement(Statement::FieldAccess {
+                        target: function_ptr_temp.clone(),
+                        object: func_val.clone(),
+                        field: "function_ptr".to_string(),
+                        span,
+                    });
+                    
+                    ctx.add_statement(Statement::Call {
+                        target: Some(destination.clone()),
+                        function: function_ptr_temp,
+                        args: arg_vals,
+                        span,
+                    });
+                    return Ok(());
+                }
             }
             
-            // 然后添加实际的参数
+            let func_val = lower_expression_to_temp(ctx, function)?;
+            
+            // 对于所有其他函数调用，生成运行时closure检查
+            // 1. 生成参数列表
             let arg_vals: Vec<Value> = args
                 .iter()
                 .map(|arg| lower_expression_to_temp(ctx, arg))
                 .collect::<Result<_, _>>()?;
-            all_args.extend(arg_vals);
-
-            ctx.add_statement(Statement::Call {
-                target: Some(destination.clone()),
-                function: func_val,
-                args: all_args,
-                span,
-            });
+            
+            // 2. 检查函数值是否已知为直接函数
+            match &func_val {
+                Value::Function { name: _ } => {
+                    // 直接函数调用，无需额外处理
+                    ctx.add_statement(Statement::Call {
+                        target: Some(destination.clone()),
+                        function: func_val.clone(),
+                        args: arg_vals,
+                        span,
+                    });
+                }
+                Value::Closure { captured_values, function_name } => {
+                    // 旧式闭包调用（兼容性）
+                    let mut all_args = captured_values.clone();
+                    all_args.extend(arg_vals);
+                    ctx.add_statement(Statement::Call {
+                        target: Some(destination.clone()),
+                        function: Value::Function { name: function_name.clone() },
+                        args: all_args,
+                        span,
+                    });
+                }
+                _ => {
+                    // 其他情况：可能是closure结构体或其他类型
+                    // 生成运行时closure处理逻辑
+                    
+                    // 1. 尝试提取function_ptr字段
+                    let function_ptr_temp = ctx.new_temp();
+                    ctx.add_statement(Statement::FieldAccess {
+                        target: function_ptr_temp.clone(),
+                        object: func_val.clone(),
+                        field: "function_ptr".to_string(),
+                        span,
+                    });
+                    
+                    // 2. 尝试提取env_ptr字段
+                    let env_ptr_temp = ctx.new_temp();
+                    ctx.add_statement(Statement::FieldAccess {
+                        target: env_ptr_temp.clone(),
+                        object: func_val.clone(),
+                        field: "env_ptr".to_string(),
+                        span,
+                    });
+                    
+                    // 3. 检查env_ptr是否为0
+                    let zero_val = Value::Number { value: 0 };
+                    let is_zero_temp = ctx.new_temp();
+                    ctx.add_statement(Statement::BinaryOp {
+                        target: is_zero_temp.clone(),
+                        left: env_ptr_temp.clone(),
+                        op: crate::ir::BinaryOperator::Equal,
+                        right: zero_val,
+                        span,
+                    });
+                    
+                    // 4. 创建分支：env_ptr == 0 时直接调用，否则传递env_ptr
+                    let then_block = ctx.new_block();
+                    let else_block = ctx.new_block();
+                    let merge_block = ctx.new_block();
+                    
+                    // 设置条件分支
+                    ctx.set_terminator(Terminator::Branch {
+                        condition: is_zero_temp,
+                        then_block,
+                        else_block,
+                        span,
+                    });
+                    
+                    // then分支: env_ptr == 0，无环境调用
+                    ctx.set_current_block(then_block);
+                    ctx.add_statement(Statement::Call {
+                        target: Some(destination.clone()),
+                        function: function_ptr_temp.clone(),
+                        args: arg_vals.clone(),
+                        span,
+                    });
+                    ctx.set_terminator(Terminator::Goto {
+                        target: merge_block,
+                        span,
+                    });
+                    
+                    // else分支: env_ptr != 0，传递环境
+                    ctx.set_current_block(else_block);
+                    let mut env_args = vec![env_ptr_temp];
+                    env_args.extend(arg_vals);
+                    ctx.add_statement(Statement::Call {
+                        target: Some(destination.clone()),
+                        function: function_ptr_temp,
+                        args: env_args,
+                        span,
+                    });
+                    ctx.set_terminator(Terminator::Goto {
+                        target: merge_block,
+                        span,
+                    });
+                    
+                    // 切换到合并块
+                    ctx.set_current_block(merge_block);
+                }
+            }
         }
         
         Expr::Block { statements, final_expr, span } => {
@@ -563,8 +792,26 @@ fn lower_expression(
             
             match target.as_ref() {
                 Expr::Identifier { name, .. } => {
-                    // 变量赋值：更新变量映射
-                    ctx.variables.insert(name.clone(), value_temp);
+                    // 变量赋值：检查变量是否为引用类型
+                    if let Some(var_value) = ctx.variables.get(name).cloned() {
+                        match var_value {
+                            Value::Reference { value: ref_target } => {
+                                // 引用变量赋值：生成存储指令写入引用指向的位置
+                                ctx.add_statement(Statement::Store {
+                                    target: *ref_target,
+                                    value: value_temp,
+                                    span: *span,
+                                });
+                            }
+                            _ => {
+                                // 普通变量赋值：更新变量映射
+                                ctx.variables.insert(name.clone(), value_temp);
+                            }
+                        }
+                    } else {
+                        // 新变量赋值
+                        ctx.variables.insert(name.clone(), value_temp);
+                    }
                 }
                 Expr::FieldAccess { object, field, .. } => {
                     // 字段赋值：生成字段赋值指令
@@ -575,7 +822,7 @@ fn lower_expression(
                                 object: object_var,
                                 field: field.clone(),
                                 value: value_temp,
-                                span: karte_diagnostics::Span::new(0, 0),
+                                span: *span,
                             });
                         } else {
                             return Err(vec![format!("Undefined variable in field assignment: {}", name)]);
@@ -629,8 +876,26 @@ fn lower_statement(
             
             match target {
                 Expr::Identifier { name, .. } => {
-                    // 变量赋值：更新变量映射
-                    ctx.variables.insert(name.clone(), value_temp);
+                    // 变量赋值：检查变量是否为引用类型
+                    if let Some(var_value) = ctx.variables.get(name).cloned() {
+                        match var_value {
+                            Value::Reference { value: ref_target } => {
+                                // 引用变量赋值：生成存储指令写入引用指向的位置
+                                ctx.add_statement(Statement::Store {
+                                    target: *ref_target,
+                                    value: value_temp,
+                                    span: karte_diagnostics::Span::new(0, 0),
+                                });
+                            }
+                            _ => {
+                                // 普通变量赋值：更新变量映射
+                                ctx.variables.insert(name.clone(), value_temp);
+                            }
+                        }
+                    } else {
+                        // 新变量赋值
+                        ctx.variables.insert(name.clone(), value_temp);
+                    }
                 }
                 Expr::FieldAccess { object, field, .. } => {
                     // 字段赋值：生成字段赋值指令
@@ -728,8 +993,18 @@ fn collect_vars_recursive(expr: &Expr, vars: &mut Vec<String>) {
             collect_vars_recursive(condition, vars);
             collect_vars_recursive(body, vars);
         }
-        Expr::Lambda { body, .. } => {
-            collect_vars_recursive(body, vars);
+        Expr::Lambda { params, body, .. } => {
+            // 对于lambda，只收集真正的外部捕获变量，排除lambda参数
+            let mut lambda_vars = Vec::new();
+            collect_vars_recursive(body, &mut lambda_vars);
+            
+            // 过滤掉lambda参数
+            let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+            for var in lambda_vars {
+                if !param_names.contains(&var) {
+                    vars.push(var);
+                }
+            }
         }
         Expr::FunctionCall { function, args, .. } => {
             collect_vars_recursive(function, vars);
@@ -1049,4 +1324,255 @@ mod assignment_lowering_tests {
         assert!(vars.contains(&"x".to_string()), "应该包含变量x");
         assert!(vars.contains(&"y".to_string()), "应该包含变量y");
     }
-} 
+}
+
+#[cfg(test)]
+mod closure_struct_tests {
+    use super::*;
+
+    fn make_span() -> Span {
+        Span::new(0, 0)
+    }
+
+    #[test]
+    fn test_lambda_without_captures_lowering() {
+        // lambda (x) => x + 1
+        use karte_hir::Parameter;
+        
+        let lambda_expr = Expr::Lambda {
+            params: vec![Parameter { 
+                name: "x".to_string(), 
+                type_annotation: Some("Number".to_string()),
+                span: make_span()
+            }],
+            body: Box::new(Expr::BinaryOp {
+                left: Box::new(Expr::Identifier {
+                    name: "x".to_string(),
+                    span: make_span(),
+                }),
+                op: karte_hir::BinaryOperator::Add,
+                right: Box::new(Expr::Number {
+                    value: 1,
+                    span: make_span(),
+                }),
+                span: make_span(),
+            }),
+            span: make_span(),
+        };
+
+        let result = lower_expr_to_mir(&lambda_expr);
+        assert!(result.is_ok(), "无捕获lambda的MIR lowering应该成功");
+
+        let program = result.unwrap();
+        let main_fn = &program.functions["main"];
+        let entry_block = &main_fn.basic_blocks[&main_fn.entry_block];
+
+        // 检查是否生成了Closure结构体
+        let has_closure_struct = entry_block.statements.iter().any(|stmt| {
+            if let Statement::Assign { source: Value::Struct { name, fields }, .. } = stmt {
+                name == "Closure" && 
+                fields.get("env_ptr").map(|v| matches!(v, Value::Number { value: 0 })).unwrap_or(false)
+            } else {
+                false
+            }
+        });
+        assert!(has_closure_struct, "应该生成env_ptr=0的Closure结构体");
+
+        // 检查是否生成了lambda函数
+        assert!(program.functions.len() >= 2, "应该生成主函数和lambda函数");
+        
+        let lambda_fn_name = program.functions.keys()
+            .find(|name| name.starts_with("lambda$"))
+            .expect("应该有lambda函数");
+        let lambda_fn = &program.functions[lambda_fn_name];
+        
+        // 无捕获的lambda不应该有__env参数
+        assert_eq!(lambda_fn.params.len(), 1, "无捕获lambda应该只有1个参数");
+        assert_eq!(lambda_fn.params[0], "x", "参数应该是x");
+    }
+
+    #[test]
+    fn test_lambda_with_captures_lowering() {
+        // let y = 42; lambda (x) => x + y
+        use karte_hir::{Parameter, Statement as HirStatement};
+        
+        let expr = Expr::Block {
+            statements: vec![
+                HirStatement::Let {
+                    name: "y".to_string(),
+                    value: Expr::Number {
+                        value: 42,
+                        span: make_span(),
+                    },
+                    span: make_span(),
+                },
+            ],
+            final_expr: Some(Box::new(Expr::Lambda {
+                params: vec![Parameter { 
+                    name: "x".to_string(), 
+                    type_annotation: Some("Number".to_string()),
+                    span: make_span()
+                }],
+                body: Box::new(Expr::BinaryOp {
+                    left: Box::new(Expr::Identifier {
+                        name: "x".to_string(),
+                        span: make_span(),
+                    }),
+                    op: karte_hir::BinaryOperator::Add,
+                    right: Box::new(Expr::Identifier {
+                        name: "y".to_string(),
+                        span: make_span(),
+                    }),
+                    span: make_span(),
+                }),
+                span: make_span(),
+            })),
+            span: make_span(),
+        };
+
+        let result = lower_expr_to_mir(&expr);
+        assert!(result.is_ok(), "有捕获lambda的MIR lowering应该成功");
+
+        let program = result.unwrap();
+        let main_fn = &program.functions["main"];
+        let entry_block = &main_fn.basic_blocks[&main_fn.entry_block];
+
+        // 检查是否生成了堆分配语句
+        let has_heap_alloc = entry_block.statements.iter().any(|stmt| {
+            matches!(stmt, Statement::HeapAlloc { object_type, .. } if object_type == "closure_env")
+        });
+        assert!(has_heap_alloc, "应该生成闭包环境的堆分配语句");
+
+        // 检查是否生成了Store语句（存储捕获的变量）
+        let has_store = entry_block.statements.iter().any(|stmt| {
+            matches!(stmt, Statement::Store { .. })
+        });
+        assert!(has_store, "应该生成Store语句来存储捕获的变量");
+
+        // 检查是否生成了非零env_ptr的Closure结构体
+        let has_closure_with_env = entry_block.statements.iter().any(|stmt| {
+            if let Statement::Assign { source: Value::Struct { name, fields }, .. } = stmt {
+                name == "Closure" && 
+                fields.get("env_ptr").map(|v| !matches!(v, Value::Number { value: 0 })).unwrap_or(false)
+            } else {
+                false
+            }
+        });
+        assert!(has_closure_with_env, "应该生成env_ptr非零的Closure结构体");
+
+        // 检查lambda函数是否有环境参数
+        let lambda_fn_name = program.functions.keys()
+            .find(|name| name.starts_with("lambda$"))
+            .expect("应该有lambda函数");
+        let lambda_fn = &program.functions[lambda_fn_name];
+        
+        // 有捕获的lambda应该有__env参数 + 原始参数
+        assert_eq!(lambda_fn.params.len(), 2, "有捕获lambda应该有2个参数");
+        assert_eq!(lambda_fn.params[0], "__env", "第一个参数应该是__env");
+        assert_eq!(lambda_fn.params[1], "x", "第二个参数应该是x");
+    }
+
+    #[test]
+    fn test_closure_struct_function_call() {
+        // 测试闭包结构体的函数调用
+        use karte_hir::Parameter;
+        
+        let call_expr = Expr::FunctionCall {
+            function: Box::new(Expr::Lambda {
+                params: vec![Parameter { 
+                    name: "x".to_string(), 
+                    type_annotation: Some("Number".to_string()),
+                    span: make_span()
+                }],
+                body: Box::new(Expr::Identifier {
+                    name: "x".to_string(),
+                    span: make_span(),
+                }),
+                span: make_span(),
+            }),
+            args: vec![Expr::Number {
+                value: 42,
+                span: make_span(),
+            }],
+            span: make_span(),
+        };
+
+        let result = lower_expr_to_mir(&call_expr);
+        assert!(result.is_ok(), "闭包结构体调用的MIR lowering应该成功");
+
+        let program = result.unwrap();
+        let main_fn = &program.functions["main"];
+        let entry_block = &main_fn.basic_blocks[&main_fn.entry_block];
+
+        // 检查是否生成了Call语句
+        let has_call = entry_block.statements.iter().any(|stmt| {
+            matches!(stmt, Statement::Call { .. })
+        });
+        assert!(has_call, "应该生成Call语句");
+    }
+
+    #[test]
+    fn test_heap_allocation_statements() {
+        // 测试堆分配相关语句的生成
+        use karte_hir::{Parameter, Statement as HirStatement};
+        
+        let expr = Expr::Block {
+            statements: vec![
+                HirStatement::Let {
+                    name: "captured".to_string(),
+                    value: Expr::Number {
+                        value: 100,
+                        span: make_span(),
+                    },
+                    span: make_span(),
+                },
+            ],
+            final_expr: Some(Box::new(Expr::Lambda {
+                params: vec![Parameter { 
+                    name: "param".to_string(), 
+                    type_annotation: Some("Number".to_string()),
+                    span: make_span()
+                }],
+                body: Box::new(Expr::Identifier {
+                    name: "captured".to_string(),
+                    span: make_span(),
+                }),
+                span: make_span(),
+            })),
+            span: make_span(),
+        };
+
+        let result = lower_expr_to_mir(&expr);
+        assert!(result.is_ok(), "包含堆分配的lambda MIR lowering应该成功");
+
+        let program = result.unwrap();
+        let main_fn = &program.functions["main"];
+        let entry_block = &main_fn.basic_blocks[&main_fn.entry_block];
+
+        // 验证各种堆操作语句
+        let heap_alloc_count = entry_block.statements.iter().filter(|stmt| {
+            matches!(stmt, Statement::HeapAlloc { .. })
+        }).count();
+        assert_eq!(heap_alloc_count, 1, "应该有1个HeapAlloc语句");
+
+        let store_count = entry_block.statements.iter().filter(|stmt| {
+            matches!(stmt, Statement::Store { .. })
+        }).count();
+        assert_eq!(store_count, 1, "应该有1个Store语句（存储捕获的变量）");
+
+        // 检查lambda函数中的变量恢复
+        let lambda_fn_name = program.functions.keys()
+            .find(|name| name.starts_with("lambda$"))
+            .expect("应该有lambda函数");
+        let lambda_fn = &program.functions[lambda_fn_name];
+        let lambda_entry_block = &lambda_fn.basic_blocks[&lambda_fn.entry_block];
+
+        // 应该有语句来恢复捕获的变量（通过引用和解引用）
+        let has_var_recovery = lambda_entry_block.statements.iter().any(|stmt| {
+            matches!(stmt, Statement::Assign { .. }) || matches!(stmt, Statement::Dereference { .. })
+        });
+        assert!(has_var_recovery, "lambda函数应该有语句来恢复捕获的变量");
+    }
+}
+
+ 

@@ -9,10 +9,12 @@
 pub mod execution_engine;
 pub mod instruction_processor;
 pub mod program_manager;
+pub mod heap_allocator;
 
 pub use execution_engine::*;
 pub use instruction_processor::*;
 pub use program_manager::*;
+pub use heap_allocator::*;
 
 use super::{VirtualMachine, MemoryManager, CallingConvention, StackManager};
 use karte_lir::{LirProgram, LabelId, Instruction};
@@ -105,8 +107,24 @@ impl ProfessionalExecutor {
                     self.execution_engine.set_pc(target_pc);
                 }
                 InstructionResult::Return(value) => {
-                    // 函数返回
-                    return Ok(value);
+                    // 函数返回 - 检查是否有调用栈需要恢复
+                    if let Some(call_frame) = self.execution_engine.pop_call_frame()? {
+                        // 恢复调用栈：返回到调用点
+                        if let Some(result_reg) = call_frame.result_register {
+                            // 设置返回值到结果寄存器
+                            self.execution_engine.set_register(&result_reg, value)?;
+                        }
+                        
+                        // 设置返回地址
+                        self.execution_engine.set_pc(call_frame.return_pc);
+                        
+                        if self.debug_mode {
+                            println!("返回到调用点: PC={}, 返回值={}", call_frame.return_pc, value);
+                        }
+                    } else {
+                        // 这是主函数的返回，程序结束
+                        return Ok(value);
+                    }
                 }
                 InstructionResult::Exit(code) => {
                     // 程序退出

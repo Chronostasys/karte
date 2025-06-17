@@ -171,50 +171,14 @@ impl InstructionLowerer {
         span: &Span,
         instructions: &mut Vec<Instruction>,
     ) -> Result<(), String> {
-        // 1. 将要存储的值移动到特殊标记寄存器
-        let store_marker_reg = RegisterId(999); // 特殊标记寄存器
-        instructions.push(Instruction::Move {
-            dst: store_marker_reg,
+        // Store64操作需要特殊处理：不能覆盖地址寄存器
+        // 我们直接保留Store64指令，让专业执行器处理
+        instructions.push(Instruction::Store64 {
+            addr: *addr,
+            offset,
             src: src.clone(),
             span: *span,
         });
-        
-        // 2. 计算目标地址并执行存储操作
-        if offset == 0 {
-            // 简单情况：直接使用地址寄存器
-            // 专业执行器会识别RegisterId(999)并执行存储操作
-            instructions.push(Instruction::Move {
-                dst: *addr,
-                src: Operand::Register { id: store_marker_reg },
-                span: *span,
-            });
-        } else {
-            // 复杂情况：需要计算 addr + offset
-            let temp_offset_reg = RegisterId(998); // 使用特殊寄存器避免冲突
-            let temp_addr_reg = RegisterId(997);   // 使用特殊寄存器避免冲突
-            
-            // temp_offset_reg = offset
-            instructions.push(Instruction::Move {
-                dst: temp_offset_reg,
-                src: Operand::Immediate { value: offset },
-                span: *span,
-            });
-            
-            // temp_addr_reg = addr + offset
-            instructions.push(Instruction::Add {
-                dst: temp_addr_reg,
-                src1: Operand::Register { id: *addr },
-                src2: Operand::Register { id: temp_offset_reg },
-                span: *span,
-            });
-            
-            // 执行存储操作：将标记寄存器的值存储到计算出的地址
-            instructions.push(Instruction::Move {
-                dst: temp_addr_reg,
-                src: Operand::Register { id: store_marker_reg },
-                span: *span,
-            });
-        }
         
         Ok(())
     }

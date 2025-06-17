@@ -95,6 +95,17 @@ impl InstructionProcessor {
                 Ok(InstructionResult::Continue)
             }
 
+            // 内存操作指令
+            Instruction::Store64 { addr, offset, src, .. } => {
+                self.handle_store64(addr, *offset, src, engine)
+            }
+            Instruction::Load64 { dst, addr, offset, .. } => {
+                self.handle_load64(dst, addr, *offset, engine)
+            }
+            Instruction::Alloc { dst, size, alignment, allocation_type, .. } => {
+                self.handle_alloc(dst, *size, *alignment, engine)
+            }
+
             // 其他指令暂时返回错误
             _ => {
                 Err(format!("Unsupported instruction: {:?}", instruction))
@@ -285,23 +296,71 @@ impl InstructionProcessor {
         let return_value = if let Some(reg) = value {
             engine.get_register(reg)?
         } else {
-            0
+            0 // 无返回值的函数返回0
         };
         
-        // 弹出调用栈帧
-        if let Some(call_frame) = engine.pop_call_frame()? {
-            // 如果有结果寄存器，设置返回值
-            if let Some(result_reg) = call_frame.result_register {
-                engine.set_register(&result_reg, return_value)?;
-            }
-            
-            // 跳转到返回地址
-            Ok(InstructionResult::Jump(call_frame.return_pc))
-        } else {
-            // 如果调用栈为空，这是主函数的返回，程序结束
-            engine.set_return_value(return_value)?;
-            Ok(InstructionResult::Exit(return_value))
-        }
+        Ok(InstructionResult::Return(return_value))
+    }
+
+    /// 处理Store64指令
+    fn handle_store64(
+        &mut self,
+        addr: &RegisterId,
+        offset: i64,
+        src: &Operand,
+        engine: &mut ExecutionEngine,
+    ) -> Result<InstructionResult, String> {
+        let base_addr = engine.get_register(addr)? as usize;
+        let store_addr = (base_addr as i64 + offset) as usize;
+        let value = engine.get_operand_value(src)?;
+        
+        println!("Store64: storing {} to address {} (base {} + offset {})", 
+            value, store_addr, base_addr, offset);
+        
+        engine.store_memory(store_addr, value)?;
+        Ok(InstructionResult::Continue)
+    }
+
+    /// 处理Load64指令
+    fn handle_load64(
+        &mut self,
+        dst: &RegisterId,
+        addr: &RegisterId,
+        offset: i64,
+        engine: &mut ExecutionEngine,
+    ) -> Result<InstructionResult, String> {
+        let base_addr = engine.get_register(addr)? as usize;
+        let load_addr = (base_addr as i64 + offset) as usize;
+        let value = engine.load_memory(load_addr)?;
+        
+        println!("Load64: loaded {} from address {} (base {} + offset {})", 
+            value, load_addr, base_addr, offset);
+        
+        engine.set_register(dst, value)?;
+        Ok(InstructionResult::Continue)
+    }
+
+    /// 处理Alloc指令
+    fn handle_alloc(
+        &mut self,
+        dst: &RegisterId,
+        size: usize,
+        _alignment: usize,
+        engine: &mut ExecutionEngine,
+    ) -> Result<InstructionResult, String> {
+        // 简化的内存分配：使用递增地址
+        static mut NEXT_ADDR: usize = 1048544; // 从栈之后开始分配
+        
+        let addr = unsafe {
+            let current = NEXT_ADDR;
+            NEXT_ADDR += size;
+            current
+        };
+        
+        println!("Alloc: allocated {} bytes at address {}", size, addr);
+        
+        engine.set_register(dst, addr as i64)?;
+        Ok(InstructionResult::Continue)
     }
 }
 

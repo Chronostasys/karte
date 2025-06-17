@@ -169,8 +169,24 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            // 不是语句，尝试解析表达式作为最终表达式
+            // 不是语句，尝试解析表达式
             let expr = self.parse_expression()?;
+            
+            // 检查是否有分号 - 如果有分号，这是一个表达式语句
+            if let Some(token) = self.peek() {
+                if matches!(token.token, Token::Semicolon) {
+                    self.advance(); // consume ';'
+                    // 这是一个表达式语句，加入statements
+                    let expr_span = expr.span();
+                    statements.push(Statement::Expression {
+                        expr,
+                        span: expr_span,
+                    });
+                    continue;
+                }
+            }
+            
+            // 没有分号，这是最终表达式
             final_expr = Some(Box::new(expr));
             break;
         }

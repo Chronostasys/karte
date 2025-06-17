@@ -146,6 +146,12 @@ impl fmt::Display for Statement {
                 value,
                 ..
             } => write!(f, "{}.{} = {}", object, field, value),
+            Statement::HeapAlloc {
+                target,
+                size,
+                object_type,
+                ..
+            } => write!(f, "{} = heap_alloc {} bytes ({})", target, size, object_type),
         }
     }
 }
