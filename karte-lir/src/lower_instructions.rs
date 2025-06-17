@@ -102,20 +102,12 @@ impl InstructionLowerer {
                 // 1. 获取栈指针寄存器（确保使用正确的栈指针）
                 let stack_pointer = function.get_stack_pointer_register();
                 
-                // 2. 使用临时寄存器存储size值（确保不使用栈指针寄存器）
-                let temp_reg = function.new_register(); // 这个方法现在会跳过栈指针寄存器
-                
-                instructions.push(Instruction::Move {
-                    dst: temp_reg,
-                    src: Operand::Immediate { value: size as i64 },
-                    span: *span,
-                });
-                
-                // 3. SP = SP - size (移动栈指针)
+                // 2. 直接使用立即数进行栈指针计算，避免生成新寄存器
+                // SP = SP - size (移动栈指针)
                 instructions.push(Instruction::Sub {
                     dst: stack_pointer,
                     src1: Operand::Register { id: stack_pointer },
-                    src2: Operand::Register { id: temp_reg },
+                    src2: Operand::Immediate { value: size as i64 },
                     span: *span,
                 });
                 

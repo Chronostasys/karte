@@ -6,6 +6,9 @@ use super::{NUM_REGISTERS, MEMORY_SIZE, STACK_SIZE};
 use karte_lir::RegisterId;
 use std::collections::HashMap;
 
+// 导入SpillSlot结构体
+use super::register_allocator::SpillSlot;
+
 /// 比较结果标志
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComparisonFlags {
@@ -31,8 +34,8 @@ pub struct VirtualMachine {
     pub call_stack: Vec<usize>,
     /// 虚拟寄存器到物理寄存器的映射
     pub register_mapping: HashMap<RegisterId, u8>,
-    /// 溢出寄存器的内存存储（寄存器ID -> 内存值）
-    pub spilled_register_storage: HashMap<RegisterId, i64>,
+    /// 虚拟寄存器到溢出槽的映射
+    pub spill_slot_mapping: HashMap<RegisterId, SpillSlot>,
 }
 
 impl VirtualMachine {
@@ -46,7 +49,7 @@ impl VirtualMachine {
             memory: vec![0; MEMORY_SIZE],
             call_stack: Vec::new(),
             register_mapping: HashMap::new(),
-            spilled_register_storage: HashMap::new(),
+            spill_slot_mapping: HashMap::new(),
         }
     }
 
@@ -69,29 +72,56 @@ impl VirtualMachine {
         }
     }
 
-    /// 获取虚拟寄存器的值（通过映射或溢出存储）
+    /// 获取虚拟寄存器的值（支持物理寄存器映射和溢出处理）
     pub fn get_virtual_register(&self, reg_id: &RegisterId) -> Result<i64, String> {
         if let Some(&physical_reg) = self.register_mapping.get(reg_id) {
-            // 寄存器已分配到物理寄存器
-            self.get_physical_register(physical_reg)
-        } else if let Some(&spilled_value) = self.spilled_register_storage.get(reg_id) {
-            // 寄存器被溢出到内存，从溢出存储中读取
-            Ok(spilled_value)
+            if physical_reg == 255 {
+                // 这是一个溢出寄存器，需要从栈加载
+                if let Some(spill_slot) = self.spill_slot_mapping.get(reg_id) {
+                    // 计算栈地址：栈指针 + 溢出槽偏移
+                    let stack_addr = (self.registers[6] as i64 + spill_slot.stack_offset) as usize;
+                    if stack_addr < self.memory.len() {
+                        Ok(self.memory[stack_addr])
+                    } else {
+                        Err(format!("Spill slot memory access out of bounds: {}", stack_addr))
+                    }
+                } else {
+                    Err(format!("Spill slot not found for register {:?}", reg_id))
+                }
+            } else {
+                // 寄存器已分配到物理寄存器
+                self.get_physical_register(physical_reg)
+            }
         } else {
-            // 寄存器从未被使用，返回默认值0
-            Ok(0)
+            // 寄存器未映射 - 这应该在寄存器分配阶段被处理
+            Err(format!("Unmapped virtual register: {:?} - register allocation should handle spilling", reg_id))
         }
     }
 
-    /// 设置虚拟寄存器的值（通过映射或溢出存储）
+    /// 设置虚拟寄存器的值（支持物理寄存器映射和溢出处理）
     pub fn set_virtual_register(&mut self, reg_id: &RegisterId, value: i64) -> Result<(), String> {
         if let Some(&physical_reg) = self.register_mapping.get(reg_id) {
-            // 寄存器已分配到物理寄存器
-            self.set_physical_register(physical_reg, value)
+            if physical_reg == 255 {
+                // 这是一个溢出寄存器，需要写入栈
+                if let Some(spill_slot) = self.spill_slot_mapping.get(reg_id).cloned() {
+                    // 计算栈地址：栈指针 + 溢出槽偏移
+                    let stack_addr = (self.registers[6] as i64 + spill_slot.stack_offset) as usize;
+                    if stack_addr < self.memory.len() {
+                        self.memory[stack_addr] = value;
+                        Ok(())
+                    } else {
+                        Err(format!("Spill slot memory access out of bounds: {}", stack_addr))
+                    }
+                } else {
+                    Err(format!("Spill slot not found for register {:?}", reg_id))
+                }
+            } else {
+                // 寄存器已分配到物理寄存器
+                self.set_physical_register(physical_reg, value)
+            }
         } else {
-            // 寄存器被溢出到内存，存储到溢出存储中
-            self.spilled_register_storage.insert(*reg_id, value);
-            Ok(())
+            // 寄存器未映射 - 这应该在寄存器分配阶段被处理
+            Err(format!("Unmapped virtual register: {:?} - register allocation should handle spilling", reg_id))
         }
     }
 
@@ -136,7 +166,7 @@ impl VirtualMachine {
         self.flags = ComparisonFlags::Equal;
         self.call_stack.clear();
         self.register_mapping.clear();
-        self.spilled_register_storage.clear();
+        self.spill_slot_mapping.clear();
     }
 
     /// 获取可用的物理寄存器数量
@@ -168,13 +198,7 @@ impl VirtualMachine {
             }
         }
 
-        // 打印溢出寄存器存储
-        if !self.spilled_register_storage.is_empty() {
-            println!("Spilled Register Storage:");
-            for (virtual_reg, &value) in &self.spilled_register_storage {
-                println!("  {:?}: {}", virtual_reg, value);
-            }
-        }
+        // 溢出寄存器现在应该通过栈访问，不再单独存储
         
         // 打印虚拟机内存中的非零值（仅前100个位置）
         println!("Non-zero VM memory values (first 100):");

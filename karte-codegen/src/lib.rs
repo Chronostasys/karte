@@ -21,5 +21,3 @@ pub mod vm;
 pub use hir_interpreter::*;
 pub use lir_interpreter::*;
 
-// This will be filled with the LIR interpreter later.
-// For now, it just exports the HIR interpreter.

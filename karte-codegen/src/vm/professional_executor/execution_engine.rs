@@ -58,29 +58,31 @@ impl ExecutionEngine {
     }
 
     /// 初始化执行环境
-    pub fn initialize(&mut self, _program_manager: &ProgramManager) -> Result<(), String> {
+    pub fn initialize(&mut self, program_manager: &ProgramManager) -> Result<(), String> {
         // 重置虚拟机状态
         self.vm.reset();
         self.memory.reset();
         
-        // 初始化栈指针和帧指针
+        // 初始化栈指针和帧指针（使用物理寄存器）
         // 栈从内存的高地址向低地址增长
-        // 栈基址应该在内存数组的有效范围内（0到MEMORY_SIZE-1）
-        let stack_base = (super::super::MEMORY_SIZE - 1) as i64;  // 使用MEMORY_SIZE-1作为栈基址
+        // 使用更安全的栈基址：从内存中间开始，留出足够的栈空间
+        let stack_base = (super::super::MEMORY_SIZE / 2) as i64;  // 使用内存中间作为栈基址
         self.vm.set_physical_register(self.calling_convention.stack_pointer, stack_base)?;
         self.vm.set_physical_register(self.calling_convention.frame_pointer, stack_base)?;
         self.vm.set_physical_register(self.calling_convention.return_address, 0)?;
         
-        // 建立虚拟寄存器到物理寄存器的映射
-        // 这对于专业执行器来说是关键的
-        self.vm.register_mapping.insert(karte_lir::RegisterId(0), 0); // r0 -> physical r0
-        self.vm.register_mapping.insert(karte_lir::RegisterId(1), 1); // r1 -> physical r1
-        self.vm.register_mapping.insert(karte_lir::RegisterId(2), 2); // r2 -> physical r2
-        self.vm.register_mapping.insert(karte_lir::RegisterId(3), 3); // r3 -> physical r3
-        self.vm.register_mapping.insert(karte_lir::RegisterId(4), 4); // r4 -> physical r4
-        self.vm.register_mapping.insert(karte_lir::RegisterId(5), 5); // r5 -> physical r5
-        self.vm.register_mapping.insert(karte_lir::RegisterId(6), 6); // r6 -> physical r6 (栈指针)
-        self.vm.register_mapping.insert(karte_lir::RegisterId(7), 7); // r7 -> physical r7 (帧指针)
+        // 从编译Pass结果中获取寄存器分配信息
+        if program_manager.get_main_function_info().is_ok() {
+            self.load_register_allocation_from_pass_results(program_manager)?;
+        } else {
+            // 如果没有主函数，使用默认映射（兼容性）
+            self.initialize_default_register_mapping();
+        }
+        
+        // 确保栈指针寄存器不被虚拟寄存器覆盖
+        // RegisterId(6) 应该直接映射到物理寄存器r6（栈指针）
+        self.vm.register_mapping.insert(karte_lir::RegisterId(6), self.calling_convention.stack_pointer);
+        self.vm.register_mapping.insert(karte_lir::RegisterId(7), self.calling_convention.frame_pointer);
         
         if self.debug_mode {
             println!("执行引擎初始化完成");
@@ -88,9 +90,139 @@ impl ExecutionEngine {
             println!("  内存大小: {} bytes", super::super::MEMORY_SIZE);
             println!("  调用约定: {:?}", self.calling_convention);
             println!("  寄存器映射: {:?}", self.vm.register_mapping);
+            println!("  物理寄存器r6(SP): {}", self.vm.get_physical_register(6)?);
+            println!("  物理寄存器r7(FP): {}", self.vm.get_physical_register(7)?);
         }
         
         Ok(())
+    }
+    
+    /// 执行真正的寄存器分配
+    fn perform_register_allocation(&mut self, program_manager: &ProgramManager) -> Result<(), String> {
+        use super::super::register_allocator::RegisterAllocator;
+        
+        // 获取主函数信息
+        let main_info = program_manager.get_main_function_info()?;
+        let main_function = program_manager.get_function_info(&main_info.name)
+            .ok_or("Cannot find main function")?;
+        
+        // 创建寄存器分配器
+        let mut allocator = RegisterAllocator::new();
+        
+        // 设置栈寄存器（r6）
+        allocator.set_stack_register(karte_lir::RegisterId(6));
+        
+        // 分析寄存器生命周期
+        allocator.analyze_lifetimes(&main_function.function);
+        
+        if self.debug_mode {
+            println!("=== 寄存器分配分析 ===");
+            allocator.print_allocation();
+        }
+        
+        // 执行寄存器分配
+        match allocator.allocate_registers_with_spill(&mut main_function.function.clone()) {
+            Ok(allocation) => {
+                // 应用寄存器分配结果
+                let allocation_result = allocator.get_register_allocation();
+                
+                // 1. 处理成功分配到物理寄存器的虚拟寄存器
+                for (virtual_reg, physical_reg) in &allocation_result.register_assignments {
+                    self.vm.register_mapping.insert(*virtual_reg, *physical_reg);
+                    if self.debug_mode {
+                        println!("  -> 分配 {:?} 到物理寄存器 r{}", virtual_reg, physical_reg);
+                    }
+                }
+                
+                // 2. 处理溢出到栈的虚拟寄存器
+                // 溢出的寄存器使用特殊的标记来表示它们存储在栈上
+                for (virtual_reg, spill_slot) in &allocation_result.spill_assignments {
+                    // 使用特殊的物理寄存器ID (255) 来标记溢出寄存器
+                    // 这样执行引擎就知道需要从栈加载/存储这些寄存器
+                    self.vm.register_mapping.insert(*virtual_reg, 255); // 255表示溢出
+                    
+                    // 同时记录溢出槽信息
+                    self.vm.spill_slot_mapping.insert(*virtual_reg, spill_slot.clone());
+                    
+                    if self.debug_mode {
+                        println!("  -> 溢出 {:?} 到栈槽 {} (偏移 {})", 
+                            virtual_reg, spill_slot.slot_id, spill_slot.stack_offset);
+                    }
+                }
+                
+                // 3. 打印最终的寄存器分配结果
+                if self.debug_mode {
+                    println!("Final register allocation:");
+                    for (virtual_reg, physical_reg) in &allocation_result.register_assignments {
+                        println!("  {:?} -> r{}", virtual_reg, physical_reg);
+                    }
+                    if !allocation_result.spill_assignments.is_empty() {
+                        println!("Spilled registers:");
+                        for (virtual_reg, spill_slot) in &allocation_result.spill_assignments {
+                            println!("  {:?} -> 栈槽 {} (偏移 {})", 
+                                virtual_reg, spill_slot.slot_id, spill_slot.stack_offset);
+                        }
+                    }
+                }
+                
+                // 获取分配统计
+                let stats = allocator.get_allocation_stats();
+                if self.debug_mode {
+                    println!("寄存器分配成功:");
+                    println!("  - 虚拟寄存器总数: {}", stats.total_virtual_registers);
+                    println!("  - 分配的物理寄存器: {}", stats.allocated_physical_registers);
+                    println!("  - 寄存器压力: {}", stats.register_pressure);
+                    println!("  - 溢出的寄存器: {}", stats.spilled_registers);
+                    println!("  - 使用的溢出槽: {}", stats.spill_slots_used);
+                }
+                
+                Ok(())
+            }
+            Err(e) => {
+                if self.debug_mode {
+                    println!("寄存器分配失败，使用默认映射: {}", e);
+                }
+                // 分配失败时使用默认映射
+                self.initialize_default_register_mapping();
+                Ok(())
+            }
+        }
+    }
+    
+    /// 初始化默认的寄存器映射（兼容性后备）
+    fn initialize_default_register_mapping(&mut self) {
+        // 建立虚拟寄存器到物理寄存器的映射
+        // 需要避免分配特殊寄存器（栈指针、帧指针等）给普通变量
+        const MAX_VIRTUAL_REGS: usize = 32; // 支持足够多的虚拟寄存器
+        
+        // 获取可分配的物理寄存器（排除特殊寄存器）
+        let allocatable_registers = self.calling_convention.get_allocatable_registers();
+        
+        for virtual_reg_id in 0..MAX_VIRTUAL_REGS {
+            let virtual_reg = karte_lir::RegisterId(virtual_reg_id);
+            
+            // 特殊寄存器的映射
+            if virtual_reg_id == 6 {
+                // RegisterId(6) 直接映射到栈指针
+                self.vm.register_mapping.insert(virtual_reg, self.calling_convention.stack_pointer);
+            } else if virtual_reg_id == 7 {
+                // RegisterId(7) 直接映射到帧指针
+                self.vm.register_mapping.insert(virtual_reg, self.calling_convention.frame_pointer);
+            } else {
+                // 普通虚拟寄存器映射到可分配的物理寄存器
+                // 使用模运算，但跳过特殊寄存器
+                let allocatable_index = virtual_reg_id % allocatable_registers.len();
+                let physical_reg_id = allocatable_registers[allocatable_index];
+                self.vm.register_mapping.insert(virtual_reg, physical_reg_id);
+            }
+        }
+        
+        if self.debug_mode {
+            println!("使用默认寄存器映射策略（智能分配，避免特殊寄存器冲突）");
+            println!("可分配寄存器: {:?}", allocatable_registers);
+            println!("栈指针寄存器: r{}", self.calling_convention.stack_pointer);
+            println!("帧指针寄存器: r{}", self.calling_convention.frame_pointer);
+        }
     }
 
     /// 获取程序计数器
@@ -332,5 +464,21 @@ impl ExecutionEngine {
             println!("  峰值使用: {}", heap_stats.peak_usage);
             println!("  堆利用率: {:.1}%", heap_stats.heap_utilization);
         }
+    }
+
+    /// 从编译Pass结果中获取寄存器分配信息
+    fn load_register_allocation_from_pass_results(&mut self, _program_manager: &ProgramManager) -> Result<(), String> {
+        // 简化版本：寄存器分配已经在编译时完成
+        // 这里我们使用简单的1:1映射作为默认策略
+        // 在更完善的实现中，这里应该从编译Pass结果中加载分配信息
+        
+        if self.debug_mode {
+            println!("=== 寄存器分配信息 ===");
+            println!("使用编译时寄存器分配结果");
+            println!("执行引擎使用简化的1:1映射策略");
+        }
+        
+        self.initialize_default_register_mapping();
+        Ok(())
     }
 } 

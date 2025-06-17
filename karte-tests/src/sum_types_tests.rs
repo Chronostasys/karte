@@ -211,7 +211,8 @@ mod type_check_tests {
     }
 
     #[test]
-    fn test_some_match_fixed() {
+    fn 
+    test_some_match_fixed() {
         // 测试我们修复的Some匹配问题
         let result = test_evaluate("match Some(42) { Some(x) -> x + 1, None -> 0 }").unwrap();
         assert_eq!(result, 43);

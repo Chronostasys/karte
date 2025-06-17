@@ -28,6 +28,8 @@ pub mod display;
 pub mod struct_layout;
 pub mod tagged_union;
 pub mod lower_instructions;
+pub mod pass;
+pub mod optimization_pipeline;
 
 pub use ir::*;
 pub use struct_layout::*;
@@ -35,3 +37,5 @@ pub use lower::*;
 pub use display::*;
 pub use tagged_union::*;
 pub use lower_instructions::*;
+pub use pass::*;
+pub use optimization_pipeline::*;

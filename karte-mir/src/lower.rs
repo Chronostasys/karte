@@ -1553,12 +1553,12 @@ mod closure_struct_tests {
         let heap_alloc_count = entry_block.statements.iter().filter(|stmt| {
             matches!(stmt, Statement::HeapAlloc { .. })
         }).count();
-        assert_eq!(heap_alloc_count, 1, "应该有1个HeapAlloc语句");
+        assert_eq!(heap_alloc_count, 2, "应该有2个HeapAlloc语句：1个为捕获变量分配共享内存，1个为闭包环境分配内存");
 
         let store_count = entry_block.statements.iter().filter(|stmt| {
             matches!(stmt, Statement::Store { .. })
         }).count();
-        assert_eq!(store_count, 1, "应该有1个Store语句（存储捕获的变量）");
+        assert_eq!(store_count, 2, "应该有2个Store语句：1个存储捕获变量到共享内存，1个存储共享内存位置到闭包环境");
 
         // 检查lambda函数中的变量恢复
         let lambda_fn_name = program.functions.keys()

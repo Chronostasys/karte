@@ -23,8 +23,10 @@ pub struct RegisterLifetime {
 pub struct SpillSlot {
     /// 槽ID
     pub slot_id: usize,
-    /// 内存偏移量
+    /// 内存偏移量（相对于栈指针）
     pub offset: i64,
+    /// 栈偏移量（用于实际内存访问）
+    pub stack_offset: i64,
     /// 被溢出的寄存器
     pub spilled_register: RegisterId,
 }
@@ -46,6 +48,26 @@ pub struct RegisterAllocator {
     next_spill_offset: i64,
     /// 栈指针寄存器（用于访问溢出槽）
     stack_register: Option<RegisterId>,
+}
+
+/// 寄存器分配结果
+#[derive(Debug, Clone)]
+pub struct RegisterAllocationResult {
+    /// 成功分配的寄存器映射
+    pub register_assignments: HashMap<RegisterId, u8>,
+    /// 溢出的寄存器映射
+    pub spill_assignments: HashMap<RegisterId, SpillSlot>,
+}
+
+/// 分配统计信息
+#[derive(Debug, Clone)]
+pub struct AllocationStats {
+    pub total_virtual_registers: usize,
+    pub allocated_physical_registers: usize,
+    pub available_physical_registers: usize,
+    pub register_pressure: usize,
+    pub spilled_registers: usize,
+    pub spill_slots_used: usize,
 }
 
 impl RegisterAllocator {
@@ -426,6 +448,7 @@ impl RegisterAllocator {
         let spill_slot = SpillSlot {
             slot_id,
             offset: self.next_spill_offset,
+            stack_offset: self.next_spill_offset, // 直接使用偏移量作为栈偏移
             spilled_register: lifetime.register,
         };
         
@@ -668,17 +691,23 @@ impl RegisterAllocator {
         let stats = self.get_allocation_stats();
         println!("Statistics: {:?}", stats);
     }
-}
 
-/// 寄存器分配统计信息
-#[derive(Debug, Clone)]
-pub struct AllocationStats {
-    pub total_virtual_registers: usize,
-    pub allocated_physical_registers: usize,
-    pub available_physical_registers: usize,
-    pub register_pressure: usize,
-    pub spilled_registers: usize,
-    pub spill_slots_used: usize,
+    /// 获取寄存器分配结果
+    pub fn get_register_allocation(&self) -> RegisterAllocationResult {
+        let mut spill_assignments = HashMap::new();
+        
+        // 构建溢出分配映射
+        for (register, slot_id) in &self.spilled_registers {
+            if let Some(spill_slot) = self.spill_slots.get(*slot_id) {
+                spill_assignments.insert(*register, spill_slot.clone());
+            }
+        }
+        
+        RegisterAllocationResult {
+            register_assignments: self.allocation.clone(),
+            spill_assignments,
+        }
+    }
 }
 
 impl Default for RegisterAllocator {

@@ -38,6 +38,8 @@ pub struct LirLoweringContext {
     struct_name_to_type_id: HashMap<String, StructTypeId>,
     /// Tagged Union管理器
     tagged_union_manager: TaggedUnionManager,
+    /// Stack-First策略相关字段
+    stack_allocations: HashMap<String, RegisterId>,
 }
 
 impl LirLoweringContext {
@@ -55,6 +57,7 @@ impl LirLoweringContext {
             struct_layout_manager: StructLayoutManager::new(),
             struct_name_to_type_id: HashMap::new(),
             tagged_union_manager: TaggedUnionManager::new(),
+            stack_allocations: HashMap::new(),
         }
     }
 
@@ -82,13 +85,67 @@ impl LirLoweringContext {
         self.current_function.as_mut().expect("No current function")
     }
 
-    /// 为值分配寄存器
+    /// 为值分配栈槽（Stack-First策略）
+    fn allocate_stack_slot_for_value(&mut self, value: &Value) -> RegisterId {
+        let key = value_to_key(value);
+        
+        // 为每个调用都分配新的栈空间，不重用现有地址
+        // 这确保每个值都有独立的栈位置，避免数据被覆盖
+        let address_register = self.current_function_mut().new_register();
+        
+        // 根据值类型确定需要的空间大小
+        let size = match value {
+            Value::Boolean { .. } | 
+            Value::Constructor { .. } | 
+            Value::QualifiedConstructor { .. } => 16, // Tagged Union需要16字节（tag + data）
+            _ => 8, // 其他值8字节
+        };
+        
+        // 在栈上分配空间来存储这个值
+        self.add_instruction(Instruction::Alloc {
+            dst: address_register, 
+            size,
+            alignment: 8,
+            allocation_type: AllocationType::Stack,
+            span: karte_diagnostics::Span::dummy(),
+        });
+        
+        // 记录分配的栈地址（但允许多次分配）
+        self.stack_allocations.insert(key, address_register);
+        address_register
+    }
+
+    /// Stack-First策略的Store操作
+    /// 将值存储到已分配的栈位置
+    pub fn store_value_to_stack(&mut self, value: &Value, src_operand: Operand) {
+        let value_key = value_to_key(value);
+        
+        // 确保值已经有栈空间分配
+        let stack_addr = if let Some(&existing_addr) = self.stack_allocations.get(&value_key) {
+            existing_addr
+        } else {
+            // 如果没有分配，现在分配
+            let addr = self.allocate_stack_slot_for_value(value);
+            self.stack_allocations.insert(value_key.clone(), addr);
+            addr
+        };
+        
+        // 存储值到栈上
+        self.add_instruction(Instruction::Store64 {
+            addr: stack_addr,
+            offset: 0,
+            src: src_operand,
+            span: karte_diagnostics::Span::dummy(),
+        });
+    }
+
+    /// 为值分配寄存器（保留用于函数参数等特殊情况）
     fn allocate_register_for_value(&mut self, value: &Value) -> RegisterId {
         let key = value_to_key(value);
         if let Some(&register) = self.value_to_register.get(&key) {
             register
         } else {
-            // 检查是否是函数参数
+            // 检查是否是函数参数 - 函数参数仍然使用寄存器传递
             if let Value::Variable { name } = value {
                 if let Some(param_index) = self.current_function_params.iter().position(|p| p == name) {
                     // 函数参数使用固定的寄存器：r0, r1, r2, ...
@@ -98,9 +155,8 @@ impl LirLoweringContext {
                 }
             }
             
-            let register = self.current_function_mut().new_register();
-            self.value_to_register.insert(key, register);
-            register
+            // 对于非参数变量，使用栈分配
+            self.allocate_stack_slot_for_value(value)
         }
     }
 
@@ -125,144 +181,283 @@ impl LirLoweringContext {
         self.pending_instructions.append(&mut instructions);
     }
 
-    /// 将值转换为操作数
+    /// 为值分配操作数，采用Stack-First策略：
+    /// - 所有变量和临时值都分配到栈上
+    /// - 运算时才load到临时寄存器
+    /// - 这样Memory2Reg优化可以清楚地识别哪些可以提升到寄存器
     fn value_to_operand(&mut self, value: &Value) -> Operand {
+        // 对于临时变量和变量，优先检查栈分配映射
         match value {
-            Value::Number { value } => {
-                // 直接使用数字值，不进行范围验证
-                // 在运行时，解释器会区分构造器和用户数据
-                Operand::Immediate { value: *value }
-            },
-            Value::Unit => Operand::Immediate { value: 0 }, // Unit表示为0（在用户数据范围内）
-            Value::Boolean { value } => {
-                // Boolean值使用简单的0/1编码，便于逻辑操作符处理
-                Operand::Immediate { value: if *value { 1 } else { 0 } }
-            },
-            Value::Constructor { name, arg } => {
-                // 特殊处理Boolean构造器：使用简单的0/1编码
-                if name == "true" {
-                    return Operand::Immediate { value: 1 };
-                } else if name == "false" {
-                    return Operand::Immediate { value: 0 };
+            Value::Variable { .. } | Value::Temp { .. } => {
+                let value_key = value_to_key(value);
+                
+                // 如果已经有栈分配，直接使用
+                if let Some(&stack_addr) = self.stack_allocations.get(&value_key) {
+                    return self.handle_stack_first_value(value);
                 }
                 
-                // 其他构造器使用tagged union结构体
-                // 创建Tagged Union并返回寄存器地址
-                let constructor_reg = self.create_tagged_union_for_constructor(name, arg.as_deref());
+                // 如果没有栈分配，再使用resolve_value
+                let resolved_value = self.resolve_value(value);
                 
-                // 直接返回寄存器，这个寄存器包含Tagged Union结构体的地址
-                Operand::Register { id: constructor_reg }
-            },
-            Value::QualifiedConstructor { type_name, constructor_name, arg, .. } => {
-                // 限定构造器使用tagged union结构体
-                let constructor_reg = self.create_tagged_union_for_qualified_constructor(type_name, constructor_name, arg.as_deref());
-                
-                // 直接返回寄存器，这个寄存器包含Tagged Union结构体的地址
-                Operand::Register { id: constructor_reg }
-            },
-            Value::Struct { name, fields } => {
-                // 结构体处理：在栈上分配内存并存储字段数据
-                let struct_reg = self.current_function_mut().new_register();
-                
-                // 计算结构体大小（简化：每个字段8字节）
-                let struct_size = fields.len() * 8;
-                
-                // 在栈上分配结构体内存
-                self.add_instruction(Instruction::Alloc {
-                    dst: struct_reg,
-                    size: struct_size,
-                    alignment: 8,
-                    allocation_type: AllocationType::Stack,
-                    span: karte_diagnostics::Span::dummy(),
-                });
-                
-                // 存储字段数据到结构体内存中
-                // 按照预定义的字段顺序存储，而不是按照HashMap的迭代顺序
-                let field_order = ["value", "next"]; // 定义字段的正确顺序
-                
-                for (field_index, field_name) in field_order.iter().enumerate() {
-                    if let Some(field_value) = fields.get(*field_name) {
-                        let field_operand = self.value_to_operand(field_value);
-                        let field_offset = field_index * 8; // 每个字段8字节
-                        
-                        // 将字段值存储到结构体内存的相应偏移位置
-                        self.add_instruction(Instruction::Store64 {
-                            addr: struct_reg,
-                            offset: field_offset as i64,
-                            src: field_operand,
-                            span: karte_diagnostics::Span::dummy(),
-                        });
-                        
-                        // 将字段映射存储在value_mapping中，以便字段访问时能找到
-                        let field_key = format!("struct:{}:{}:{}", name, struct_reg.0, field_name);
-                        let resolved_field = self.resolve_value(field_value);
-                        self.value_mapping.insert(field_key, resolved_field);
-                    }
-                }
-                
-                Operand::Register { id: struct_reg }
-            },
-            Value::Function { name } => {
-                // 函数值表示为函数ID（简化处理）
-                // 我们使用函数名的哈希作为函数ID
-                let function_id = name.chars().fold(0, |acc, c| acc + c as usize) as i64;
-                Operand::Immediate { value: function_id }
-            },
-            Value::Closure { function_name, .. } => {
-                // 闭包值也表示为函数ID，类似于函数值
-                let function_id = function_name.chars().fold(0, |acc, c| acc + c as usize) as i64;
-                Operand::Immediate { value: function_id }
-            },
-            Value::Reference { value } => {
-                // 引用处理：将引用存储在栈内存中
-                // 1. 首先确保被引用的值已经被正确处理
-                let referenced_operand = self.value_to_operand(value);
-                
-                // 2. 在栈上分配空间存储被引用的值
-                let stack_addr_reg = self.current_function_mut().new_register();
-                
-                // 分配栈空间（16字节用于存储一个完整的值，包括可能的Tagged Union）
-                self.add_instruction(Instruction::Alloc {
-                    dst: stack_addr_reg,
-                    size: 16,
-                    alignment: 8,
-                    allocation_type: AllocationType::Stack,
-                    span: karte_diagnostics::Span::dummy(),
-                });
-                
-                // 3. 将被引用的值存储到栈内存中
-                match referenced_operand {
-                    Operand::Register { id: _src_reg } => {
-                        // 直接将被引用的值存储到栈内存中
-                        self.add_instruction(Instruction::Store64 {
-                            addr: stack_addr_reg,
-                            offset: 0,
-                            src: referenced_operand,
-                            span: karte_diagnostics::Span::dummy(),
-                        });
+                // 如果resolve后变成了立即数等，直接处理
+                match &resolved_value {
+                    Value::Number { value } => {
+                        Operand::Immediate { value: *value }
+                    },
+                    Value::Boolean { value } => {
+                        Operand::Immediate { value: if *value { 1 } else { 0 } }
+                    },
+                    Value::Unit => {
+                        Operand::Immediate { value: 0 }
                     },
                     _ => {
-                        // 对于立即数或其他操作数，也直接存储
-                        self.add_instruction(Instruction::Store64 {
-                            addr: stack_addr_reg,
-                            offset: 0,
-                            src: referenced_operand,
-                            span: karte_diagnostics::Span::dummy(),
-                        });
+                        self.handle_stack_first_value(&resolved_value)
                     }
                 }
-                
-                // 4. 直接返回引用地址，不进行额外的存储和加载操作
-                // 这样可以避免寄存器冲突问题
-                Operand::Register { id: stack_addr_reg }
             },
+            
+            // 立即数直接返回
+            Value::Number { value } => {
+                Operand::Immediate { value: *value }
+            },
+            
+            // 布尔值转换为立即数
+            Value::Boolean { value } => {
+                Operand::Immediate { value: if *value { 1 } else { 0 } }
+            },
+            
+            // 单元值
+            Value::Unit => {
+                Operand::Immediate { value: 0 }
+            },
+            
+            // 结构体值
+            Value::Struct { name, fields, .. } => {
+                let struct_register = self.handle_struct_value(name, fields)
+                    .unwrap_or_else(|e| panic!("Failed to handle struct: {}", e));
+                Operand::Register { id: struct_register }
+            },
+            
+            // Tagged Union构造器等其他类型
             _ => {
-                let register = self.allocate_register_for_value(value);
-                Operand::Register { id: register }
+                self.handle_stack_first_value(value)
             }
         }
     }
     
+         /// Stack-First策略的核心实现
+     /// 所有非立即数的值都分配到栈上，只在需要时load到寄存器
+     fn handle_stack_first_value(&mut self, value: &Value) -> Operand {
+         let value_key = value_to_key(value);
+         
+         // 检查是否已经分配了栈空间
+         let existing_stack_addr = self.stack_allocations.get(&value_key).copied();
+         if let Some(stack_addr) = existing_stack_addr {
+             // 对于Tagged Union类型，返回栈地址而不是加载内容
+             match value {
+                 Value::Boolean { .. } | 
+                 Value::Constructor { .. } | 
+                 Value::QualifiedConstructor { .. } => {
+                     // Tagged Union值：返回栈地址本身
+                     return Operand::Register { id: stack_addr };
+                 }
+                 _ => {
+                     // 其他值：从栈加载内容
+                     let temp_register = self.current_function_mut().new_register();
+                     
+                     // 从栈加载值到临时寄存器
+                     self.add_instruction(Instruction::Load64 {
+                         dst: temp_register,
+                         addr: stack_addr,
+                         offset: 0,
+                         span: karte_diagnostics::Span::dummy(),
+                     });
+                     
+                     return Operand::Register { id: temp_register };
+                 }
+             }
+         }
+        
+        // 为这个值分配栈空间
+        let stack_addr = self.allocate_stack_slot_for_value(value);
+        self.stack_allocations.insert(value_key.clone(), stack_addr);
+        
+        // 初始化栈上的值
+        self.initialize_stack_value(value, stack_addr);
+        
+        // 对于Tagged Union类型，返回栈地址而不是加载内容
+        match value {
+            Value::Boolean { .. } | 
+            Value::Constructor { .. } | 
+            Value::QualifiedConstructor { .. } => {
+                // Tagged Union值：返回栈地址本身
+                Operand::Register { id: stack_addr }
+            }
+            _ => {
+                // 其他值：从栈加载内容
+                let temp_register = self.current_function_mut().new_register();
+                
+                // 从栈加载值到临时寄存器  
+                self.add_instruction(Instruction::Load64 {
+                    dst: temp_register,
+                    addr: stack_addr,
+                    offset: 0,
+                    span: karte_diagnostics::Span::dummy(),
+                });
+                
+                Operand::Register { id: temp_register }
+            }
+        }
+    }
+    
+    /// 初始化栈上的值
+         fn initialize_stack_value(&mut self, value: &Value, stack_addr: RegisterId) {
+         match value {
+             Value::Boolean { value } => {
+                 // 创建Tagged Union for boolean
+                 let struct_addr = self.create_tagged_union_for_boolean(*value);
+                 
+                 // 将Tagged Union的内容复制到栈位置（16字节）
+                 // 复制tag字段（8字节）
+                 self.add_instruction(Instruction::Load64 {
+                     dst: stack_addr, // 临时使用stack_addr作为临时寄存器
+                     addr: struct_addr,
+                     offset: 0,
+                     span: karte_diagnostics::Span::dummy(),
+                 });
+                 let temp_tag = self.current_function_mut().new_register();
+                 self.add_instruction(Instruction::Move {
+                     dst: temp_tag,
+                     src: Operand::Register { id: stack_addr },
+                     span: karte_diagnostics::Span::dummy(),
+                 });
+                 self.add_instruction(Instruction::Store64 {
+                     addr: stack_addr,
+                     offset: 0,
+                     src: Operand::Register { id: temp_tag },
+                     span: karte_diagnostics::Span::dummy(),
+                 });
+                 
+                 // 复制data字段（8字节）
+                 let temp_data = self.current_function_mut().new_register();
+                 self.add_instruction(Instruction::Load64 {
+                     dst: temp_data,
+                     addr: struct_addr,
+                     offset: 8,
+                     span: karte_diagnostics::Span::dummy(),
+                 });
+                 self.add_instruction(Instruction::Store64 {
+                     addr: stack_addr,
+                     offset: 8,
+                     src: Operand::Register { id: temp_data },
+                     span: karte_diagnostics::Span::dummy(),
+                 });
+             },
+             
+             Value::Constructor { name, arg } => {
+                 // 创建Tagged Union for constructor
+                 let struct_addr = self.create_tagged_union_for_constructor(name, arg.as_deref());
+                 
+                 // 将Tagged Union的内容复制到栈位置（16字节）
+                 // 复制tag字段（8字节）
+                 let temp_tag = self.current_function_mut().new_register();
+                 self.add_instruction(Instruction::Load64 {
+                     dst: temp_tag,
+                     addr: struct_addr,
+                     offset: 0,
+                     span: karte_diagnostics::Span::dummy(),
+                 });
+                 self.add_instruction(Instruction::Store64 {
+                     addr: stack_addr,
+                     offset: 0,
+                     src: Operand::Register { id: temp_tag },
+                     span: karte_diagnostics::Span::dummy(),
+                 });
+                 
+                 // 复制data字段（8字节）
+                 let temp_data = self.current_function_mut().new_register();
+                 self.add_instruction(Instruction::Load64 {
+                     dst: temp_data,
+                     addr: struct_addr,
+                     offset: 8,
+                     span: karte_diagnostics::Span::dummy(),
+                 });
+                 self.add_instruction(Instruction::Store64 {
+                     addr: stack_addr,
+                     offset: 8,
+                     src: Operand::Register { id: temp_data },
+                     span: karte_diagnostics::Span::dummy(),
+                 });
+             },
+             
+             Value::QualifiedConstructor { type_name, constructor_name, arg } => {
+                 // 创建Tagged Union for qualified constructor
+                 let struct_addr = self.create_tagged_union_for_qualified_constructor(
+                     type_name, constructor_name, arg.as_deref()
+                 );
+                 
+                 // 将Tagged Union的内容复制到栈位置（16字节）
+                 // 复制tag字段（8字节）
+                 let temp_tag = self.current_function_mut().new_register();
+                 self.add_instruction(Instruction::Load64 {
+                     dst: temp_tag,
+                     addr: struct_addr,
+                     offset: 0,
+                     span: karte_diagnostics::Span::dummy(),
+                 });
+                 self.add_instruction(Instruction::Store64 {
+                     addr: stack_addr,
+                     offset: 0,
+                     src: Operand::Register { id: temp_tag },
+                     span: karte_diagnostics::Span::dummy(),
+                 });
+                 
+                 // 复制data字段（8字节）
+                 let temp_data = self.current_function_mut().new_register();
+                 self.add_instruction(Instruction::Load64 {
+                     dst: temp_data,
+                     addr: struct_addr,
+                     offset: 8,
+                     span: karte_diagnostics::Span::dummy(),
+                 });
+                 self.add_instruction(Instruction::Store64 {
+                     addr: stack_addr,
+                     offset: 8,
+                     src: Operand::Register { id: temp_data },
+                     span: karte_diagnostics::Span::dummy(),
+                 });
+             },
+            
+                         Value::Variable { .. } | Value::Temp { .. } => {
+                 // 变量和临时值：检查是否有映射的值
+                 let value_key = value_to_key(value);
+                 let mapped_value = self.value_mapping.get(&value_key).cloned();
+                 if let Some(mapped) = mapped_value {
+                     // 递归初始化映射的值
+                     self.initialize_stack_value(&mapped, stack_addr);
+                 } else {
+                     // 未初始化的变量，存储默认值(0)
+                     self.add_instruction(Instruction::Store64 {
+                         addr: stack_addr,
+                         offset: 0,
+                         src: Operand::Immediate { value: 0 },
+                         span: karte_diagnostics::Span::dummy(),
+                     });
+                 }
+             },
+            
+            _ => {
+                // 其他情况存储默认值
+                self.add_instruction(Instruction::Store64 {
+                    addr: stack_addr,
+                    offset: 0,
+                    src: Operand::Immediate { value: 0 },
+                    span: karte_diagnostics::Span::dummy(),
+                });
+            }
+        }
+    }
+
     /// 处理结构体值，分配内存并初始化字段
     fn handle_struct_value(&mut self, name: &str, fields: &std::collections::HashMap<String, Value>) -> Result<RegisterId, String> {
         // 获取或创建结构体类型ID
@@ -552,15 +747,18 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
         lir_program.set_main(main_name.clone());
     }
 
-    // 在返回之前，降级高级指令为基础指令
+    // 返回未降级的LIR，让优化阶段处理Alloc指令
     if context.errors.is_empty() {
-        match crate::lower_program_instructions(&mut lir_program) {
-            Ok(()) => Ok(lir_program),
-            Err(lowering_error) => {
-                context.errors.push(format!("指令降级错误: {}", lowering_error));
-                Err(context.errors)
+        println!("=== 返回高级LIR (包含Alloc指令，待优化) ===");
+        for (name, function) in &lir_program.functions {
+            println!("function {} (stack_frame: {}):", name, function.stack_frame_size);
+            for instruction in &function.instructions {
+                println!("  {}", instruction);
             }
         }
+        println!("================================================");
+        
+        Ok(lir_program)
     } else {
         Err(context.errors)
     }
@@ -573,79 +771,14 @@ fn lower_statement(
 ) -> Result<(), Vec<String>> {
     match statement {
         Statement::Assign { target, source, span } => {
-            let dst = ctx.allocate_register_for_value(target);
+            // Stack-First策略：获取源操作数（可能从栈load）
+            let src = ctx.value_to_operand(source);
             
-            // 特殊处理构造器：直接生成Tagged Union，不需要额外的Move指令
-            match source {
-                Value::Constructor { name, arg } => {
-                    // 特殊处理Boolean构造器：使用简单的0/1编码
-                    if name == "true" {
-                        ctx.add_instruction(Instruction::Move {
-                            dst,
-                            src: Operand::Immediate { value: 1 },
-                            span: *span,
-                        });
-                    } else if name == "false" {
-                        ctx.add_instruction(Instruction::Move {
-                            dst,
-                            src: Operand::Immediate { value: 0 },
-                            span: *span,
-                        });
-                    } else {
-                        // 其他构造器：创建Tagged Union，直接使用目标寄存器
-                        let tag_id = ctx.tagged_union_manager.get_constructor_id(name);
-                        let data_operand = if let Some(arg_value) = arg {
-                            Some(ctx.value_to_operand(arg_value))
-                        } else {
-                            None
-                        };
-                        
-                        let instructions = ctx.tagged_union_manager.generate_allocation_instructions(
-                            dst,
-                            tag_id,
-                            data_operand,
-                            *span,
-                        );
-                        
-                        for instruction in instructions {
-                            ctx.add_instruction(instruction);
-                        }
-                    }
-                },
-                Value::QualifiedConstructor { type_name, constructor_name, arg, .. } => {
-                    // 限定构造器：创建Tagged Union，直接使用目标寄存器
-                    let tag_id = ctx.tagged_union_manager.get_qualified_constructor_id(type_name, constructor_name);
-                    let data_operand = if let Some(arg_value) = arg {
-                        Some(ctx.value_to_operand(arg_value))
-                    } else {
-                        None
-                    };
-                    
-                    let instructions = ctx.tagged_union_manager.generate_allocation_instructions(
-                        dst,
-                        tag_id,
-                        data_operand,
-                        *span,
-                    );
-                    
-                    for instruction in instructions {
-                        ctx.add_instruction(instruction);
-                    }
-                },
-                _ => {
-                    // 其他值：正常处理
-                    let src = ctx.value_to_operand(source);
-                    ctx.add_instruction(Instruction::Move {
-                        dst,
-                        src,
-                        span: *span,
-                    });
-                }
-            }
+            // 使用新的Stack-First存储方法
+            ctx.store_value_to_stack(target, src);
             
             // 更新值映射，追踪赋值关系
             let target_key = value_to_key(target);
-            // 如果source是一个间接引用，我们需要解析它的实际值
             let actual_source = ctx.resolve_value(source);
             ctx.value_mapping.insert(target_key, actual_source);
             
@@ -659,15 +792,18 @@ fn lower_statement(
             right,
             span,
         } => {
-            let dst = ctx.allocate_register_for_value(target);
+            // Stack-First策略：创建临时寄存器来存储计算结果
+            let temp_register = ctx.current_function_mut().new_register();
+            
+            // 从栈load操作数到临时寄存器
             let src1 = ctx.value_to_operand(left);
             let src2 = ctx.value_to_operand(right);
 
             let instruction = match op {
-                BinaryOperator::Add => Instruction::Add { dst, src1, src2, span: *span },
-                BinaryOperator::Subtract => Instruction::Sub { dst, src1, src2, span: *span },
-                BinaryOperator::Multiply => Instruction::Mul { dst, src1, src2, span: *span },
-                BinaryOperator::Divide => Instruction::Div { dst, src1, src2, span: *span },
+                BinaryOperator::Add => Instruction::Add { dst: temp_register, src1, src2, span: *span },
+                BinaryOperator::Subtract => Instruction::Sub { dst: temp_register, src1, src2, span: *span },
+                BinaryOperator::Multiply => Instruction::Mul { dst: temp_register, src1, src2, span: *span },
+                BinaryOperator::Divide => Instruction::Div { dst: temp_register, src1, src2, span: *span },
                 
                 // For comparisons, we generate a cmp instruction and then a conditional jump.
                 // The result (true/false) is moved into the destination register.
@@ -692,15 +828,19 @@ fn lower_statement(
                     ctx.add_instruction(jump_instr);
 
                     // False case
-                    ctx.add_instruction(Instruction::Move { dst: dst, src: Operand::Immediate { value: 0 }, span: *span });
+                    ctx.add_instruction(Instruction::Move { dst: temp_register, src: Operand::Immediate { value: 0 }, span: *span });
                     ctx.add_instruction(Instruction::Jump { target: end_label, span: *span });
 
                     // True case
                     ctx.add_instruction(Instruction::Label { id: true_label, span: *span });
-                    ctx.add_instruction(Instruction::Move { dst: dst, src: Operand::Immediate { value: 1 }, span: *span });
+                    ctx.add_instruction(Instruction::Move { dst: temp_register, src: Operand::Immediate { value: 1 }, span: *span });
 
                     // End
                     ctx.add_instruction(Instruction::Label { id: end_label, span: *span });
+                    
+                    // Stack-First策略：将结果存储到栈
+                    ctx.store_value_to_stack(target, Operand::Register { id: temp_register });
+                    
                     return Ok(());
                 }
                 
@@ -723,15 +863,19 @@ fn lower_statement(
                     ctx.add_instruction(Instruction::JumpEqual { target: false_label, span: *span });
                     
                     // src1 is true (non-zero), move src2 to result
-                    ctx.add_instruction(Instruction::Move { dst, src: src2, span: *span });
+                    ctx.add_instruction(Instruction::Move { dst: temp_register, src: src2, span: *span });
                     ctx.add_instruction(Instruction::Jump { target: end_label, span: *span });
                     
                     // src1 is false, result is false (0)
                     ctx.add_instruction(Instruction::Label { id: false_label, span: *span });
-                    ctx.add_instruction(Instruction::Move { dst, src: Operand::Immediate { value: 0 }, span: *span });
+                    ctx.add_instruction(Instruction::Move { dst: temp_register, src: Operand::Immediate { value: 0 }, span: *span });
                     
                     // End
                     ctx.add_instruction(Instruction::Label { id: end_label, span: *span });
+                    
+                    // Stack-First策略：将结果存储到栈
+                    ctx.store_value_to_stack(target, Operand::Register { id: temp_register });
+                    
                     return Ok(());
                 }
                 
@@ -753,20 +897,28 @@ fn lower_statement(
                     ctx.add_instruction(Instruction::JumpNotEqual { target: true_label, span: *span });
                     
                     // src1 is false, move src2 to result
-                    ctx.add_instruction(Instruction::Move { dst, src: src2, span: *span });
+                    ctx.add_instruction(Instruction::Move { dst: temp_register, src: src2, span: *span });
                     ctx.add_instruction(Instruction::Jump { target: end_label, span: *span });
                     
                     // src1 is true, result is true (1)
                     ctx.add_instruction(Instruction::Label { id: true_label, span: *span });
-                    ctx.add_instruction(Instruction::Move { dst, src: Operand::Immediate { value: 1 }, span: *span });
+                    ctx.add_instruction(Instruction::Move { dst: temp_register, src: Operand::Immediate { value: 1 }, span: *span });
                     
                     // End
                     ctx.add_instruction(Instruction::Label { id: end_label, span: *span });
+                    
+                    // Stack-First策略：将结果存储到栈
+                    ctx.store_value_to_stack(target, Operand::Register { id: temp_register });
+                    
                     return Ok(());
                 }
             };
 
             ctx.add_instruction(instruction);
+            
+            // Stack-First策略：将结果存储到栈
+            ctx.store_value_to_stack(target, Operand::Register { id: temp_register });
+            
             Ok(())
         }
 
@@ -776,14 +928,16 @@ fn lower_statement(
             operand,
             span,
         } => {
-            let dst = ctx.allocate_register_for_value(target);
+            // Stack-First策略：创建临时寄存器来存储计算结果
+            let temp_register = ctx.current_function_mut().new_register();
+            
             let src = ctx.value_to_operand(operand);
 
             match op {
                 UnaryOperator::Plus => {
                     // +x is just x, so we move it
                     ctx.add_instruction(Instruction::Move {
-                        dst,
+                        dst: temp_register,
                         src,
                         span: *span,
                     });
@@ -791,7 +945,7 @@ fn lower_statement(
                 UnaryOperator::Minus => {
                     // -x is 0 - x
                     ctx.add_instruction(Instruction::Sub {
-                        dst,
+                        dst: temp_register,
                         src1: Operand::Immediate { value: 0 },
                         src2: src,
                         span: *span,
@@ -811,13 +965,17 @@ fn lower_statement(
                     
                     // Subtract src from 1: result = 1 - src
                     ctx.add_instruction(Instruction::Sub { 
-                        dst, 
+                        dst: temp_register, 
                         src1: Operand::Register { id: temp_reg }, 
                         src2: src, 
                         span: *span 
                     });
                 }
             }
+            
+            // Stack-First策略：将结果存储到栈
+            ctx.store_value_to_stack(target, Operand::Register { id: temp_register });
+            
             Ok(())
         }
 
@@ -1062,7 +1220,6 @@ fn lower_statement(
 
         Statement::ConstructorArgExtract { target, constructor, arg_index, span } => {
             // Tagged Union构造器参数提取：从Tagged Union结构体中提取数据
-            let dst = ctx.allocate_register_for_value(target);
             
             // 获取构造器寄存器
             let constructor_operand = ctx.value_to_operand(constructor);
@@ -1070,13 +1227,19 @@ fn lower_statement(
                 Operand::Register { id } => id,
                 _ => {
                     return Err(vec!["Constructor must be a register for argument extraction".to_string()]);
-                        }
+                }
             };
             
-            // 使用Tagged Union管理器生成数据提取指令
+            // 使用Stack-First策略：为目标值分配栈槽
+            let target_stack_addr = ctx.allocate_stack_slot_for_value(target);
+            
+            // 创建临时寄存器来接收提取的数据
+            let temp_reg = ctx.current_function_mut().new_register();
+            
+            // 使用Tagged Union管理器生成数据提取指令到临时寄存器
             let extract_instructions = ctx.tagged_union_manager.generate_data_extraction_instructions(
                 constructor_reg,
-                dst,
+                temp_reg,
                 *span,
             );
             
@@ -1084,10 +1247,17 @@ fn lower_statement(
                 ctx.add_instruction(instruction);
             }
             
-            // 更新值映射
-                let target_key = value_to_key(target);
-            let target_value = Value::Temp { id: TempId(dst.0) };
-            ctx.value_mapping.insert(target_key, target_value);
+            // 将提取的数据存储到栈槽
+            ctx.add_instruction(Instruction::Store64 {
+                addr: target_stack_addr,
+                offset: 0,
+                src: Operand::Register { id: temp_reg },
+                span: *span,
+            });
+            
+            // 更新值映射，记录目标值已分配栈槽
+            let target_key = value_to_key(target);
+            ctx.stack_allocations.insert(target_key.clone(), target_stack_addr);
             
             Ok(())
         }
@@ -1172,13 +1342,41 @@ fn lower_terminator(
             });
         }
         Terminator::Return { value, span } => {
-            let return_reg = value
-                .as_ref()
-                .map(|v| ctx.allocate_register_for_value(v));
-            ctx.add_instruction(Instruction::Return {
-                value: return_reg,
-                span: *span,
-            });
+            if let Some(v) = value {
+                // Stack-First策略：从栈加载返回值
+                let return_operand = ctx.value_to_operand(v);
+                
+                // 如果是寄存器操作数，直接返回；如果是立即数，也直接返回
+                match return_operand {
+                    Operand::Register { id } => {
+                        ctx.add_instruction(Instruction::Return {
+                            value: Some(id),
+                            span: *span,
+                        });
+                    }
+                    Operand::Immediate { value } => {
+                        // 立即数需要先移动到寄存器
+                        let temp_reg = ctx.current_function_mut().new_register();
+                        ctx.add_instruction(Instruction::Move {
+                            dst: temp_reg,
+                            src: Operand::Immediate { value },
+                            span: *span,
+                        });
+                        ctx.add_instruction(Instruction::Return {
+                            value: Some(temp_reg),
+                            span: *span,
+                        });
+                    }
+                    _ => {
+                        return Err(vec!["Invalid return value operand".to_string()]);
+                    }
+                }
+            } else {
+                ctx.add_instruction(Instruction::Return {
+                    value: None,
+                    span: *span,
+                });
+            }
         }
         Terminator::Branch {
             condition,
@@ -1281,31 +1479,32 @@ fn lower_terminator(
                         } else {
                             ctx.tagged_union_manager.get_constructor_id(name)
                         };
-                            
+                        
+                        // constructor_reg直接包含Tagged Union的地址
                         // 生成标签检查指令
                         let temp_reg = ctx.current_function_mut().new_register();
-                            let tag_check_instructions = ctx.tagged_union_manager.generate_tag_check_instructions(
-                            constructor_reg,
-                                expected_tag_id,
-                                temp_reg,
-                                *span,
-                            );
+                        let tag_check_instructions = ctx.tagged_union_manager.generate_tag_check_instructions(
+                            constructor_reg,  // 直接使用constructor_reg作为Tagged Union地址
+                            expected_tag_id,
+                            temp_reg,
+                            *span,
+                        );
                             
-                            for instruction in tag_check_instructions {
-                                ctx.add_instruction(instruction);
-                            }
+                        for instruction in tag_check_instructions {
+                            ctx.add_instruction(instruction);
+                        }
                             
                         // 如果标签匹配，跳转到目标分支
                         ctx.add_instruction(Instruction::JumpEqual {
                             target: target_label,
-                                span: *span,
-                            });
+                            span: *span,
+                        });
                             
                         // 如果有参数绑定，生成数据提取指令
                         if let Some(var_name) = arg {
                             let var_reg_id = ctx.allocate_register_for_value(&Value::Variable { name: var_name.clone() });
                             let extract_instructions = ctx.tagged_union_manager.generate_data_extraction_instructions(
-                                constructor_reg,
+                                constructor_reg,  // 直接使用constructor_reg作为Tagged Union地址
                                 var_reg_id,
                                 *span,
                             );
@@ -1358,7 +1557,6 @@ fn value_to_key(value: &Value) -> String {
             let captured_str = captured_values.iter().map(|v| value_to_key(v)).collect::<Vec<_>>().join(",");
             format!("closure:{}:({})", function_name, captured_str)
         },
-        Value::Function { name } => format!("fn:{}", name),
         // Note: This is a simplification. Hash of constructor/struct would be better
         Value::Constructor { name, arg } => format!("ctor:{}({:?})", name, arg),
         Value::QualifiedConstructor { type_name, constructor_name, arg } => format!("qctor:{}::{}({:?})", type_name, constructor_name, arg),
