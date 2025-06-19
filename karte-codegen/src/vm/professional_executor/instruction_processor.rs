@@ -4,6 +4,7 @@
 
 use super::{ExecutionEngine, ProgramManager, InstructionResult};
 use karte_lir::{Instruction, RegisterId, Operand, LabelId};
+use std::collections::HashMap;
 
 /// 指令处理器
 /// 
@@ -104,6 +105,9 @@ impl InstructionProcessor {
             }
             Instruction::Alloc { dst, size, alignment, allocation_type, .. } => {
                 self.handle_alloc(dst, *size, *alignment, engine)
+            }
+            Instruction::StructFieldLoad { dst, struct_addr, field_offset, .. } => {
+                self.handle_struct_field_load(dst, struct_addr, *field_offset, engine)
             }
 
             // 其他指令暂时返回错误
@@ -273,18 +277,64 @@ impl InstructionProcessor {
         Ok(InstructionResult::Jump(target_pc))
     }
 
-    /// 处理间接函数调用（简化版本）
+    /// 处理间接函数调用
     fn handle_call_indirect(
         &mut self,
-        _function_register: &RegisterId,
-        _args: &[RegisterId],
-        _result: Option<&RegisterId>,
-        _engine: &mut ExecutionEngine,
-        _program_manager: &ProgramManager,
+        function_register: &RegisterId,
+        args: &[RegisterId],
+        result: Option<&RegisterId>,
+        engine: &mut ExecutionEngine,
+        program_manager: &ProgramManager,
     ) -> Result<InstructionResult, String> {
-        // 暂时简化处理间接函数调用
-        // TODO: 实现完整的间接函数调用机制
-        Ok(InstructionResult::Continue)
+        // 🔧 实现完整的间接函数调用机制
+        
+        // 1. 获取函数地址（标签ID）
+        let function_address = engine.get_register(function_register)?;
+        let target_label = karte_lir::LabelId(function_address as usize);
+        
+        println!("CallIndirect 调试信息:");
+        println!("  function_register: {:?}", function_register);
+        println!("  function_address: {}", function_address);
+        println!("  target_label: {:?}", target_label);
+        
+        // 2. 准备参数 - 将参数值传递到参数寄存器
+        let mut arg_values = Vec::new();
+        for (i, arg_reg) in args.iter().enumerate() {
+            let arg_value = engine.get_register(arg_reg)?;
+            arg_values.push(arg_value);
+            
+            println!("  参数{}: 寄存器{:?} = {}", i, arg_reg, arg_value);
+            
+            // 如果有足够的参数寄存器，设置参数寄存器
+            if i < engine.get_calling_convention().argument_registers.len() {
+                let param_reg = engine.get_calling_convention().argument_registers[i];
+                engine.set_register(&RegisterId(param_reg as usize), arg_value)?;
+                println!("  -> 设置参数寄存器r{} = {}", param_reg, arg_value);
+            }
+        }
+ 
+        // 5. 保存调用者状态
+        let current_pc = engine.get_pc();
+        
+        // 6. 查找目标函数PC
+        let target_pc = match program_manager.get_label_pc(&target_label) {
+            Ok(pc) => {
+                println!("  -> 找到目标函数PC: {}", pc);
+                pc
+            }
+            Err(e) => {
+                println!("  -> 错误：无法找到函数地址 {:?}: {}", target_label, e);
+                println!("  -> 可用标签: {:?}", program_manager.get_all_labels());
+                return Err(format!("Function address {:?} not found: {}", target_label, e));
+            }
+        };
+        
+        // 7. 标记这是一个函数调用，需要在返回时恢复状态
+        engine.push_call_frame(current_pc + 1, result.cloned())?;
+        
+        println!("  -> 成功跳转到PC: {} (标签: {:?})", target_pc, target_label);
+        
+        Ok(InstructionResult::Jump(target_pc))
     }
 
     /// 处理函数返回
@@ -360,6 +410,32 @@ impl InstructionProcessor {
         println!("Alloc: allocated {} bytes at address {}", size, addr);
         
         engine.set_register(dst, addr as i64)?;
+        Ok(InstructionResult::Continue)
+    }
+
+    /// 处理结构体字段加载
+    fn handle_struct_field_load(
+        &mut self,
+        dst: &RegisterId,
+        struct_addr: &RegisterId,
+        field_offset: usize,
+        engine: &mut ExecutionEngine,
+    ) -> Result<InstructionResult, String> {
+        // 获取结构体的基地址
+        let base_addr = engine.get_register(struct_addr)? as usize;
+        
+        // 计算字段的实际地址
+        let field_addr = base_addr + field_offset;
+        
+        // 从字段地址加载值
+        let value = engine.load_memory(field_addr)?;
+        
+        println!("StructFieldLoad: loaded {} from field at address {} (base {} + offset {})", 
+            value, field_addr, base_addr, field_offset);
+        
+        // 将值存储到目标寄存器
+        engine.set_register(dst, value)?;
+        
         Ok(InstructionResult::Continue)
     }
 }

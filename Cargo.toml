@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
     "karte-lexer",
-    "karte-cli", "karte-codegen", "karte-diagnostics", "karte-hir", "karte-lir", "karte-mir", "karte-lsp", "karte-parser", "karte-tests",
+    "karte-cli", "karte-codegen", "karte-diagnostics", "karte-hir", "karte-lir", "karte-mir", "karte-lsp", "karte-parser", "karte-tests", "karte-common",
 ]
 
 [workspace.package]

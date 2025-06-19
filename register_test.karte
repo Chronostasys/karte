@@ -1,4 +1,0 @@
-let y = 2;
-let f = |x| x + 1;
-let result = f(5);
-y

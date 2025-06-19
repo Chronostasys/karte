@@ -123,9 +123,6 @@ fn process_expression(input: &str, filename: &str, optimization_level: Optimizat
         println!("{}", lir_program);
 
         println!("\n--- 寄存器分配 ---");
-        // 注意：寄存器分配需要在指令降级之前进行，这样Memory2Reg优化生成的新寄存器才能被正确分配
-        // 这里我们暂时跳过寄存器分配，因为当前的实现在执行器中进行
-        println!("寄存器分配将在执行器中进行");
         
         println!("\n--- 指令降级 ---");
         if let Err(lowering_error) = karte_lir::lower_program_instructions(&mut lir_program) {

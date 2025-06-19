@@ -449,15 +449,20 @@ impl InstructionExecutor {
             
             Instruction::CallIndirect { function_register, args, result, .. } => {
                 // 间接函数调用：通过寄存器中的函数地址调用
-                if self.debug_mode {
-                    println!("  -> Executing CallIndirect");
-                }
                 
                 // 获取函数地址（标签ID）
                 let function_address = self.vm.get_virtual_register(function_register)?;
                 let target_label = karte_lir::LabelId(function_address as usize);
                 
+                // 🔧 添加详细调试输出
+                println!("CallIndirect 调试信息:");
+                println!("  function_register: {:?}", function_register);
+                println!("  function_address: {}", function_address);
+                println!("  target_label: {:?}", target_label);
+                println!("  可用的label_map: {:?}", self.label_map);
+                
                 if self.debug_mode {
+                    println!("  -> Executing CallIndirect");
                     println!("  -> Function address: {}, target label: {:?}", function_address, target_label);
                 }
                 
@@ -476,11 +481,13 @@ impl InstructionExecutor {
                 // 跳转到目标函数
                 if let Some(&target_pc) = self.label_map.get(&target_label) {
                     self.vm.pc = target_pc;
+                    println!("  -> 成功跳转到PC: {}", target_pc);
                     if self.debug_mode {
                         println!("  -> Jumping to PC: {}", target_pc);
                     }
                     Ok(None) // 继续执行
                 } else {
+                    println!("  -> 错误：无法找到函数地址 {:?}！", target_label);
                     return Err(format!("Function address {:?} not found in label map", target_label));
                 }
             }
@@ -616,16 +623,10 @@ impl InstructionExecutor {
             }
             
             Instruction::Free { addr, .. } => {
-                // 内存释放
-                let free_addr = self.vm.get_virtual_register(addr)? as usize;
-                // 简化实现：在真实VM中需要调用内存管理器的释放方法
-                
-                if self.debug_mode {
-                    println!("  -> Free: addr {}", free_addr);
-                }
-                
+                // 内存释放目前是空操作
+                self.vm.pc += 1;
                 Ok(None)
-            }
+            },
             
             Instruction::Load64 { dst, addr, offset, .. } => {
                 // 64位加载
@@ -654,6 +655,18 @@ impl InstructionExecutor {
                         value, store_addr, base_addr, offset);
                 }
                 
+                Ok(None)
+            }
+            
+            Instruction::Phi { dst, incoming, .. } => {
+                // φ节点：根据当前基本块选择正确的值
+                // 这里需要实现φ节点的语义：根据前驱块选择值
+                // 暂时简化实现：使用第一个值
+                if let Some((_, operand)) = incoming.first() {
+                    let value = self.get_operand_value(operand)?;
+                    self.vm.set_virtual_register(dst, value)?;
+                }
+                self.vm.pc += 1;
                 Ok(None)
             }
         }

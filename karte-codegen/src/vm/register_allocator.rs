@@ -73,8 +73,13 @@ pub struct AllocationStats {
 impl RegisterAllocator {
     /// 创建新的寄存器分配器
     pub fn new() -> Self {
+        // 🔧 修复：只使用可分配的寄存器，排除特殊寄存器
+        // 根据调用约定，r5(返回地址)、r6(栈指针)、r7(帧指针)是特殊寄存器
+        // 只有 r0-r4 可以用于寄存器分配
+        let available_registers = vec![0, 1, 2, 3, 4];
+        
         Self {
-            available_registers: (0..NUM_REGISTERS as u8).collect(),
+            available_registers,
             lifetimes: Vec::new(),
             allocation: HashMap::new(),
             spill_slots: Vec::new(),
@@ -524,6 +529,16 @@ impl RegisterAllocator {
 
         // 克隆lifetimes以避免借用冲突
         let lifetimes = self.lifetimes.clone();
+        
+        // 🔧 调试：打印初始状态
+        println!("=== 寄存器分配开始 ===");
+        println!("可用寄存器: {:?}", self.available_registers);
+        println!("需要分配的寄存器数量: {}", lifetimes.len());
+        println!("寄存器生命周期:");
+        for lifetime in &lifetimes {
+            println!("  {:?}: {} -> {}", lifetime.register, lifetime.start, lifetime.end);
+        }
+        
         for lifetime in &lifetimes {
             // 释放已经结束生命周期的寄存器
             let mut i = 0;
@@ -538,40 +553,29 @@ impl RegisterAllocator {
                 }
             }
 
-            // 改进的指令冲突检测：重点检查同一条指令中的寄存器冲突
-            let conflicts = {
-                let mut temp_conflicts = Vec::new();
-                
-                // 检查生命周期重叠的基本冲突
-                for other_lifetime in &lifetimes {
-                    if other_lifetime.register != lifetime.register &&
-                       !(other_lifetime.end < lifetime.start || lifetime.end < other_lifetime.start) {
-                        temp_conflicts.push(other_lifetime.register);
-                    }
-                }
-                
-                // 手动去重，避免需要Ord trait
-                let mut unique_conflicts = Vec::new();
-                for conflict in temp_conflicts {
-                    if !unique_conflicts.contains(&conflict) {
-                        unique_conflicts.push(conflict);
-                    }
-                }
-                unique_conflicts
-            };
-            
+            // 🔧 修复：更智能的冲突检测，只检查真正同时活跃的寄存器
             let mut forbidden_registers = std::collections::HashSet::new();
-            for conflicting_reg in conflicts {
-                if let Some(&physical_reg) = self.allocation.get(&conflicting_reg) {
-                    forbidden_registers.insert(physical_reg);
+            
+            // 检查与当前活跃区间的冲突
+            for active_interval in &active_intervals {
+                // 只有当两个区间真正重叠时才认为冲突
+                if !(active_interval.end < lifetime.start || lifetime.end < active_interval.start) {
+                    if let Some(&physical_reg) = self.allocation.get(&active_interval.register) {
+                        forbidden_registers.insert(physical_reg);
+                    }
                 }
             }
 
             // 为当前寄存器分配物理寄存器，避免冲突
             let mut assigned = false;
-            let mut available_copy = self.available_registers.clone();
             
-            while let Some(physical_reg) = available_copy.pop() {
+            println!("  分配寄存器 {:?}:", lifetime.register);
+            println!("    可用寄存器: {:?}", self.available_registers);
+            println!("    禁用寄存器: {:?}", forbidden_registers);
+            
+            // 🔧 修复：更高效的寄存器分配策略
+            // 首先尝试分配未被禁止的寄存器
+            for &physical_reg in &self.available_registers.clone() {
                 if !forbidden_registers.contains(&physical_reg) {
                     // 找到一个不冲突的物理寄存器
                     self.allocation.insert(lifetime.register, physical_reg);
@@ -581,11 +585,13 @@ impl RegisterAllocator {
                         self.available_registers.remove(pos);
                     }
                     assigned = true;
+                    println!("    -> 成功分配到 r{}", physical_reg);
                     break;
                 }
             }
             
             if !assigned {
+                println!("    -> 分配失败，需要溢出");
                 // 如果没有可用寄存器，需要溢出（spill）
                 return self.handle_register_spill(&mut active_intervals, lifetime);
             }

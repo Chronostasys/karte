@@ -355,11 +355,16 @@ dependencies = [
 name = "karte-codegen"
 version = "0.1.0"
 dependencies = [
+ "karte-common",
  "karte-diagnostics",
  "karte-hir",
  "karte-lir",
  "karte-mir",
 ]
+
+[[package]]
+name = "karte-common"
+version = "0.1.0"
 
 [[package]]
 name = "karte-diagnostics"
@@ -392,6 +397,7 @@ dependencies = [
 name = "karte-lir"
 version = "0.1.0"
 dependencies = [
+ "karte-common",
  "karte-diagnostics",
  "karte-hir",
  "karte-mir",

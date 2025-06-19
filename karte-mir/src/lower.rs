@@ -867,8 +867,24 @@ fn lower_statement(
             let temp = ctx.new_temp();
             lower_expression(ctx, expr, &temp)?;
         }
-        karte_hir::Statement::TypeDef { .. } | karte_hir::Statement::StructDef { .. } => {
+        karte_hir::Statement::TypeDef { .. } => {
             // 类型定义在编译期处理，MIR中无需体现
+        }
+        karte_hir::Statement::StructDef { name, fields, .. } => {
+            // 🔧 专业修复：收集结构体定义信息，传递给MIR
+            let mir_fields: Vec<crate::MirStructField> = fields.iter().map(|field| {
+                crate::MirStructField {
+                    name: field.name.clone(),
+                    field_type: field.field_type.clone(),
+                }
+            }).collect();
+
+            let mir_struct_type = crate::MirStructType {
+                name: name.clone(),
+                fields: mir_fields,
+            };
+
+            ctx.program.add_struct_type(mir_struct_type);
         }
         karte_hir::Statement::Assignment { target, value, .. } => {
             // 赋值语句：将值计算到临时变量，然后赋值给目标

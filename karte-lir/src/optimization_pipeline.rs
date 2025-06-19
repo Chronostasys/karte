@@ -3,6 +3,7 @@ use crate::pass::analysis::*;
 use crate::pass::transformation::*;
 use crate::pass::memory2reg::*;
 use crate::pass::register_allocation::*;
+use crate::pass::phi_elimination::*;
 use crate::{LirProgram, LirFunction};
 
 /// 优化级别
@@ -29,7 +30,7 @@ impl OptimizationLevel {
     }
 }
 
-/// 优化流水线配置
+/// 优化流水线配置（按migration_to_ssa.md第5-6周计划增强）
 #[derive(Debug, Clone)]
 pub struct OptimizationConfig {
     /// 是否启用 Memory2Reg 优化
@@ -42,6 +43,10 @@ pub struct OptimizationConfig {
     pub optimization_level: u8,
     /// 是否启用调试输出
     pub debug: bool,
+    /// 是否启用SSA构造（新增）
+    pub enable_ssa_construction: bool,
+    /// 是否启用分析失效验证（新增）
+    pub enable_analysis_validation: bool,
 }
 
 impl Default for OptimizationConfig {
@@ -52,11 +57,13 @@ impl Default for OptimizationConfig {
             enable_const_fold: true,
             optimization_level: 2,
             debug: false,
+            enable_ssa_construction: true,  // 默认启用SSA构造
+            enable_analysis_validation: true,  // 默认启用分析验证
         }
     }
 }
 
-/// 优化流水线
+/// 优化流水线（按migration_to_ssa.md第5-6周计划重新设计）
 pub struct OptimizationPipeline {
     config: OptimizationConfig,
 }
@@ -77,6 +84,20 @@ impl OptimizationPipeline {
         Self::new(OptimizationLevel::Balanced)
     }
     
+    /// 按照migration_to_ssa.md计划创建专业Pass管道
+    pub fn create_professional_pipeline() -> Self {
+        let config = OptimizationConfig {
+            enable_mem2reg: true,
+            enable_dce: true,
+            enable_const_fold: true,
+            optimization_level: 3,
+            debug: false,
+            enable_ssa_construction: true,
+            enable_analysis_validation: true,
+        };
+        Self::from_config(config)
+    }
+    
     /// 运行优化
     pub fn optimize(&mut self, program: &mut LirProgram) -> Result<OptimizationStats, Vec<String>> {
         let mut pass_manager = PassManager::new();
@@ -89,7 +110,7 @@ impl OptimizationPipeline {
         let instructions_before = self.count_instructions(program);
         
         // 根据配置添加 Pass
-        self.configure_passes(&mut pass_manager);
+        self.configure_professional_passes(&mut pass_manager);
         
         // 运行优化
         let start_time = std::time::Instant::now();
@@ -112,7 +133,73 @@ impl OptimizationPipeline {
             .sum()
     }
     
-    /// 配置 Pass 序列
+    /// 按照migration_to_ssa.md第5-6周计划配置专业Pass序列
+    fn configure_professional_passes(&self, pass_manager: &mut PassManager) {
+        // === 第1阶段：基础分析 Pass ===
+        // 这些分析为后续优化提供必要信息
+        pass_manager.add_analysis_pass(Box::new(ControlFlowAnalysis::new()));
+        pass_manager.add_analysis_pass(Box::new(DefUseAnalysis::new()));
+        
+        // === 第2阶段：早期优化 Pass ===
+        // 常量折叠：在其他优化之前进行，为后续优化创造机会
+        if self.config.enable_const_fold {
+            pass_manager.add_function_pass(Box::new(ConstantFolding::new()));
+        }
+        
+        // === 第3阶段：核心SSA优化 ===
+        // Memory2Reg：将栈变量提升到寄存器，这是SSA的核心
+        if self.config.enable_mem2reg {
+            pass_manager.add_function_pass(Box::new(Memory2RegPass::new()));
+        }
+        
+        // === 第4阶段：φ指令消除 ===
+        // φ指令消除：在Memory2Reg之后运行，将φ指令转换为mov指令
+        if self.config.enable_dce {
+            pass_manager.add_function_pass(Box::new(PhiEliminationPass::new()));
+        }
+        
+        // === 第5阶段：死代码消除 ===
+        // 在Memory2Reg之后运行，清理不需要的指令
+        if self.config.enable_dce {
+            pass_manager.add_function_pass(Box::new(DeadCodeElimination::new()));
+        }
+        
+        // === 第6阶段：多轮优化（高级别时） ===
+        if self.config.optimization_level >= 3 {
+            // 再次运行常量折叠，处理新的机会
+            if self.config.enable_const_fold {
+                pass_manager.add_function_pass(Box::new(ConstantFolding::new()));
+            }
+            
+            // 再次运行Memory2Reg，处理新暴露的优化机会
+            if self.config.enable_mem2reg {
+                pass_manager.add_function_pass(Box::new(Memory2RegPass::new()));
+            }
+        }
+        
+        // === 第7阶段：两阶段寄存器分配架构 ===
+        // 🔧 新架构：Pre-RA (决策) -> StackFrameLowering -> Final-RA (改写)
+        
+        // 阶段 7.1: Pre-RA - 寄存器分配决策（不修改代码）
+        pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::DecisionOnly)));
+        
+        // 阶段 7.2: StackFrameLowering - 栈帧管理和溢出代码生成（使用临时虚拟寄存器）
+        pass_manager.add_function_pass(Box::new(StackFrameLowering::new()));
+        
+        // 阶段 7.3: Final-RA - 最终寄存器分配（包括临时寄存器的分配）
+        pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::FinalRewrite)));
+        
+        if self.config.debug {
+            println!("=== 专业Pass管道配置完成（两阶段分配架构）===");
+            println!("优化级别: {}", self.config.optimization_level);
+            println!("启用Memory2Reg: {}", self.config.enable_mem2reg);
+            println!("启用死代码消除: {}", self.config.enable_dce);
+            println!("启用常量折叠: {}", self.config.enable_const_fold);
+            println!("寄存器分配架构: Pre-RA -> StackFrameLowering -> Final-RA");
+        }
+    }
+
+    /// 配置 Pass 序列（保留原有逻辑作为兼容）
     fn configure_passes(&self, pass_manager: &mut PassManager) {
         // 添加分析 Pass
         pass_manager.add_analysis_pass(Box::new(ControlFlowAnalysis::new()));
@@ -122,15 +209,20 @@ impl OptimizationPipeline {
         match self.config.optimization_level {
             0 => {
                 // 无优化，只做基本分析和寄存器分配
-                pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new()));
+                // 🔧 修改：使用两阶段寄存器分配架构
+                pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::DecisionOnly)));
+                pass_manager.add_function_pass(Box::new(StackFrameLowering::new()));
+                pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::FinalRewrite)));
             }
             1 => {
                 // 基本优化
                 if self.config.enable_const_fold {
                     pass_manager.add_function_pass(Box::new(ConstantFolding::new()));
                 }
-                // 寄存器分配总是最后执行
-                pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new()));
+                // 🔧 修改：使用两阶段寄存器分配架构
+                pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::DecisionOnly)));
+                pass_manager.add_function_pass(Box::new(StackFrameLowering::new()));
+                pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::FinalRewrite)));
             }
             2 => {
                 // 标准优化
@@ -143,8 +235,10 @@ impl OptimizationPipeline {
                 if self.config.enable_dce {
                     pass_manager.add_function_pass(Box::new(DeadCodeElimination::new()));
                 }
-                // 寄存器分配总是最后执行
-                pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new()));
+                // 🔧 修改：使用两阶段寄存器分配架构
+                pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::DecisionOnly)));
+                pass_manager.add_function_pass(Box::new(StackFrameLowering::new()));
+                pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::FinalRewrite)));
             }
             3 => {
                 // 激进优化
@@ -165,8 +259,10 @@ impl OptimizationPipeline {
                 if self.config.enable_mem2reg {
                     pass_manager.add_function_pass(Box::new(Memory2RegPass::new()));
                 }
-                // 寄存器分配总是最后执行
-                pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new()));
+                // 🔧 修改：使用两阶段寄存器分配架构
+                pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::DecisionOnly)));
+                pass_manager.add_function_pass(Box::new(StackFrameLowering::new()));
+                pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::FinalRewrite)));
             }
             _ => {
                 // 使用级别 3 的配置
@@ -301,6 +397,8 @@ impl OptimizationPresets {
             enable_const_fold: false,
             optimization_level: 0,
             debug: true,
+            enable_ssa_construction: false,
+            enable_analysis_validation: false,
         }
     }
     
@@ -312,6 +410,8 @@ impl OptimizationPresets {
             enable_const_fold: true,
             optimization_level: 1,
             debug: false,
+            enable_ssa_construction: false,
+            enable_analysis_validation: false,
         }
     }
     
@@ -323,6 +423,8 @@ impl OptimizationPresets {
             enable_const_fold: true,
             optimization_level: 2,
             debug: false,
+            enable_ssa_construction: false,
+            enable_analysis_validation: false,
         }
     }
     
@@ -334,6 +436,8 @@ impl OptimizationPresets {
             enable_const_fold: true,
             optimization_level: 3,
             debug: false,
+            enable_ssa_construction: true,
+            enable_analysis_validation: true,
         }
     }
 } 

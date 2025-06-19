@@ -86,7 +86,7 @@ impl ProfessionalExecutor {
             )?;
             
             if self.debug_mode {
-                println!("PC: {}, 执行: {:?}", self.execution_engine.get_pc(), instruction);
+                println!("PC: {}, 执行: {}", self.execution_engine.get_pc(), instruction);
             }
             
             // 处理指令

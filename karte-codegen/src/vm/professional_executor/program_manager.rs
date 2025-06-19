@@ -193,6 +193,11 @@ impl ProgramManager {
         None
     }
 
+    /// 获取所有标签信息（调试用）
+    pub fn get_all_labels(&self) -> &HashMap<LabelId, usize> {
+        &self.label_map
+    }
+
     /// 打印程序信息（调试用）
     pub fn print_program_info(&self) {
         println!("=== 程序信息 ===");

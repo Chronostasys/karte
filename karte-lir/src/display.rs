@@ -1,12 +1,6 @@
 use crate::ir::*;
 use std::fmt;
 
-impl fmt::Display for RegisterId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "r{}", self.0)
-    }
-}
-
 impl fmt::Display for LabelId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "L{}", self.0)
@@ -161,25 +155,33 @@ impl fmt::Display for Instruction {
                 write!(f, "memcpy {}, {}, #{}", dst, src, size)
             }
             Instruction::Alloc { dst, size, alignment, allocation_type, .. } => {
-                write!(f, "alloc {}, #{}, #{}, {}", dst, size, alignment, allocation_type)
-            }
+                write!(f, "alloc {}, #{}, #{}, {:?}", dst, size, alignment, allocation_type)
+            },
             Instruction::Free { addr, .. } => {
                 write!(f, "free {}", addr)
-            }
+            },
             Instruction::Load64 { dst, addr, offset, .. } => {
                 if *offset == 0 {
                     write!(f, "load64 {}, [{}]", dst, addr)
                 } else {
                     write!(f, "load64 {}, [{} + {}]", dst, addr, offset)
                 }
-            }
+            },
             Instruction::Store64 { addr, offset, src, .. } => {
                 if *offset == 0 {
                     write!(f, "store64 [{}], {}", addr, src)
                 } else {
                     write!(f, "store64 [{} + {}], {}", addr, offset, src)
                 }
-            }
+            },
+            Instruction::Phi { dst, incoming, .. } => {
+                write!(f, "{} = phi(", dst)?;
+                for (i, (block, operand)) in incoming.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "L{}: {}", block.0, operand)?;
+                }
+                write!(f, ")")
+            },
         }
     }
 }

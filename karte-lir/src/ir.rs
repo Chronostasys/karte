@@ -1,9 +1,6 @@
 use karte_diagnostics::Span;
 use std::collections::HashMap;
-
-/// 寄存器标识符
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct RegisterId(pub usize);
+pub use karte_common::calling_convention::RegisterId;
 
 /// 标签标识符（用于跳转目标）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -262,6 +259,346 @@ pub enum Instruction {
         src: Operand,
         span: Span,
     },
+
+    /// φ(Phi)节点 - SSA形式的控制流汇合
+    /// 在控制流汇合点选择来自不同前驱块的值
+    Phi {
+        dst: RegisterId,
+        /// 来自不同前驱块的值：(前驱块标签, 值)
+        incoming: Vec<(LabelId, Operand)>,
+        span: Span,
+    },
+}
+
+impl Instruction {
+    /// 获取指令定义的寄存器（目标寄存器）
+    pub fn get_def_register(&self) -> Option<RegisterId> {
+        match self {
+            Instruction::Move { dst, .. } |
+            Instruction::Add { dst, .. } |
+            Instruction::Sub { dst, .. } |
+            Instruction::Mul { dst, .. } |
+            Instruction::Div { dst, .. } |
+            Instruction::Load64 { dst, .. } |
+            Instruction::StructAlloc { dst, .. } |
+            Instruction::StructFieldLoad { dst, .. } |
+            Instruction::StructFieldAddr { dst, .. } |
+            Instruction::Alloc { dst, .. } |
+            Instruction::MemCopy { dst, .. } => Some(*dst),
+            Instruction::Call { result, .. } |
+            Instruction::CallIndirect { result, .. } => *result,
+            Instruction::Phi { dst, .. } => Some(*dst),
+            _ => None,
+        }
+    }
+
+    /// 替换指令定义的寄存器
+    pub fn replace_def_register(&mut self, old_reg: RegisterId, new_reg: RegisterId) {
+        match self {
+            Instruction::Move { dst, .. } |
+            Instruction::Add { dst, .. } |
+            Instruction::Sub { dst, .. } |
+            Instruction::Mul { dst, .. } |
+            Instruction::Div { dst, .. } |
+            Instruction::Load64 { dst, .. } |
+            Instruction::StructAlloc { dst, .. } |
+            Instruction::StructFieldLoad { dst, .. } |
+            Instruction::StructFieldAddr { dst, .. } |
+            Instruction::Alloc { dst, .. } |
+            Instruction::MemCopy { dst, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+            }
+            Instruction::Call { result, .. } |
+            Instruction::CallIndirect { result, .. } => {
+                if let Some(ref mut res) = result {
+                    if *res == old_reg {
+                        *res = new_reg;
+                    }
+                }
+            }
+            Instruction::Phi { dst, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// 获取指令使用的寄存器
+    pub fn get_used_registers(&self) -> Vec<RegisterId> {
+        let mut used = Vec::new();
+        
+        match self {
+            Instruction::Move { src, .. } => {
+                self.add_operand_registers(src, &mut used);
+            }
+            Instruction::Add { src1, src2, .. } |
+            Instruction::Sub { src1, src2, .. } |
+            Instruction::Mul { src1, src2, .. } |
+            Instruction::Div { src1, src2, .. } => {
+                self.add_operand_registers(src1, &mut used);
+                self.add_operand_registers(src2, &mut used);
+            }
+            Instruction::Compare { src1, src2, .. } => {
+                self.add_operand_registers(src1, &mut used);
+                self.add_operand_registers(src2, &mut used);
+            }
+            Instruction::Load64 { addr, .. } => {
+                used.push(*addr);
+            }
+            Instruction::Store64 { addr, src, .. } => {
+                used.push(*addr);
+                self.add_operand_registers(src, &mut used);
+            }
+            Instruction::StructFieldLoad { struct_addr, .. } => {
+                used.push(*struct_addr);
+            }
+            Instruction::StructFieldStore { struct_addr, src, .. } => {
+                used.push(*struct_addr);
+                self.add_operand_registers(src, &mut used);
+            }
+            Instruction::StructFieldAddr { struct_addr, .. } => {
+                used.push(*struct_addr);
+            }
+            Instruction::Call { args, .. } => {
+                used.extend_from_slice(args);
+            }
+            Instruction::CallIndirect { function_register, args, .. } => {
+                used.push(*function_register);
+                used.extend_from_slice(args);
+            }
+            Instruction::Return { value, .. } => {
+                if let Some(reg) = value {
+                    used.push(*reg);
+                }
+            }
+            Instruction::MemCopy { src, .. } => {
+                used.push(*src);
+            }
+            Instruction::Free { addr, .. } => {
+                used.push(*addr);
+            }
+            Instruction::Phi { incoming, .. } => {
+                for (_, value) in incoming {
+                    self.add_operand_registers(value, &mut used);
+                }
+            }
+            _ => {}
+        }
+        
+        used
+    }
+
+    /// 替换指令中的寄存器
+    pub fn replace_register(&mut self, old_reg: RegisterId, new_reg: RegisterId) {
+        match self {
+            Instruction::Move { src, .. } => {
+                Self::replace_operand_register(src, old_reg, new_reg);
+            }
+            Instruction::Add { src1, src2, .. } |
+            Instruction::Sub { src1, src2, .. } |
+            Instruction::Mul { src1, src2, .. } |
+            Instruction::Div { src1, src2, .. } => {
+                Self::replace_operand_register(src1, old_reg, new_reg);
+                Self::replace_operand_register(src2, old_reg, new_reg);
+            }
+            Instruction::Compare { src1, src2, .. } => {
+                Self::replace_operand_register(src1, old_reg, new_reg);
+                Self::replace_operand_register(src2, old_reg, new_reg);
+            }
+            Instruction::Load64 { addr, .. } => {
+                if *addr == old_reg {
+                    *addr = new_reg;
+                }
+            }
+            Instruction::Store64 { addr, src, .. } => {
+                if *addr == old_reg {
+                    *addr = new_reg;
+                }
+                Self::replace_operand_register(src, old_reg, new_reg);
+            }
+            Instruction::StructFieldLoad { struct_addr, .. } => {
+                if *struct_addr == old_reg {
+                    *struct_addr = new_reg;
+                }
+            }
+            Instruction::StructFieldStore { struct_addr, src, .. } => {
+                if *struct_addr == old_reg {
+                    *struct_addr = new_reg;
+                }
+                Self::replace_operand_register(src, old_reg, new_reg);
+            }
+            Instruction::StructFieldAddr { struct_addr, .. } => {
+                if *struct_addr == old_reg {
+                    *struct_addr = new_reg;
+                }
+            }
+            Instruction::Call { args, .. } => {
+                for arg in args {
+                    if *arg == old_reg {
+                        *arg = new_reg;
+                    }
+                }
+            }
+            Instruction::CallIndirect { function_register, args, .. } => {
+                if *function_register == old_reg {
+                    *function_register = new_reg;
+                }
+                for arg in args {
+                    if *arg == old_reg {
+                        *arg = new_reg;
+                    }
+                }
+            }
+            Instruction::Return { value, .. } => {
+                if let Some(ref mut reg) = value {
+                    if *reg == old_reg {
+                        *reg = new_reg;
+                    }
+                }
+            }
+            Instruction::MemCopy { src, .. } => {
+                if *src == old_reg {
+                    *src = new_reg;
+                }
+            }
+            Instruction::Free { addr, .. } => {
+                if *addr == old_reg {
+                    *addr = new_reg;
+                }
+            }
+            Instruction::Phi { incoming, .. } => {
+                for (_, value) in incoming {
+                    Self::replace_operand_register(value, old_reg, new_reg);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// 辅助方法：从操作数中提取寄存器
+    fn add_operand_registers(&self, operand: &Operand, registers: &mut Vec<RegisterId>) {
+        match operand {
+            Operand::Register { id } => registers.push(*id),
+            Operand::Memory { base, .. } => registers.push(*base),
+            Operand::StructField { struct_addr, .. } => registers.push(*struct_addr),
+            _ => {}
+        }
+    }
+
+    /// 辅助方法：替换操作数中的寄存器
+    fn replace_operand_register(operand: &mut Operand, old_reg: RegisterId, new_reg: RegisterId) {
+        match operand {
+            Operand::Register { id } => {
+                if *id == old_reg {
+                    *id = new_reg;
+                }
+            }
+            Operand::Memory { base, .. } => {
+                if *base == old_reg {
+                    *base = new_reg;
+                }
+            }
+            Operand::StructField { struct_addr, .. } => {
+                if *struct_addr == old_reg {
+                    *struct_addr = new_reg;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// 获取指令的跨度信息
+    pub(crate) fn get_span(&self) -> Span {
+        match self {
+            Instruction::Move { span, .. } |
+            Instruction::Add { span, .. } |
+            Instruction::Sub { span, .. } |
+            Instruction::Mul { span, .. } |
+            Instruction::Div { span, .. } |
+            Instruction::Store64 { span, .. } |
+            Instruction::Load64 { span, .. } |
+            Instruction::Compare { span, .. } |
+            Instruction::CallIndirect { span, .. } |
+            Instruction::Call { span, .. } |
+            Instruction::StructFieldStore { span, .. } |
+            Instruction::Phi { span, .. } => *span,
+            _ => Span::dummy(),
+        }
+    }
+    
+    /// 获取指令定义和使用的寄存器
+    /// 
+    /// 返回元组 (定义的寄存器, 使用的寄存器)
+    pub(crate) fn get_defined_and_used_registers(&self) -> (Vec<RegisterId>, Vec<RegisterId>) {
+        let mut defined = vec![];
+        let mut used = vec![];
+
+        match self {
+            Instruction::Move { dst, src, .. } => {
+                defined.push(*dst);
+                if let Operand::Register { id } = src { used.push(*id); }
+            }
+            Instruction::Add { dst, src1, src2, .. } |
+            Instruction::Sub { dst, src1, src2, .. } |
+            Instruction::Mul { dst, src1, src2, .. } |
+            Instruction::Div { dst, src1, src2, .. } => {
+                defined.push(*dst);
+                if let Operand::Register { id } = src1 { used.push(*id); }
+                if let Operand::Register { id } = src2 { used.push(*id); }
+            }
+            Instruction::Store64 { addr, src, .. } => {
+                used.push(*addr);
+                if let Operand::Register { id } = src { used.push(*id); }
+            }
+            Instruction::Load64 { dst, addr, .. } => {
+                defined.push(*dst);
+                used.push(*addr);
+            }
+            Instruction::Compare { src1, src2, .. } => {
+                if let Operand::Register { id } = src1 { used.push(*id); }
+                if let Operand::Register { id } = src2 { used.push(*id); }
+            }
+            Instruction::Return { value, .. } => {
+                if let Some(reg) = value { used.push(*reg); }
+            }
+            Instruction::CallIndirect { function_register, args, result, .. } => {
+                used.push(*function_register);
+                used.extend_from_slice(args);
+                if let Some(result_reg) = result { defined.push(*result_reg); }
+            }
+            Instruction::Call { args, result, .. } => {
+                used.extend_from_slice(args);
+                if let Some(result_reg) = result { defined.push(*result_reg); }
+            }
+            Instruction::Alloc { dst, .. } |
+            Instruction::StructAlloc { dst, .. } => {
+                defined.push(*dst);
+            }
+            Instruction::StructFieldStore { struct_addr, src, .. } => {
+                used.push(*struct_addr);
+                if let Operand::Register { id } = src { used.push(*id); }
+            }
+            Instruction::StructFieldLoad { dst, struct_addr, .. } => {
+                defined.push(*dst);
+                used.push(*struct_addr);
+            }
+            Instruction::Phi { dst, incoming, .. } => {
+                defined.push(*dst);
+                for (_, operand) in incoming {
+                    if let Operand::Register { id } = operand {
+                        used.push(*id);
+                    }
+                }
+            }
+            _ => {} // 其他指令不涉及寄存器
+        }
+
+        (defined, used)
+    }
 }
 
 /// LIR函数
@@ -275,6 +612,10 @@ pub struct LirFunction {
     pub struct_types: HashMap<StructTypeId, StructLayout>,
     /// 栈帧大小（用于局部变量分配）
     pub stack_frame_size: usize,
+    /// 🔧 新增：函数参数数量
+    pub parameter_count: usize,
+    /// 🔧 新增：函数参数寄存器列表
+    pub parameter_registers: Vec<RegisterId>,
 }
 
 impl LirFunction {
@@ -286,23 +627,49 @@ impl LirFunction {
             next_label: 0,
             struct_types: HashMap::new(),
             stack_frame_size: 0,
+            parameter_count: 0,
+            parameter_registers: Vec::new(),
         }
     }
-
-    /// 分配一个新的寄存器，跳过栈指针寄存器(RegisterId(6))
-    pub fn new_register(&mut self) -> RegisterId {
-        // 栈指针寄存器是RegisterId(6)，我们需要跳过它
-        const STACK_POINTER_REG: usize = 6;
+    
+    /// 🔧 新增：创建带参数信息的函数
+    pub fn new_with_params(name: String, param_count: usize) -> Self {
+        let mut function = Self::new(name);
+        function.parameter_count = param_count;
         
-        let id = RegisterId(self.next_register);
-        self.next_register += 1;
-        
-        // 如果分配到了栈指针寄存器，跳过它
-        if self.next_register == STACK_POINTER_REG {
-            self.next_register += 1;
+        // 根据调用约定设置参数寄存器
+        for i in 0..param_count {
+            // 调用约定：r1-r4 是参数寄存器
+            if i < 4 {
+                function.parameter_registers.push(RegisterId(i + 1));
+            }
         }
         
-        id
+        function
+    }
+
+    /// 分配一个新的寄存器，跳过栈指针寄存器(RegisterId(6))、帧指针寄存器(RegisterId(7))和函数参数寄存器
+    pub fn new_register(&mut self) -> RegisterId {
+        // 栈指针寄存器是RegisterId(6)，帧指针寄存器是RegisterId(7)
+        const STACK_POINTER_REG: usize = 6;
+        const FRAME_POINTER_REG: usize = 7;
+        // 🔧 修复：跳过已分配的函数参数寄存器
+        let parameter_registers: Vec<usize> = self.parameter_registers.iter().map(|r| r.0).collect();
+        
+        loop {
+            let id = RegisterId(self.next_register);
+            self.next_register += 1;
+            
+            // 🔧 关键修复：跳过栈指针和帧指针寄存器
+            if id.0 == STACK_POINTER_REG || id.0 == FRAME_POINTER_REG {
+                continue; // 跳过这些特殊寄存器
+            }
+            
+            // 🔧 修复：如果分配到了函数参数寄存器，跳过它
+            if !parameter_registers.contains(&id.0) {
+                return id;
+            }
+        }
     }
     
     /// 专门用于栈操作的寄存器分配（只返回栈指针寄存器）
@@ -314,11 +681,16 @@ impl LirFunction {
     pub fn is_stack_pointer_register(&self, reg: &RegisterId) -> bool {
         reg.0 == 6
     }
+    
+    /// 检查一个寄存器是否是帧指针寄存器
+    pub fn is_frame_pointer_register(&self, reg: &RegisterId) -> bool {
+        reg.0 == 7
+    }
 
     /// 验证指令是否违反栈指针寄存器使用规则
-    /// 栈指针寄存器(RegisterId(6))只能用于栈操作(Alloc, Sub等栈相关操作)
+    /// 栈指针寄存器(RegisterId(6))只能用于栈操作和栈帧管理
     pub fn validate_stack_pointer_usage(&self) -> Result<(), String> {
-        // 简化验证逻辑，只检查最关键的违规情况
+        // 🔧 修复：支持基于帧指针的栈帧管理代码
         for (index, instruction) in self.instructions.iter().enumerate() {
             match instruction {
                 // 允许的栈操作
@@ -326,11 +698,27 @@ impl LirFunction {
                     // 栈分配操作允许使用栈指针
                 }
                 Instruction::Sub { dst, src1, src2, .. } => {
-                    // 只有当目标是栈指针且操作数也是栈指针时才允许
+                    // 栈指针相关的减法操作
                     if self.is_stack_pointer_register(dst) {
                         match (src1, src2) {
                             (Operand::Register { id }, _) if self.is_stack_pointer_register(id) => {
-                                // 允许：SP = SP - size
+                                // 允许：SP = SP - size (栈分配或函数序言)
+                            }
+                            _ => {
+                                return Err(format!(
+                                    "指令 {} 违反栈指针使用规则: 栈指针寄存器只能用于栈操作",
+                                    index
+                                ));
+                            }
+                        }
+                    }
+                }
+                Instruction::Add { dst, src1, src2, .. } => {
+                    // 🔧 新增：允许栈指针的加法操作（函数尾声恢复栈指针）
+                    if self.is_stack_pointer_register(dst) {
+                        match (src1, src2) {
+                            (Operand::Register { id }, _) if self.is_stack_pointer_register(id) => {
+                                // 允许：SP = SP + size (函数尾声恢复栈指针)
                             }
                             _ => {
                                 return Err(format!(
@@ -342,11 +730,14 @@ impl LirFunction {
                     }
                 }
                 Instruction::Move { dst, src, .. } => {
-                    // 检查是否有非栈操作使用栈指针
+                    // 🔧 修复：支持栈帧管理中的寄存器移动
                     if self.is_stack_pointer_register(dst) {
                         match src {
                             Operand::Register { id } if self.is_stack_pointer_register(id) => {
                                 // 允许：dst = SP (栈分配结果)
+                            }
+                            Operand::Register { id } if self.is_frame_pointer_register(id) => {
+                                // 🔧 新增：允许：SP = FP (函数尾声恢复栈指针)
                             }
                             _ => {
                                 return Err(format!(
@@ -356,11 +747,36 @@ impl LirFunction {
                             }
                         }
                     }
+                    
+                    // 🔧 新增：允许帧指针相关的操作
+                    if self.is_frame_pointer_register(dst) {
+                        match src {
+                            Operand::Register { id } if self.is_stack_pointer_register(id) => {
+                                // 允许：FP = SP (函数序言设置帧指针)
+                            }
+                            _ => {
+                                // 其他对帧指针的赋值也允许（例如恢复调用者的帧指针）
+                            }
+                        }
+                    }
+                    
                     // 允许将栈指针值复制到其他寄存器（栈分配结果）
                     if let Operand::Register { id } = src {
                         if self.is_stack_pointer_register(id) && !self.is_stack_pointer_register(dst) {
                             // 允许：将栈指针值复制到其他寄存器
                         }
+                    }
+                }
+                Instruction::Store64 { addr, src, .. } => {
+                    // 🔧 新增：允许存储到栈指针地址（函数序言保存调用者帧指针）
+                    if self.is_stack_pointer_register(addr) {
+                        // 允许：store [SP], FP 或其他值
+                    }
+                }
+                Instruction::Load64 { dst, addr, .. } => {
+                    // 🔧 新增：允许从栈指针地址加载（函数尾声恢复调用者帧指针）
+                    if self.is_stack_pointer_register(addr) {
+                        // 允许：load FP, [SP] 或其他值
                     }
                 }
                 // 其他指令暂时不进行严格验证，避免复杂性

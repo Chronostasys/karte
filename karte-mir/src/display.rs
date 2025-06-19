@@ -152,6 +152,14 @@ impl fmt::Display for Statement {
                 object_type,
                 ..
             } => write!(f, "{} = heap_alloc {} bytes ({})", target, size, object_type),
+            Statement::Phi { target, incoming, .. } => {
+                write!(f, "{} = phi(", target)?;
+                for (i, (block_id, value)) in incoming.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "bb{}: {}", block_id.0, value)?;
+                }
+                write!(f, ")")
+            }
         }
     }
 }

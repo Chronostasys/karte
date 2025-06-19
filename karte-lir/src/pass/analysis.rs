@@ -372,6 +372,18 @@ impl DefUseAnalysis {
                     defs.push(*result_reg);
                 }
             }
+            Instruction::CallIndirect { function_register, args, result, .. } => {
+                // 函数寄存器被使用
+                uses.push(*function_register);
+                // 参数寄存器被使用
+                for arg in args {
+                    uses.push(*arg);
+                }
+                // 结果寄存器被定义
+                if let Some(result_reg) = result {
+                    defs.push(*result_reg);
+                }
+            }
             Instruction::Return { value, .. } => {
                 if let Some(ret_reg) = value {
                     uses.push(*ret_reg);
@@ -380,8 +392,40 @@ impl DefUseAnalysis {
             Instruction::Alloc { dst, .. } => {
                 defs.push(*dst);
             }
-            // 其他指令类型...
-            _ => {}
+            Instruction::StructAlloc { dst, .. } => {
+                defs.push(*dst);
+            }
+            Instruction::StructFieldLoad { dst, struct_addr, .. } => {
+                defs.push(*dst);
+                uses.push(*struct_addr);
+            }
+            Instruction::StructFieldStore { struct_addr, src, .. } => {
+                uses.push(*struct_addr);
+                self.analyze_operand_uses(src, &mut uses);
+            }
+            Instruction::Phi { dst, incoming, .. } => {
+                defs.push(*dst);
+                // Phi指令使用来自不同前驱块的寄存器
+                for (_, operand) in incoming {
+                    self.analyze_operand_uses(operand, &mut uses);
+                }
+            }
+            // 跳转指令和标签不涉及寄存器定义/使用
+            Instruction::Jump { .. } |
+            Instruction::JumpEqual { .. } |
+            Instruction::JumpNotEqual { .. } |
+            Instruction::JumpLess { .. } |
+            Instruction::JumpLessEqual { .. } |
+            Instruction::JumpGreater { .. } |
+            Instruction::JumpGreaterEqual { .. } |
+            Instruction::Label { .. } |
+            Instruction::Nop { .. } => {
+                // 这些指令不涉及寄存器
+            }
+            // 未知指令类型的默认处理
+            _ => {
+                eprintln!("警告: DefUseAnalysis遇到未知指令类型: {:?}", instruction);
+            }
         }
         
         (defs, uses)
@@ -399,7 +443,13 @@ impl DefUseAnalysis {
             Operand::Immediate { .. } => {
                 // 立即数不使用寄存器
             }
-            _ => {}
+            Operand::Label { .. } => {
+                // 标签不使用寄存器
+            }
+            // 处理其他可能的操作数类型
+            _ => {
+                // 未知操作数类型，暂时不处理
+            }
         }
     }
 }

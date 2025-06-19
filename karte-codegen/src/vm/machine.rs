@@ -78,10 +78,22 @@ impl VirtualMachine {
             if physical_reg == 255 {
                 // 这是一个溢出寄存器，需要从栈加载
                 if let Some(spill_slot) = self.spill_slot_mapping.get(reg_id) {
-                    // 计算栈地址：栈指针 + 溢出槽偏移
-                    let stack_addr = (self.registers[6] as i64 + spill_slot.stack_offset) as usize;
+                    // 🔧 修复：使用帧指针而不是栈指针
+                    // println!("溢出槽访问调试 - 读取:");
+                    // println!("  寄存器: {:?}", reg_id);
+                    // println!("  帧指针r7: {}", self.registers[7]);
+                    // println!("  栈指针r6: {}", self.registers[6]);
+                    // println!("  溢出槽偏移: {}", spill_slot.stack_offset);
+                    // println!("  溢出槽信息: {:?}", spill_slot);
+                    
+                    // 计算栈地址：帧指针 + 溢出槽偏移 (帧指针在函数执行期间保持不变)
+                    let stack_addr = (self.registers[7] as i64 + spill_slot.stack_offset) as usize;
+                    // println!("  计算地址: {} + {} = {}", self.registers[7], spill_slot.stack_offset, stack_addr);
+                    
                     if stack_addr < self.memory.len() {
-                        Ok(self.memory[stack_addr])
+                        let value = self.memory[stack_addr];
+                        // println!("  从地址{}读取值: {}", stack_addr, value);
+                        Ok(value)
                     } else {
                         Err(format!("Spill slot memory access out of bounds: {}", stack_addr))
                     }
@@ -104,10 +116,22 @@ impl VirtualMachine {
             if physical_reg == 255 {
                 // 这是一个溢出寄存器，需要写入栈
                 if let Some(spill_slot) = self.spill_slot_mapping.get(reg_id).cloned() {
-                    // 计算栈地址：栈指针 + 溢出槽偏移
-                    let stack_addr = (self.registers[6] as i64 + spill_slot.stack_offset) as usize;
+                    // 🔧 修复：使用帧指针而不是栈指针
+                    // println!("溢出槽访问调试 - 写入:");
+                    // println!("  寄存器: {:?}", reg_id);
+                    // println!("  写入值: {}", value);
+                    // println!("  帧指针r7: {}", self.registers[7]);
+                    // println!("  栈指针r6: {}", self.registers[6]);
+                    // println!("  溢出槽偏移: {}", spill_slot.stack_offset);
+                    // println!("  溢出槽信息: {:?}", spill_slot);
+                    
+                    // 计算栈地址：帧指针 + 溢出槽偏移 (帧指针在函数执行期间保持不变)
+                    let stack_addr = (self.registers[7] as i64 + spill_slot.stack_offset) as usize;
+                    // println!("  计算地址: {} + {} = {}", self.registers[7], spill_slot.stack_offset, stack_addr);
+                    
                     if stack_addr < self.memory.len() {
                         self.memory[stack_addr] = value;
+                        // println!("  写入值{}到地址{}", value, stack_addr);
                         Ok(())
                     } else {
                         Err(format!("Spill slot memory access out of bounds: {}", stack_addr))

@@ -159,7 +159,7 @@ mod tests {
         };
         
         let result = execute_with_pipeline(&call_expr);
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "{}", result.err().unwrap());
         assert_eq!(result.unwrap(), 42); // 身份函数应该返回输入值
     }
 

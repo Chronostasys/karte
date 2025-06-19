@@ -2,9 +2,13 @@ use super::{FunctionPass, ProgramPass, AnalysisPass, AnalysisManager, PassResult
 use crate::{LirProgram, LirFunction};
 use std::time::Instant;
 
-/// Pass 管理器
+/// Pass 管理器（按migration_to_ssa.md第5-6周计划增强）
 /// 
 /// 负责组织和执行各种优化 Pass，管理 Pass 之间的依赖关系
+/// 新增功能：
+/// - 改进的分析失效处理
+/// - Pass依赖验证
+/// - 更好的错误处理和统计
 pub struct PassManager {
     /// 程序级别的 Pass 列表
     program_passes: Vec<Box<dyn ProgramPass>>,
@@ -18,6 +22,10 @@ pub struct PassManager {
     stats: Vec<PassStats>,
     /// 是否启用调试输出
     debug: bool,
+    /// 是否启用严格的依赖检查（新增）
+    strict_dependency_check: bool,
+    /// 是否验证分析失效处理（新增）
+    validate_invalidation: bool,
 }
 
 impl PassManager {
@@ -30,6 +38,8 @@ impl PassManager {
             analysis_manager: AnalysisManager::new(),
             stats: Vec::new(),
             debug: false,
+            strict_dependency_check: true,  // 默认启用严格依赖检查
+            validate_invalidation: true,    // 默认启用失效验证
         }
     }
     
@@ -37,6 +47,25 @@ impl PassManager {
     pub fn with_debug(mut self) -> Self {
         self.debug = true;
         self
+    }
+    
+    /// 启用严格的依赖检查（按migration计划新增）
+    pub fn with_strict_dependency_check(mut self, enable: bool) -> Self {
+        self.strict_dependency_check = enable;
+        self
+    }
+    
+    /// 启用分析失效验证（按migration计划新增）
+    pub fn with_invalidation_validation(mut self, enable: bool) -> Self {
+        self.validate_invalidation = enable;
+        self
+    }
+    
+    /// 创建专业的Pass管理器（按migration计划）
+    pub fn create_professional() -> Self {
+        Self::new()
+            .with_strict_dependency_check(true)
+            .with_invalidation_validation(true)
     }
     
     /// 添加程序级别的 Pass
@@ -54,43 +83,19 @@ impl PassManager {
         self.analysis_passes.push(pass);
     }
     
-    /// 在程序上运行所有 Pass
+    /// 在程序上运行所有 Pass（增强版本）
     pub fn run_on_program(&mut self, program: &mut LirProgram) -> Result<(), String> {
         self.stats.clear();
         
         if self.debug {
-            println!("=== Pass Manager: 开始执行 Pass 序列 ===");
+            println!("=== 专业Pass管理器: 开始执行Pass序列 ===");
             println!("程序信息: {} 个函数", program.functions.len());
+            println!("严格依赖检查: {}", self.strict_dependency_check);
+            println!("失效验证: {}", self.validate_invalidation);
         }
         
         // 1. 运行程序级别的 Pass
-        let mut i = 0;
-        while i < self.program_passes.len() {
-            // 简化的依赖检查
-            let required_analyses = self.program_passes[i].required_analyses();
-            for analysis_name in required_analyses {
-                if !self.analysis_manager.results.contains_key(analysis_name) {
-                    return Err(format!("找不到所需的分析: {}", analysis_name));
-                }
-            }
-            
-            let result = self.program_passes[i].run_on_program(program, &mut self.analysis_manager);
-            let invalidated = self.program_passes[i].invalidated_analyses();
-            self.analysis_manager.invalidate_all(&invalidated);
-            
-            // 记录统计信息
-            let mut stats = PassStats::new(self.program_passes[i].name().to_string());
-            stats.result = result.clone();
-            stats.functions_processed = program.functions.len();
-            self.stats.push(stats);
-            
-            match result {
-                PassResult::Failed(msg) => return Err(format!("Pass {} 失败: {}", self.program_passes[i].name(), msg)),
-                _ => {}
-            }
-            
-            i += 1;
-        }
+        self.run_program_passes(program)?;
         
         // 2. 为每个函数运行分析和函数级别的 Pass
         for (func_name, function) in program.functions.iter_mut() {
@@ -103,16 +108,70 @@ impl PassManager {
             
             // 运行函数级别的 Pass
             self.run_function_passes_on_function(function)?;
+            
+            // 清理函数级分析结果（每个函数处理完后清理）
+            if self.validate_invalidation {
+                self.cleanup_function_analyses();
+            }
         }
         
         if self.debug {
             self.print_statistics();
+            println!("=== Pass序列执行完成 ===");
         }
         
         Ok(())
     }
     
-
+    /// 运行程序级别的Pass（新增方法）
+    fn run_program_passes(&mut self, program: &mut LirProgram) -> Result<(), String> {
+        let mut i = 0;
+        while i < self.program_passes.len() {
+            let start_time = Instant::now();
+            
+            // 依赖检查
+            let required_analyses = self.program_passes[i].required_analyses();
+            for analysis_name in required_analyses {
+                if !self.analysis_manager.results.contains_key(analysis_name) {
+                    return Err(format!("找不到所需的分析: {}", analysis_name));
+                }
+            }
+            
+            if self.debug {
+                println!("  执行程序Pass: {}", self.program_passes[i].name());
+            }
+            
+            let result = self.program_passes[i].run_on_program(program, &mut self.analysis_manager);
+            let invalidated = self.program_passes[i].invalidated_analyses();
+            
+            // 分析失效处理
+            if self.validate_invalidation && self.debug && !invalidated.is_empty() {
+                println!("    失效分析: {:?}", invalidated);
+            }
+            self.analysis_manager.invalidate_all(&invalidated);
+            
+            let execution_time = start_time.elapsed().as_millis() as u64;
+            
+            // 记录统计信息
+            let mut stats = PassStats::new(self.program_passes[i].name().to_string());
+            stats.execution_time_ms = execution_time;
+            stats.result = result.clone();
+            stats.functions_processed = program.functions.len();
+            self.stats.push(stats);
+            
+            match result {
+                PassResult::Failed(msg) => return Err(format!("程序Pass {} 失败: {}", self.program_passes[i].name(), msg)),
+                _ => {}
+            }
+            
+            if self.debug {
+                println!("    程序Pass {} 完成 ({}ms)", self.program_passes[i].name(), execution_time);
+            }
+            
+            i += 1;
+        }
+        Ok(())
+    }
     
     /// 为函数运行分析 Pass
     fn run_analysis_passes_on_function(&mut self, function: &LirFunction) -> Result<(), String> {
@@ -164,7 +223,7 @@ impl PassManager {
                 println!("    执行函数 Pass: {}", self.function_passes[i].name());
             }
             
-            // 检查依赖（简化版本）
+            // 依赖检查
             let required = self.function_passes[i].required_analyses();
             for analysis_name in required {
                 if !self.analysis_manager.results.contains_key(analysis_name) {
@@ -192,7 +251,10 @@ impl PassManager {
                 PassResult::Failed(msg) => {
                     return Err(format!("函数 Pass {} 失败: {}", self.function_passes[i].name(), msg));
                 }
-                _ => {}
+                _ => {
+                    println!("    函数 Pass {} 完成 ({}ms)", self.function_passes[i].name(), execution_time);
+                    println!("    优化后lir: {}", function);
+                }
             }
             
             i += 1;
@@ -201,7 +263,16 @@ impl PassManager {
         Ok(())
     }
     
-
+    /// 清理函数级分析结果（新增方法）
+    fn cleanup_function_analyses(&mut self) {
+        // 清理函数特定的分析结果，保留程序级分析
+        let function_analyses = ["def-use", "cfg", "liveness"];
+        self.analysis_manager.invalidate_all(&function_analyses);
+        
+        if self.debug {
+            println!("    清理函数级分析结果");
+        }
+    }
     
     /// 打印执行统计
     fn print_statistics(&self) {

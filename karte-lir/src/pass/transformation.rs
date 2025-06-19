@@ -1,6 +1,6 @@
 use super::{FunctionPass, AnalysisManager, PassResult};
 use crate::{LirFunction, Instruction, RegisterId, Operand};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// 死代码消除 Pass
 /// 
@@ -15,66 +15,128 @@ impl DeadCodeElimination {
     
     /// 运行死代码消除
     fn eliminate_dead_code(&self, function: &mut LirFunction) -> bool {
-        let mut changed = false;
-        let mut worklist = Vec::new();
-        let mut live_instructions = std::collections::HashSet::new();
+        println!("🧹 开始死代码消除");
         
-        // 标记所有有副作用的指令为活跃
+        let mut used_registers = HashSet::new();
+        let mut defined_registers = HashMap::new();
+        
+        // 第一遍：收集所有有副作用的指令使用的寄存器
         for (i, instruction) in function.instructions.iter().enumerate() {
             if self.has_side_effects(instruction) {
-                live_instructions.insert(i);
-                worklist.push(i);
+                let used = self.get_used_registers(instruction);
+                println!("🧹 有副作用的指令 {}: {:?} 使用寄存器: {:?}", i, instruction, used);
+                for reg in used {
+                    used_registers.insert(reg);
+                }
+            }
+            
+            // 记录定义
+            if let Some(def_reg) = self.get_defined_register(instruction) {
+                defined_registers.insert(def_reg, i);
             }
         }
         
-        // 从活跃指令开始，标记所有依赖的指令
-        while let Some(instruction_index) = worklist.pop() {
-            // 获取这条指令使用的寄存器
-            let used_registers = self.get_used_registers(&function.instructions[instruction_index]);
+        println!("🧹 初始使用的寄存器: {:?}", used_registers);
+        
+        // 第二遍：传播使用关系
+        let mut changed = true;
+        while changed {
+            changed = false;
+            let mut new_used = HashSet::new();
             
-            // 找到定义这些寄存器的指令
-            for used_reg in used_registers {
-                for (i, instr) in function.instructions.iter().enumerate() {
-                    if i < instruction_index && self.defines_register(instr, &used_reg) {
-                        if live_instructions.insert(i) {
-                            worklist.push(i);
+            for (i, instruction) in function.instructions.iter().enumerate() {
+                if let Some(def_reg) = self.get_defined_register(instruction) {
+                    if used_registers.contains(&def_reg) {
+                        let used = self.get_used_registers(instruction);
+                        println!("🧹 指令 {} 定义了使用中的寄存器 {:?}，传播使用: {:?}", i, def_reg, used);
+                        for reg in used {
+                            if used_registers.insert(reg) {
+                                new_used.insert(reg);
+                                changed = true;
+                            }
                         }
-                        break; // 找到最近的定义即可
                     }
                 }
             }
         }
         
-        // 移除未标记为活跃的指令
-        let mut new_instructions = Vec::new();
+        println!("🧹 传播后使用的寄存器: {:?}", used_registers);
+        
+        // 第三遍：移除死代码
+        let original_len = function.instructions.len();
+        let mut instructions_to_remove = Vec::new();
+        
         for (i, instruction) in function.instructions.iter().enumerate() {
-            if live_instructions.contains(&i) {
-                new_instructions.push(instruction.clone());
-            } else {
-                changed = true;
+            if !self.has_side_effects(instruction) {
+                if let Some(def_reg) = self.get_defined_register(instruction) {
+                    if !used_registers.contains(&def_reg) {
+                        instructions_to_remove.push(i);
+                        if matches!(instruction, Instruction::Phi { .. }) {
+                            println!("🧹 移除未使用的φ节点: {:?}", instruction);
+                        } else {
+                            println!("🧹 移除死代码: {:?}", instruction);
+                        }
+                    } else {
+                        println!("🧹 保留指令 {} (定义寄存器 {:?} 被使用): {:?}", i, def_reg, instruction);
+                    }
+                }
             }
         }
         
-        function.instructions = new_instructions;
-        changed
+        // 按逆序移除，避免索引问题
+        instructions_to_remove.reverse();
+        for &i in &instructions_to_remove {
+            function.instructions.remove(i);
+        }
+        
+        let removed_count = instructions_to_remove.len();
+        if removed_count > 0 {
+            println!("🧹 死代码消除完成，移除了 {} 条指令", removed_count);
+            true
+        } else {
+            println!("🧹 死代码消除完成，无代码被移除");
+            false
+        }
     }
     
     /// 检查指令是否有副作用
     fn has_side_effects(&self, instruction: &Instruction) -> bool {
         match instruction {
-            Instruction::Store64 { .. } |
-            Instruction::Call { .. } |
-            Instruction::Return { .. } |
-            Instruction::Jump { .. } |
-            Instruction::JumpEqual { .. } |
-            Instruction::JumpNotEqual { .. } |
-            Instruction::JumpLess { .. } |
-            Instruction::JumpLessEqual { .. } |
-            Instruction::JumpGreater { .. } |
-            Instruction::JumpGreaterEqual { .. } |
-            Instruction::Compare { .. } |
-            Instruction::Label { .. } => true, // 标签指令不能被移除，因为它们是跳转目标
-            _ => false,
+            // 内存操作 - 有副作用
+            Instruction::Store64 { .. } => true,
+            Instruction::Alloc { .. } => true,
+            Instruction::StructAlloc { .. } => true,
+            Instruction::StructFieldStore { .. } => true,
+            Instruction::MemCopy { .. } => true,
+            Instruction::Free { .. } => true,
+            
+            // 函数调用 - 有副作用
+            Instruction::Call { .. } => true,
+            Instruction::CallIndirect { .. } => true,
+            
+            // 控制流 - 有副作用
+            Instruction::Return { .. } => true,
+            Instruction::Jump { .. } => true,
+            Instruction::JumpEqual { .. } => true,
+            Instruction::JumpNotEqual { .. } => true,
+            Instruction::JumpLess { .. } => true,
+            Instruction::JumpLessEqual { .. } => true,
+            Instruction::JumpGreater { .. } => true,
+            Instruction::JumpGreaterEqual { .. } => true,
+            Instruction::Compare { .. } => true,
+            Instruction::Label { .. } => true,
+            
+            // 纯计算指令 - 无副作用（可以被DCE移除如果结果未使用）
+            Instruction::Move { .. } => false,
+            Instruction::Add { .. } => false,
+            Instruction::Sub { .. } => false,
+            Instruction::Mul { .. } => false,
+            Instruction::Div { .. } => false,
+            Instruction::Load64 { .. } => false,
+            Instruction::StructFieldLoad { .. } => false,
+            Instruction::StructFieldAddr { .. } => false,
+            Instruction::Nop { .. } => false,
+            Instruction::Phi { .. } => false,
         }
     }
     
@@ -107,9 +169,33 @@ impl DeadCodeElimination {
             Instruction::Call { args, .. } => {
                 used.extend_from_slice(args);
             }
+            Instruction::CallIndirect { function_register, args, .. } => {
+                used.push(*function_register);
+                used.extend_from_slice(args);
+            }
             Instruction::Return { value, .. } => {
                 if let Some(reg) = value {
                     used.push(*reg);
+                }
+            }
+            Instruction::StructFieldStore { struct_addr, src, .. } => {
+                used.push(*struct_addr);
+                self.add_operand_registers(src, &mut used);
+            }
+            Instruction::StructFieldLoad { struct_addr, .. } |
+            Instruction::StructFieldAddr { struct_addr, .. } => {
+                used.push(*struct_addr);
+            }
+            Instruction::MemCopy { src, .. } => {
+                used.push(*src);
+            }
+            Instruction::Free { addr, .. } => {
+                used.push(*addr);
+            }
+            Instruction::Phi { incoming, .. } => {
+                // φ节点使用来自各个前驱块的值
+                for (_, operand) in incoming {
+                    self.add_operand_registers(operand, &mut used);
                 }
             }
             _ => {}
@@ -136,9 +222,34 @@ impl DeadCodeElimination {
             Instruction::Mul { dst, .. } |
             Instruction::Div { dst, .. } |
             Instruction::Load64 { dst, .. } |
-            Instruction::Alloc { dst, .. } => dst == register,
-            Instruction::Call { result: Some(dst), .. } => dst == register,
+            Instruction::Alloc { dst, .. } |
+            Instruction::StructAlloc { dst, .. } |
+            Instruction::StructFieldLoad { dst, .. } |
+            Instruction::StructFieldAddr { dst, .. } => dst == register,
+            Instruction::Call { result: Some(dst), .. } |
+            Instruction::CallIndirect { result: Some(dst), .. } => dst == register,
+            Instruction::Phi { dst, .. } => dst == register,
             _ => false,
+        }
+    }
+    
+    /// 获取指令定义的寄存器
+    fn get_defined_register(&self, instruction: &Instruction) -> Option<RegisterId> {
+        match instruction {
+            Instruction::Move { dst, .. } |
+            Instruction::Add { dst, .. } |
+            Instruction::Sub { dst, .. } |
+            Instruction::Mul { dst, .. } |
+            Instruction::Div { dst, .. } |
+            Instruction::Load64 { dst, .. } |
+            Instruction::Alloc { dst, .. } |
+            Instruction::StructAlloc { dst, .. } |
+            Instruction::StructFieldLoad { dst, .. } |
+            Instruction::StructFieldAddr { dst, .. } => Some(*dst),
+            Instruction::Call { result: Some(dst), .. } |
+            Instruction::CallIndirect { result: Some(dst), .. } => Some(*dst),
+            Instruction::Phi { dst, .. } => Some(*dst),
+            _ => None,
         }
     }
 }
@@ -263,8 +374,13 @@ impl ConstantFolding {
             Instruction::Mul { dst, .. } |
             Instruction::Div { dst, .. } |
             Instruction::Load64 { dst, .. } |
-            Instruction::Alloc { dst, .. } => Some(*dst),
-            Instruction::Call { result: Some(dst), .. } => Some(*dst),
+            Instruction::Alloc { dst, .. } |
+            Instruction::StructAlloc { dst, .. } |
+            Instruction::StructFieldLoad { dst, .. } |
+            Instruction::StructFieldAddr { dst, .. } => Some(*dst),
+            Instruction::Call { result: Some(dst), .. } |
+            Instruction::CallIndirect { result: Some(dst), .. } => Some(*dst),
+            Instruction::Phi { dst, .. } => Some(*dst),
             _ => None,
         }
     }

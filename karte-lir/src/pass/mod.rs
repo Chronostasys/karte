@@ -3,12 +3,16 @@ pub mod analysis;
 pub mod transformation;
 pub mod memory2reg;
 pub mod register_allocation;
+pub mod ssa_construction;
+pub mod phi_elimination;
+pub mod stack_frame_lowering;
 
 pub use pass_manager::*;
 pub use analysis::*;
 pub use transformation::*;
 pub use memory2reg::*;
 pub use register_allocation::*;
+pub use stack_frame_lowering::*;
 
 use crate::{LirProgram, LirFunction};
 use std::collections::HashMap;
