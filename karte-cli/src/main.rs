@@ -1,8 +1,10 @@
+use clap::{Parser, Subcommand, ValueEnum};
 use karte_codegen::lir_interpreter::execute;
 use karte_diagnostics::DiagnosticBag;
 use karte_lexer::tokenize;
 use karte_lir::lower::lower_mir_to_lir;
 use karte_lir::optimization_pipeline::{OptimizationPipeline, OptimizationLevel};
+use karte_lir::LirProgram;
 use karte_mir::lower::lower_expr_to_mir;
 use karte_parser::parse_with_type_check;
 use log::{error, info, warn};
@@ -10,6 +12,89 @@ use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
+
+#[derive(Parser)]
+#[command(name = "karte")]
+#[command(about = "Karte 编程语言编译器")]
+#[command(version)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+    
+    /// 优化级别
+    #[arg(short, long, value_enum, default_value_t = OptimizationArg::Balanced)]
+    optimization: OptimizationArg,
+    
+    /// 显示详细的编译过程
+    #[arg(short, long)]
+    verbose: bool,
+    
+    /// 只输出LIR代码，不执行
+    #[arg(long)]
+    emit_lir: bool,
+    
+    /// 输出LIR到指定文件
+    #[arg(long)]
+    output: Option<String>,
+    
+    /// 输入文件或表达式
+    input: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// 编译并运行Karte代码
+    Run {
+        /// 输入文件或表达式
+        input: Option<String>,
+        
+        /// 只输出LIR代码，不执行
+        #[arg(long)]
+        emit_lir: bool,
+        
+        /// 输出LIR到指定文件
+        #[arg(long)]
+        output: Option<String>,
+    },
+    
+    /// 编译Karte代码到LIR
+    Compile {
+        /// 输入文件
+        input: String,
+        
+        /// 输出文件
+        #[arg(short, long)]
+        output: Option<String>,
+    },
+    
+    /// 运行LIR文件
+    Execute {
+        /// LIR文件路径
+        input: String,
+    },
+    
+    /// 交互式模式
+    Repl,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+enum OptimizationArg {
+    Debug,
+    Fast,
+    Balanced,
+    Performance,
+}
+
+impl From<OptimizationArg> for OptimizationLevel {
+    fn from(opt: OptimizationArg) -> Self {
+        match opt {
+            OptimizationArg::Debug => OptimizationLevel::Debug,
+            OptimizationArg::Fast => OptimizationLevel::Fast,
+            OptimizationArg::Balanced => OptimizationLevel::Balanced,
+            OptimizationArg::Performance => OptimizationLevel::Performance,
+        }
+    }
+}
 
 fn print_diagnostics(diagnostics: &DiagnosticBag, source_code: &str, filename: &str) {
     for diagnostic in &diagnostics.diagnostics {
@@ -31,11 +116,13 @@ fn print_diagnostics(diagnostics: &DiagnosticBag, source_code: &str, filename: &
     }
 }
 
-fn process_expression(input: &str, filename: &str, optimization_level: OptimizationLevel) {
-    if filename != "input" {
-        println!("Processing file: {}", filename);
-    } else {
-        println!("Input: {}", input);
+fn compile_to_lir(input: &str, filename: &str, optimization_level: OptimizationLevel, verbose: bool) -> Result<LirProgram, Box<dyn std::error::Error>> {
+    if verbose {
+        if filename != "input" {
+            println!("Processing file: {}", filename);
+        } else {
+            println!("Input: {}", input);
+        }
     }
 
     // 词法分析
@@ -44,11 +131,11 @@ fn process_expression(input: &str, filename: &str, optimization_level: Optimizat
     if !lex_diagnostics.is_empty() {
         print_diagnostics(&lex_diagnostics, input, filename);
         if lex_diagnostics.has_errors() {
-            return;
+            return Err("Lexical analysis failed".into());
         }
     }
 
-    if filename == "input" {
+    if verbose && filename == "input" {
         println!(
             "Tokens: {:?}",
             tokens.iter().map(|t| &t.token).collect::<Vec<_>>()
@@ -61,47 +148,63 @@ fn process_expression(input: &str, filename: &str, optimization_level: Optimizat
     if !parse_diagnostics.is_empty() {
         print_diagnostics(&parse_diagnostics, input, filename);
         if parse_diagnostics.has_errors() {
-            return;
+            return Err("Parsing or type checking failed".into());
         }
     }
 
-    if let Some(result) = result {
-        if filename == "input" {
-            println!("AST: {}", result.expr);
-        }
+    let result = result.ok_or("Failed to parse expression or type check failed")?;
+    
+    if verbose && filename == "input" {
+        println!("AST: {}", result.expr);
+    }
+    if verbose {
         println!("Type: {}", result.result_type);
+    }
 
-        // --- New Lowering and Execution Pipeline ---
+    // Lowering to MIR
+    if verbose {
         println!("\n--- Lowering to MIR ---");
-        let mir_program = match lower_expr_to_mir(&result.expr) {
-            Ok(prog) => prog,
-            Err(errors) => {
-                for err in errors {
-                    error!("MIR Lowering Error: {}", err);
-                }
-                return;
+    }
+    let mir_program = match lower_expr_to_mir(&result.expr) {
+        Ok(prog) => prog,
+        Err(errors) => {
+            for err in errors {
+                error!("MIR Lowering Error: {}", err);
             }
-        };
+            return Err("MIR lowering failed".into());
+        }
+    };
+    if verbose {
         println!("{}", mir_program);
+    }
 
+    // Lowering to LIR
+    if verbose {
         println!("\n--- Lowering to LIR ---");
         println!("=== 返回高级LIR (包含Alloc指令，待优化) ===");
-        let mut lir_program = match lower_mir_to_lir(&mir_program) {
-            Ok(prog) => prog,
-            Err(errors) => {
-                for err in errors {
-                    error!("LIR Lowering Error: {}", err);
-                }
-                return;
+    }
+    let mut lir_program = match lower_mir_to_lir(&mir_program) {
+        Ok(prog) => prog,
+        Err(errors) => {
+            for err in errors {
+                error!("LIR Lowering Error: {}", err);
             }
-        };
+            return Err("LIR lowering failed".into());
+        }
+    };
+    if verbose {
         println!("{}", lir_program);
         println!("================================================");
+    }
 
+    // LIR 优化
+    if verbose {
         println!("\n--- LIR 优化 ---");
-        let mut pipeline = OptimizationPipeline::new(optimization_level);
-        match pipeline.optimize(&mut lir_program) {
-            Ok(stats) => {
+    }
+    let mut pipeline = OptimizationPipeline::new(optimization_level);
+    match pipeline.optimize(&mut lir_program) {
+        Ok(stats) => {
+            if verbose {
                 println!("优化完成:");
                 println!("  - 总耗时: {}ms", stats.total_time_ms);
                 println!("  - 执行pass数: {}", stats.passes_executed);
@@ -111,184 +214,232 @@ fn process_expression(input: &str, filename: &str, optimization_level: Optimizat
                     println!("  - 指令减少: {:.1}%", reduction);
                 }
             }
-            Err(errors) => {
-                for err in errors {
-                    error!("LIR 优化错误: {}", err);
-                }
-                return;
-            }
         }
-        
+        Err(errors) => {
+            for err in errors {
+                error!("LIR 优化错误: {}", err);
+            }
+            return Err("LIR optimization failed".into());
+        }
+    }
+    
+    if verbose {
         println!("\n--- 优化后LIR ---");
         println!("{}", lir_program);
-
-        println!("\n--- 寄存器分配 ---");
-        
-        println!("\n--- 指令降级 ---");
-        if let Err(lowering_error) = karte_lir::lower_program_instructions(&mut lir_program) {
-            error!("指令降级错误: {}", lowering_error);
-            return;
-        }
-        
-        println!("\n--- 降级后LIR (可执行) ---");
-        println!("{}", lir_program);
-
-        println!("\n--- Executing LIR ---");
-        match execute(&lir_program) {
-            Ok(value) => {
-                println!("Result: {}", value);
-            }
-            Err(err) => {
-                error!("Runtime error: {}", err);
-            }
-        }
-    } else {
-        error!("Failed to parse expression or type check failed");
     }
 
-    println!();
+    // 指令降级
+    if verbose {
+        println!("\n--- 指令降级 ---");
+    }
+    if let Err(lowering_error) = karte_lir::lower_program_instructions(&mut lir_program) {
+        error!("指令降级错误: {}", lowering_error);
+        return Err("Instruction lowering failed".into());
+    }
+    
+    if verbose {
+        println!("\n--- 降级后LIR (可执行) ---");
+        println!("{}", lir_program);
+    }
+
+    Ok(lir_program)
 }
 
-fn process_file(filename: &str, optimization_level: OptimizationLevel) -> Result<(), Box<dyn std::error::Error>> {
-    // 读取文件内容
+fn execute_lir(lir_program: &LirProgram, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
+    if verbose {
+        println!("\n--- Executing LIR ---");
+    }
+    match execute(lir_program) {
+        Ok(value) => {
+            println!("Result: {}", value);
+            Ok(())
+        }
+        Err(err) => {
+            error!("Runtime error: {}", err);
+            Err("Execution failed".into())
+        }
+    }
+}
+
+fn process_file(filename: &str, optimization_level: OptimizationLevel, verbose: bool, emit_lir: bool, output_file: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     let content = fs::read_to_string(filename)?;
+    let lir_program = compile_to_lir(&content, filename, optimization_level, verbose)?;
     
-    // 处理文件内容
-    process_expression(&content, filename, optimization_level);
+    if let Some(output_path) = output_file {
+        let lir_code = format!("{}", lir_program);
+        fs::write(output_path, lir_code)?;
+        println!("LIR代码已输出到: {}", output_path);
+    }
+    
+    if emit_lir {
+        println!("{}", lir_program);
+    } else {
+        execute_lir(&lir_program, verbose)?;
+    }
     
     Ok(())
 }
 
-fn parse_optimization_level(arg: &str) -> Option<OptimizationLevel> {
-    match arg {
-        "--debug" | "-O0" => Some(OptimizationLevel::Debug),
-        "--fast" | "-O1" => Some(OptimizationLevel::Fast),
-        "--balanced" | "-O2" => Some(OptimizationLevel::Balanced),
-        "--performance" | "-O3" => Some(OptimizationLevel::Performance),
-        _ => None,
+fn process_expression(input: &str, optimization_level: OptimizationLevel, verbose: bool, emit_lir: bool, output_file: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    let lir_program = compile_to_lir(input, "input", optimization_level, verbose)?;
+    
+    if let Some(output_path) = output_file {
+        let lir_code = format!("{}", lir_program);
+        fs::write(output_path, lir_code)?;
+        println!("LIR代码已输出到: {}", output_path);
     }
+    
+    if emit_lir {
+        println!("{}", lir_program);
+    } else {
+        execute_lir(&lir_program, verbose)?;
+    }
+    
+    Ok(())
 }
 
-fn print_help() {
+fn load_and_execute_lir(filename: &str, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
+    if verbose {
+        println!("Loading LIR from: {}", filename);
+    }
+    
+    let content = fs::read_to_string(filename)?;
+    // 这里需要实现LIR的解析功能
+    // 暂时返回错误，因为LIR解析器还没有实现
+    Err("LIR file execution not yet implemented. Please compile from source code instead.".into())
+}
+
+fn run_repl(optimization_level: OptimizationLevel, verbose: bool) {
     println!("Karte 编程语言解释器");
+    println!("当前优化级别: {:?}", optimization_level);
     println!();
-    println!("用法:");
-    println!("  karte [选项] [表达式或文件]");
+    println!("支持的功能:");
+    println!("  - 基础运算: 1 + 2 * 3");
+    println!("  - 变量绑定: let x = 5; x + 10");
+    println!("  - 函数定义: let f = |x| x * 2; f(5)");
+    println!("  - 布尔类型: true, false");
+    println!("  - 条件表达式: if true then 42 else 0");
+    println!("  - 循环表达式: while false do 42");
+    println!("  - 加法类型: Some(42), None");
+    println!("  - 模式匹配: match Some(42) {{ Some(x) -> x, None -> 0 }}");
+    println!("  - 结构体: struct Point {{ x: number, y: number }}");
+    println!("输入表达式进行计算，输入 'quit' 或 'exit' 退出");
+    println!("你也可以传入文件名作为参数来执行文件: karte run filename.karte");
+    println!("使用 --help 查看所有选项");
     println!();
-    println!("选项:");
-    println!("  --debug, -O0        无优化，调试模式 (保留所有栈操作)");
-    println!("  --fast, -O1         快速优化 (Memory2Reg + 常量折叠)");
-    println!("  --balanced, -O2     平衡优化 (默认，所有基本优化)");
-    println!("  --performance, -O3  高性能优化 (激进优化)");
-    println!("  --help, -h          显示此帮助信息");
-    println!();
-    println!("示例:");
-    println!("  karte \"1 + 2 * 3\"              # 使用默认优化计算表达式");
-    println!("  karte --debug \"1 + 2 * 3\"      # 无优化，显示完整栈操作");
-    println!("  karte -O3 \"1 + 2 * 3\"          # 激进优化");
-    println!("  karte program.karte             # 执行文件");
-    println!("  karte --balanced program.karte  # 使用平衡优化执行文件");
+
+    loop {
+        print!("> ");
+        io::stdout().flush().unwrap();
+
+        let mut input = String::new();
+        match io::stdin().read_line(&mut input) {
+            Ok(_) => {
+                let input = input.trim();
+
+                if input.is_empty() {
+                    continue;
+                }
+
+                if input == "quit" || input == "exit" {
+                    println!("再见！");
+                    break;
+                }
+
+                // 在交互模式中也支持文件加载
+                if input.starts_with("load ") {
+                    let filename = input.strip_prefix("load ").unwrap().trim();
+                    if let Err(err) = process_file(filename, optimization_level, verbose, false, None) {
+                        error!("Error reading file '{}': {}", filename, err);
+                    }
+                    continue;
+                }
+
+                if let Err(err) = process_expression(input, optimization_level, verbose, false, None) {
+                    error!("Error: {}", err);
+                }
+            }
+            Err(error) => {
+                error!("Error reading input: {}", error);
+                break;
+            }
+        }
+    }
 }
 
 fn main() {
     env_logger::init();
 
-    let args: Vec<String> = env::args().collect();
-    let mut optimization_level = OptimizationLevel::Balanced; // 默认使用平衡优化
-    let mut non_option_args = Vec::new();
+    let cli = Cli::parse();
+    let optimization_level: OptimizationLevel = cli.optimization.into();
 
-    // 解析命令行参数
-    let mut i = 1;
-    while i < args.len() {
-        let arg = &args[i];
-        
-        if arg == "--help" || arg == "-h" {
-            print_help();
-            return;
-        }
-        
-        if let Some(level) = parse_optimization_level(arg) {
-            optimization_level = level;
-        } else {
-            non_option_args.push(arg.clone());
-        }
-        
-        i += 1;
+    if cli.verbose {
+        env::set_var("RUST_LOG", "info");
     }
 
-    if !non_option_args.is_empty() {
-        // 处理命令行参数
-        for arg in &non_option_args {
-            // 检查是否为文件路径
-            if Path::new(arg).exists() && Path::new(arg).is_file() {
-                // 如果是文件，读取并执行文件内容
-                match process_file(arg, optimization_level) {
-                    Ok(()) => {},
-                    Err(err) => {
-                        error!("Error reading file '{}': {}", arg, err);
+    match cli.command {
+        Some(Commands::Run { input, emit_lir, output }) => {
+            let input = input.or(cli.input);
+            if let Some(input) = input {
+                // 检查是否为文件路径
+                if Path::new(&input).exists() && Path::new(&input).is_file() {
+                    if let Err(err) = process_file(&input, optimization_level, cli.verbose, emit_lir, output.as_deref()) {
+                        error!("Error processing file '{}': {}", input, err);
+                        std::process::exit(1);
+                    }
+                } else {
+                    if let Err(err) = process_expression(&input, optimization_level, cli.verbose, emit_lir, output.as_deref()) {
+                        error!("Error processing expression: {}", err);
+                        std::process::exit(1);
                     }
                 }
             } else {
-                // 如果不是文件，当作表达式处理
-                process_expression(arg, "input", optimization_level);
+                error!("No input provided. Use 'karte run <input>' or 'karte repl' for interactive mode.");
+                std::process::exit(1);
             }
         }
-    } else {
-        // 交互式模式
-        println!("Karte 编程语言解释器");
-        println!("当前优化级别: {:?}", optimization_level);
-        println!();
-        println!("支持的功能:");
-        println!("  - 基础运算: 1 + 2 * 3");
-        println!("  - 变量绑定: let x = 5; x + 10");
-        println!("  - 函数定义: let f = |x| x * 2; f(5)");
-        println!("  - 布尔类型: true, false");
-        println!("  - 条件表达式: if true then 42 else 0");
-        println!("  - 循环表达式: while false do 42");
-        println!("  - 加法类型: Some(42), None");
-        println!("  - 模式匹配: match Some(42) {{ Some(x) -> x, None -> 0 }}");
-        println!("  - 结构体: struct Point {{ x: number, y: number }}");
-        println!("输入表达式进行计算，输入 'quit' 或 'exit' 退出");
-        println!("你也可以传入文件名作为参数来执行文件: cargo run filename.karte");
-        println!("使用 --help 查看优化选项");
-        println!();
-
-        loop {
-            print!("> ");
-            io::stdout().flush().unwrap();
-
-            let mut input = String::new();
-            match io::stdin().read_line(&mut input) {
-                Ok(_) => {
-                    let input = input.trim();
-
-                    if input.is_empty() {
-                        continue;
+        
+        Some(Commands::Compile { input, output }) => {
+            let output = output.unwrap_or_else(|| {
+                let mut path = Path::new(&input).to_path_buf();
+                path.set_extension("lir");
+                path.to_string_lossy().to_string()
+            });
+            
+            if let Err(err) = process_file(&input, optimization_level, cli.verbose, true, Some(&output)) {
+                error!("Error compiling file '{}': {}", input, err);
+                std::process::exit(1);
+            }
+        }
+        
+        Some(Commands::Execute { input }) => {
+            if let Err(err) = load_and_execute_lir(&input, cli.verbose) {
+                error!("Error executing LIR file '{}': {}", input, err);
+                std::process::exit(1);
+            }
+        }
+        
+        Some(Commands::Repl) => {
+            run_repl(optimization_level, cli.verbose);
+        }
+        
+        None => {
+            // 兼容旧版本的用法
+            if let Some(input) = cli.input {
+                // 检查是否为文件路径
+                if Path::new(&input).exists() && Path::new(&input).is_file() {
+                    if let Err(err) = process_file(&input, optimization_level, cli.verbose, cli.emit_lir, cli.output.as_deref()) {
+                        error!("Error processing file '{}': {}", input, err);
+                        std::process::exit(1);
                     }
-
-                    if input == "quit" || input == "exit" {
-                        println!("再见！");
-                        break;
+                } else {
+                    if let Err(err) = process_expression(&input, optimization_level, cli.verbose, cli.emit_lir, cli.output.as_deref()) {
+                        error!("Error processing expression: {}", err);
+                        std::process::exit(1);
                     }
-
-                    // 在交互模式中也支持文件加载
-                    if input.starts_with("load ") {
-                        let filename = input.strip_prefix("load ").unwrap().trim();
-                        match process_file(filename, optimization_level) {
-                            Ok(()) => {},
-                            Err(err) => {
-                                error!("Error reading file '{}': {}", filename, err);
-                            }
-                        }
-                        continue;
-                    }
-
-                    process_expression(input, "input", optimization_level);
                 }
-                Err(error) => {
-                    error!("Error reading input: {}", error);
-                    break;
-                }
+            } else {
+                run_repl(optimization_level, cli.verbose);
             }
         }
     }

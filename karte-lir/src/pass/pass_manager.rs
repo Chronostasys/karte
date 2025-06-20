@@ -223,11 +223,18 @@ impl PassManager {
                 println!("    执行函数 Pass: {}", self.function_passes[i].name());
             }
             
-            // 依赖检查
+            // 自动补全所需分析
             let required = self.function_passes[i].required_analyses();
             for analysis_name in required {
                 if !self.analysis_manager.results.contains_key(analysis_name) {
-                    return Err(format!("找不到所需的分析: {}", analysis_name));
+                    // 找到对应的analysis pass并运行
+                    if let Some(analysis_pass) = self.analysis_passes.iter_mut().find(|p| p.name() == analysis_name) {
+                        let result = analysis_pass.analyze_function(function, &self.analysis_manager)
+                            .map_err(|msg| format!("分析 Pass {} 失败: {}", analysis_pass.name(), msg))?;
+                        self.analysis_manager.store_result(analysis_pass.name().to_string(), result);
+                    } else {
+                        return Err(format!("找不到所需的分析: {}", analysis_name));
+                    }
                 }
             }
             

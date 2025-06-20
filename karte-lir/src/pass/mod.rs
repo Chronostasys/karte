@@ -6,6 +6,7 @@ pub mod register_allocation;
 pub mod ssa_construction;
 pub mod phi_elimination;
 pub mod stack_frame_lowering;
+pub mod instruction_transformer;
 
 pub use pass_manager::*;
 pub use analysis::*;
@@ -13,6 +14,7 @@ pub use transformation::*;
 pub use memory2reg::*;
 pub use register_allocation::*;
 pub use stack_frame_lowering::*;
+pub use instruction_transformer::*;
 
 use crate::{LirProgram, LirFunction};
 use std::collections::HashMap;

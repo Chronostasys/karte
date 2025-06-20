@@ -11,7 +11,7 @@
 //!   实现一个更强大的图着色分配器作为补充，或者在优化级别较高时使用。
 
 use crate::RegisterId;
-use super::types::{RegisterLifetime, RegisterAllocationResult, SpillSlot, AllocationStats, SimpleCallingConvention};
+use super::types::{RegisterLifetime, RegisterAllocationResult, SpillSlot, AllocationStats, SimpleCallingConvention, RegisterType};
 use std::collections::{HashMap, HashSet};
 
 /// 线性扫描分配器
@@ -20,19 +20,22 @@ use std::collections::{HashMap, HashSet};
 pub struct LinearScanAllocator {
     calling_convention: SimpleCallingConvention,
     reserved_registers: HashSet<u8>,
+    // 🔥 新增：显式spill栈，严格LIFO管理
+    spill_stack: Vec<u8>,
 }
 
 impl LinearScanAllocator {
     /// 创建新的线性扫描分配器
     pub fn new(calling_convention: SimpleCallingConvention) -> Self {
         let mut reserved = HashSet::new();
-        reserved.insert(calling_convention.stack_pointer);
-        reserved.insert(calling_convention.frame_pointer);
-        reserved.insert(calling_convention.return_address);
+        reserved.insert(calling_convention.stack_pointer);  // r6
+        reserved.insert(calling_convention.frame_pointer);  // r7
+        // 🔧 修复：不再保留return_address (r5)，允许它被分配
         
         Self {
             calling_convention,
             reserved_registers: reserved,
+            spill_stack: Vec::new(),
         }
     }
     
@@ -40,12 +43,12 @@ impl LinearScanAllocator {
     /// 
     /// 这是分配算法的主入口点。
     /// @param lifetimes - 所有虚拟寄存器的生命周期信息。
-    /// @param stack_address_registers - 不可被溢出的栈地址寄存器集合。
+    /// @param register_types - 寄存器类型映射。
     /// @returns 分配结果。
     pub fn allocate(
-        &self, 
+        &mut self, 
         mut lifetimes: Vec<RegisterLifetime>, 
-        stack_address_registers: &HashSet<RegisterId>
+        register_types: HashMap<RegisterId, RegisterType>
     ) -> RegisterAllocationResult {
         lifetimes.sort_by(|a, b| a.start.cmp(&b.start));
         
@@ -55,6 +58,7 @@ impl LinearScanAllocator {
         let mut available_registers = self.get_available_physical_registers();
         let mut spill_slot_counter = 0;
         let mut max_register_pressure = 0;
+        self.spill_stack.clear();
         
         // 🔧 修复：预分配函数参数寄存器
         for lifetime in &lifetimes {
@@ -71,37 +75,88 @@ impl LinearScanAllocator {
             }
         }
         
-        // 🔧 修复：优先分配stack_address_registers，保证它们一定有映射
-        for lifetime in &lifetimes {
-            if stack_address_registers.contains(&lifetime.register) && !register_mapping.contains_key(&lifetime.register) {
-                if let Some(physical_reg) = available_registers.pop() {
-                    register_mapping.insert(lifetime.register, physical_reg);
-                    println!("🔧 预分配栈地址寄存器: {:?} -> r{}", lifetime.register, physical_reg);
-                    active_intervals.push(lifetime.clone());
+        // 🔧 修复：StackAddress寄存器也需要分配物理寄存器
+        // 因为它们在StackFrameLowering后变成了add指令的目标寄存器
+        println!("🔍 StackAddress寄存器也需要分配物理寄存器");
+        
+        for current_lifetime in &lifetimes {
+            if current_lifetime.is_function_parameter {
+                continue;
+            }
+            // 🔧 修复：为Data和StackAddress类型都分配物理寄存器
+            // StackAddress寄存器在StackFrameLowering后变成add指令的目标寄存器，需要物理寄存器
+            if current_lifetime.register_type != RegisterType::Data && current_lifetime.register_type != RegisterType::StackAddress {
+                continue;
+            }
+            self.expire_old_intervals(&mut active_intervals, &mut available_registers, &register_mapping, current_lifetime.start);
+            max_register_pressure = max_register_pressure.max(active_intervals.len());
+            if let Some(physical_reg) = available_registers.pop() {
+                debug_assert!(!self.reserved_registers.contains(&physical_reg));
+                register_mapping.insert(current_lifetime.register, physical_reg);
+                active_intervals.push(current_lifetime.clone());
+                self.spill_stack.push(physical_reg);
+            } else {
+                // 🔧 修复：只有Data类型的寄存器可以被溢出
+                if let Some(victim) = active_intervals.iter().find(|lt| lt.can_spill()) {
+                    let victim_reg = victim.register;
+                    let freed_reg = register_mapping.remove(&victim_reg).unwrap();
+                    spilled_registers.insert(victim_reg, SpillSlot { slot_id: spill_slot_counter });
+                    spill_slot_counter += 1;
+                    if let Some(pos) = self.spill_stack.iter().position(|&r| r == freed_reg) {
+                        self.spill_stack.remove(pos);
+                    }
+                    register_mapping.insert(current_lifetime.register, freed_reg);
+                    active_intervals.retain(|i| i.register != victim_reg);
+                    active_intervals.push(current_lifetime.clone());
+                    self.spill_stack.push(freed_reg);
                 } else {
-                    // 没有可用物理寄存器，必须溢出
-                    spilled_registers.insert(lifetime.register, SpillSlot { slot_id: spill_slot_counter });
-                    println!("🔧 溢出栈地址寄存器: {:?} -> slot_{}", lifetime.register, spill_slot_counter);
+                    // 🔧 修复：如果当前寄存器是StackAddress类型且无法溢出，这是错误
+                    if current_lifetime.register_type == RegisterType::StackAddress {
+                        panic!("无法为StackAddress寄存器 {:?} 分配物理寄存器，且无法溢出！这是寄存器分配器的bug", current_lifetime.register);
+                    }
+                    spilled_registers.insert(current_lifetime.register, SpillSlot { slot_id: spill_slot_counter });
                     spill_slot_counter += 1;
                 }
             }
         }
         
-        for current_lifetime in &lifetimes {
-            // 跳过已经预分配的函数参数和stack_address_registers
-            if current_lifetime.is_function_parameter || stack_address_registers.contains(&current_lifetime.register) {
-                continue;
+        // 检查分配结果，彻底禁止255魔数和超出范围的寄存器
+        for (&reg, &phys) in &register_mapping {
+            if phys == 255 {
+                panic!("分配结果中出现非法物理寄存器255: {:?}，这是分配器的bug！", reg);
             }
-            
-            self.expire_old_intervals(&mut active_intervals, &mut available_registers, &register_mapping, current_lifetime.start);
-            max_register_pressure = max_register_pressure.max(active_intervals.len());
+            // 🔧 新增：检查物理寄存器是否超出虚拟机范围（r0-r7）
+            if phys >= 8 {
+                panic!("分配结果中出现超出虚拟机范围的物理寄存器r{}: {:?}，虚拟机只支持r0-r7！", phys, reg);
+            }
+        }
 
-            if let Some(physical_reg) = available_registers.pop() {
-                debug_assert!(!self.reserved_registers.contains(&physical_reg), "分配到保留寄存器: r{}", physical_reg);
-                register_mapping.insert(current_lifetime.register, physical_reg);
-                active_intervals.push(current_lifetime.clone());
-            } else {
-                self.spill_at_interval(&mut active_intervals, current_lifetime, &mut register_mapping, &mut spilled_registers, &mut spill_slot_counter, stack_address_registers);
+        // === 🔥 新增：保证每个restore点有可用物理寄存器 ===
+        // 对于每个spilled寄存器的每个uses（reload点），模拟活跃区间，保证有空闲物理寄存器
+        for (spilled_reg, spill_slot) in &spilled_registers {
+            if let Some(lifetime) = lifetimes.iter().find(|lt| lt.register == *spilled_reg) {
+                for &use_pos in &lifetime.uses {
+                    // 模拟到use_pos时的活跃区间和可用寄存器
+                    let mut temp_active = active_intervals.clone();
+                    let mut temp_available = self.get_available_physical_registers();
+                    let mut temp_register_mapping = register_mapping.clone();
+                    // expire已结束的区间
+                    self.expire_old_intervals(&mut temp_active, &mut temp_available, &temp_register_mapping, use_pos);
+                    // 检查是否有空闲物理寄存器
+                    if temp_available.is_empty() {
+                        // 没有空闲寄存器，主动spill一个可spill的活跃寄存器
+                        if let Some(victim) = temp_active.iter().find(|lt| lt.can_spill()) {
+                            let victim_reg = victim.register;
+                            let freed_reg = temp_register_mapping.remove(&victim_reg).unwrap();
+                            temp_available.push(freed_reg);
+                            // 这里仅做分配决策，实际spill指令由后续pass插入
+                            println!("[restore点主动spill] reload {:?} 需要先spill {:?} (r{})", spilled_reg, victim_reg, freed_reg);
+                        } else {
+                            panic!("restore点无法分配物理寄存器：{:?}，没有可spill的活跃寄存器！", spilled_reg);
+                        }
+                    }
+                    // 用空闲寄存器做reload（这里只做决策，实际reload由后续pass插入）
+                }
             }
         }
         
@@ -114,12 +169,13 @@ impl LinearScanAllocator {
             },
             register_mapping,
             spilled_registers,
+            register_types,
         }
     }
     
     /// 释放已结束的活跃区间，并回收它们占用的物理寄存器
     fn expire_old_intervals(
-        &self,
+        &mut self,
         active_intervals: &mut Vec<RegisterLifetime>,
         available_registers: &mut Vec<u8>,
         register_mapping: &HashMap<RegisterId, u8>,
@@ -131,6 +187,13 @@ impl LinearScanAllocator {
                 let ended = active_intervals.remove(i);
                 if let Some(&physical_reg) = register_mapping.get(&ended.register) {
                     if !self.reserved_registers.contains(&physical_reg) {
+                        // 只有spill_stack顶才pop并reload，否则仅标记空闲
+                        if let Some(&top) = self.spill_stack.last() {
+                            if top == physical_reg {
+                                // LIFO顺序，pop并reload
+                                self.spill_stack.pop();
+                            }
+                        }
                         available_registers.push(physical_reg);
                     }
                 }
@@ -148,9 +211,18 @@ impl LinearScanAllocator {
         register_mapping: &mut HashMap<RegisterId, u8>,
         spilled_registers: &mut HashMap<RegisterId, SpillSlot>,
         spill_slot_counter: &mut usize,
-        stack_address_registers: &HashSet<RegisterId>,
     ) {
-        if let Some(spill_candidate) = self.find_spill_candidate(active_intervals, current, stack_address_registers) {
+        if !current.can_spill() {
+            panic!("尝试溢出非数据寄存器 {:?} (类型: {:?})，这是分配器的bug", 
+                   current.register, current.register_type);
+        }
+        
+        if let Some(spill_candidate) = self.find_spill_candidate(active_intervals, current) {
+            if !spill_candidate.can_spill() {
+                panic!("选择非数据寄存器 {:?} (类型: {:?}) 作为溢出候选，这是分配器的bug", 
+                       spill_candidate.register, spill_candidate.register_type);
+            }
+            
             if spill_candidate.end > current.end {
                 let freed_reg = register_mapping.remove(&spill_candidate.register).unwrap();
                 register_mapping.insert(current.register, freed_reg);
@@ -164,9 +236,6 @@ impl LinearScanAllocator {
                 *spill_slot_counter += 1;
             }
         } else {
-            if stack_address_registers.contains(&current.register) {
-                panic!("无法溢出栈地址寄存器 {:?}，分配失败", current.register);
-            }
             spilled_registers.insert(current.register, SpillSlot { slot_id: *spill_slot_counter });
             *spill_slot_counter += 1;
         }
@@ -177,13 +246,12 @@ impl LinearScanAllocator {
         &self,
         active_intervals: &'a [RegisterLifetime],
         current_lifetime: &RegisterLifetime,
-        stack_address_registers: &HashSet<RegisterId>,
     ) -> Option<&'a RegisterLifetime> {
         let mut furthest_use = 0;
         let mut spill_candidate = None;
 
         for interval in active_intervals {
-            if stack_address_registers.contains(&interval.register) {
+            if !interval.can_spill() {
                 continue;
             }
             let next_use = self.find_next_use(interval, current_lifetime.start);

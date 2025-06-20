@@ -8,6 +8,43 @@ use std::collections::HashMap;
 use std::any::Any;
 use crate::pass::AnalysisResult;
 
+/// 寄存器类型
+/// 
+/// 定义了虚拟寄存器的语义类型，用于指导寄存器分配策略
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
+pub enum RegisterType {
+    /// 普通数据寄存器 - 存储计算值，可以被溢出
+    Data,
+    /// 栈地址寄存器 - 存储栈地址，不能被溢出
+    StackAddress,
+    /// 函数参数寄存器 - 特殊处理，优先分配
+    FunctionParameter,
+    /// 特殊用途寄存器 - 如返回值、帧指针等，不能被重新分配
+    Special,
+}
+
+impl RegisterType {
+    /// 检查该类型的寄存器是否可以被溢出
+    pub fn can_spill(&self) -> bool {
+        matches!(self, RegisterType::Data)
+    }
+    
+    /// 检查该类型的寄存器是否需要特殊处理
+    pub fn needs_special_handling(&self) -> bool {
+        matches!(self, RegisterType::StackAddress | RegisterType::FunctionParameter | RegisterType::Special)
+    }
+    
+    /// 获取寄存器类型的字符串表示
+    pub fn to_string(&self) -> &'static str {
+        match self {
+            RegisterType::Data => "Data",
+            RegisterType::StackAddress => "StackAddress",
+            RegisterType::FunctionParameter => "FunctionParameter",
+            RegisterType::Special => "Special",
+        }
+    }
+}
+
 /// 寄存器分配结果
 /// 
 /// 封装了一次寄存器分配操作的完整产出，包括
@@ -19,6 +56,8 @@ pub struct RegisterAllocationResult {
     pub register_mapping: HashMap<RegisterId, u8>,
     /// 溢出的寄存器及其逻辑栈槽信息
     pub spilled_registers: HashMap<RegisterId, SpillSlot>,
+    /// 🔧 新增：寄存器类型映射
+    pub register_types: HashMap<RegisterId, RegisterType>,
     /// 分配统计信息
     pub stats: AllocationStats,
 }
@@ -70,6 +109,8 @@ pub struct RegisterLifetime {
     pub is_function_parameter: bool,
     /// 如果是函数参数，记录其参数索引
     pub parameter_index: Option<usize>,
+    /// 🔧 新增：寄存器类型
+    pub register_type: RegisterType,
 }
 
 impl RegisterLifetime {
@@ -83,6 +124,7 @@ impl RegisterLifetime {
             uses: vec![],
             is_function_parameter: false,
             parameter_index: None,
+            register_type: RegisterType::Data,
         }
     }
 
@@ -94,6 +136,11 @@ impl RegisterLifetime {
     /// 计算生命周期的长度
     pub fn length(&self) -> usize {
         self.end - self.start
+    }
+    
+    /// 检查该寄存器是否可以被溢出
+    pub fn can_spill(&self) -> bool {
+        self.register_type.can_spill()
     }
 }
 
@@ -124,7 +171,7 @@ impl Default for SimpleCallingConvention {
             stack_pointer: 6,                     // r6
             frame_pointer: 7,                     // r7
             return_address: 5,                    // r5
-            allocatable_registers: vec![0, 1, 2, 3, 4], // r0-r4
+            allocatable_registers: vec![0, 1, 2, 3, 4, 5], // r0-r5，排除r6(SP)和r7(FP)
         }
     }
 }

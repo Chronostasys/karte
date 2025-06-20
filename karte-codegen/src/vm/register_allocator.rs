@@ -33,6 +33,7 @@ pub struct SpillSlot {
 
 /// 寄存器分配器
 #[derive(Debug)]
+#[deprecated(note = "use karte-lir/pass/register_allocation instead")]
 pub struct RegisterAllocator {
     /// 可用的物理寄存器
     available_registers: Vec<u8>,

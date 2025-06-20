@@ -153,8 +153,10 @@ impl OptimizationPipeline {
         }
         
         // === 第4阶段：φ指令消除 ===
-        // φ指令消除：在Memory2Reg之后运行，将φ指令转换为mov指令
+        // 在φ指令消除之前重新运行CFG分析，因为Memory2Reg可能使CFG失效
         if self.config.enable_dce {
+            // 重新运行CFG分析，为φ指令消除提供必要信息
+            pass_manager.add_analysis_pass(Box::new(ControlFlowAnalysis::new()));
             pass_manager.add_function_pass(Box::new(PhiEliminationPass::new()));
         }
         
@@ -183,8 +185,8 @@ impl OptimizationPipeline {
         // 阶段 7.1: Pre-RA - 寄存器分配决策（不修改代码）
         pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::DecisionOnly)));
         
-        // 阶段 7.2: StackFrameLowering - 栈帧管理和溢出代码生成（使用临时虚拟寄存器）
-        pass_manager.add_function_pass(Box::new(StackFrameLowering::new()));
+        // // 阶段 7.2: StackFrameLowering - 栈帧管理和溢出代码生成（使用临时虚拟寄存器）
+        // pass_manager.add_function_pass(Box::new(StackFrameLowering::new()));
         
         // 阶段 7.3: Final-RA - 最终寄存器分配（包括临时寄存器的分配）
         pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::FinalRewrite)));
@@ -211,7 +213,7 @@ impl OptimizationPipeline {
                 // 无优化，只做基本分析和寄存器分配
                 // 🔧 修改：使用两阶段寄存器分配架构
                 pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::DecisionOnly)));
-                pass_manager.add_function_pass(Box::new(StackFrameLowering::new()));
+                // pass_manager.add_function_pass(Box::new(StackFrameLowering::new()));
                 pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::FinalRewrite)));
             }
             1 => {
@@ -221,7 +223,7 @@ impl OptimizationPipeline {
                 }
                 // 🔧 修改：使用两阶段寄存器分配架构
                 pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::DecisionOnly)));
-                pass_manager.add_function_pass(Box::new(StackFrameLowering::new()));
+                // pass_manager.add_function_pass(Box::new(StackFrameLowering::new()));
                 pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::FinalRewrite)));
             }
             2 => {
@@ -237,7 +239,7 @@ impl OptimizationPipeline {
                 }
                 // 🔧 修改：使用两阶段寄存器分配架构
                 pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::DecisionOnly)));
-                pass_manager.add_function_pass(Box::new(StackFrameLowering::new()));
+                // pass_manager.add_function_pass(Box::new(StackFrameLowering::new()));
                 pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::FinalRewrite)));
             }
             3 => {
@@ -261,7 +263,7 @@ impl OptimizationPipeline {
                 }
                 // 🔧 修改：使用两阶段寄存器分配架构
                 pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::DecisionOnly)));
-                pass_manager.add_function_pass(Box::new(StackFrameLowering::new()));
+                // pass_manager.add_function_pass(Box::new(StackFrameLowering::new()));
                 pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::FinalRewrite)));
             }
             _ => {

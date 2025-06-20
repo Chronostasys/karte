@@ -270,6 +270,18 @@ pub enum Instruction {
     },
 }
 
+// 🔧 新增：指令唯一ID系统
+static NEXT_INSTRUCTION_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct InstructionId(pub u64);
+
+impl InstructionId {
+    pub fn new() -> Self {
+        InstructionId(NEXT_INSTRUCTION_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst))
+    }
+}
+
 impl Instruction {
     /// 获取指令定义的寄存器（目标寄存器）
     pub fn get_def_register(&self) -> Option<RegisterId> {

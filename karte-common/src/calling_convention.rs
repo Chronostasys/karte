@@ -115,9 +115,10 @@ impl CallingConvention {
 
     /// 获取可用于寄存器分配的通用寄存器
     pub fn get_allocatable_registers(&self) -> Vec<PhysicalRegister> {
-        // 排除特殊寄存器，只返回可分配的寄存器
+        // 🔧 修复：增加可分配寄存器数量，只排除SP和FP，允许分配r5
+        // 这样可以支持更多的栈地址寄存器分配
         (0..8u8)
-            .filter(|&reg| !self.is_special_register(reg))
+            .filter(|&reg| reg != self.stack_pointer && reg != self.frame_pointer)
             .collect()
     }
 }

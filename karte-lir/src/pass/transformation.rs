@@ -1,4 +1,5 @@
 use super::{FunctionPass, AnalysisManager, PassResult};
+use super::instruction_transformer::IndexInstructionTransformer;
 use crate::{LirFunction, Instruction, RegisterId, Operand};
 use std::collections::{HashMap, HashSet};
 
@@ -63,14 +64,12 @@ impl DeadCodeElimination {
         println!("🧹 传播后使用的寄存器: {:?}", used_registers);
         
         // 第三遍：移除死代码
-        let original_len = function.instructions.len();
-        let mut instructions_to_remove = Vec::new();
-        
+        let mut transformer = IndexInstructionTransformer::new();
         for (i, instruction) in function.instructions.iter().enumerate() {
             if !self.has_side_effects(instruction) {
                 if let Some(def_reg) = self.get_defined_register(instruction) {
                     if !used_registers.contains(&def_reg) {
-                        instructions_to_remove.push(i);
+                        transformer.remove(i);
                         if matches!(instruction, Instruction::Phi { .. }) {
                             println!("🧹 移除未使用的φ节点: {:?}", instruction);
                         } else {
@@ -82,21 +81,13 @@ impl DeadCodeElimination {
                 }
             }
         }
-        
-        // 按逆序移除，避免索引问题
-        instructions_to_remove.reverse();
-        for &i in &instructions_to_remove {
-            function.instructions.remove(i);
-        }
-        
-        let removed_count = instructions_to_remove.len();
-        if removed_count > 0 {
-            println!("🧹 死代码消除完成，移除了 {} 条指令", removed_count);
-            true
+        let (changed, _, _, _) = transformer.apply_to_function(function);
+        if changed {
+            println!("🧹 死代码消除完成，有代码被移除");
         } else {
             println!("🧹 死代码消除完成，无代码被移除");
-            false
         }
+        changed
     }
     
     /// 检查指令是否有副作用

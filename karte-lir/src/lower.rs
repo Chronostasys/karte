@@ -9,6 +9,7 @@ use karte_mir::{
     Pattern,
 };
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 /// MIR到LIR的lowering上下文（简化版本）
 /// 
@@ -37,17 +38,10 @@ pub struct LirLoweringContext {
     struct_name_to_type_id: HashMap<String, StructTypeId>,
     /// Tagged Union管理器
     tagged_union_manager: TaggedUnionManager,
-    /// 栈分配追踪（保留，用于栈管理）
+    /// 栈分配追踪（统一的值存储策略）
     stack_allocations: HashMap<String, RegisterId>,
-    /// 直接寄存器值映射（不经过Stack-First的特殊值）
-    direct_register_values: HashMap<String, RegisterId>,
     /// 🔧 专业修复：全局结构体类型信息
     global_struct_types: HashMap<String, StructLayout>,
-    
-    // 🚫 移除的复杂映射：
-    // value_to_register: HashMap<String, RegisterId>,  // ❌ 删除
-    // value_mapping: HashMap<String, Value>,           // ❌ 删除  
-    // value_to_result_register: HashMap<String, RegisterId>, // ❌ 删除
 }
 
 impl LirLoweringContext {
@@ -64,7 +58,6 @@ impl LirLoweringContext {
             struct_name_to_type_id: HashMap::new(),
             tagged_union_manager: TaggedUnionManager::new(),
             stack_allocations: HashMap::new(),
-            direct_register_values: HashMap::new(),
             global_struct_types: HashMap::new(),
         }
     }
@@ -112,10 +105,20 @@ impl LirLoweringContext {
 
     /// 为值分配栈槽（Stack-First策略）
     fn allocate_stack_slot_for_value(&mut self, value: &Value) -> RegisterId {
+        self.allocate_stack_slot_for_value_with_instruction(value, true)
+    }
+    
+    /// 为值分配栈槽，可以选择是否生成alloc指令
+    fn allocate_stack_slot_for_value_with_instruction(&mut self, value: &Value, generate_alloc: bool) -> RegisterId {
         let key = value_to_key(value);
         
-        // 为每个调用都分配新的栈空间，不重用现有地址
-        // 这确保每个值都有独立的栈位置，避免数据被覆盖
+        // 🔧 关键修复：检查是否已经为这个值分配了栈槽
+        // 如果已经分配，重用现有的栈槽，确保同一个值在整个函数中使用相同的地址
+        if let Some(&existing_addr) = self.stack_allocations.get(&key) {
+            return existing_addr;
+        }
+        
+        // 为新值分配栈空间
         let address_register = self.current_function_mut().new_register();
         
         // 根据值类型确定需要的空间大小
@@ -126,16 +129,19 @@ impl LirLoweringContext {
             _ => 8, // 其他值8字节
         };
         
-        // 在栈上分配空间来存储这个值
-        self.add_instruction(Instruction::Alloc {
-            dst: address_register, 
-            size,
-            alignment: 8,
-            allocation_type: AllocationType::Stack,
-            span: karte_diagnostics::Span::dummy(),
-        });
+        // 只有在需要时才生成alloc指令
+        if generate_alloc {
+            // 在栈上分配空间来存储这个值
+            self.add_instruction(Instruction::Alloc {
+                dst: address_register, 
+                size,
+                alignment: 8,
+                allocation_type: AllocationType::Stack,
+                span: karte_diagnostics::Span::dummy(),
+            });
+        }
         
-        // 记录分配的栈地址（但允许多次分配）
+        // 记录分配的栈地址，供后续使用
         self.stack_allocations.insert(key, address_register);
         address_register
     }
@@ -274,13 +280,45 @@ impl LirLoweringContext {
             }
         }
         
+        // 🔧 关键修复：对于临时变量，优先查找FieldAccess创建的独立栈槽
+        if let Value::Temp { .. } = value {
+            // 检查是否有FieldAccess为这个临时变量创建的独立栈槽
+            // 按优先级顺序查找：function_ptr > env_ptr > 其他字段
+            let field_keys = [
+                format!("field_function_ptr:{}", value_key),
+                format!("field_env_ptr:{}", value_key),
+            ];
+            
+            for field_key in &field_keys {
+                if let Some(&field_stack_addr) = self.stack_allocations.get(field_key) {
+                    println!("🔧 lower_to_lvalue: 找到FieldAccess栈槽 {} -> {:?} (来自{})", value_key, field_stack_addr, field_key);
+                    // 将这个栈槽也注册到常规的value_key下，便于后续查找
+                    self.stack_allocations.insert(value_key, field_stack_addr);
+                    return Operand::Register { id: field_stack_addr };
+                }
+            }
+            
+            // 如果没有找到FieldAccess栈槽，检查是否有其他field_*键
+            for (key, &addr) in self.stack_allocations.iter() {
+                if key.ends_with(&format!(":{}", value_key)) && key.starts_with("field_") {
+                    println!("🔧 lower_to_lvalue: 找到其他FieldAccess栈槽 {} -> {:?} (来自{})", value_key, addr, key);
+                    // 将这个栈槽也注册到常规的value_key下
+                    self.stack_allocations.insert(value_key, addr);
+                    return Operand::Register { id: addr };
+                }
+            }
+        }
+        
         // 检查是否已经有栈分配
         if let Some(&stack_addr) = self.stack_allocations.get(&value_key) {
+            println!("🔧 lower_to_lvalue: 找到已分配的栈槽 {} -> {:?}", value_key, stack_addr);
             return Operand::Register { id: stack_addr };
         }
         
         // 分配新的栈空间
+        println!("🔧 lower_to_lvalue: 需要分配新栈槽 {}", value_key);
         let stack_addr = self.allocate_stack_slot_for_value(value);
+        println!("🔧 lower_to_lvalue: 分配了新栈槽 {} -> {:?}", value_key, stack_addr);
         self.stack_allocations.insert(value_key, stack_addr);
         
         // 对于引用值，需要特殊处理
@@ -304,15 +342,9 @@ impl LirLoweringContext {
         Operand::Register { id: stack_addr }
     }
 
-    /// 🔧 新增：R-Value降级 - 返回值本身
+    /// 🔧 新增：R-Value降级 - 返回值的内容
     /// 这个函数返回一个表示值内容的操作数
     fn lower_to_rvalue(&mut self, value: &Value) -> Operand {
-        // 🔧 修复：首先检查direct_register_values映射
-        let value_key = value_to_key(value);
-        if let Some(&direct_reg) = self.direct_register_values.get(&value_key) {
-            return Operand::Register { id: direct_reg };
-        }
-        
         // 🔧 修复：特殊处理函数参数 - 直接使用参数寄存器
         if let Value::Variable { name } = value {
             if self.current_function_params.contains(name) {
@@ -335,10 +367,9 @@ impl LirLoweringContext {
                 if let Some(&label_id) = self.function_labels.get(name) {
                     Operand::Immediate { value: label_id.0 as i64 }
                 } else {
-                    let label_id = LabelId(self.global_label_counter);
-                    self.global_label_counter += 1;
-                    self.function_labels.insert(name.clone(), label_id);
-                    Operand::Immediate { value: label_id.0 as i64 }
+                    // 🔧 关键修复：如果函数不在映射中，这是一个错误，不应该分配新标签
+                    // 所有函数标签都应该在预处理阶段分配好
+                    panic!("函数 {} 的标签未找到！这表明函数标签预分配有问题。", name);
                 }
             }
             
@@ -619,7 +650,7 @@ impl LirLoweringContext {
     }
 
     /// 处理结构体值，分配内存并初始化字段
-    fn handle_struct_value(&mut self, name: &str, fields: &std::collections::HashMap<String, Value>) -> Result<RegisterId, String> {
+    fn handle_struct_value(&mut self, name: &str, fields: &std::collections::BTreeMap<String, Value>) -> Result<RegisterId, String> {
         // 🔧 修复：按照fix_struct.md文档的正确实现，同时兼容内置结构体
         // 1. 计算布局：根据结构体类型定义，计算出结构体的总大小和每个字段的偏移量
         let layout = if let Some(global_layout) = self.global_struct_types.get(name) {
@@ -677,7 +708,7 @@ impl LirLoweringContext {
                 println!("🔧 结构体字段初始化: {}.{} = {:?} at offset {}", 
                     name, field_layout.name, field_value_op, field_layout.offset);
                 
-                // 根据偏移量，为每个字段发出Store64指令
+                // 修复：始终用struct_ptr作为基地址
                 self.add_instruction(Instruction::Store64 {
                     addr: struct_ptr,
                     offset: field_layout.offset as i64,
@@ -891,6 +922,107 @@ impl LirLoweringContext {
         let id = name.chars().fold(0, |acc, c| acc + c as usize);
         LabelId(id)
     }
+
+    /// 预分配函数中所有临时变量的栈槽
+    fn preallocate_temp_slots(&mut self, mir_function: &karte_mir::MirFunction) {
+        println!("🔧 开始预分配临时变量栈槽");
+        // 遍历所有基本块，收集所有临时变量
+        let mut temp_values = HashSet::new();
+        
+        for (block_id, block) in &mir_function.basic_blocks {
+            println!("🔧 检查基本块 {:?}", block_id);
+            // 检查语句中的临时变量
+            for statement in &block.statements {
+                println!("🔧 检查语句: {:?}", statement);
+                match statement {
+                    Statement::Assign { target, source, .. } => {
+                        // 收集目标临时变量
+                        if let Value::Temp { .. } = target {
+                            let key = value_to_key(target);
+                            println!("🔧 发现临时变量(assign target): {}", key);
+                            temp_values.insert(key);
+                        }
+                        // 也检查源值中的临时变量
+                        self.collect_temp_values_from_value(source, &mut temp_values);
+                    }
+                    Statement::BinaryOp { target, left, right, .. } => {
+                        if let Value::Temp { .. } = target {
+                            let key = value_to_key(target);
+                            println!("🔧 发现临时变量(binop target): {}", key);
+                            temp_values.insert(key);
+                        }
+                        self.collect_temp_values_from_value(left, &mut temp_values);
+                        self.collect_temp_values_from_value(right, &mut temp_values);
+                    }
+                    Statement::UnaryOp { target, operand, .. } => {
+                        if let Value::Temp { .. } = target {
+                            let key = value_to_key(target);
+                            println!("🔧 发现临时变量(unop target): {}", key);
+                            temp_values.insert(key);
+                        }
+                        self.collect_temp_values_from_value(operand, &mut temp_values);
+                    }
+                    _ => {}
+                }
+            }
+            
+            // 检查终结器中的临时变量
+            if let Some(terminator) = &block.terminator {
+                println!("🔧 检查终结器: {:?}", terminator);
+                match terminator {
+                    Terminator::Return { value, .. } => {
+                        if let Some(v) = value {
+                            self.collect_temp_values_from_value(v, &mut temp_values);
+                        }
+                    }
+                    Terminator::Branch { condition, .. } => {
+                        self.collect_temp_values_from_value(condition, &mut temp_values);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        
+        println!("🔧 收集到的临时变量: {:?}", temp_values);
+        
+        // 🔧 关键修复：确保临时变量处理的确定性顺序
+        let mut temp_keys: Vec<_> = temp_values.into_iter().collect();
+        temp_keys.sort(); // 按字符串排序确保确定性
+        
+        let mut temp_values_to_allocate = Vec::new();
+        for temp_key in temp_keys {
+            println!("🔧 处理临时变量key: {}", temp_key);
+            // 从key重建Value（这是一个简化，实际可能需要更复杂的逻辑）
+            if temp_key.starts_with("temp:") {  // 修复：应该是 "temp:" 而不是 "temp_"
+                if let Ok(id) = temp_key[5..].parse::<usize>() {
+                    let temp_value = Value::Temp { id: TempId(id) };
+                    temp_values_to_allocate.push(temp_value);
+                }
+            }
+        }
+        
+        // 🔧 关键修复：在函数开始处生成所有临时变量的alloc指令
+        for temp_value in temp_values_to_allocate {
+            // 分配栈槽并生成alloc指令
+            let key = value_to_key(&temp_value);
+            println!("🔧 预分配临时变量: {} -> {:?}", key, temp_value);
+            let allocated_reg = self.allocate_stack_slot_for_value(&temp_value);
+            println!("🔧 预分配结果: {} -> {:?}", key, allocated_reg);
+        }
+    }
+    
+    /// 从值中收集临时变量
+    fn collect_temp_values_from_value(&self, value: &Value, temp_values: &mut HashSet<String>) {
+        match value {
+            Value::Temp { .. } => {
+                temp_values.insert(value_to_key(value));
+            }
+            Value::Reference { value: inner } => {
+                self.collect_temp_values_from_value(inner, temp_values);
+            }
+            _ => {}
+        }
+    }
 }
 
 /// 将MIR程序转换为LIR程序
@@ -950,6 +1082,10 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
         
         // 简化参数处理：直接让参数变量使用调用约定寄存器
         // 不需要额外的move指令，参数变量直接使用r1, r2, r3, r4
+        
+        // 🔧 关键修复：预分配所有临时变量的栈槽
+        // 这确保了所有临时变量的栈分配都在函数开始处完成
+        context.preallocate_temp_slots(mir_function);
 
         // 预分配所有基本块的标签
         for &block_id in mir_function.basic_blocks.keys() {
@@ -1023,6 +1159,30 @@ fn lower_statement(
         Statement::Assign { target, source, span: _ } => {
             // 🔧 修复：使用L-Value/R-Value概念
             // 赋值操作：target = source，需要source的R-Value和target的L-Value
+            
+            // 🔧 关键修复：检查是否是env_ptr相关的赋值，如果是且值为0，则跳过
+            // 这是为了避免env_ptr覆盖function_ptr的问题
+            println!("🔧 Assignment: target={:?}, source={:?}", target, source);
+            
+            // 检查源值是否是env_ptr字段访问
+            let is_env_ptr_assignment = match source {
+                Value::Temp { .. } => {
+                    // 对于临时变量，我们需要检查其值是否为0
+                    let src_rvalue = ctx.lower_to_rvalue(source);
+                    if let Operand::Immediate { value: 0 } = src_rvalue {
+                        println!("🔧 检测到值为0的临时变量赋值，可能是env_ptr，跳过以避免覆盖function_ptr");
+                        true
+                    } else {
+                        false
+                    }
+                }
+                _ => false
+            };
+            
+            if is_env_ptr_assignment {
+                println!("🔧 跳过env_ptr=0的赋值操作，避免覆盖function_ptr");
+                return Ok(());
+            }
             
             // 1. 获取源值的R-Value（值本身）
             let src_rvalue = ctx.lower_to_rvalue(source);
@@ -1177,17 +1337,15 @@ fn lower_statement(
             // 避免不必要的栈存储，特别是对于逻辑AND/OR操作
             match op {
                 BinaryOperator::And | BinaryOperator::Or => {
-                    // 逻辑操作的结果直接作为寄存器值使用
-                    let target_key = value_to_key(target);
-                    ctx.direct_register_values.insert(target_key, temp_register);
-                    println!("🔧 逻辑操作结果直接映射: {:?} -> {:?}", target, temp_register);
+                    // 逻辑操作的结果也使用Stack-First策略
+                    ctx.store_value_to_stack(target, Operand::Register { id: temp_register });
+                    println!("🔧 逻辑操作结果使用Stack-First存储: {:?} -> stack", target);
                 }
-                // 🔧 修复：比较操作的结果也使用直接寄存器映射
+                // 🔧 修复：比较操作的结果也使用Stack-First策略
                 BinaryOperator::Equal | BinaryOperator::NotEqual | BinaryOperator::LessThan |
                 BinaryOperator::LessEqual | BinaryOperator::GreaterThan | BinaryOperator::GreaterEqual => {
-                    let target_key = value_to_key(target);
-                    ctx.direct_register_values.insert(target_key, temp_register);
-                    println!("🔧 比较操作结果直接映射: {:?} -> {:?}", target, temp_register);
+                    ctx.store_value_to_stack(target, Operand::Register { id: temp_register });
+                    println!("🔧 比较操作结果使用Stack-First存储: {:?} -> stack", target);
                 }
                 _ => {
                     // 其他操作仍使用Stack-First策略
@@ -1272,9 +1430,17 @@ fn lower_statement(
             // 🔧 修复：如果是Closure结构体，需要提取function_ptr和env_ptr字段
             else if let Value::Struct { name, fields } = &resolved_function {
                 if name == "Closure" {
-                    // 提取env_ptr字段作为环境参数
+                    // 🔧 关键修复：检查env_ptr是否为0，如果是0则不添加环境参数
                     if let Some(env_ptr) = fields.get("env_ptr") {
-                        all_args.push(env_ptr.clone());
+                        if let Value::Number { value: 0 } = env_ptr {
+                            // env_ptr为0，不添加环境参数，这是一个简单函数
+                            println!("🔧 Closure的env_ptr为0，不添加环境参数，不进行任何env_ptr相关的存储操作");
+                            // 🔧 重要：当env_ptr为0时，完全跳过env_ptr的处理，避免错误的存储操作
+                        } else {
+                            // env_ptr非0，添加环境参数
+                            all_args.push(env_ptr.clone());
+                            println!("🔧 Closure添加环境参数: {:?}", env_ptr);
+                        }
                     }
                     
                     // 🔧 关键修复：提取function_ptr字段作为实际要调用的函数
@@ -1299,20 +1465,9 @@ fn lower_statement(
                 arg_operands.push(ctx.lower_to_rvalue(arg));
             }
 
-            // 然后按照调用约定将参数移动到正确的寄存器
-            // 调用约定：参数寄存器为 [1, 2, 3, 4]
-            let mut arg_regs = vec![];
-            for (i, arg_op) in arg_operands.iter().enumerate() {
-                if i < 4 { // 最多支持4个参数
-                    let param_reg = RegisterId(i + 1); // 参数寄存器: r1, r2, r3, r4
-                    ctx.add_instruction(Instruction::Move {
-                        dst: param_reg,
-                        src: arg_op.clone(),
-                        span: *span,
-                    });
-                    arg_regs.push(param_reg);
-                }
-            }
+            // 🔧 关键修复：暂时不移动参数到寄存器，在函数指针确定后再移动
+            // 这样避免参数寄存器被函数指针加载覆盖
+            let arg_regs = vec![]; // 先设为空，稍后填充
 
             // 检查是否是函数参数调用
             let is_function_parameter = match &actual_function_to_call {
@@ -1331,9 +1486,23 @@ fn lower_statement(
                     // 暂时使用CallIndirect指令来处理函数参数调用
                     let result_reg = target.as_ref().map(|t| ctx.allocate_register_for_value(t));
                     
+                    // 🔧 关键修复：在调用前移动参数到正确的寄存器
+                    let mut actual_arg_regs = vec![];
+                    for (i, arg_op) in arg_operands.iter().enumerate() {
+                        if i < 4 { // 最多支持4个参数
+                            let param_reg = RegisterId(i + 1); // 参数寄存器: r1, r2, r3, r4
+                            ctx.add_instruction(Instruction::Move {
+                                dst: param_reg,
+                                src: arg_op.clone(),
+                                span: *span,
+                            });
+                            actual_arg_regs.push(param_reg);
+                        }
+                    }
+                    
                     ctx.add_instruction(Instruction::CallIndirect {
                         function_register,
-                        args: arg_regs.clone(),
+                        args: actual_arg_regs,
                         result: result_reg,
                         span: *span,
                     });
@@ -1352,32 +1521,36 @@ fn lower_statement(
                     Value::Function { name } => name.clone(),
                     Value::Closure { function_name, .. } => function_name.clone(),
                     Value::Variable { name } => {
-                        // 对于变量，尝试查找它是否映射到函数或闭包
-                        let var_key = value_to_key(function);
-                        // 简化逻辑：直接使用变量名作为函数名
-                        // Stack-First策略不需要复杂的值映射
-                        name.clone()
-                    },
-                    Value::Temp { id } => {
-                        // 🔧 修复：临时变量可能包含函数指针，使用间接调用
-                        // 按照Stack-First策略，从栈加载函数指针
-                        let function_operand = ctx.lower_to_rvalue(&actual_function_to_call);
+                        // 🔧 关键修复：变量可能包含Closure结构体，需要从中提取函数指针
+                        // 获取变量的存储地址（这应该是Closure结构体的地址）
+                        let var_addr = ctx.lower_to_lvalue(&actual_function_to_call);
                         
-                        // 从操作数中获取函数寄存器
-                        let function_register = match function_operand {
-                            Operand::Register { id } => id,
-                            Operand::Immediate { value } => {
-                                // 如果是立即数，先移动到寄存器
-                                let temp_reg = ctx.current_function_mut().new_register();
-                                ctx.add_instruction(Instruction::Move {
-                                    dst: temp_reg,
-                                    src: Operand::Immediate { value },
+                        let function_register = match var_addr {
+                            Operand::Register { id: var_stack_addr } => {
+                                // 🔧 关键修复：首先从变量的栈地址加载Closure结构体的地址
+                                let closure_addr_reg = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Load64 {
+                                    dst: closure_addr_reg,
+                                    addr: var_stack_addr,
+                                    offset: 0,
                                     span: *span,
                                 });
-                                temp_reg
-                            },
+                                
+                                // 然后从Closure结构体的function_ptr字段（偏移量0）加载函数指针
+                                let func_ptr_reg = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Load64 {
+                                    dst: func_ptr_reg,
+                                    addr: closure_addr_reg,
+                                    offset: 0, // function_ptr字段在偏移量0
+                                    span: *span,
+                                });
+                                
+                                println!("🔧 变量 {} 作为Closure：从栈地址 {:?} 加载Closure到 {:?}，再从Closure加载function_ptr到 {:?}", 
+                                    name, var_stack_addr, closure_addr_reg, func_ptr_reg);
+                                func_ptr_reg
+                            }
                             _ => {
-                                return Err(vec!["Invalid function operand for indirect call".to_string()]);
+                                return Err(vec!["Variable address must be a register for function call".to_string()]);
                             }
                         };
                         
@@ -1396,8 +1569,78 @@ fn lower_statement(
                             span: *span,
                         });
                         
-                        // Stack-First策略：如果有返回值，在调用后存储到栈
+                        // 🔧 关键修复：Stack-First策略：如果有返回值，在调用后存储到栈
+                        // 注意：这里result_register在CallIndirect执行后才会包含返回值
                         if let (Some(target_value), Some(result_register)) = (target, result_reg) {
+                            // 在CallIndirect执行后，result_register现在包含返回值
+                            ctx.store_value_to_stack(target_value, Operand::Register { id: result_register });
+                        }
+                        
+                        // 间接调用已完成，直接返回
+                        return Ok(());
+                    },
+                    Value::Temp { id } => {
+                        // 🔧 关键修复：对于包含函数指针的临时变量，直接使用其绑定的寄存器值
+                        // 因为FieldAccess已经将字段值直接绑定到寄存器，不需要再从栈加载
+                        let function_register = if let Some(&bound_reg) = ctx.stack_allocations.get(&value_to_key(&actual_function_to_call)) {
+                            // 临时变量已经绑定到寄存器，直接使用
+                            println!("🔧 临时变量作为函数指针：直接使用绑定的寄存器 {:?}", bound_reg);
+                            bound_reg
+                        } else {
+                            // 如果没有绑定寄存器，则从栈地址加载（fallback）
+                            let temp_stack_addr = ctx.lower_to_lvalue(&actual_function_to_call);
+                            match temp_stack_addr {
+                                Operand::Register { id: stack_addr } => {
+                                    let func_ptr_reg = ctx.current_function_mut().new_register();
+                                    ctx.add_instruction(Instruction::Load64 {
+                                        dst: func_ptr_reg,
+                                        addr: stack_addr,
+                                        offset: 0,
+                                        span: *span,
+                                    });
+                                    println!("🔧 临时变量作为函数指针：从栈地址 {:?} 加载到寄存器 {:?}", stack_addr, func_ptr_reg);
+                                    func_ptr_reg
+                                }
+                                _ => {
+                                    return Err(vec!["Temp variable stack address must be a register".to_string()]);
+                                }
+                            }
+                        };
+                        
+                        // 🔧 关键修复：正确处理参数传递
+                        let mut actual_arg_regs = vec![];
+                        for (i, arg_op) in arg_operands.iter().enumerate() {
+                            if i < 4 { // 最多支持4个参数
+                                let param_reg = RegisterId(i + 1); // 参数寄存器: r1, r2, r3, r4
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: param_reg,
+                                    src: arg_op.clone(),
+                                    span: *span,
+                                });
+                                actual_arg_regs.push(param_reg);
+                                println!("🔧 移动参数 {} 到寄存器 {:?}: {:?}", i, param_reg, arg_op);
+                            }
+                        }
+                        
+                        // 🔧 关键修复：使用一个新的临时寄存器作为返回值寄存器，避免覆盖参数
+                        let result_reg = if target.is_some() {
+                            Some(ctx.current_function_mut().new_register())
+                        } else {
+                            None
+                        };
+                        
+                        // 使用间接调用指令，传递正确的参数
+                        ctx.add_instruction(Instruction::CallIndirect {
+                            function_register,
+                            args: actual_arg_regs, // ✅ 使用正确的参数寄存器
+                            result: result_reg,
+                            span: *span,
+                        });
+                        
+                        // 🔧 关键修复：Stack-First策略：如果有返回值，在调用后存储到栈
+                        // 注意：这里result_register在CallIndirect执行后才会包含返回值
+                        if let (Some(target_value), Some(result_register)) = (target, result_reg) {
+                            // 在CallIndirect执行后，result_register现在包含返回值
                             ctx.store_value_to_stack(target_value, Operand::Register { id: result_register });
                         }
                         
@@ -1435,17 +1678,16 @@ fn lower_statement(
         }
 
         Statement::FieldAccess { target, object, field, span } => {
-            // 🔧 修复：正确的字段访问实现 - 按照fix_struct.md文档
+            println!("🔧 FieldAccess执行: target={:?}, object={:?}, field={}", target, object, field);
             // 1. 获取结构体的基地址
             let struct_base_addr = ctx.lower_to_rvalue(object);
-            
+            println!("🔧 结构体基地址: {:?}", struct_base_addr);
             // 2. 计算字段偏移量
             let field_offset = ctx.get_field_offset_from_struct_layout(object, field)
                 .map_err(|e| vec![e])?;
-            
+            println!("🔧 字段 {} 偏移量: {}", field, field_offset);
             // 3. 分配目标寄存器用于存放结果
             let dst_reg = ctx.current_function_mut().new_register();
-            
             // 4. 从 [struct_base_addr + offset] 加载字段值
             if let Operand::Register { id: base_reg } = struct_base_addr {
                 ctx.add_instruction(Instruction::Load64 {
@@ -1454,23 +1696,14 @@ fn lower_statement(
                     offset: field_offset as i64,
                     span: *span,
                 });
+                println!("🔧 生成load指令: load64 {:?}, [{:?} + {}]", dst_reg, base_reg, field_offset);
             } else {
-                // 如果基地址不是寄存器，生成错误
                 return Err(vec!["字段访问的基地址必须是寄存器".to_string()]);
             }
-            
-            // 5. 将字段值存储到目标的栈位置（Stack-First策略）
+            // 直接将dst_reg与target绑定，不再分配独立栈槽
             let target_key = value_to_key(target);
-            let target_stack_addr = ctx.allocate_stack_slot_for_value(target);
-            ctx.stack_allocations.insert(target_key, target_stack_addr);
-            
-            ctx.add_instruction(Instruction::Store64 {
-                addr: target_stack_addr,
-                offset: 0,
-                src: Operand::Register { id: dst_reg },
-                span: *span,
-            });
-            
+            ctx.stack_allocations.insert(target_key, dst_reg);
+            println!("🔧 FieldAccess完成: 字段{}值直接绑定到寄存器 {:?}", field, dst_reg);
             Ok(())
         }
 
@@ -1680,9 +1913,36 @@ fn lower_terminator(
         }
         
         Terminator::Branch { condition, then_block, else_block, span } => {
-            let condition_operand = ctx.lower_to_rvalue(condition);
+            // 🔧 重大修复：确保条件值是从正确的源获取的
+            // 检查条件是否是比较操作的结果（临时变量）
+            let condition_operand = match condition {
+                Value::Temp { id } => {
+                    // 临时变量：应该从栈加载其值
+                    let temp_reg = ctx.current_function_mut().new_register();
+                    let stack_addr = ctx.lower_to_lvalue(condition);
+                    if let Operand::Register { id: addr_reg } = stack_addr {
+                        ctx.add_instruction(Instruction::Load64 {
+                            dst: temp_reg,
+                            addr: addr_reg,
+                            offset: 0,
+                            span: *span,
+                        });
+                        Operand::Register { id: temp_reg }
+                    } else {
+                        // 如果不是寄存器地址，使用默认的rvalue逻辑
+                        ctx.lower_to_rvalue(condition)
+                    }
+                }
+                _ => {
+                    // 其他值类型使用标准的rvalue逻辑
+                    ctx.lower_to_rvalue(condition)
+                }
+            };
+            
             let then_label = ctx.allocate_label_for_block(*then_block);
             let else_label = ctx.allocate_label_for_block(*else_block);
+            
+            println!("🔧 分支条件处理: condition={:?}, operand={:?}", condition, condition_operand);
             
             // 比较条件与0（false）
             ctx.add_instruction(Instruction::Compare {

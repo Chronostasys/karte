@@ -1,0 +1,6 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+本项目是一个专业的编译器，任何修改都应该向最佳实践靠拢，更改不应该出现任何hack和投机取巧的代码

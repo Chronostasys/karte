@@ -290,6 +290,7 @@ impl InstructionProcessor {
         
         // 1. 获取函数地址（标签ID）
         let function_address = engine.get_register(function_register)?;
+        
         let target_label = karte_lir::LabelId(function_address as usize);
         
         println!("CallIndirect 调试信息:");
@@ -312,6 +313,8 @@ impl InstructionProcessor {
                 println!("  -> 设置参数寄存器r{} = {}", param_reg, arg_value);
             }
         }
+        
+
  
         // 5. 保存调用者状态
         let current_pc = engine.get_pc();

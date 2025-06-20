@@ -1,0 +1,705 @@
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+
+running 1 test
+test codegen_tests::tests::test_lambda_creation ... FAILED
+
+failures:
+
+---- codegen_tests::tests::test_lambda_creation stdout ----
+=== MIR Program ===
+fn lambda$0(x) {
+  bb0:
+    _t0 = x
+    return _t0
+}
+
+fn main() {
+  bb0:
+    _t1 = struct Closure { env_ptr = 0 function_ptr = fn:lambda$0 }
+    _t2 = 42
+    _t3 = _t1.function_ptr
+    _t0 = call _t3(_t2)
+    return _t0
+}
+
+
+分配函数标签: lambda$0 -> LabelId(1)
+分配函数标签: main -> LabelId(2)
+🔧 创建函数 lambda$0 包含 1 个参数: ["x"]
+🔧 开始预分配临时变量栈槽
+🔧 检查基本块 BasicBlockId(0)
+🔧 检查语句: Assign { target: Temp { id: TempId(0) }, source: Variable { name: "x" }, span: Span { start: 0, end: 0 } }
+🔧 发现临时变量(assign target): temp:0
+🔧 检查终结器: Return { value: Some(Temp { id: TempId(0) }), span: Span { start: 0, end: 0 } }
+🔧 收集到的临时变量: {"temp:0"}
+🔧 处理临时变量key: temp:0
+🔧 预分配临时变量: temp:0 -> Temp { id: TempId(0) }
+🔧 预分配结果: temp:0 -> RegisterId(0)
+🔧 Assignment: target=Temp { id: TempId(0) }, source=Variable { name: "x" }
+🔧 函数参数 x 在lower_to_rvalue中直接使用寄存器 RegisterId(1)
+🔧 lower_to_lvalue: 找到已分配的栈槽 temp:0 -> RegisterId(0)
+🔧 lower_to_lvalue: 找到已分配的栈槽 temp:0 -> RegisterId(0)
+🔧 创建函数 main 包含 0 个参数: []
+🔧 开始预分配临时变量栈槽
+🔧 检查基本块 BasicBlockId(0)
+🔧 检查语句: Assign { target: Temp { id: TempId(1) }, source: Struct { name: "Closure", fields: {"env_ptr": Number { value: 0 }, "function_ptr": Function { name: "lambda$0" }} }, span: Span { start: 0, end: 0 } }
+🔧 发现临时变量(assign target): temp:1
+🔧 检查语句: Assign { target: Temp { id: TempId(2) }, source: Number { value: 42 }, span: Span { start: 0, end: 0 } }
+🔧 发现临时变量(assign target): temp:2
+🔧 检查语句: FieldAccess { target: Temp { id: TempId(3) }, object: Temp { id: TempId(1) }, field: "function_ptr", span: Span { start: 0, end: 0 } }
+🔧 检查语句: Call { target: Some(Temp { id: TempId(0) }), function: Temp { id: TempId(3) }, args: [Temp { id: TempId(2) }], span: Span { start: 0, end: 0 } }
+🔧 检查终结器: Return { value: Some(Temp { id: TempId(0) }), span: Span { start: 0, end: 0 } }
+🔧 收集到的临时变量: {"temp:0", "temp:1", "temp:2"}
+🔧 处理临时变量key: temp:0
+🔧 处理临时变量key: temp:1
+🔧 处理临时变量key: temp:2
+🔧 预分配临时变量: temp:0 -> Temp { id: TempId(0) }
+🔧 预分配结果: temp:0 -> RegisterId(0)
+🔧 预分配临时变量: temp:1 -> Temp { id: TempId(1) }
+🔧 预分配结果: temp:1 -> RegisterId(1)
+🔧 预分配临时变量: temp:2 -> Temp { id: TempId(2) }
+🔧 预分配结果: temp:2 -> RegisterId(2)
+🔧 Assignment: target=Temp { id: TempId(1) }, source=Struct { name: "Closure", fields: {"env_ptr": Number { value: 0 }, "function_ptr": Function { name: "lambda$0" }} }
+🔧 结构体字段初始化: Closure.function_ptr = Immediate { value: 1 } at offset 0
+🔧 结构体字段初始化: Closure.env_ptr = Immediate { value: 0 } at offset 8
+🔧 结构体初始化完成: Closure -> RegisterId(3)
+🔧 lower_to_lvalue: 找到已分配的栈槽 temp:1 -> RegisterId(1)
+🔧 Assignment: target=Temp { id: TempId(2) }, source=Number { value: 42 }
+🔧 lower_to_lvalue: 找到已分配的栈槽 temp:2 -> RegisterId(2)
+🔧 FieldAccess执行: target=Temp { id: TempId(3) }, object=Temp { id: TempId(1) }, field=function_ptr
+🔧 lower_to_lvalue: 找到已分配的栈槽 temp:1 -> RegisterId(1)
+🔧 结构体基地址: Register { id: RegisterId(4) }
+🔧 字段 function_ptr 偏移量: 0
+🔧 生成load指令: load64 RegisterId(5), [RegisterId(4) + 0]
+🔧 FieldAccess完成: 字段function_ptr值直接绑定到寄存器 RegisterId(5)
+🔧 lower_to_lvalue: 找到已分配的栈槽 temp:2 -> RegisterId(2)
+🔧 临时变量作为函数指针：直接使用绑定的寄存器 RegisterId(5)
+🔧 移动参数 0 到寄存器 RegisterId(1): Register { id: RegisterId(8) }
+🔧 lower_to_lvalue: 找到已分配的栈槽 temp:0 -> RegisterId(0)
+=== 返回高级LIR (包含Alloc指令，待优化) ===
+function lambda$0 (stack_frame: 0):
+  L1:
+  alloc r0, #8, #8, Stack
+  L3:
+  store64 [r0], r1
+  load64 r2, [r0]
+  ret r2
+function main (stack_frame: 0):
+  L2:
+  alloc r0, #8, #8, Stack
+  alloc r1, #8, #8, Stack
+  alloc r2, #8, #8, Stack
+  L4:
+  alloc r3, #16, #8, Stack
+  store64 [r3], #1
+  store64 [r3 + 8], #0
+  store64 [r1], r3
+  store64 [r2], #42
+  load64 r4, [r1]
+  load64 r5, [r4]
+  load64 r8, [r2]
+  mov r1, r8
+  r9 = call_indirect r5(r1)
+  store64 [r0], r9
+  load64 r10, [r0]
+  ret r10
+================================================
+=== 返回高级LIR (包含Alloc指令，待优化) ===
+function lambda$0 (stack_frame: 0):
+L1:
+  alloc r0, #8, #8, Stack
+L3:
+  store64 [r0], r1
+  load64 r2, [r0]
+  ret r2
+
+function main (stack_frame: 0):
+L2:
+  alloc r0, #8, #8, Stack
+  alloc r1, #8, #8, Stack
+  alloc r2, #8, #8, Stack
+L4:
+  alloc r3, #16, #8, Stack
+  store64 [r3], #1
+  store64 [r3 + 8], #0
+  store64 [r1], r3
+  store64 [r2], #42
+  load64 r4, [r1]
+  load64 r5, [r4]
+  load64 r8, [r2]
+  mov r1, r8
+  r9 = call_indirect r5(r1)
+  store64 [r0], r9
+  load64 r10, [r0]
+  ret r10
+
+
+================================================
+    函数 Pass const-fold 完成 (0ms)
+    优化后lir: function lambda$0 (stack_frame: 0):
+L1:
+  alloc r0, #8, #8, Stack
+L3:
+  store64 [r0], r1
+  load64 r2, [r0]
+  ret r2
+
+⚠️ 没有SSA构造结果，将使用简化的φ节点插入策略
+🔍 分析到 2 个基本块
+🔍 发现栈分配: 寄存器 RegisterId(0), 大小 8
+🔍 记录store: 寄存器 RegisterId(0) 在块 1
+🔍 记录load: 寄存器 RegisterId(0) 在块 1
+🔍 使用专业的φ节点构造算法
+🔧 开始专业φ节点构造
+🔧 构建CFG: 2 个基本块
+🔧   块 0: [0, 2), 前驱: [], 后继: [1]
+🔧   块 1: [2, 6), 前驱: [0], 后继: []
+✅ φ节点构造完成，共 0 个φ节点
+🚀 开始Memory2Reg变换
+🔥 开始溢出代码插入
+ℹ️ 没有需要溢出的栈槽
+⚠️ 没有SSA构造结果，将使用简化的φ节点插入策略
+⚠️ 没有φ节点需要插入
+🚀 步骤2: 收集变换操作
+🚀 处理栈槽 RegisterId(0)
+🚀 分析栈槽 RegisterId(0): stores=1, loads=1
+🚀 单一存储分析: src=Register { id: RegisterId(1) }
+🔍 追踪寄存器 RegisterId(1) 在位置 3 之前的值
+🔍 未找到寄存器 RegisterId(1) 的定义
+🚀 有效源操作数: Register { id: RegisterId(1) }
+🚀 替换load 4 -> mov RegisterId(2), Register { id: RegisterId(1) }
+🚀 总共移除 2 条指令, 修改 1 条指令
+🚀 步骤3: 应用变换
+✅ Memory2Reg变换完成，有修改
+🔧 栈地址寄存器映射: RegisterId(0) -> FP+0 (alloc指令位置: 1)
+🔧 栈地址寄存器映射表: {RegisterId(0): 0}
+    函数 Pass mem2reg 完成 (0ms)
+    优化后lir: function lambda$0 (stack_frame: 0):
+L1:
+L3:
+  mov r2, r1
+  ret r2
+
+🔧 运行φ指令消除Pass
+✅ φ指令消除完成
+    函数 Pass phi-elimination 完成 (0ms)
+    优化后lir: function lambda$0 (stack_frame: 0):
+L1:
+L3:
+  mov r2, r1
+  ret r2
+
+🧹 开始死代码消除
+🧹 有副作用的指令 0: Label { id: LabelId(1), span: Span { start: 0, end: 0 } } 使用寄存器: []
+🧹 有副作用的指令 1: Label { id: LabelId(3), span: Span { start: 0, end: 0 } } 使用寄存器: []
+🧹 有副作用的指令 3: Return { value: Some(RegisterId(2)), span: Span { start: 0, end: 0 } } 使用寄存器: [RegisterId(2)]
+🧹 初始使用的寄存器: {RegisterId(2)}
+🧹 指令 2 定义了使用中的寄存器 RegisterId(2)，传播使用: [RegisterId(1)]
+🧹 指令 2 定义了使用中的寄存器 RegisterId(2)，传播使用: [RegisterId(1)]
+🧹 传播后使用的寄存器: {RegisterId(2), RegisterId(1)}
+🧹 保留指令 2 (定义寄存器 RegisterId(2) 被使用): Move { dst: RegisterId(2), src: Register { id: RegisterId(1) }, span: Span { start: 0, end: 0 } }
+🧹 死代码消除完成，无代码被移除
+    函数 Pass dce 完成 (0ms)
+    优化后lir: function lambda$0 (stack_frame: 0):
+L1:
+L3:
+  mov r2, r1
+  ret r2
+
+🔍 寄存器类型分析完成，共识别 1 个寄存器类型
+🔍 寄存器 RegisterId(1) -> FunctionParameter
+🔧 预分配函数参数: RegisterId(1) -> r1 (参数索引: 0)
+🔍 StackAddress寄存器也需要分配物理寄存器
+    函数 Pass linear-scan-register-allocation 完成 (0ms)
+    优化后lir: function lambda$0 (stack_frame: 0):
+L1:
+L3:
+  mov r2, r1
+  ret r2
+
+🔍 寄存器类型分析完成，共识别 1 个寄存器类型
+🔍 寄存器 RegisterId(1) -> FunctionParameter
+🔧 预分配函数参数: RegisterId(1) -> r1 (参数索引: 0)
+🔍 StackAddress寄存器也需要分配物理寄存器
+    函数 Pass linear-scan-register-allocation 完成 (0ms)
+    优化后lir: function lambda$0 (stack_frame: 0):
+L1:
+L3:
+  mov r5, r1
+  ret r5
+
+    函数 Pass const-fold 完成 (0ms)
+    优化后lir: function main (stack_frame: 0):
+L2:
+  alloc r0, #8, #8, Stack
+  alloc r1, #8, #8, Stack
+  alloc r2, #8, #8, Stack
+L4:
+  alloc r3, #16, #8, Stack
+  store64 [r3], #1
+  store64 [r3 + 8], #0
+  store64 [r1], r3
+  store64 [r2], #42
+  load64 r4, [r1]
+  load64 r5, [r4]
+  load64 r8, [r2]
+  mov r1, r8
+  r9 = call_indirect r5(r1)
+  store64 [r0], r9
+  load64 r10, [r0]
+  ret r10
+
+⚠️ 没有SSA构造结果，将使用简化的φ节点插入策略
+🔍 分析到 2 个基本块
+🔍 发现栈分配: 寄存器 RegisterId(0), 大小 8
+🔍 发现栈分配: 寄存器 RegisterId(1), 大小 8
+🔍 发现栈分配: 寄存器 RegisterId(2), 大小 8
+🔍 发现栈分配: 寄存器 RegisterId(3), 大小 16
+🔍 记录store: 寄存器 RegisterId(3) 在块 1
+🔍 记录store: 寄存器 RegisterId(1) 在块 1
+🔍 记录store: 寄存器 RegisterId(2) 在块 1
+🔍 记录load: 寄存器 RegisterId(1) 在块 1
+🔍 记录load: 寄存器 RegisterId(2) 在块 1
+🔍 记录store: 寄存器 RegisterId(0) 在块 1
+🔍 记录load: 寄存器 RegisterId(0) 在块 1
+🚨 检测到引用操作: 栈槽 RegisterId(1) 存储了另一个栈地址 RegisterId(3)
+🚨 被引用的栈槽 RegisterId(3) 也标记为不可提升
+🔍 使用专业的φ节点构造算法
+🔧 开始专业φ节点构造
+🔧 构建CFG: 2 个基本块
+🔧   块 0: [0, 4), 前驱: [], 后继: [1]
+🔧   块 1: [4, 18), 前驱: [0], 后继: []
+✅ φ节点构造完成，共 0 个φ节点
+🚀 开始Memory2Reg变换
+🔥 开始溢出代码插入
+🔥 发现需要溢出的栈槽: RegisterId(3)
+🔥 发现需要溢出的栈槽: RegisterId(1)
+🔥 为store指令 6 生成溢出加载: RegisterId(3) -> RegisterId(11)
+🔥 为store指令 8 生成溢出加载: RegisterId(1) -> RegisterId(12)
+🔥 为load指令 10 生成溢出存储: RegisterId(1) <- RegisterId(4)
+🔧 应用 3 个 index-based 变换
+🔧 应用变换: 原始index=11, 修正后index=11
+🔧 插入指令 [11]: Store64 { addr: RegisterId(1), offset: 0, src: Register { id: RegisterId(4) }, span: Span { start: 0, end: 0 } }
+🔧 应用变换: 原始index=8, 修正后index=8
+🔧 插入指令 [8]: Load64 { dst: RegisterId(12), addr: RegisterId(1), offset: 0, span: Span { start: 0, end: 0 } }
+🔧 应用变换: 原始index=6, 修正后index=6
+🔧 插入指令 [6]: Load64 { dst: RegisterId(11), addr: RegisterId(3), offset: 0, span: Span { start: 0, end: 0 } }
+🔧 index-based 变换完成，修改: true
+✅ spill code插入完成，使用IndexInstructionTransformer
+⚠️ 没有SSA构造结果，将使用简化的φ节点插入策略
+⚠️ 没有φ节点需要插入
+🚀 步骤2: 收集变换操作
+🚀 处理栈槽 RegisterId(0)
+🚀 分析栈槽 RegisterId(0): stores=1, loads=1
+🚀 处理栈槽 RegisterId(2)
+🚀 分析栈槽 RegisterId(2): stores=1, loads=1
+🚀 总共移除 0 条指令, 修改 0 条指令
+🚀 步骤3: 应用变换
+ℹ️ Memory2Reg变换完成，无修改
+🔧 栈地址寄存器映射: RegisterId(0) -> FP+0 (alloc指令位置: 1)
+🔧 栈地址寄存器映射: RegisterId(1) -> FP+8 (alloc指令位置: 2)
+🔧 栈地址寄存器映射: RegisterId(2) -> FP+16 (alloc指令位置: 3)
+🔧 栈地址寄存器映射: RegisterId(3) -> FP+24 (alloc指令位置: 5)
+🔧 栈地址寄存器映射表: {RegisterId(3): 24, RegisterId(1): 8, RegisterId(2): 16, RegisterId(0): 0}
+    函数 Pass mem2reg 完成 (0ms)
+    优化后lir: function main (stack_frame: 0):
+L2:
+  alloc r0, #8, #8, Stack
+  alloc r1, #8, #8, Stack
+  alloc r2, #8, #8, Stack
+L4:
+  alloc r3, #16, #8, Stack
+  load64 r11, [r7 + 24]
+  store64 [r7 + 24], #1
+  store64 [r7 + 32], #0
+  load64 r12, [r7 + 8]
+  store64 [r7 + 8], r3
+  store64 [r7 + 16], #42
+  load64 r4, [r7 + 8]
+  store64 [r7 + 8], r4
+  load64 r5, [r4]
+  load64 r8, [r7 + 16]
+  mov r1, r8
+  r9 = call_indirect r5(r1)
+  store64 [r7], r9
+  load64 r10, [r7]
+  ret r10
+
+🔧 运行φ指令消除Pass
+✅ φ指令消除完成
+    函数 Pass phi-elimination 完成 (0ms)
+    优化后lir: function main (stack_frame: 0):
+L2:
+  alloc r0, #8, #8, Stack
+  alloc r1, #8, #8, Stack
+  alloc r2, #8, #8, Stack
+L4:
+  alloc r3, #16, #8, Stack
+  load64 r11, [r7 + 24]
+  store64 [r7 + 24], #1
+  store64 [r7 + 32], #0
+  load64 r12, [r7 + 8]
+  store64 [r7 + 8], r3
+  store64 [r7 + 16], #42
+  load64 r4, [r7 + 8]
+  store64 [r7 + 8], r4
+  load64 r5, [r4]
+  load64 r8, [r7 + 16]
+  mov r1, r8
+  r9 = call_indirect r5(r1)
+  store64 [r7], r9
+  load64 r10, [r7]
+  ret r10
+
+🧹 开始死代码消除
+🧹 有副作用的指令 0: Label { id: LabelId(2), span: Span { start: 0, end: 0 } } 使用寄存器: []
+🧹 有副作用的指令 1: Alloc { dst: RegisterId(0), size: 8, alignment: 8, allocation_type: Stack, span: Span { start: 0, end: 0 } } 使用寄存器: []
+🧹 有副作用的指令 2: Alloc { dst: RegisterId(1), size: 8, alignment: 8, allocation_type: Stack, span: Span { start: 0, end: 0 } } 使用寄存器: []
+🧹 有副作用的指令 3: Alloc { dst: RegisterId(2), size: 8, alignment: 8, allocation_type: Stack, span: Span { start: 0, end: 0 } } 使用寄存器: []
+🧹 有副作用的指令 4: Label { id: LabelId(4), span: Span { start: 0, end: 0 } } 使用寄存器: []
+🧹 有副作用的指令 5: Alloc { dst: RegisterId(3), size: 16, alignment: 8, allocation_type: Stack, span: Span { start: 0, end: 0 } } 使用寄存器: []
+🧹 有副作用的指令 7: Store64 { addr: RegisterId(7), offset: 24, src: Immediate { value: 1 }, span: Span { start: 0, end: 0 } } 使用寄存器: [RegisterId(7)]
+🧹 有副作用的指令 8: Store64 { addr: RegisterId(7), offset: 32, src: Immediate { value: 0 }, span: Span { start: 0, end: 0 } } 使用寄存器: [RegisterId(7)]
+🧹 有副作用的指令 10: Store64 { addr: RegisterId(7), offset: 8, src: Register { id: RegisterId(3) }, span: Span { start: 0, end: 0 } } 使用寄存器: [RegisterId(7), RegisterId(3)]
+🧹 有副作用的指令 11: Store64 { addr: RegisterId(7), offset: 16, src: Immediate { value: 42 }, span: Span { start: 0, end: 0 } } 使用寄存器: [RegisterId(7)]
+🧹 有副作用的指令 13: Store64 { addr: RegisterId(7), offset: 8, src: Register { id: RegisterId(4) }, span: Span { start: 0, end: 0 } } 使用寄存器: [RegisterId(7), RegisterId(4)]
+🧹 有副作用的指令 17: CallIndirect { function_register: RegisterId(5), args: [RegisterId(1)], result: Some(RegisterId(9)), span: Span { start: 0, end: 0 } } 使用寄存器: [RegisterId(5), RegisterId(1)]
+🧹 有副作用的指令 18: Store64 { addr: RegisterId(7), offset: 0, src: Register { id: RegisterId(9) }, span: Span { start: 0, end: 0 } } 使用寄存器: [RegisterId(7), RegisterId(9)]
+🧹 有副作用的指令 20: Return { value: Some(RegisterId(10)), span: Span { start: 0, end: 0 } } 使用寄存器: [RegisterId(10)]
+🧹 初始使用的寄存器: {RegisterId(7), RegisterId(3), RegisterId(4), RegisterId(5), RegisterId(1), RegisterId(9), RegisterId(10)}
+🧹 指令 2 定义了使用中的寄存器 RegisterId(1)，传播使用: []
+🧹 指令 5 定义了使用中的寄存器 RegisterId(3)，传播使用: []
+🧹 指令 12 定义了使用中的寄存器 RegisterId(4)，传播使用: [RegisterId(7)]
+🧹 指令 14 定义了使用中的寄存器 RegisterId(5)，传播使用: [RegisterId(4)]
+🧹 指令 16 定义了使用中的寄存器 RegisterId(1)，传播使用: [RegisterId(8)]
+🧹 指令 17 定义了使用中的寄存器 RegisterId(9)，传播使用: [RegisterId(5), RegisterId(1)]
+🧹 指令 19 定义了使用中的寄存器 RegisterId(10)，传播使用: [RegisterId(7)]
+🧹 指令 2 定义了使用中的寄存器 RegisterId(1)，传播使用: []
+🧹 指令 5 定义了使用中的寄存器 RegisterId(3)，传播使用: []
+🧹 指令 12 定义了使用中的寄存器 RegisterId(4)，传播使用: [RegisterId(7)]
+🧹 指令 14 定义了使用中的寄存器 RegisterId(5)，传播使用: [RegisterId(4)]
+🧹 指令 15 定义了使用中的寄存器 RegisterId(8)，传播使用: [RegisterId(7)]
+🧹 指令 16 定义了使用中的寄存器 RegisterId(1)，传播使用: [RegisterId(8)]
+🧹 指令 17 定义了使用中的寄存器 RegisterId(9)，传播使用: [RegisterId(5), RegisterId(1)]
+🧹 指令 19 定义了使用中的寄存器 RegisterId(10)，传播使用: [RegisterId(7)]
+🧹 传播后使用的寄存器: {RegisterId(7), RegisterId(9), RegisterId(3), RegisterId(4), RegisterId(5), RegisterId(1), RegisterId(8), RegisterId(10)}
+🧹 移除死代码: Load64 { dst: RegisterId(11), addr: RegisterId(7), offset: 24, span: Span { start: 0, end: 0 } }
+🧹 移除死代码: Load64 { dst: RegisterId(12), addr: RegisterId(7), offset: 8, span: Span { start: 0, end: 0 } }
+🧹 保留指令 12 (定义寄存器 RegisterId(4) 被使用): Load64 { dst: RegisterId(4), addr: RegisterId(7), offset: 8, span: Span { start: 0, end: 0 } }
+🧹 保留指令 14 (定义寄存器 RegisterId(5) 被使用): Load64 { dst: RegisterId(5), addr: RegisterId(4), offset: 0, span: Span { start: 0, end: 0 } }
+🧹 保留指令 15 (定义寄存器 RegisterId(8) 被使用): Load64 { dst: RegisterId(8), addr: RegisterId(7), offset: 16, span: Span { start: 0, end: 0 } }
+🧹 保留指令 16 (定义寄存器 RegisterId(1) 被使用): Move { dst: RegisterId(1), src: Register { id: RegisterId(8) }, span: Span { start: 0, end: 0 } }
+🧹 保留指令 19 (定义寄存器 RegisterId(10) 被使用): Load64 { dst: RegisterId(10), addr: RegisterId(7), offset: 0, span: Span { start: 0, end: 0 } }
+🔧 应用 2 个 index-based 变换
+🔧 应用变换: 原始index=6, 修正后index=6
+🔧 删除指令 [6]: Load64 { dst: RegisterId(11), addr: RegisterId(7), offset: 24, span: Span { start: 0, end: 0 } }
+🔧 应用变换: 原始index=9, 修正后index=8
+🔧 删除指令 [8]: Load64 { dst: RegisterId(12), addr: RegisterId(7), offset: 8, span: Span { start: 0, end: 0 } }
+🔧 index-based 变换完成，修改: true
+🧹 死代码消除完成，有代码被移除
+    函数 Pass dce 完成 (0ms)
+    优化后lir: function main (stack_frame: 0):
+L2:
+  alloc r0, #8, #8, Stack
+  alloc r1, #8, #8, Stack
+  alloc r2, #8, #8, Stack
+L4:
+  alloc r3, #16, #8, Stack
+  store64 [r7 + 24], #1
+  store64 [r7 + 32], #0
+  store64 [r7 + 8], r3
+  store64 [r7 + 16], #42
+  load64 r4, [r7 + 8]
+  store64 [r7 + 8], r4
+  load64 r5, [r4]
+  load64 r8, [r7 + 16]
+  mov r1, r8
+  r9 = call_indirect r5(r1)
+  store64 [r7], r9
+  load64 r10, [r7]
+  ret r10
+
+🔍 识别栈地址寄存器: RegisterId(0) (来自alloc指令)
+🔍 识别栈地址寄存器: RegisterId(1) (来自alloc指令)
+🔍 识别栈地址寄存器: RegisterId(2) (来自alloc指令)
+🔍 识别栈地址寄存器: RegisterId(3) (来自alloc指令)
+🔍 寄存器类型分析完成，共识别 4 个寄存器类型
+🔍 寄存器 RegisterId(3) -> StackAddress
+🔍 寄存器 RegisterId(1) -> StackAddress
+🔍 寄存器 RegisterId(0) -> StackAddress
+🔍 寄存器 RegisterId(2) -> StackAddress
+🔍 StackAddress寄存器也需要分配物理寄存器
+    函数 Pass linear-scan-register-allocation 完成 (0ms)
+    优化后lir: function main (stack_frame: 0):
+L2:
+  alloc r0, #8, #8, Stack
+  alloc r1, #8, #8, Stack
+  alloc r2, #8, #8, Stack
+L4:
+  alloc r3, #16, #8, Stack
+  store64 [r7 + 24], #1
+  store64 [r7 + 32], #0
+  store64 [r7 + 8], r3
+  store64 [r7 + 16], #42
+  load64 r4, [r7 + 8]
+  store64 [r7 + 8], r4
+  load64 r5, [r4]
+  load64 r8, [r7 + 16]
+  mov r1, r8
+  r9 = call_indirect r5(r1)
+  store64 [r7], r9
+  load64 r10, [r7]
+  ret r10
+
+🔍 识别栈地址寄存器: RegisterId(0) (来自alloc指令)
+🔍 识别栈地址寄存器: RegisterId(1) (来自alloc指令)
+🔍 识别栈地址寄存器: RegisterId(2) (来自alloc指令)
+🔍 识别栈地址寄存器: RegisterId(3) (来自alloc指令)
+🔍 寄存器类型分析完成，共识别 4 个寄存器类型
+🔍 寄存器 RegisterId(3) -> StackAddress
+🔍 寄存器 RegisterId(0) -> StackAddress
+🔍 寄存器 RegisterId(2) -> StackAddress
+🔍 寄存器 RegisterId(1) -> StackAddress
+🔍 StackAddress寄存器也需要分配物理寄存器
+    函数 Pass linear-scan-register-allocation 完成 (0ms)
+    优化后lir: function main (stack_frame: 0):
+L2:
+  alloc r5, #8, #8, Stack
+  alloc r5, #8, #8, Stack
+  alloc r4, #8, #8, Stack
+L4:
+  alloc r4, #16, #8, Stack
+  store64 [r7 + 24], #1
+  store64 [r7 + 32], #0
+  store64 [r7 + 8], r4
+  store64 [r7 + 16], #42
+  load64 r4, [r7 + 8]
+  store64 [r7 + 8], r4
+  load64 r2, [r4]
+  load64 r4, [r7 + 16]
+  mov r5, r4
+  r4 = call_indirect r2(r5)
+  store64 [r7], r4
+  load64 r4, [r7]
+  ret r4
+
+=== 优化统计 ===
+=== 优化统计 ===
+优化级别: 2
+总时间: 1ms
+Pass 时间: 0ms
+总 Pass 数: 12
+成功优化: 8
+无变化: 4
+失败: 0
+优化成功率: 66.7%
+=== 优化后的LIR ===
+function lambda$0 (stack_frame: 0):
+L1:
+L3:
+  mov r5, r1
+  ret r5
+
+function main (stack_frame: 0):
+L2:
+  alloc r5, #8, #8, Stack
+  alloc r5, #8, #8, Stack
+  alloc r4, #8, #8, Stack
+L4:
+  alloc r4, #16, #8, Stack
+  store64 [r7 + 24], #1
+  store64 [r7 + 32], #0
+  store64 [r7 + 8], r4
+  store64 [r7 + 16], #42
+  load64 r4, [r7 + 8]
+  store64 [r7 + 8], r4
+  load64 r2, [r4]
+  load64 r4, [r7 + 16]
+  mov r5, r4
+  r4 = call_indirect r2(r5)
+  store64 [r7], r4
+  load64 r4, [r7]
+  ret r4
+
+
+================================================
+=== 指令降级后的LIR (基础指令) ===
+function lambda$0 (stack_frame: 0):
+L1:
+L3:
+  mov r5, r1
+  ret r5
+
+function main (stack_frame: 0):
+L2:
+  sub r6, r6, #8
+  mov r5, r6
+  sub r6, r6, #8
+  mov r5, r6
+  sub r6, r6, #8
+  mov r4, r6
+L4:
+  sub r6, r6, #16
+  mov r4, r6
+  store64 [r7 + 24], #1
+  store64 [r7 + 32], #0
+  store64 [r7 + 8], r4
+  store64 [r7 + 16], #42
+  load64 r4, [r7 + 8]
+  store64 [r7 + 8], r4
+  load64 r2, [r4]
+  load64 r4, [r7 + 16]
+  mov r5, r4
+  r4 = call_indirect r2(r5)
+  store64 [r7], r4
+  load64 r4, [r7]
+  ret r4
+
+
+================================================
+=== 使用专业执行器执行LIR程序 ===
+专业虚拟机配置:
+  - 通用寄存器数量: 8
+  - 内存大小: 1048576 bytes
+  - 栈大小: 1024 entries
+  - 调用约定: System V ABI inspired
+  - 寄存器分配: Linear Scan with Spilling
+
+=== 专业执行器启动 ===
+执行引擎初始化完成
+  栈基址: 524288
+  内存大小: 1048576 bytes
+  调用约定: CallingConvention { argument_registers: [1, 2, 3, 4], return_register: 0, caller_saved: {0, 1, 3, 2, 4}, callee_saved: {5, 6, 7}, stack_pointer: 6, frame_pointer: 7, return_address: 5, temp_registers: [0, 1, 2, 3, 4] }
+  寄存器映射: 1:1 直接映射 (RegisterId(i) -> r[i])
+  物理寄存器r6(SP): 524288
+  物理寄存器r7(FP): 524288
+PC: 0, 执行: L2:
+PC: 1, 执行: sub r6, r6, #8
+获取寄存器 RegisterId(6) = 524288, 映射状态: Some(6)
+设置寄存器 RegisterId(6) = 524280, 映射状态: Some(6)
+PC: 2, 执行: mov r5, r6
+获取寄存器 RegisterId(6) = 524280, 映射状态: Some(6)
+设置寄存器 RegisterId(5) = 524280, 映射状态: Some(5)
+PC: 3, 执行: sub r6, r6, #8
+获取寄存器 RegisterId(6) = 524280, 映射状态: Some(6)
+设置寄存器 RegisterId(6) = 524272, 映射状态: Some(6)
+PC: 4, 执行: mov r5, r6
+获取寄存器 RegisterId(6) = 524272, 映射状态: Some(6)
+设置寄存器 RegisterId(5) = 524272, 映射状态: Some(5)
+PC: 5, 执行: sub r6, r6, #8
+获取寄存器 RegisterId(6) = 524272, 映射状态: Some(6)
+设置寄存器 RegisterId(6) = 524264, 映射状态: Some(6)
+PC: 6, 执行: mov r4, r6
+获取寄存器 RegisterId(6) = 524264, 映射状态: Some(6)
+设置寄存器 RegisterId(4) = 524264, 映射状态: Some(4)
+PC: 7, 执行: L4:
+PC: 8, 执行: sub r6, r6, #16
+获取寄存器 RegisterId(6) = 524264, 映射状态: Some(6)
+设置寄存器 RegisterId(6) = 524248, 映射状态: Some(6)
+PC: 9, 执行: mov r4, r6
+获取寄存器 RegisterId(6) = 524248, 映射状态: Some(6)
+设置寄存器 RegisterId(4) = 524248, 映射状态: Some(4)
+PC: 10, 执行: store64 [r7 + 24], #1
+获取寄存器 RegisterId(7) = 524288, 映射状态: Some(7)
+Store64: storing 1 to address 524312 (base 524288 + offset 24)
+PC: 11, 执行: store64 [r7 + 32], #0
+获取寄存器 RegisterId(7) = 524288, 映射状态: Some(7)
+Store64: storing 0 to address 524320 (base 524288 + offset 32)
+PC: 12, 执行: store64 [r7 + 8], r4
+获取寄存器 RegisterId(7) = 524288, 映射状态: Some(7)
+获取寄存器 RegisterId(4) = 524248, 映射状态: Some(4)
+Store64: storing 524248 to address 524296 (base 524288 + offset 8)
+PC: 13, 执行: store64 [r7 + 16], #42
+获取寄存器 RegisterId(7) = 524288, 映射状态: Some(7)
+Store64: storing 42 to address 524304 (base 524288 + offset 16)
+PC: 14, 执行: load64 r4, [r7 + 8]
+获取寄存器 RegisterId(7) = 524288, 映射状态: Some(7)
+Load64: loaded 524248 from address 524296 (base 524288 + offset 8)
+设置寄存器 RegisterId(4) = 524248, 映射状态: Some(4)
+PC: 15, 执行: store64 [r7 + 8], r4
+获取寄存器 RegisterId(7) = 524288, 映射状态: Some(7)
+获取寄存器 RegisterId(4) = 524248, 映射状态: Some(4)
+Store64: storing 524248 to address 524296 (base 524288 + offset 8)
+PC: 16, 执行: load64 r2, [r4]
+获取寄存器 RegisterId(4) = 524248, 映射状态: Some(4)
+Load64: loaded 0 from address 524248 (base 524248 + offset 0)
+设置寄存器 RegisterId(2) = 0, 映射状态: Some(2)
+PC: 17, 执行: load64 r4, [r7 + 16]
+获取寄存器 RegisterId(7) = 524288, 映射状态: Some(7)
+Load64: loaded 42 from address 524304 (base 524288 + offset 16)
+设置寄存器 RegisterId(4) = 42, 映射状态: Some(4)
+PC: 18, 执行: mov r5, r4
+获取寄存器 RegisterId(4) = 42, 映射状态: Some(4)
+设置寄存器 RegisterId(5) = 42, 映射状态: Some(5)
+PC: 19, 执行: r4 = call_indirect r2(r5)
+获取寄存器 RegisterId(2) = 0, 映射状态: Some(2)
+CallIndirect 调试信息:
+  function_register: RegisterId(2)
+  function_address: 0
+  target_label: LabelId(0)
+获取寄存器 RegisterId(5) = 42, 映射状态: Some(5)
+  参数0: 寄存器RegisterId(5) = 42
+设置寄存器 RegisterId(1) = 42, 映射状态: Some(1)
+  -> 设置参数寄存器r1 = 42
+  -> 错误：无法找到函数地址 LabelId(0): Unknown label: LabelId(0)
+  -> 可用标签: {LabelId(3): 24, LabelId(4): 7, LabelId(2): 0, LabelId(1): 23}
+
+thread 'codegen_tests::tests::test_lambda_creation' panicked at karte-tests/src/codegen_tests.rs:162:9:
+Function address LabelId(0) not found: Unknown label: LabelId(0)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    codegen_tests::tests::test_lambda_creation
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 184 filtered out; finished in 0.01s
+

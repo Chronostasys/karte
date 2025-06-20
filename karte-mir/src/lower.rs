@@ -351,7 +351,7 @@ fn lower_expression(
             // 3. 创建闭包结构体
             if captured_var_locations.is_empty() {
                 // 无捕获变量，创建简单的函数闭包
-                let mut closure_fields = std::collections::HashMap::new();
+                let mut closure_fields = std::collections::BTreeMap::new();
                 closure_fields.insert("function_ptr".to_string(), Value::Function { name: lambda_name.clone() });
                 closure_fields.insert("env_ptr".to_string(), Value::Number { value: 0 }); // 空环境
                 
@@ -391,7 +391,7 @@ fn lower_expression(
                 }
 
                 // 创建闭包结构体
-                let mut closure_fields = std::collections::HashMap::new();
+                let mut closure_fields = std::collections::BTreeMap::new();
                 closure_fields.insert("function_ptr".to_string(), Value::Function { name: lambda_name.clone() });
                 closure_fields.insert("env_ptr".to_string(), env_temp);
                 
@@ -723,7 +723,7 @@ fn lower_expression(
         
         Expr::StructLiteral { name, fields, span } => {
             // 1. 计算所有字段的值
-            let mut mir_fields = std::collections::HashMap::new();
+            let mut mir_fields = std::collections::BTreeMap::new();
             for field in fields {
                 let field_value = lower_expression_to_temp(ctx, &field.value)?;
                 mir_fields.insert(field.name.clone(), field_value);

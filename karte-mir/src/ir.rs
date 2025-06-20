@@ -34,7 +34,7 @@ pub enum Value {
     /// 结构体值
     Struct {
         name: String,
-        fields: std::collections::HashMap<String, Value>,
+        fields: std::collections::BTreeMap<String, Value>,
     },
     /// 函数值
     Function { name: String },
