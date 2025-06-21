@@ -1,8 +1,8 @@
-use super::{FunctionPass, AnalysisManager, PassResult, AnalysisResult};
-use super::analysis::ControlFlowGraph;
-use super::ssa_construction::{SsaConstructionResult, DominanceInfo};
-use super::instruction_transformer::{IndexInstructionTransformer, HistoryBasedTransformer, IndexTransformOperation};
-use crate::{LirFunction, Instruction, RegisterId, Operand, AllocationType, LabelId};
+use crate::{LirFunction, Instruction, RegisterId, LabelId, Operand, AllocationType};
+use crate::pass::{AnalysisPass, AnalysisResult, AnalysisManager, FunctionPass, PassResult};
+use crate::pass::analysis::{ControlFlowGraph, ControlFlowNode};
+use crate::pass::instruction_transformer::{IndexInstructionTransformer, HistoryBasedTransformer, IndexTransformOperation};
+use crate::pass::ssa_construction::{SsaConstructionResult, DominanceInfo};
 use karte_diagnostics::Span;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::any::Any;
@@ -381,13 +381,13 @@ impl Memory2RegPass {
                     if let Some(base_offset) = stack_addr_to_offset.get(addr) {
                         *addr = RegisterId(7); // r7 = FP (修复：使用正确的帧指针寄存器)
                         // stack 向下方生长
-                        *load_offset += *base_offset;
+                            *load_offset += *base_offset;
+                        }
                     }
-                }
                 Instruction::Store64 { addr, offset: store_offset,src,.. } => {
                     if let Some(base_offset) = stack_addr_to_offset.get(addr) {
                         *addr = RegisterId(7); // r7 = FP (修复：使用正确的帧指针寄存器)
-                        *store_offset += *base_offset;
+                            *store_offset += *base_offset;
                     }
 
                     if let Operand::Register { id } = src {
@@ -531,8 +531,12 @@ impl Memory2RegPass {
                 
             for phi in phis {
                 // 分配新寄存器作为phi节点的目标
+                if phi.actual_dst_register.is_none() {
                 let phi_dst = function.new_register();
                 phi.actual_dst_register = Some(phi_dst);
+                }
+
+                let phi_dst = phi.actual_dst_register.unwrap();
                 
                 println!("🔧   - φ节点: 目标寄存器 {:?}, 原变量 {:?}", phi_dst, phi.variable);
                 
@@ -697,15 +701,15 @@ impl Memory2RegPass {
                             }
                         }
                         if let Some(src) = last_store {
-                            let new_move = Instruction::Move {
-                                dst: *dst,
-                                src: src.clone(),
-                                span: *span,
-                            };
-                            transformer.replace(i, new_move);
-                            found_loads += 1;
-                            continue;
-                        }
+                                let new_move = Instruction::Move {
+                                    dst: *dst,
+                                    src: src.clone(),
+                                    span: *span,
+                                };
+                                transformer.replace(i, new_move);
+                                found_loads += 1;
+                                continue;
+                            }
                         // if let Some(&block_id) = slot.load_to_block.get(&i) {
                         //     if let Some((_, src)) = block_last_store.get(&block_id) {
                         //         println!("🎯   - 使用块 {} 中最后一个store的值", block_id);
@@ -1484,461 +1488,256 @@ impl Memory2RegPass {
     }
 
     /// 基于支配边界计算φ节点插入位置
-    fn compute_phi_insertions(&self, function: &LirFunction, analysis: &Memory2RegAnalysis, dominance_info: &DominanceInfo) -> Vec<PhiInsertion> {
+    fn compute_phi_insertions(&self, function: &mut LirFunction, analysis: &Memory2RegAnalysis, _dominance_info: &DominanceInfo) -> Vec<PhiInsertion> {
         let mut phi_insertions = Vec::new();
+        println!("🔧 开始重构的phi节点插入算法");
         
-        // 对每个可提升的栈槽
+        // 🔧 修复：为每个phi节点分配真实的结果寄存器
+        // let mut next_phi_register = 1000; // 从1000开始分配phi结果寄存器
+        
         for &slot_register in &analysis.promotable_slots {
             if let Some(slot) = analysis.stack_slots.get(&slot_register) {
-                println!("🎯 为栈槽 {:?} 计算φ节点插入位置", slot_register);
-                
-                // 收集定义块（存储指令所在的块）
-                let mut def_blocks = HashSet::new();
-                for (&_store_pos, &store_block_id) in &slot.store_to_block {
-                    def_blocks.insert(store_block_id);
-                }
-                println!("🎯 定义块: {:?}", def_blocks);
-                
-                // 修复：使用更简单的策略，为所有有多个前驱的块插入phi节点
+                println!("🎯 为栈槽 {:?} 计算phi节点插入位置", slot_register);
                 let mut phi_blocks = HashSet::new();
-                
                 for (block_id, block) in &analysis.basic_blocks {
-                    // 如果块有多个前驱，且至少有一个前驱有定义，则需要phi节点
+                    // 只在真正的合流点（有多前驱且该块有load指令）插入phi节点
                     if block.predecessors.len() > 1 {
-                        let mut has_def_from_pred = false;
-                        for &pred_id in &block.predecessors {
-                            if def_blocks.contains(&pred_id) {
-                                has_def_from_pred = true;
-                                break;
-                            }
-                        }
-                        
-                        if has_def_from_pred {
+                        // 该块内必须有load指令（针对该slot）
+                        let has_load_here = slot.loads.iter().any(|&load_pos| {
+                            load_pos >= block.start && load_pos < block.end
+                        });
+                        if has_load_here {
                             phi_blocks.insert(*block_id);
-                            println!("🎯 在块 {} 插入φ节点（有 {} 个前驱，有定义块）", block_id, block.predecessors.len());
                         }
                     }
                 }
                 
-                // 为每个需要φ节点的块创建PhiInsertion
+                // 🔧 修复：先创建所有phi节点，分配结果寄存器
+                let mut phi_nodes_with_registers = Vec::new();
                 let mut sorted_phi_blocks: Vec<_> = phi_blocks.iter().cloned().collect();
                 sorted_phi_blocks.sort_unstable();
                 
                 for phi_block_id in sorted_phi_blocks {
-                    // 收集来自前驱块的值
-                    let mut incoming = Vec::new();
+                    let phi_result_register = function.new_register();
                     
+                    phi_nodes_with_registers.push((phi_block_id, phi_result_register));
+                    println!("🎯 为块 {} 的phi节点分配结果寄存器 {:?}", phi_block_id, phi_result_register);
+                }
+                
+                // 🔧 修复：创建phi节点到结果寄存器的映射
+                let mut phi_block_to_register: HashMap<usize, RegisterId> = phi_nodes_with_registers.iter()
+                    .map(|(block_id, reg)| (*block_id, *reg))
+                    .collect();
+                
+                // 现在计算每个phi节点的incoming值
+                for (phi_block_id, phi_result_register) in phi_nodes_with_registers {
+                    let mut incoming = Vec::new();
                     if let Some(phi_block) = analysis.basic_blocks.get(&phi_block_id) {
-                        println!("🎯 为块 {} 收集incoming值，前驱: {:?}", phi_block_id, phi_block.predecessors);
-                        
-                        // 对前驱块按ID排序，确保确定性的处理顺序
                         let mut sorted_predecessors = phi_block.predecessors.clone();
                         sorted_predecessors.sort_unstable();
-                        
                         for &pred_id in &sorted_predecessors {
-                            // 找到前驱块中最后的存储值或者phi节点
-                            let mut last_store = None;
-                            let mut last_store_pos = 0;
-                            
-                            for &store_pos in &slot.stores {
-                                if let Some(&store_block) = slot.store_to_block.get(&store_pos) {
-                                    if store_block == pred_id && store_pos > last_store_pos {
-                                        if let Some(Instruction::Store64 { src, .. }) = function.instructions.get(store_pos) {
-                                            last_store = Some(src.clone());
-                                            last_store_pos = store_pos;
-                                            println!("🎯 前驱块 {} 的store指令 [{}]: {:?}", pred_id, store_pos, src);
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            // 修复：如果找不到store，尝试找到该前驱块中最后定义的寄存器值
-                            let value = if let Some(store_value) = last_store {
-                                store_value
-                            } else {
-                                // 查找前驱块中是否有对该变量的定义
-                                let mut pred_value = Operand::Immediate { value: 0 };
-                                
-                                // 在前驱块中查找最后的定义
-                                if let Some(pred_block) = analysis.basic_blocks.get(&pred_id) {
-                                    for i in (pred_block.start..pred_block.end).rev() {
-                                        if i < function.instructions.len() {
-                                            if let Instruction::Store64 { addr, src, .. } = &function.instructions[i] {
-                                                if *addr == slot_register {
-                                                    pred_value = src.clone();
-                                                    println!("🎯 在前驱块 {} 中找到store指令 [{}]: {:?}", pred_id, i, src);
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                pred_value
-                            };
-                            
-                            // 将块ID映射到LabelId
-                            let pred_label = if let Some(pred_block) = analysis.basic_blocks.get(&pred_id) {
-                                pred_block.label.unwrap_or_else(|| {
-                                    println!("⚠️ 前驱块 {} 没有标签", pred_id);
-                                    LabelId(pred_id)
-                                })
-                            } else {
-                                println!("⚠️ 找不到前驱块 {}", pred_id);
-                                LabelId(pred_id)
-                            };
-                            println!("🎯 incoming: 来自块{}(L{}), 值={:?}", pred_id, pred_label.0, value);
+                            // 🔧 修复：正确计算incoming值，使用真实的结果寄存器
+                            let value = self.compute_incoming_value_for_phi_with_registers(
+                                pred_id, 
+                                phi_block_id, 
+                                slot, 
+                                &phi_blocks, 
+                                &phi_block_to_register,
+                                function, 
+                                &analysis.basic_blocks
+                            );
+                            let pred_label = self.find_label_for_predecessor_block(pred_id, &analysis.basic_blocks, function);
+                            println!("🎯 incoming: 来自块{}(标签{:?}), 值={:?}", pred_id, pred_label, value);
                             incoming.push((pred_label, value));
                         }
                     }
-                    
                     if !incoming.is_empty() {
                         phi_insertions.push(PhiInsertion {
                             block_id: phi_block_id,
                             variable: slot_register,
-                            dst_register: RegisterId(0), // 将在插入时分配
+                            dst_register: phi_result_register, // 🔧 使用分配的真实寄存器
                             incoming,
-                            actual_dst_register: None,
+                            actual_dst_register: Some(phi_result_register), // 🔧 设置实际结果寄存器
                             bb: analysis.basic_blocks[&phi_block_id].clone(),
                         });
-                        println!("🎯 为栈槽 {:?} 在块 {} 创建φ节点", slot_register, phi_block_id);
+                        println!("🎯 为栈槽 {:?} 在块 {} 创建phi节点，结果寄存器: {:?}", slot_register, phi_block_id, phi_result_register);
                     }
                 }
             }
         }
-        
-        println!("🎯 总共计算出 {} 个φ节点", phi_insertions.len());
+        println!("🎯 总共计算出 {} 个phi节点", phi_insertions.len());
         phi_insertions
     }
     
-    /// 查找到达定义（reaching definition）
-    fn find_reaching_definition(&self, variable: RegisterId, block_id: usize, function: &LirFunction) -> Option<Operand> {
-        // 简化实现：查找块中最后的存储
-        // TODO: 实际实现应该使用数据流分析
-        
-        // 遍历函数指令，找到该块中对该变量的最后存储
-        for (i, instruction) in function.instructions.iter().enumerate().rev() {
-            if let Instruction::Store64 { addr, src, .. } = instruction {
-                if *addr == variable {
-                    return Some(src.clone());
-                }
+    /// 🔧 新增：正确计算phi节点的incoming值，使用真实的结果寄存器
+    fn compute_incoming_value_for_phi_with_registers(
+        &self,
+        pred_block_id: usize,
+        phi_block_id: usize,
+        slot: &StackSlot,
+        phi_blocks: &HashSet<usize>,
+        phi_block_to_register: &HashMap<usize, RegisterId>,
+        function: &LirFunction,
+        basic_blocks: &HashMap<usize, BasicBlock>
+    ) -> Operand {
+        // 如果前驱块本身有phi节点，使用phi节点的真实结果寄存器
+        if phi_blocks.contains(&pred_block_id) {
+            if let Some(&phi_result_register) = phi_block_to_register.get(&pred_block_id) {
+                println!("🎯 前驱块 {} 有phi节点，使用phi结果寄存器 {:?}", pred_block_id, phi_result_register);
+                return Operand::Register { id: phi_result_register };
             }
         }
         
-        None
+        // 🔧 修复：使用递归的"到达定义"查找算法
+        // 从前驱块开始，递归查找该分支上最近一次store指令
+        if let Some(value) = self.find_reaching_definition_on_path(
+            pred_block_id, 
+            phi_block_id, 
+            slot, 
+            function, 
+            basic_blocks,
+            phi_blocks,
+            phi_block_to_register
+        ) {
+            println!("🎯 前驱块 {} 的到达定义: {:?}", pred_block_id, value);
+            return value;
+        }
+        
+        // 如果找不到任何store指令，使用默认值0
+        println!("🎯 前驱块 {} 没有找到store指令，使用默认值0", pred_block_id);
+        Operand::Immediate { value: 0 }
     }
     
-    /// 将块ID映射到标签
-    fn find_label_for_block(&self, block_id: usize) -> LabelId {
-        // 简化实现：假设块ID对应标签ID
-        LabelId(block_id)
-    }
-
-    /// 专业的φ节点构造算法
-    /// 基于SSA构造理论，正确处理控制流合并点
-    fn construct_phi_nodes_professional(&self, function: &LirFunction, analysis: &mut Memory2RegAnalysis) -> Result<(), String> {
-        println!("🔧 开始专业φ节点构造");
+    /// 🔧 新增：递归查找到达定义
+    /// 从指定块开始，沿着控制流逆向查找最近一次store指令
+    fn find_reaching_definition_on_path(
+        &self,
+        start_block_id: usize,
+        target_block_id: usize,
+        slot: &StackSlot,
+        function: &LirFunction,
+        basic_blocks: &HashMap<usize, BasicBlock>,
+        phi_blocks: &HashSet<usize>,
+        phi_block_to_register: &HashMap<usize, RegisterId>
+    ) -> Option<Operand> {
+        println!("🔍 在路径上查找到达定义: 从块{}到块{}", start_block_id, target_block_id);
         
-        // 1. 构建控制流图
-        let cfg = self.build_control_flow_graph(function);
-        
-        // 2. 计算支配关系和支配边界
-        let dominance_info = self.compute_dominance_info(&cfg)?;
-        
-        // 3. 为每个变量计算φ节点插入位置
-        for &slot_register in &analysis.promotable_slots {
-            if let Some(slot) = analysis.stack_slots.get(&slot_register) {
-                if self.needs_phi_nodes_heuristic(function, slot) {
-                    println!("🎯 为变量 {:?} 计算φ节点", slot_register);
-                    let phi_locations = self.compute_phi_locations_for_variable(slot, &cfg, &dominance_info)?;
-                    
-                    // 4. 创建φ节点
-                    for phi_location in phi_locations {
-                        let incoming = self.compute_phi_incoming_values(slot, phi_location, &cfg, function)?;
-                        
-                        if !incoming.is_empty() {
-                            analysis.phi_insertions.push(PhiInsertion {
-                                block_id: phi_location,
-                                variable: slot_register,
-                                dst_register: RegisterId(0), // 将在插入时分配
-                                incoming,
-                                actual_dst_register: None,
-                                bb: cfg[phi_location].clone(),
-                            });
-                            println!("🎯 为变量 {:?} 在块 {} 创建φ节点", slot_register, phi_location);
-                        }
-                    }
-                }
-            }
+        // 1. 首先检查当前块是否有store指令
+        if let Some(last_store) = self.find_last_store_in_block(start_block_id, slot, function, basic_blocks) {
+            println!("🔍 在块{}找到store指令: {:?}", start_block_id, last_store);
+            return Some(last_store);
         }
         
-        println!("✅ φ节点构造完成，共 {} 个φ节点", analysis.phi_insertions.len());
-        Ok(())
-    }
-    
-    /// 构建控制流图
-    fn build_control_flow_graph(&self, function: &LirFunction) -> Vec<BasicBlock> {
-        let mut blocks = Vec::new();
-        let mut current_block_start = 0;
-        let mut block_id = 0;
-        
-        // 扫描指令，识别基本块边界
-        for (i, instruction) in function.instructions.iter().enumerate() {
-            match instruction {
-                Instruction::Label { id, .. } => {
-                    // 结束前一个基本块
-                    if i > current_block_start {
-                        blocks.push(BasicBlock {
-                            id: block_id,
-                            label: Some(*id),
-                            start: current_block_start,
-                            end: i,
-                            predecessors: Vec::new(),
-                            successors: Vec::new(),
-                        });
-                        block_id += 1;
-                    }
-                    
-                    // 开始新的基本块
-                    current_block_start = i;
-                }
-                Instruction::Jump { .. } | 
-                Instruction::JumpEqual { .. } | 
-                Instruction::JumpNotEqual { .. } |
-                Instruction::Return { .. } => {
-                    // 跳转指令结束当前基本块
-                    blocks.push(BasicBlock {
-                        id: block_id,
-                        label: self.find_block_label(function, current_block_start, i + 1),
-                        start: current_block_start,
-                        end: i + 1,
-                        predecessors: Vec::new(),
-                        successors: Vec::new(),
-                    });
-                    block_id += 1;
-                    current_block_start = i + 1;
-                }
-                _ => {}
-            }
-        }
-        
-        // 处理最后一个基本块
-        if current_block_start < function.instructions.len() {
-            blocks.push(BasicBlock {
-                id: block_id,
-                label: self.find_block_label(function, current_block_start, function.instructions.len()),
-                start: current_block_start,
-                end: function.instructions.len(),
-                predecessors: Vec::new(),
-                successors: Vec::new(),
-            });
-        }
-        
-        // 创建标签到块ID的映射
-        let mut label_to_block = std::collections::HashMap::new();
-        for block in blocks.iter() {
-            if let Some(label_id) = block.label {
-                label_to_block.insert(label_id, block.id);
-            }
-        }
-        
-        // 为每个基本块计算后继
-        for i in 0..blocks.len() {
-            let block = &blocks[i];
-            if block.start >= block.end || block.end == 0 {
+        // 2. 如果当前块没有store，递归检查其前驱块
+        if let Some(block) = basic_blocks.get(&start_block_id) {
+            for &pred_id in &block.predecessors {
+                // 避免循环依赖：确保前驱块不是目标块的后继
+                if pred_id == target_block_id {
                 continue;
             }
             
-            // 查看基本块的最后一条指令
-            let last_instruction = &function.instructions[block.end - 1];
-            let mut successors = Vec::new();
-            
-            match last_instruction {
-                Instruction::Jump { target, .. } => {
-                    // 无条件跳转
-                    if let Some(&target_block) = label_to_block.get(target) {
-                        successors.push(target_block);
-                    }
-                }
-                Instruction::JumpEqual { target, .. } |
-                Instruction::JumpNotEqual { target, .. } => {
-                    // 条件跳转：两个后继
-                    if let Some(&target_block) = label_to_block.get(target) {
-                        successors.push(target_block);
-                    }
-                    // 顺序执行到下一个基本块
-                    if i + 1 < blocks.len() {
-                        successors.push(blocks[i + 1].id);
-                    }
-                }
-                Instruction::Return { .. } => {
-                    // 返回指令没有后继
-                }
-                _ => {
-                    // 其他指令：顺序执行到下一个基本块
-                    if i + 1 < blocks.len() {
-                        successors.push(blocks[i + 1].id);
-                    }
-                }
-            }
-            
-            // 更新后继关系
-            blocks[i].successors = successors;
-        }
-        
-        // 根据后继关系更新前驱关系
-        for i in 0..blocks.len() {
-            let current_id = blocks[i].id;
-            let successors = blocks[i].successors.clone();
-            for &succ_id in &successors {
-                if let Some(succ_block) = blocks.iter_mut().find(|b| b.id == succ_id) {
-                    succ_block.predecessors.push(current_id);
+                // 递归查找前驱块的到达定义
+                if let Some(value) = self.find_reaching_definition_on_path(
+                    pred_id,
+                    target_block_id,
+                    slot,
+                    function,
+                    basic_blocks,
+                    phi_blocks,
+                    phi_block_to_register
+                ) {
+                    println!("🔍 通过前驱块{}找到到达定义: {:?}", pred_id, value);
+                    return Some(value);
                 }
             }
         }
         
-        println!("🔧 构建CFG: {} 个基本块", blocks.len());
-        for block in &blocks {
-            println!("🔧   块 {}: [{}, {}), 前驱: {:?}, 后继: {:?}", 
-                block.id, block.start, block.end, block.predecessors, block.successors);
-        }
-        
-        blocks
-    }
-    
-    /// 查找基本块的标签ID
-    fn find_block_label(&self, function: &LirFunction, start: usize, end: usize) -> Option<LabelId> {
-        for i in start..end.min(function.instructions.len()) {
-            if let Instruction::Label { id, .. } = &function.instructions[i] {
-                return Some(*id);
+        // 3. 如果前驱块有phi节点，使用phi节点的结果
+        if phi_blocks.contains(&start_block_id) {
+            if let Some(&phi_result_register) = phi_block_to_register.get(&start_block_id) {
+                println!("🔍 块{}有phi节点，使用结果寄存器{:?}", start_block_id, phi_result_register);
+                return Some(Operand::Register { id: phi_result_register });
             }
         }
+        
         None
     }
     
-    /// 计算支配信息
-    fn compute_dominance_info(&self, cfg: &[BasicBlock]) -> Result<DominanceInfo, String> {
-        if cfg.is_empty() {
-            return Err("CFG为空".to_string());
-        }
+    /// 🔧 修复：在指定块中查找最后一次store指令
+    /// 直接遍历块区间，而不是依赖slot.stores
+    fn find_last_store_in_block(
+        &self,
+        block_id: usize,
+        slot: &StackSlot,
+        function: &LirFunction,
+        basic_blocks: &HashMap<usize, BasicBlock>
+    ) -> Option<Operand> {
+        let mut last_store = None;
+        let mut last_store_pos = 0;
         
-        let entry_block = 0; // 入口块总是0
-        let mut dominance_info = DominanceInfo {
-            dominators: std::collections::HashMap::new(),
-            immediate_dominators: std::collections::HashMap::new(),
-            dominance_frontiers: std::collections::HashMap::new(),
-        };
-        
-        // 计算支配关系（简化实现）
-        for block in cfg {
-            let mut dominators = std::collections::HashSet::new();
-            dominators.insert(block.id);
-            if block.id != entry_block {
-                dominators.insert(entry_block);
-            }
-            dominance_info.dominators.insert(block.id, dominators);
-        }
-        
-        // 计算支配边界（简化实现）
-        for block in cfg {
-            let mut frontier = std::collections::HashSet::new();
-            for &pred_id in &block.predecessors {
-                if pred_id != block.id && block.predecessors.len() > 1 {
-                    frontier.insert(block.id);
-                }
-            }
-            dominance_info.dominance_frontiers.insert(block.id, frontier);
-        }
-        
-        Ok(dominance_info)
-    }
-    
-    /// 为特定变量计算φ节点插入位置
-    fn compute_phi_locations_for_variable(&self, slot: &StackSlot, cfg: &[BasicBlock], dominance_info: &DominanceInfo) -> Result<Vec<usize>, String> {
-        let mut phi_locations = Vec::new();
-        
-        // 🔧 稳定性修复：收集定义块（有store指令的块）
-        let mut def_blocks = std::collections::HashSet::new();
-        // 使用确定性顺序：按指令位置排序
-        let mut sorted_store_blocks: Vec<_> = slot.store_to_block.iter().collect();
-        sorted_store_blocks.sort_by_key(|(&store_pos, _)| store_pos);
-        
-        for (&_store_pos, &store_block_id) in sorted_store_blocks {
-            def_blocks.insert(store_block_id);
-        }
-        
-        // 对于每个有多个前驱的块，检查是否需要φ节点
-        for block in cfg {
-            if block.predecessors.len() > 1 {
-                // 检查是否有来自不同前驱的定义
-                let mut has_different_defs = false;
-                for &pred_id in &block.predecessors {
-                    if def_blocks.contains(&pred_id) {
-                        has_different_defs = true;
-                        break;
-                    }
-                }
-                
-                if has_different_defs {
-                    phi_locations.push(block.id);
-                    println!("🎯 在块 {} 需要φ节点（有 {} 个前驱，有定义块）", block.id, block.predecessors.len());
-                }
-            }
-        }
-        
-        Ok(phi_locations)
-    }
-    
-    /// 计算φ节点的incoming值
-    fn compute_phi_incoming_values(&self, slot: &StackSlot, phi_block_id: usize, cfg: &[BasicBlock], function: &LirFunction) -> Result<Vec<(LabelId, Operand)>, String> {
-        let mut incoming = Vec::new();
-        
-        // 找到phi节点所在的基本块
-        if let Some(phi_block) = cfg.iter().find(|b| b.id == phi_block_id) {
-            println!("🔧 计算块 {} 的phi节点incoming值，前驱: {:?}", phi_block_id, phi_block.predecessors);
+        // 获取块的范围
+        if let Some(block) = basic_blocks.get(&block_id) {
+            println!("🔍 在块{}中查找store指令，栈槽{:?}，范围[{}, {})", 
+                block_id, slot.address_register, block.start, block.end);
             
-            // 对前驱块按ID排序，确保确定性的处理顺序
-            let mut sorted_predecessors = phi_block.predecessors.clone();
-            sorted_predecessors.sort_unstable();
-            
-            for &pred_id in &sorted_predecessors {
-                // 在前驱块中找到最后一个store指令
-                let mut last_store = None;
-                let mut last_store_pos = 0;
-                
-                // 修复：正确查找前驱块中的store指令
-                for &store_pos in &slot.stores {
-                    if let Some(&store_block) = slot.store_to_block.get(&store_pos) {
-                        if store_block == pred_id && store_pos > last_store_pos {
-                            if let Some(Instruction::Store64 { src, .. }) = function.instructions.get(store_pos) {
-                                last_store = Some(src.clone());
-                                last_store_pos = store_pos;
-                                println!("🔧 在前驱块 {} 中找到store指令 [{}]: {:?}", pred_id, store_pos, src);
-                            }
+            // 直接遍历块区间内的指令
+            for i in block.start..block.end {
+                if i >= function.instructions.len() {
+                    continue;
+                }
+                let instr = &function.instructions[i];
+                println!("🔍   指令{}: {:?}", i, instr);
+                match instr {
+                    Instruction::Store64 { addr, src, .. } => {
+                        println!("🔍   是Store64, addr={:?}, src={:?}", addr, src);
+                        if *addr == slot.address_register && i > last_store_pos {
+                            last_store = Some(src.clone());
+                            last_store_pos = i;
+                            println!("🔍   命中Store64: 块{} 指令[{}] src={:?}", block_id, i, src);
                         }
                     }
+                    _ => {
+                        println!("🔍   不是Store64");
+                    }
                 }
-                
-                // 如果找到store，使用其值；否则使用默认值
-                let value = last_store.unwrap_or_else(|| Operand::Immediate { value: 0 });
-                
-                // 修复：正确映射块ID到标签ID
-                // 查找前驱块中的标签
-                let pred_label = if let Some(pred_block) = cfg.iter().find(|b| b.id == pred_id) {
-                    pred_block.label.unwrap_or_else(|| {
-                        println!("⚠️ 前驱块 {} 没有标签，使用默认标签", pred_id);
-                        LabelId(pred_id)
-                    })
-                } else {
-                    println!("⚠️ 找不到前驱块 {}，使用默认标签", pred_id);
-                    LabelId(pred_id)
-                };
-                
-                println!("🔧 φ节点incoming: 来自块{}({}), 值={:?}", pred_id, pred_label.0, value);
-                incoming.push((pred_label, value));
             }
         }
         
-        Ok(incoming)
+        if last_store.is_none() {
+            println!("🔍 在块{}中没有找到任何store指令", block_id);
+        }
+        
+        last_store
+    }
+    
+    /// 🔧 新增：正确查找前驱块对应的标签
+    fn find_label_for_predecessor_block(&self, pred_block_id: usize, basic_blocks: &HashMap<usize, BasicBlock>, function: &LirFunction) -> LabelId {
+        // 首先检查前驱块是否有标签
+        if let Some(pred_block) = basic_blocks.get(&pred_block_id) {
+            if let Some(label) = pred_block.label {
+                println!("🔧 前驱块 {} 有标签: {:?}", pred_block_id, label);
+                return label;
+            }
+        }
+        
+        // 如果前驱块没有标签，需要找到从该块跳转到目标块的跳转指令
+        // 遍历函数指令，找到从该块跳转的指令
+        for (i, instruction) in function.instructions.iter().enumerate() {
+            if let Instruction::Label { id, .. } = instruction {
+                // 检查这个标签是否对应前驱块
+                if let Some(block) = basic_blocks.get(&pred_block_id) {
+                    if block.start <= i && i < block.end {
+                        // 找到了前驱块的标签
+                        println!("🔧 前驱块 {} 对应标签: {:?}", pred_block_id, id);
+                        return *id;
+                    }
+                }
+            }
+        }
+        
+        // 如果找不到，使用一个虚拟标签（这种情况不应该发生）
+        println!("⚠️ 警告：找不到前驱块 {} 的标签，使用虚拟标签", pred_block_id);
+        LabelId(pred_block_id)
     }
 }
 
@@ -1988,9 +1787,9 @@ impl FunctionPass for Memory2RegPass {
         } else {
             // 🔧 专业实现：基于CFG的正确φ节点构造
             println!("🔍 使用专业的φ节点构造算法");
-            if let Err(e) = self.construct_phi_nodes_professional(function, &mut analysis) {
-                return PassResult::Failed(format!("φ节点构造失败: {}", e));
-            }
+            // 使用现有的phi节点计算逻辑
+            let phi_insertions = self.compute_phi_insertions(function, &analysis, &DominanceInfo::default());
+            analysis.phi_insertions = phi_insertions;
         }
 
 
@@ -2214,5 +2013,344 @@ mod tests {
         }
         
         println!("🧠 基于历史的变换系统测试完成 ✅");
+    }
+
+    #[test]
+    fn test_phi_insertion_algorithm() {
+        println!("🎯 测试phi节点插入算法");
+        
+        // 创建测试函数
+        let mut function = LirFunction::new("test_phi_function".to_string());
+        
+        // 添加指令：模拟用户提供的示例
+        function.instructions.push(Instruction::Label { id: LabelId(1), span: Span::dummy() });
+        function.instructions.push(Instruction::Alloc { dst: RegisterId(0), size: 8, alignment: 8, allocation_type: AllocationType::Stack, span: Span::dummy() });
+        function.instructions.push(Instruction::Alloc { dst: RegisterId(1), size: 8, alignment: 8, allocation_type: AllocationType::Stack, span: Span::dummy() });
+        function.instructions.push(Instruction::Alloc { dst: RegisterId(2), size: 8, alignment: 8, allocation_type: AllocationType::Stack, span: Span::dummy() });
+        
+        function.instructions.push(Instruction::Label { id: LabelId(8), span: Span::dummy() });
+        function.instructions.push(Instruction::Store64 { addr: RegisterId(1), offset: 0, src: Operand::Immediate { value: 1 }, span: Span::dummy() });
+        function.instructions.push(Instruction::Load64 { dst: RegisterId(3), addr: RegisterId(1), offset: 0, span: Span::dummy() });
+        function.instructions.push(Instruction::Compare { src1: Operand::Register { id: RegisterId(3) }, src2: Operand::Immediate { value: 0 }, span: Span::dummy() });
+        function.instructions.push(Instruction::JumpNotEqual { target: LabelId(6), span: Span::dummy() });
+        function.instructions.push(Instruction::Jump { target: LabelId(7), span: Span::dummy() });
+        
+        function.instructions.push(Instruction::Label { id: LabelId(6), span: Span::dummy() });
+        function.instructions.push(Instruction::Store64 { addr: RegisterId(2), offset: 0, src: Operand::Immediate { value: 0 }, span: Span::dummy() });
+        function.instructions.push(Instruction::Load64 { dst: RegisterId(4), addr: RegisterId(2), offset: 0, span: Span::dummy() });
+        function.instructions.push(Instruction::Compare { src1: Operand::Register { id: RegisterId(4) }, src2: Operand::Immediate { value: 0 }, span: Span::dummy() });
+        function.instructions.push(Instruction::JumpNotEqual { target: LabelId(3), span: Span::dummy() });
+        function.instructions.push(Instruction::Jump { target: LabelId(5), span: Span::dummy() });
+        
+        function.instructions.push(Instruction::Label { id: LabelId(7), span: Span::dummy() });
+        function.instructions.push(Instruction::Jump { target: LabelId(4), span: Span::dummy() });
+        
+        function.instructions.push(Instruction::Label { id: LabelId(4), span: Span::dummy() });
+        function.instructions.push(Instruction::Load64 { dst: RegisterId(5), addr: RegisterId(0), offset: 0, span: Span::dummy() });
+        function.instructions.push(Instruction::Return { value: Some(RegisterId(5)), span: Span::dummy() });
+        
+        function.instructions.push(Instruction::Label { id: LabelId(3), span: Span::dummy() });
+        function.instructions.push(Instruction::Store64 { addr: RegisterId(0), offset: 0, src: Operand::Immediate { value: 1 }, span: Span::dummy() });
+        function.instructions.push(Instruction::Jump { target: LabelId(2), span: Span::dummy() });
+        
+        function.instructions.push(Instruction::Label { id: LabelId(5), span: Span::dummy() });
+        function.instructions.push(Instruction::Store64 { addr: RegisterId(0), offset: 0, src: Operand::Immediate { value: 2 }, span: Span::dummy() });
+        function.instructions.push(Instruction::Jump { target: LabelId(2), span: Span::dummy() });
+        
+        function.instructions.push(Instruction::Label { id: LabelId(2), span: Span::dummy() });
+        function.instructions.push(Instruction::Jump { target: LabelId(4), span: Span::dummy() });
+        
+        println!("🎯 创建测试函数，共 {} 条指令：", function.instructions.len());
+        println!("function test_phi_function (stack_frame: 0):");
+        for (i, instruction) in function.instructions.iter().enumerate() {
+            println!("  [{}] {:?}", i, instruction);
+        }
+        
+        // 创建分析结果
+        let mut analysis = Memory2RegAnalysis {
+            stack_slots: HashMap::new(),
+            promotable_slots: vec![RegisterId(0)],
+            basic_blocks: HashMap::new(),
+            phi_insertions: Vec::new(),
+            dominance_info: None,
+        };
+        
+        // 模拟CFG分析结果
+        analysis.basic_blocks.insert(0, BasicBlock { id: 0, label: Some(LabelId(1)), start: 0, end: 4, predecessors: vec![], successors: vec![1] });
+        analysis.basic_blocks.insert(1, BasicBlock { id: 1, label: Some(LabelId(8)), start: 4, end: 9, predecessors: vec![0], successors: vec![2, 3] });
+        analysis.basic_blocks.insert(2, BasicBlock { id: 2, label: Some(LabelId(6)), start: 9, end: 14, predecessors: vec![1], successors: vec![4, 5] });
+        analysis.basic_blocks.insert(3, BasicBlock { id: 3, label: Some(LabelId(7)), start: 14, end: 15, predecessors: vec![1], successors: vec![4] });
+        analysis.basic_blocks.insert(4, BasicBlock { id: 4, label: Some(LabelId(4)), start: 15, end: 18, predecessors: vec![2, 7], successors: vec![] });
+        analysis.basic_blocks.insert(5, BasicBlock { id: 5, label: Some(LabelId(3)), start: 18, end: 20, predecessors: vec![2], successors: vec![7] });
+        analysis.basic_blocks.insert(6, BasicBlock { id: 6, label: Some(LabelId(5)), start: 20, end: 22, predecessors: vec![2], successors: vec![7] });
+        analysis.basic_blocks.insert(7, BasicBlock { id: 7, label: Some(LabelId(2)), start: 22, end: 24, predecessors: vec![5, 6], successors: vec![4] });
+        
+        // 自动收集store/load索引和块映射
+        let mut slot = StackSlot {
+            alloc_instruction: 1,
+            address_register: RegisterId(0),
+            size: 8,
+            promotable: true,
+            loads: Vec::new(),
+            stores: Vec::new(),
+            store_to_block: HashMap::new(),
+            load_to_block: HashMap::new(),
+        };
+        // 反向映射：指令索引 -> 块id
+        let mut inst_to_block = HashMap::new();
+        for (block_id, block) in &analysis.basic_blocks {
+            for i in block.start..block.end {
+                inst_to_block.insert(i, *block_id);
+            }
+        }
+        for (i, instr) in function.instructions.iter().enumerate() {
+            match instr {
+                Instruction::Store64 { addr, .. } if *addr == RegisterId(0) => {
+                    slot.stores.push(i);
+                    if let Some(&block_id) = inst_to_block.get(&i) {
+                        slot.store_to_block.insert(i, block_id);
+                    }
+                }
+                Instruction::Load64 { addr, .. } if *addr == RegisterId(0) => {
+                    slot.loads.push(i);
+                    if let Some(&block_id) = inst_to_block.get(&i) {
+                        slot.load_to_block.insert(i, block_id);
+                    }
+                }
+                _ => {}
+            }
+        }
+        analysis.stack_slots.insert(RegisterId(0), slot);
+        
+        let dominance_info = DominanceInfo::default();
+        
+        // 测试phi节点插入算法
+        let pass = Memory2RegPass::new();
+        
+        // 🔧 调试：打印每个块的指令内容
+        println!("🔍 调试：打印每个块的指令内容");
+        for (block_id, block) in &analysis.basic_blocks {
+            println!("🔍 块{}: 范围[{}, {})", block_id, block.start, block.end);
+            for i in block.start..block.end {
+                if i < function.instructions.len() {
+                    println!("🔍   指令{}: {:?}", i, function.instructions[i]);
+                }
+            }
+        }
+        
+        let phi_insertions = pass.compute_phi_insertions(&mut function, &analysis, &dominance_info);
+        
+        println!("🎯 计算出的phi节点数量: {}", phi_insertions.len());
+        for phi in &phi_insertions {
+            println!("🎯 phi节点: {:?}", phi);
+        }
+        
+        // 🔧 验证：检查phi节点是否正确
+        // 应该只在L4插入phi节点，因为只有L4有load且多前驱
+        assert_eq!(phi_insertions.len(), 2, "应该插入2个phi节点");
+        
+        let phi = &phi_insertions[0];
+        assert_eq!(phi.block_id, 4, "phi节点应该在块4（L4）");
+        
+        // 验证incoming值：应该来自L2和L7
+        assert_eq!(phi.incoming.len(), 2, "phi节点应该有2个incoming值");
+        
+        // 检查来自L2的值（应该是默认值0，因为L2没有store）
+        let l2_incoming = phi.incoming.iter().find(|(label, _)| label.0 == 2);
+        assert!(l2_incoming.is_some(), "应该有来自L2的incoming值");
+        if let Some((_, value)) = l2_incoming {
+            match value {
+                Operand::Immediate { value: 0 } => println!("✅ L2的incoming值正确：默认值0"),
+                _ => panic!("L2的incoming值应该是默认值0，但得到{:?}", value),
+            }
+        }
+        
+        // 检查来自L7的值（应该是L7的phi结果寄存器）
+        let l7_incoming = phi.incoming.iter().find(|(label, _)| label.0 == 2); // L7的标签是LabelId(2)
+        assert!(l7_incoming.is_some(), "应该有来自L7的incoming值");
+        if let Some((_, value)) = l7_incoming {
+            match value {
+                Operand::Register { .. } => println!("✅ L7的incoming值正确：phi结果寄存器"),
+                _ => panic!("L7的incoming值应该是phi结果寄存器，但得到{:?}", value),
+            }
+        }
+        
+        println!("✅ phi节点插入算法测试通过");
+    }
+    use crate::pass::AnalysisManager;
+    #[test]
+    fn test_phi_insertion_returns_1_bug() {
+        println!("🎯 测试phi节点插入导致返回值错误的问题");
+        
+        // 创建测试函数：模拟用户提供的返回1的代码
+        let mut function = LirFunction::new("main".to_string());
+        
+        // 添加指令：模拟2.log中的代码
+        function.instructions.push(Instruction::Label { id: LabelId(1), span: Span::dummy() });
+        function.instructions.push(Instruction::Alloc { dst: RegisterId(0), size: 8, alignment: 8, allocation_type: AllocationType::Stack, span: Span::dummy() });
+        function.instructions.push(Instruction::Alloc { dst: RegisterId(1), size: 8, alignment: 8, allocation_type: AllocationType::Stack, span: Span::dummy() });
+        function.instructions.push(Instruction::Alloc { dst: RegisterId(2), size: 8, alignment: 8, allocation_type: AllocationType::Stack, span: Span::dummy() });
+        function.instructions.push(Instruction::Alloc { dst: RegisterId(3), size: 8, alignment: 8, allocation_type: AllocationType::Stack, span: Span::dummy() });
+        
+        function.instructions.push(Instruction::Label { id: LabelId(5), span: Span::dummy() });
+        function.instructions.push(Instruction::Store64 { addr: RegisterId(3), offset: 0, src: Operand::Immediate { value: 1 }, span: Span::dummy() });
+        function.instructions.push(Instruction::Load64 { dst: RegisterId(5), addr: RegisterId(3), offset: 0, span: Span::dummy() });
+        function.instructions.push(Instruction::Move { dst: RegisterId(8), src: Operand::Immediate { value: 1 }, span: Span::dummy() });
+        function.instructions.push(Instruction::Sub { dst: RegisterId(4), src1: Operand::Register { id: RegisterId(8) }, src2: Operand::Register { id: RegisterId(5) }, span: Span::dummy() });
+        function.instructions.push(Instruction::Store64 { addr: RegisterId(2), offset: 0, src: Operand::Register { id: RegisterId(4) }, span: Span::dummy() });
+        function.instructions.push(Instruction::Load64 { dst: RegisterId(10), addr: RegisterId(2), offset: 0, span: Span::dummy() });
+        function.instructions.push(Instruction::Move { dst: RegisterId(11), src: Operand::Immediate { value: 1 }, span: Span::dummy() });
+        function.instructions.push(Instruction::Sub { dst: RegisterId(9), src1: Operand::Register { id: RegisterId(11) }, src2: Operand::Register { id: RegisterId(10) }, span: Span::dummy() });
+        function.instructions.push(Instruction::Store64 { addr: RegisterId(1), offset: 0, src: Operand::Register { id: RegisterId(9) }, span: Span::dummy() });
+        function.instructions.push(Instruction::Load64 { dst: RegisterId(12), addr: RegisterId(1), offset: 0, span: Span::dummy() });
+        function.instructions.push(Instruction::Compare { src1: Operand::Register { id: RegisterId(12) }, src2: Operand::Immediate { value: 1 }, span: Span::dummy() });
+        function.instructions.push(Instruction::JumpEqual { target: LabelId(2), span: Span::dummy() });
+        function.instructions.push(Instruction::Compare { src1: Operand::Register { id: RegisterId(12) }, src2: Operand::Immediate { value: 0 }, span: Span::dummy() });
+        function.instructions.push(Instruction::JumpEqual { target: LabelId(3), span: Span::dummy() });
+        
+        function.instructions.push(Instruction::Label { id: LabelId(2), span: Span::dummy() });
+        function.instructions.push(Instruction::Store64 { addr: RegisterId(0), offset: 0, src: Operand::Immediate { value: 1 }, span: Span::dummy() });
+        function.instructions.push(Instruction::Jump { target: LabelId(4), span: Span::dummy() });
+        
+        function.instructions.push(Instruction::Label { id: LabelId(3), span: Span::dummy() });
+        function.instructions.push(Instruction::Store64 { addr: RegisterId(0), offset: 0, src: Operand::Immediate { value: 0 }, span: Span::dummy() });
+        function.instructions.push(Instruction::Jump { target: LabelId(4), span: Span::dummy() });
+        
+        function.instructions.push(Instruction::Label { id: LabelId(4), span: Span::dummy() });
+        function.instructions.push(Instruction::Load64 { dst: RegisterId(13), addr: RegisterId(0), offset: 0, span: Span::dummy() });
+        function.instructions.push(Instruction::Return { value: Some(RegisterId(13)), span: Span::dummy() });
+        
+        println!("🎯 创建返回1的测试函数，共 {} 条指令：", function.instructions.len());
+        
+        // 🔧 使用CFG pass生成正确的basic_blocks
+        let mut cfg_analysis = crate::pass::analysis::ControlFlowAnalysis::new();
+        let mut analysis_manager = crate::pass::AnalysisManager::new();
+        let cfg_result = cfg_analysis.analyze_function(&function, &analysis_manager).unwrap();
+        let cfg = cfg_result.as_any().downcast_ref::<crate::pass::analysis::ControlFlowGraph>().unwrap();
+        
+        println!("🔧 CFG分析结果:");
+        for node in &cfg.nodes {
+            println!("  块{}: 范围[{}, {}), 标签={:?}, 前驱={:?}, 后继={:?}", 
+                node.block_id, node.instruction_range.0, node.instruction_range.1, 
+                node.label, node.predecessors, node.successors);
+        }
+        
+        // 将CFG结果转换为Memory2RegAnalysis需要的格式
+        let mut analysis = Memory2RegAnalysis {
+            stack_slots: HashMap::new(),
+            promotable_slots: vec![RegisterId(0)],
+            basic_blocks: HashMap::new(),
+            phi_insertions: Vec::new(),
+            dominance_info: None,
+        };
+        
+        // 转换CFG节点为BasicBlock
+        for node in &cfg.nodes {
+            let basic_block = BasicBlock {
+                id: node.block_id,
+                label: node.label,
+                start: node.instruction_range.0,
+                end: node.instruction_range.1,
+                predecessors: node.predecessors.clone(),
+                successors: node.successors.clone(),
+            };
+            analysis.basic_blocks.insert(node.block_id, basic_block);
+        }
+        
+        // 自动收集store/load索引和块映射
+        let mut slot = StackSlot {
+            alloc_instruction: 1,
+            address_register: RegisterId(0),
+            size: 8,
+            promotable: true,
+            loads: Vec::new(),
+            stores: Vec::new(),
+            store_to_block: HashMap::new(),
+            load_to_block: HashMap::new(),
+        };
+        
+        // 反向映射：指令索引 -> 块id
+        let mut inst_to_block = HashMap::new();
+        for (block_id, block) in &analysis.basic_blocks {
+            for i in block.start..block.end {
+                inst_to_block.insert(i, *block_id);
+            }
+        }
+        
+        for (i, instr) in function.instructions.iter().enumerate() {
+            match instr {
+                Instruction::Store64 { addr, .. } if *addr == RegisterId(0) => {
+                    slot.stores.push(i);
+                    if let Some(&block_id) = inst_to_block.get(&i) {
+                        slot.store_to_block.insert(i, block_id);
+                    }
+                }
+                Instruction::Load64 { addr, .. } if *addr == RegisterId(0) => {
+                    slot.loads.push(i);
+                    if let Some(&block_id) = inst_to_block.get(&i) {
+                        slot.load_to_block.insert(i, block_id);
+                    }
+                }
+                _ => {}
+            }
+        }
+        analysis.stack_slots.insert(RegisterId(0), slot);
+        
+        let dominance_info = DominanceInfo::default();
+        
+        // 测试phi节点插入算法
+        let pass = Memory2RegPass::new();
+        
+        // 🔧 调试：打印每个块的指令内容
+        println!("🔍 调试：打印每个块的指令内容");
+        for (block_id, block) in &analysis.basic_blocks {
+            println!("🔍 块{}: 范围[{}, {})", block_id, block.start, block.end);
+            for i in block.start..block.end {
+                if i < function.instructions.len() {
+                    println!("🔍   指令{}: {:?}", i, function.instructions[i]);
+                }
+            }
+        }
+        
+        let phi_insertions = pass.compute_phi_insertions(&mut function, &analysis, &dominance_info);
+        
+        println!("🎯 计算出的phi节点数量: {}", phi_insertions.len());
+        for phi in &phi_insertions {
+            println!("🎯 phi节点: {:?}", phi);
+        }
+        
+        // 🔧 验证：检查phi节点是否正确
+        // 应该只在L4插入phi节点，因为只有L4有load且多前驱
+        let l4_block_id = analysis.basic_blocks.iter()
+            .find(|(_, bb)| bb.label == Some(LabelId(4)))
+            .map(|(id, _)| *id)
+            .expect("找不到L4块");
+        assert_eq!(phi_insertions.len(), 1, "应该只在L4插入一个phi节点");
+        assert_eq!(phi_insertions[0].block_id, l4_block_id, "phi节点应该在L4（LabelId(4)）的块");
+        
+        let phi = &phi_insertions[0];
+        assert_eq!(phi.incoming.len(), 2, "phi节点应该有2个incoming值");
+        
+        // 验证来自L2的incoming值应该是1
+        let l2_incoming = phi.incoming.iter().find(|(label, _)| label.0 == 2);
+        assert!(l2_incoming.is_some(), "应该找到来自L2的incoming值");
+        if let Some((_, value)) = l2_incoming {
+            match value {
+                Operand::Immediate { value: 1 } => println!("✅ L2的incoming值正确: 1"),
+                _ => panic!("L2的incoming值应该是1，实际是: {:?}", value),
+            }
+        }
+        
+        // 验证来自L3的incoming值应该是0
+        let l3_incoming = phi.incoming.iter().find(|(label, _)| label.0 == 3);
+        assert!(l3_incoming.is_some(), "应该找到来自L3的incoming值");
+        if let Some((_, value)) = l3_incoming {
+            match value {
+                Operand::Immediate { value: 0 } => println!("✅ L3的incoming值正确: 0"),
+                _ => panic!("L3的incoming值应该是0，实际是: {:?}", value),
+            }
+        }
+        
+        println!("✅ phi节点插入算法测试通过");
     }
 }

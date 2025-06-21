@@ -85,6 +85,16 @@ pub struct DominanceInfo {
     pub dominance_frontiers: HashMap<usize, HashSet<usize>>,
 }
 
+impl Default for DominanceInfo {
+    fn default() -> Self {
+        DominanceInfo {
+            dominators: HashMap::new(),
+            immediate_dominators: HashMap::new(),
+            dominance_frontiers: HashMap::new(),
+        }
+    }
+}
+
 impl SsaConstructionPass {
     pub fn new() -> Self {
         Self {

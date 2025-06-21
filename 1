@@ -1,38 +1,8 @@
-function main (stack_frame: 0):
-L1:
-  alloc r1, #8, #8, Stack
-L2:
-  alloc r4, #16, #8, Stack
-  mov r8, #42
-  alloc r5, #16, #8, Stack
-  store64 [r5], #3
-  store64 [r5 + 8], r8
-  load64 r9, [r5]
-  load64 r19, [r4]
-  store64 [r4], r9
-  load64 r10, [r5 + 8]
-  store64 [r4 + 8], r10
-  load64 r20, [r1]
-  store64 [r1], r4
-  load64 r11, [r1]
-  store64 [r1], r11
-  load64 r12, [r11]
-  cmp r12, #3
-  je L4
-  alloc r13, #8, #8, Stack
-  load64 r13, [r11 + 8]
-  jmp L3
-L4:
-  load64 r14, [r1]
-  store64 [r1], r14
-  load64 r15, [r14 + 8]
-  mov r16, r15
-  mov r17, r15
-  jmp L5
-L3:
-  jmp L5
-L5:
-  r21 = phi(L4: r17, L3: #0)
-  r22 = phi(L4: r15, L3: #0)
-  mov r18, r21
-  ret r18
+struct Point {
+    x: number,
+    y: number
+}
+
+let p = Point { x: 15, y: 25 };
+let d = p.y;
+d
