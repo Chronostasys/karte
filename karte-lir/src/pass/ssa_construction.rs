@@ -9,6 +9,7 @@
 use super::{FunctionPass, AnalysisManager, PassResult, AnalysisResult};
 use crate::{LirFunction, Instruction, RegisterId, Operand, AllocationType};
 use karte_diagnostics::Span;
+use karte_mir::BasicBlockId;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::any::Any;
 
@@ -60,6 +61,8 @@ pub struct SsaConstructionPass {
     control_flow_graph: Vec<BasicBlockInfo>,
     /// 支配关系
     dominance_info: DominanceInfo,
+    /// 标签到基本块的映射
+    label_to_block: HashMap<crate::LabelId, usize>,
 }
 
 /// 基本块信息
@@ -91,6 +94,7 @@ impl SsaConstructionPass {
                 immediate_dominators: HashMap::new(),
                 dominance_frontiers: HashMap::new(),
             },
+            label_to_block: HashMap::new(),
         }
     }
 
@@ -101,13 +105,13 @@ impl SsaConstructionPass {
         // 识别基本块边界
         let mut block_starts = vec![0]; // 函数开始是第一个基本块
         let mut leaders = HashSet::new();
-        leaders.insert(0);
+        leaders.insert((None,0));
         
         // 扫描指令，找到基本块的领导指令
         for (i, instruction) in function.instructions.iter().enumerate() {
             match instruction {
-                Instruction::Label { .. } => {
-                    leaders.insert(i);
+                Instruction::Label { id,.. } => {
+                    leaders.insert((Some(*id), i));
                 }
                 Instruction::Jump { .. } |
                 Instruction::JumpEqual { .. } |
@@ -115,7 +119,7 @@ impl SsaConstructionPass {
                 Instruction::Return { .. } => {
                     // 跳转指令后的指令是新基本块的开始
                     if i + 1 < function.instructions.len() {
-                        leaders.insert(i + 1);
+                        leaders.insert((None, i + 1));
                     }
                 }
                 _ => {}
@@ -123,16 +127,20 @@ impl SsaConstructionPass {
         }
         
         // 收集并排序基本块开始位置
-        block_starts = leaders.into_iter().collect();
-        block_starts.sort();
-        
+        let mut block_starts: Vec<(Option<crate::LabelId>, usize)>  = leaders.into_iter().collect::<Vec<(Option<_>,usize)>>();
+        block_starts.sort_by_key(|(_, i)| *i);
+            
         // 创建基本块信息
-        for (idx, &start) in block_starts.iter().enumerate() {
+        for (idx, &(label, start)) in block_starts.iter().enumerate() {
             let end = if idx + 1 < block_starts.len() {
-                block_starts[idx + 1]
+                block_starts[idx + 1].1
             } else {
                 function.instructions.len()
             };
+            
+            if let Some(label) = label {
+                self.label_to_block.insert(label, idx);
+            }
             
             let block_info = BasicBlockInfo {
                 id: idx,
@@ -202,9 +210,7 @@ impl SsaConstructionPass {
     
     /// 根据标签找到基本块
     fn find_block_by_label(&self, label: crate::LabelId) -> Option<usize> {
-        // 简化实现：假设标签ID对应基本块ID
-        // 实际实现需要维护标签到基本块的映射
-        Some(label.0)
+        self.label_to_block.get(&label).cloned()
     }
     
     /// 计算支配关系

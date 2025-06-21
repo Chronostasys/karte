@@ -58,7 +58,10 @@ impl PhiEliminationPass {
     /// 找到在基本块末尾插入指令的位置
     fn find_insertion_point(&self, function: &LirFunction, block: &super::analysis::ControlFlowNode) -> usize {
         let (start, end) = block.instruction_range;
-        // 在跳转指令之前插入
+        let mut last_non_control = end;
+        let mut control_flow_pos = end;
+
+        // 从后向前扫描，找到最后一个非控制流指令的位置
         for i in (start..end).rev() {
             if i >= function.instructions.len() {
                 continue;
@@ -72,13 +75,21 @@ impl PhiEliminationPass {
                 Instruction::JumpGreater { .. } |
                 Instruction::JumpGreaterEqual { .. } |
                 Instruction::Return { .. } => {
-                    return i; // 在跳转指令之前插入
+                    control_flow_pos = i;
                 }
-                _ => {}
+                _ => {
+                    last_non_control = i + 1;
+                    break;
+                }
             }
         }
-        // 如果没有跳转指令，在基本块末尾插入
-        end
+
+        // 在最后一个非控制流指令之后、控制流指令之前插入
+        if last_non_control <= control_flow_pos {
+            last_non_control
+        } else {
+            control_flow_pos
+        }
     }
 }
 

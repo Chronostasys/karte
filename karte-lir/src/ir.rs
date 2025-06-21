@@ -158,6 +158,8 @@ pub enum Instruction {
     Call {
         target: LabelId,
         args: Vec<RegisterId>,
+        /// 🔧 新增：参数操作数，用于指令降级
+        arg_operands: Vec<Operand>,
         result: Option<RegisterId>,
         span: Span,
     },
@@ -166,7 +168,16 @@ pub enum Instruction {
     CallIndirect {
         function_register: RegisterId,
         args: Vec<RegisterId>,
+        /// 🔧 新增：参数操作数，用于指令降级
+        arg_operands: Vec<Operand>,
         result: Option<RegisterId>,
+        span: Span,
+    },
+
+    /// 间接跳转指令
+
+    JumpIndirect {
+        function_register: RegisterId,
         span: Span,
     },
 
@@ -375,12 +386,20 @@ impl Instruction {
             Instruction::StructFieldAddr { struct_addr, .. } => {
                 used.push(*struct_addr);
             }
-            Instruction::Call { args, .. } => {
+            Instruction::Call { args, arg_operands, .. } => {
                 used.extend_from_slice(args);
+                // 添加参数操作数中使用的寄存器
+                for operand in arg_operands {
+                    self.add_operand_registers(operand, &mut used);
+                }
             }
-            Instruction::CallIndirect { function_register, args, .. } => {
+            Instruction::CallIndirect { function_register, args, arg_operands, .. } => {
                 used.push(*function_register);
                 used.extend_from_slice(args);
+                // 添加参数操作数中使用的寄存器
+                for operand in arg_operands {
+                    if let Operand::Register { id } = operand { used.push(*id); }
+                }
             }
             Instruction::Return { value, .. } => {
                 if let Some(reg) = value {
@@ -448,14 +467,18 @@ impl Instruction {
                     *struct_addr = new_reg;
                 }
             }
-            Instruction::Call { args, .. } => {
+            Instruction::Call { args, arg_operands, .. } => {
                 for arg in args {
                     if *arg == old_reg {
                         *arg = new_reg;
                     }
                 }
+                // 替换参数操作数中的寄存器
+                for operand in arg_operands {
+                    Self::replace_operand_register(operand, old_reg, new_reg);
+                }
             }
-            Instruction::CallIndirect { function_register, args, .. } => {
+            Instruction::CallIndirect { function_register, args, arg_operands, .. } => {
                 if *function_register == old_reg {
                     *function_register = new_reg;
                 }
@@ -463,6 +486,10 @@ impl Instruction {
                     if *arg == old_reg {
                         *arg = new_reg;
                     }
+                }
+                // 替换参数操作数中的寄存器
+                for operand in arg_operands {
+                    Self::replace_operand_register(operand, old_reg, new_reg);
                 }
             }
             Instruction::Return { value, .. } => {
@@ -552,19 +579,19 @@ impl Instruction {
         match self {
             Instruction::Move { dst, src, .. } => {
                 defined.push(*dst);
-                if let Operand::Register { id } = src { used.push(*id); }
+                self.add_operand_registers(src, &mut used);
             }
             Instruction::Add { dst, src1, src2, .. } |
             Instruction::Sub { dst, src1, src2, .. } |
             Instruction::Mul { dst, src1, src2, .. } |
             Instruction::Div { dst, src1, src2, .. } => {
                 defined.push(*dst);
-                if let Operand::Register { id } = src1 { used.push(*id); }
-                if let Operand::Register { id } = src2 { used.push(*id); }
+                self.add_operand_registers(src1, &mut used);
+                self.add_operand_registers(src2, &mut used);
             }
             Instruction::Store64 { addr, src, .. } => {
                 used.push(*addr);
-                if let Operand::Register { id } = src { used.push(*id); }
+                self.add_operand_registers(src, &mut used);
             }
             Instruction::Load64 { dst, addr, .. } => {
                 defined.push(*dst);
@@ -577,13 +604,21 @@ impl Instruction {
             Instruction::Return { value, .. } => {
                 if let Some(reg) = value { used.push(*reg); }
             }
-            Instruction::CallIndirect { function_register, args, result, .. } => {
+            Instruction::CallIndirect { function_register, args, arg_operands, result, .. } => {
                 used.push(*function_register);
                 used.extend_from_slice(args);
+                // 添加参数操作数中使用的寄存器
+                for operand in arg_operands {
+                    if let Operand::Register { id } = operand { used.push(*id); }
+                }
                 if let Some(result_reg) = result { defined.push(*result_reg); }
             }
-            Instruction::Call { args, result, .. } => {
+            Instruction::Call { args, arg_operands, result, .. } => {
                 used.extend_from_slice(args);
+                // 添加参数操作数中使用的寄存器
+                for operand in arg_operands {
+                    if let Operand::Register { id } = operand { used.push(*id); }
+                }
                 if let Some(result_reg) = result { defined.push(*result_reg); }
             }
             Instruction::Alloc { dst, .. } |
@@ -592,7 +627,7 @@ impl Instruction {
             }
             Instruction::StructFieldStore { struct_addr, src, .. } => {
                 used.push(*struct_addr);
-                if let Operand::Register { id } = src { used.push(*id); }
+                self.add_operand_registers(src, &mut used);
             }
             Instruction::StructFieldLoad { dst, struct_addr, .. } => {
                 defined.push(*dst);
@@ -601,9 +636,7 @@ impl Instruction {
             Instruction::Phi { dst, incoming, .. } => {
                 defined.push(*dst);
                 for (_, operand) in incoming {
-                    if let Operand::Register { id } = operand {
-                        used.push(*id);
-                    }
+                    self.add_operand_registers(operand, &mut used);
                 }
             }
             _ => {} // 其他指令不涉及寄存器

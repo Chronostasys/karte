@@ -50,6 +50,13 @@ impl LinearScanAllocator {
         mut lifetimes: Vec<RegisterLifetime>, 
         register_types: HashMap<RegisterId, RegisterType>
     ) -> RegisterAllocationResult {
+        println!("==== StackAddress RegisterLifetime ====");
+for lt in &lifetimes {
+    if lt.register_type == RegisterType::StackAddress {
+        println!("{:?}", lt);
+    }
+}
+println!("=======================================");
         lifetimes.sort_by(|a, b| a.start.cmp(&b.start));
         
         let mut register_mapping = HashMap::new();
@@ -90,7 +97,20 @@ impl LinearScanAllocator {
             }
             self.expire_old_intervals(&mut active_intervals, &mut available_registers, &register_mapping, current_lifetime.start);
             max_register_pressure = max_register_pressure.max(active_intervals.len());
-            if let Some(physical_reg) = available_registers.pop() {
+            // === 修复点：分配前检查同类型活跃区间 ===
+            let mut candidate_reg = None;
+            for &reg in &available_registers {
+                let conflict = active_intervals.iter().any(|lt| {
+                    lt.register_type == current_lifetime.register_type && register_mapping.get(&lt.register) == Some(&reg)
+                });
+                if !conflict {
+                    candidate_reg = Some(reg);
+                    break;
+                }
+            }
+            if let Some(physical_reg) = candidate_reg {
+                // 分配并移除
+                available_registers.retain(|&r| r != physical_reg);
                 debug_assert!(!self.reserved_registers.contains(&physical_reg));
                 register_mapping.insert(current_lifetime.register, physical_reg);
                 active_intervals.push(current_lifetime.clone());

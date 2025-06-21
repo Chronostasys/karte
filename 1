@@ -1,44 +1,38 @@
+function main (stack_frame: 0):
 L1:
-  alloc r0, #8, #8, Stack
   alloc r1, #8, #8, Stack
-  alloc r2, #8, #8, Stack
-  alloc r3, #8, #8, Stack
-L3:
-  store64 [r2], #42
+L2:
   alloc r4, #16, #8, Stack
-  load64 r8, [r2]
+  mov r8, #42
   alloc r5, #16, #8, Stack
   store64 [r5], #3
   store64 [r5 + 8], r8
   load64 r9, [r5]
-  load64 r20, [r4]
+  load64 r19, [r4]
   store64 [r4], r9
   load64 r10, [r5 + 8]
   store64 [r4 + 8], r10
-  load64 r19, [r1]
+  load64 r20, [r1]
   store64 [r1], r4
   load64 r11, [r1]
   store64 [r1], r11
   load64 r12, [r11]
   cmp r12, #3
-  je L2
+  je L4
   alloc r13, #8, #8, Stack
   load64 r13, [r11 + 8]
-  jmp L5
-L2:
+  jmp L3
+L4:
   load64 r14, [r1]
   store64 [r1], r14
   load64 r15, [r14 + 8]
-  store64 [r3], r15
-  load64 r16, [r3]
-  load64 r17, [r3]
-  store64 [r0], r17
-  jmp L4
+  mov r16, r15
+  mov r17, r15
+  jmp L5
+L3:
+  jmp L5
 L5:
-  r22 = phi(L2: r15, L5: #0)
-  r21 = phi(L2: r17, L5: #0)
-  store64 [r0], #0
-  jmp L4
-L4:
-  load64 r18, [r0]
+  r21 = phi(L4: r17, L3: #0)
+  r22 = phi(L4: r15, L3: #0)
+  mov r18, r21
   ret r18

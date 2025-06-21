@@ -1465,10 +1465,6 @@ fn lower_statement(
                 arg_operands.push(ctx.lower_to_rvalue(arg));
             }
 
-            // 🔧 关键修复：暂时不移动参数到寄存器，在函数指针确定后再移动
-            // 这样避免参数寄存器被函数指针加载覆盖
-            let arg_regs = vec![]; // 先设为空，稍后填充
-
             // 检查是否是函数参数调用
             let is_function_parameter = match &actual_function_to_call {
                 Value::Variable { name } => {
@@ -1481,11 +1477,9 @@ fn lower_statement(
                 // 对于函数参数，使用间接调用
                 if let Value::Variable { name } = &actual_function_to_call {
                     let function_register = ctx.allocate_register_for_value(&actual_function_to_call);
-                    
-                    // 使用特殊的间接调用指令（我们需要定义这个指令）
-                    // 暂时使用CallIndirect指令来处理函数参数调用
                     let result_reg = target.as_ref().map(|t| ctx.allocate_register_for_value(t));
                     
+                    // 🔧 简化：不再手动设置参数，让指令降级器处理
                     // 🔧 关键修复：在调用前移动参数到正确的寄存器
                     let mut actual_arg_regs = vec![];
                     for (i, arg_op) in arg_operands.iter().enumerate() {
@@ -1499,10 +1493,22 @@ fn lower_statement(
                             actual_arg_regs.push(param_reg);
                         }
                     }
+
+                    // function register 要再load一次
+                    let func_ptr_reg = ctx.current_function_mut().new_register();
+                    ctx.add_instruction(Instruction::Load64 {
+                        dst: func_ptr_reg,
+                        addr: function_register,
+                        offset: 0,
+                        span: *span,
+                    });
+                    let function_register = func_ptr_reg;
+                                        
                     
                     ctx.add_instruction(Instruction::CallIndirect {
                         function_register,
-                        args: actual_arg_regs,
+                        args: actual_arg_regs, // 参数将在指令降级阶段进一步处理
+                        arg_operands: arg_operands.clone(), // 传递参数操作数
                         result: result_reg,
                         span: *span,
                     });
@@ -1554,25 +1560,45 @@ fn lower_statement(
                             }
                         };
                         
-                        // 🔧 关键修复：使用一个新的临时寄存器作为返回值寄存器，避免覆盖参数
+                        // 🔧 简化：不再手动设置参数，让指令降级器处理
                         let result_reg = if target.is_some() {
                             Some(ctx.current_function_mut().new_register())
                         } else {
                             None
                         };
-                        
-                        // 使用间接调用指令
+
+                        let mut actual_arg_regs = vec![];
+                        for (i, arg_op) in arg_operands.iter().enumerate() {
+                            if i < 4 { // 最多支持4个参数
+                                let param_reg = RegisterId(i + 1); // 参数寄存器: r1, r2, r3, r4
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: param_reg,
+                                    src: arg_op.clone(),
+                                    span: *span,
+                                });
+                                actual_arg_regs.push(param_reg);
+                            }
+                        }
+                                            // function register 要再load一次
+                    let func_ptr_reg = ctx.current_function_mut().new_register();
+                    ctx.add_instruction(Instruction::Load64 {
+                        dst: func_ptr_reg,
+                        addr: function_register,
+                        offset: 0,
+                        span: *span,
+                    });
+                    let function_register = func_ptr_reg;
+                                        
                         ctx.add_instruction(Instruction::CallIndirect {
                             function_register,
-                            args: arg_regs.clone(),
+                            args: actual_arg_regs, // 参数将在指令降级阶段处理
+                            arg_operands: arg_operands.clone(), // 传递参数操作数
                             result: result_reg,
                             span: *span,
                         });
                         
                         // 🔧 关键修复：Stack-First策略：如果有返回值，在调用后存储到栈
-                        // 注意：这里result_register在CallIndirect执行后才会包含返回值
                         if let (Some(target_value), Some(result_register)) = (target, result_reg) {
-                            // 在CallIndirect执行后，result_register现在包含返回值
                             ctx.store_value_to_stack(target_value, Operand::Register { id: result_register });
                         }
                         
@@ -1581,7 +1607,6 @@ fn lower_statement(
                     },
                     Value::Temp { id } => {
                         // 🔧 关键修复：对于包含函数指针的临时变量，直接使用其绑定的寄存器值
-                        // 因为FieldAccess已经将字段值直接绑定到寄存器，不需要再从栈加载
                         let function_register = if let Some(&bound_reg) = ctx.stack_allocations.get(&value_to_key(&actual_function_to_call)) {
                             // 临时变量已经绑定到寄存器，直接使用
                             println!("🔧 临时变量作为函数指针：直接使用绑定的寄存器 {:?}", bound_reg);
@@ -1607,7 +1632,12 @@ fn lower_statement(
                             }
                         };
                         
-                        // 🔧 关键修复：正确处理参数传递
+                        // 🔧 简化：不再手动设置参数，让指令降级器处理
+                        let result_reg = if target.is_some() {
+                            Some(ctx.current_function_mut().new_register())
+                        } else {
+                            None
+                        };
                         let mut actual_arg_regs = vec![];
                         for (i, arg_op) in arg_operands.iter().enumerate() {
                             if i < 4 { // 最多支持4个参数
@@ -1618,29 +1648,29 @@ fn lower_statement(
                                     span: *span,
                                 });
                                 actual_arg_regs.push(param_reg);
-                                println!("🔧 移动参数 {} 到寄存器 {:?}: {:?}", i, param_reg, arg_op);
                             }
                         }
-                        
-                        // 🔧 关键修复：使用一个新的临时寄存器作为返回值寄存器，避免覆盖参数
-                        let result_reg = if target.is_some() {
-                            Some(ctx.current_function_mut().new_register())
-                        } else {
-                            None
-                        };
-                        
-                        // 使用间接调用指令，传递正确的参数
+                                            // function register 要再load一次
+                    let func_ptr_reg = ctx.current_function_mut().new_register();
+                    ctx.add_instruction(Instruction::Load64 {
+                        dst: func_ptr_reg,
+                        addr: function_register,
+                        offset: 0,
+                        span: *span,
+                    });
+                    let function_register = func_ptr_reg;
+                                        
+
                         ctx.add_instruction(Instruction::CallIndirect {
                             function_register,
-                            args: actual_arg_regs, // ✅ 使用正确的参数寄存器
+                            args: actual_arg_regs, // 参数将在指令降级阶段处理
+                            arg_operands: arg_operands.clone(), // 传递参数操作数
                             result: result_reg,
                             span: *span,
                         });
                         
                         // 🔧 关键修复：Stack-First策略：如果有返回值，在调用后存储到栈
-                        // 注意：这里result_register在CallIndirect执行后才会包含返回值
                         if let (Some(target_value), Some(result_register)) = (target, result_reg) {
-                            // 在CallIndirect执行后，result_register现在包含返回值
                             ctx.store_value_to_stack(target_value, Operand::Register { id: result_register });
                         }
                         
@@ -1656,9 +1686,11 @@ fn lower_statement(
 
                 let result_reg = target.as_ref().map(|t| ctx.allocate_register_for_value(t));
 
+                // 🔧 简化：不再手动设置参数，让指令降级器处理
                 ctx.add_instruction(Instruction::Call {
                     target: target_label,
-                    args: arg_regs,
+                    args: vec![], // 参数将在指令降级阶段处理
+                    arg_operands: arg_operands.clone(), // 传递参数操作数
                     result: result_reg,
                     span: *span
                 });
@@ -1690,20 +1722,20 @@ fn lower_statement(
             let dst_reg = ctx.current_function_mut().new_register();
             // 4. 从 [struct_base_addr + offset] 加载字段值
             if let Operand::Register { id: base_reg } = struct_base_addr {
-                ctx.add_instruction(Instruction::Load64 {
+                ctx.add_instruction(Instruction::Add {
                     dst: dst_reg,
-                    addr: base_reg,
-                    offset: field_offset as i64,
+                    src1: Operand::Register { id: base_reg },
+                    src2: Operand::Immediate { value: field_offset as i64 },
                     span: *span,
                 });
-                println!("🔧 生成load指令: load64 {:?}, [{:?} + {}]", dst_reg, base_reg, field_offset);
+                println!("🔧 生成add指令: add {:?}, [{:?} + {}]", dst_reg, base_reg, field_offset);
             } else {
                 return Err(vec!["字段访问的基地址必须是寄存器".to_string()]);
             }
             // 直接将dst_reg与target绑定，不再分配独立栈槽
             let target_key = value_to_key(target);
+            println!("🔧 FieldAccess完成: 字段{}值直接绑定到寄存器 {:?}, {}", field, dst_reg, target_key);
             ctx.stack_allocations.insert(target_key, dst_reg);
-            println!("🔧 FieldAccess完成: 字段{}值直接绑定到寄存器 {:?}", field, dst_reg);
             Ok(())
         }
 

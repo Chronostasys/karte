@@ -54,7 +54,7 @@ impl IndexInstructionTransformer {
             return (false, 0, 0, 0);
         }
         
-        println!("🔧 应用 {} 个 index-based 变换", self.transforms.len());
+        println!("🔧 应用 {} 个 index-based 变换，原lir: \n{}", self.transforms.len(), function);
         let mut modified = false;
         let mut removed_count = 0;
         let mut replaced_count = 0;
@@ -97,7 +97,7 @@ impl IndexInstructionTransformer {
             match op {
                 IndexTransformOperation::Remove(_) => {
                     if idx < function.instructions.len() {
-                        println!("🔧 删除指令 [{}]: {:?}", idx, function.instructions[idx]);
+                        println!("🔧 删除指令 [{}]: {}", idx, function.instructions[idx]);
                         function.instructions.remove(idx);
                         modified = true;
                         removed_count += 1;
@@ -105,7 +105,7 @@ impl IndexInstructionTransformer {
                 }
                 IndexTransformOperation::Replace(_, new_instr) => {
                     if idx < function.instructions.len() {
-                        println!("🔧 替换指令 [{}]: {:?} -> {:?}", idx, function.instructions[idx], new_instr);
+                        println!("🔧 替换指令 [{}]: {} -> {}", idx, function.instructions[idx], new_instr);
                         function.instructions[idx] = new_instr.clone();
                         modified = true;
                         replaced_count += 1;
@@ -113,7 +113,7 @@ impl IndexInstructionTransformer {
                 }
                 IndexTransformOperation::Insert(_, new_instr) => {
                     if idx <= function.instructions.len() {
-                        println!("🔧 插入指令 [{}]: {:?}", idx, new_instr);
+                        println!("🔧 插入指令 [{}]: {}", idx, new_instr);
                         function.instructions.insert(idx, new_instr.clone());
                         modified = true;
                         inserted_count += 1;
@@ -126,7 +126,7 @@ impl IndexInstructionTransformer {
         }
         
         self.transforms.clear();
-        println!("🔧 index-based 变换完成，修改: {}", modified);
+        println!("🔧 index-based 变换完成，修改: {} lir:\n{}", modified, function);
         (modified, removed_count, replaced_count, inserted_count)
     }
 

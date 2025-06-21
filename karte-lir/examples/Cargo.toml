@@ -1,0 +1,10 @@
+[package]
+name = "call_lowering_test"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+karte-lir = { path = ".." }
+karte-diagnostics = { path = "../../karte-diagnostics" } 

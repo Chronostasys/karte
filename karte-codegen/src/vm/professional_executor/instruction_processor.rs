@@ -109,6 +109,9 @@ impl InstructionProcessor {
             Instruction::StructFieldLoad { dst, struct_addr, field_offset, .. } => {
                 self.handle_struct_field_load(dst, struct_addr, *field_offset, engine)
             }
+            Instruction::JumpIndirect { function_register, .. } => {
+                self.handle_jump_indirect(function_register, engine, program_manager)
+            }
 
             // 其他指令暂时返回错误
             _ => {
@@ -274,6 +277,23 @@ impl InstructionProcessor {
         // 4. 标记这是一个函数调用，需要在返回时恢复状态
         engine.push_call_frame(current_pc + 1, result.cloned())?;
         
+        Ok(InstructionResult::Jump(target_pc))
+    }
+
+
+    fn handle_jump_indirect(
+        &mut self,
+        function_register: &RegisterId,
+        engine: &mut ExecutionEngine,
+        program_manager: &ProgramManager,
+    ) -> Result<InstructionResult, String> {
+        let function_address = engine.get_register(function_register)?; 
+        let target_label = karte_lir::LabelId(function_address as usize);
+        let target_pc = program_manager.get_label_pc(&target_label)?;
+        // push call frame
+        let current_pc = engine.get_pc();
+        engine.push_call_frame(current_pc + 1, Some(RegisterId(0)))?;
+
         Ok(InstructionResult::Jump(target_pc))
     }
 

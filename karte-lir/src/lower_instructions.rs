@@ -3,7 +3,7 @@
 //! 将高级LIR指令（如Alloc、Load64、Store64等）降级为更基础的指令组合
 //! 这样虚拟机只需要支持最基础的指令集
 
-use crate::{Instruction, RegisterId, Operand, LirFunction, LirProgram, AllocationType};
+use crate::{Instruction, RegisterId, Operand, LirFunction, LirProgram, AllocationType, LabelId};
 use karte_diagnostics::Span;
 
 /// 指令降级器
@@ -39,8 +39,15 @@ impl InstructionLowerer {
         let mut new_instructions = Vec::new();
         
         // 克隆指令列表以避免借用检查问题
-        let instructions_to_process = function.instructions.clone();
-        
+        let mut instructions_to_process = function.instructions.clone();
+
+        // 首先，mov fp, sp
+        instructions_to_process.insert(1, Instruction::Move {
+            dst: self.frame_pointer_reg,
+            src: Operand::Register { id: self.stack_pointer_reg },
+            span: Span::new(0, 0),
+        });
+
         for instruction in &instructions_to_process {
             match instruction {
                 // 降级 Alloc 指令
@@ -77,6 +84,244 @@ impl InstructionLowerer {
                 Instruction::Phi { dst, incoming, span } => {
                     self.lower_phi(dst, incoming, span, &mut new_instructions, function)?;
                 }
+                
+                // 降级 Call 指令
+                Instruction::Call { target, args, arg_operands, result, span } => {
+                    // 1. 保存 caller-saved 寄存器（r0-r4）到栈
+                    // 2. 参数依次mov到r1-r4
+                    // 3. 生成返回标签并压栈
+                    // 4. jump 到目标label
+                    // 5. 返回标签：恢复caller-saved寄存器，处理返回值
+
+                    // 生成唯一的返回标签
+                    let return_label = function.new_label();
+                    
+                    // 保存caller-saved寄存器到栈
+                    for reg in 0..=4 {
+                        // sp = sp - 8
+                        new_instructions.push(Instruction::Sub {
+                            dst: self.stack_pointer_reg,
+                            src1: Operand::Register { id: self.stack_pointer_reg },
+                            src2: Operand::Immediate { value: 8 },
+                            span: *span,
+                        });
+                        // store64 [sp], reg
+                        new_instructions.push(Instruction::Store64 {
+                            addr: self.stack_pointer_reg,
+                            offset: 0,
+                            src: Operand::Register { id: RegisterId(reg) },
+                            span: *span,
+                        });
+                    }
+
+                    // 参数传递
+                    for (i, op) in arg_operands.iter().enumerate() {
+                        if i < 4 {
+                            new_instructions.push(Instruction::Move {
+                                dst: RegisterId(i + 1),
+                                src: op.clone(),
+                                span: *span,
+                            });
+                        }
+                    }
+
+                    // 将返回标签地址压栈
+                    new_instructions.push(Instruction::Sub {
+                        dst: self.stack_pointer_reg,
+                        src1: Operand::Register { id: self.stack_pointer_reg },
+                        src2: Operand::Immediate { value: 8 },
+                        span: *span,
+                    });
+                    new_instructions.push(Instruction::Store64 {
+                        addr: self.stack_pointer_reg,
+                        offset: 0,
+                        src: Operand::Label { id: return_label },
+                        span: *span,
+                    });
+
+                    // 跳转到目标函数
+                    new_instructions.push(Instruction::Jump {
+                        target: *target,
+                        span: *span,
+                    });
+
+                    // 返回标签：恢复caller-saved寄存器
+                    new_instructions.push(Instruction::Label {
+                        id: return_label,
+                        span: *span,
+                    });
+
+                    // 从栈上弹出返回地址（丢弃）
+                    new_instructions.push(Instruction::Load64 {
+                        dst: RegisterId(0), // 临时使用r0
+                        addr: self.stack_pointer_reg,
+                        offset: 0,
+                        span: *span,
+                    });
+                    new_instructions.push(Instruction::Add {
+                        dst: self.stack_pointer_reg,
+                        src1: Operand::Register { id: self.stack_pointer_reg },
+                        src2: Operand::Immediate { value: 8 },
+                        span: *span,
+                    });
+
+                    // 恢复caller-saved寄存器
+                    for reg in (0..=4).rev() {
+                        new_instructions.push(Instruction::Load64 {
+                            dst: RegisterId(reg),
+                            addr: self.stack_pointer_reg,
+                            offset: 0,
+                            span: *span,
+                        });
+                        new_instructions.push(Instruction::Add {
+                            dst: self.stack_pointer_reg,
+                            src1: Operand::Register { id: self.stack_pointer_reg },
+                            src2: Operand::Immediate { value: 8 },
+                            span: *span,
+                        });
+                    }
+
+                    // 返回值处理（r0已经包含返回值）
+                    if let Some(result_reg) = result {
+                        new_instructions.push(Instruction::Move {
+                            dst: *result_reg,
+                            src: Operand::Register { id: RegisterId(0) },
+                            span: *span,
+                        });
+                    }
+                }
+                // 降级 CallIndirect 指令
+                Instruction::CallIndirect { function_register, args, arg_operands, result, span } => {
+                    
+                    // 保存caller-saved寄存器到栈
+                    for reg in 0..=4 {
+                        new_instructions.push(Instruction::Sub {
+                            dst: self.stack_pointer_reg,
+                            src1: Operand::Register { id: self.stack_pointer_reg },
+                            src2: Operand::Immediate { value: 8 },
+                            span: *span,
+                        });
+                        new_instructions.push(Instruction::Store64 {
+                            addr: self.stack_pointer_reg,
+                            offset: 0,
+                            src: Operand::Register { id: RegisterId(reg) },
+                            span: *span,
+                        });
+                    }
+
+                    // 参数传递
+                    for (i, op) in arg_operands.iter().enumerate() {
+                        if i < 4 {
+                            new_instructions.push(Instruction::Move {
+                                dst: RegisterId(i + 1),
+                                src: Operand::Register { id: args[i] },
+                                span: *span,
+                            });
+                        }
+                    }
+
+                    let mut call_reg = *function_register;
+                    // 如果function register 是r1-r4，则需要先mov到r0
+                    if function_register.0 >= 1 && function_register.0 <= 4 {
+                        // 之前已经压栈了，现在需要load，注意offset位置
+                        new_instructions.push(Instruction::Load64 {
+                            dst: RegisterId(0),
+                            addr: self.stack_pointer_reg,
+                            offset: 32 - 8 * (function_register.0) as i64,
+                            span: *span,
+                        });
+                        call_reg = RegisterId(0);
+                    }
+
+
+                    // // 将返回标签地址压栈
+                    // new_instructions.push(Instruction::Sub {
+                    //     dst: self.stack_pointer_reg,
+                    //     src1: Operand::Register { id: self.stack_pointer_reg },
+                    //     src2: Operand::Immediate { value: 8 },
+                    //     span: *span,
+                    // });
+                    // new_instructions.push(Instruction::Store64 {
+                    //     addr: self.stack_pointer_reg,
+                    //     offset: 0,
+                    //     src: Operand::Label { id: return_label },
+                    //     span: *span,
+                    // });
+
+                    // 间接跳转
+                    // 从函数寄存器加载函数地址到临时寄存器
+                    new_instructions.push(Instruction::JumpIndirect {
+                        function_register: call_reg,
+                        span: *span,
+                    });
+
+                    
+                    // 返回值处理（r0已经包含返回值）
+                    if let Some(result_reg) = result {
+                        new_instructions.push(Instruction::Move {
+                            dst: *result_reg,
+                            src: Operand::Register { id: RegisterId(0) },
+                            span: *span,
+                        });
+                    }
+
+                    // 恢复caller-saved寄存器
+                    for reg in (0..=4).rev() {
+                        // 跳过result_reg，这个是返回值，不需要恢复
+                        if reg == result.unwrap_or(RegisterId(10000)).0 {
+                            continue;
+                        }
+                        new_instructions.push(Instruction::Load64 {
+                            dst: RegisterId(reg),
+                            addr: self.stack_pointer_reg,
+                            offset: 0,
+                            span: *span,
+                        });
+                        new_instructions.push(Instruction::Add {
+                            dst: self.stack_pointer_reg,
+                            src1: Operand::Register { id: self.stack_pointer_reg },
+                            src2: Operand::Immediate { value: 8 },
+                            span: *span,
+                        });
+                    }
+
+                }
+                
+                // // 降级 Return 指令
+                // Instruction::Return { value, span } => {
+                //     // 1. 如果有返回值，放到r0
+                //     if let Some(ret_reg) = value {
+                //         new_instructions.push(Instruction::Move {
+                //             dst: RegisterId(0), // 返回值放到r0
+                //             src: Operand::Register { id: *ret_reg },
+                //             span: *span,
+                //         });
+                //     }
+
+                //     // 判断是否为main函数
+                //     let is_main = function.name == "main";
+                //     if !is_main {
+                //         // 从栈上弹出返回地址
+                //         let temp_reg = RegisterId(0); // 直接用r0临时存放返回地址
+                //         new_instructions.push(Instruction::Load64 {
+                //             dst: temp_reg,
+                //             addr: self.stack_pointer_reg,
+                //             offset: 0,
+                //             span: *span,
+                //         });
+                //         new_instructions.push(Instruction::Add {
+                //             dst: self.stack_pointer_reg,
+                //             src1: Operand::Register { id: self.stack_pointer_reg },
+                //             src2: Operand::Immediate { value: 8 },
+                //             span: *span,
+                //         });
+                //         // 跳转到返回地址
+                //         new_instructions.push(Instruction::Jump {
+                //             target: LabelId(temp_reg.0),
+                //             span: *span,
+                //         });
+                //     }
+                // }
                 
                 // 其他指令直接保留
                 _ => {

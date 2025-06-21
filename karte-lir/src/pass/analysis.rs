@@ -123,7 +123,8 @@ impl ControlFlowAnalysis {
         // 确定入口和出口块
         let entry_block = 0; // 第一个块是入口
         let exit_blocks = self.find_exit_blocks(&nodes, function);
-        
+        eprintln!("lir: \n{}", function);
+        eprintln!("🔍 控制流图分析结果: {:?}", nodes);
         Ok(ControlFlowGraph {
             nodes,
             entry_block,

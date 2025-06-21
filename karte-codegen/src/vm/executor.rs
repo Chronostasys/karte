@@ -270,405 +270,384 @@ impl InstructionExecutor {
     fn execute_instruction(&mut self, instruction: &Instruction) -> Result<Option<i64>, String> {
         match instruction {
             Instruction::Move { dst, src, .. } => {
-                // 检查是否是溢出相关的特殊指令
-                if dst.0 == 999998 {
-                    // 这是一个存储到内存的溢出指令
-                    // 在真实实现中，这里应该将值存储到栈中
-                    if self.debug_mode {
-                        println!("  -> Spill store instruction (simplified: no-op)");
-                    }
-                    return Ok(None);
-                }
+                        // 检查是否是溢出相关的特殊指令
+                        if dst.0 == 999998 {
+                            // 这是一个存储到内存的溢出指令
+                            // 在真实实现中，这里应该将值存储到栈中
+                            if self.debug_mode {
+                                println!("  -> Spill store instruction (simplified: no-op)");
+                            }
+                            return Ok(None);
+                        }
                 
-                let value = self.get_operand_value(src)?;
-                if self.debug_mode {
-                    println!("  -> Move: {:?} = {} (was {}), source: {:?}", dst, value, 
-                        self.vm.get_virtual_register(dst).unwrap_or(0), src);
+                        let value = self.get_operand_value(src)?;
+                        if self.debug_mode {
+                            println!("  -> Move: {:?} = {} (was {}), source: {:?}", dst, value, 
+                                self.vm.get_virtual_register(dst).unwrap_or(0), src);
                     
-                    // 额外的调试信息
-                    if let Operand::Register { id } = src {
-                        println!("  -> Source register {:?} value: {}", id, 
-                            self.vm.get_virtual_register(id).unwrap_or(0));
-                        if let Some(&physical_reg) = self.vm.register_mapping.get(id) {
-                            println!("  -> Source physical register r{}: {}", physical_reg, 
-                                self.vm.registers[physical_reg as usize]);
+                            // 额外的调试信息
+                            if let Operand::Register { id } = src {
+                                println!("  -> Source register {:?} value: {}", id, 
+                                    self.vm.get_virtual_register(id).unwrap_or(0));
+                                if let Some(&physical_reg) = self.vm.register_mapping.get(id) {
+                                    println!("  -> Source physical register r{}: {}", physical_reg, 
+                                        self.vm.registers[physical_reg as usize]);
+                                }
+                            }
+                        }
+                        self.vm.set_virtual_register(dst, value)?;
+                        Ok(None)
+                    }
+            Instruction::Add { dst, src1, src2, .. } => {
+                        let v1 = self.get_operand_value(src1)?;
+                        let v2 = self.get_operand_value(src2)?;
+                        self.vm.set_virtual_register(dst, v1 + v2)?;
+                        Ok(None)
+                    }
+            Instruction::Sub { dst, src1, src2, .. } => {
+                        let v1 = self.get_operand_value(src1)?;
+                        let v2 = self.get_operand_value(src2)?;
+                        self.vm.set_virtual_register(dst, v1 - v2)?;
+                        Ok(None)
+                    }
+            Instruction::Mul { dst, src1, src2, .. } => {
+                        let v1 = self.get_operand_value(src1)?;
+                        let v2 = self.get_operand_value(src2)?;
+                        let result = v1 * v2;
+                        if self.debug_mode {
+                            println!("  -> Mul: {} * {} = {} -> {:?}", v1, v2, result, dst);
+                        }
+                        self.vm.set_virtual_register(dst, result)?;
+                        if self.debug_mode {
+                            println!("  -> After Mul: {:?} = {}", dst, self.vm.get_virtual_register(dst).unwrap_or(0));
+                        }
+                        Ok(None)
+                    }
+            Instruction::Div { dst, src1, src2, .. } => {
+                        let v1 = self.get_operand_value(src1)?;
+                        let v2 = self.get_operand_value(src2)?;
+                        if v2 == 0 {
+                            return Err("Division by zero".to_string());
+                        }
+                        self.vm.set_virtual_register(dst, v1 / v2)?;
+                        Ok(None)
+                    }
+            Instruction::Compare { src1, src2, .. } => {
+                        let v1 = self.get_operand_value(src1)?;
+                        let v2 = self.get_operand_value(src2)?;
+                        self.vm.compare(v1, v2);
+                        Ok(None)
+                    }
+            Instruction::Jump { target, .. } => {
+                        self.vm.pc = *self.label_map.get(target)
+                            .ok_or(format!("Label {:?} not found", target))?;
+                        Ok(None)
+                    }
+            Instruction::JumpEqual { target, .. } => {
+                        if self.vm.check_condition(JumpCondition::Equal) {
+                            self.vm.pc = *self.label_map.get(target)
+                                .ok_or(format!("Label {:?} not found", target))?;
+                        } else {
+                            self.vm.pc += 1; // 条件不满足时递增PC
+                        }
+                        Ok(None)
+                    }
+            Instruction::JumpNotEqual { target, .. } => {
+                        if self.vm.check_condition(JumpCondition::NotEqual) {
+                            self.vm.pc = *self.label_map.get(target)
+                                .ok_or(format!("Label {:?} not found", target))?;
+                        } else {
+                            self.vm.pc += 1; // 条件不满足时递增PC
+                        }
+                        Ok(None)
+                    }
+            Instruction::JumpGreater { target, .. } => {
+                        if self.vm.check_condition(JumpCondition::Greater) {
+                            self.vm.pc = *self.label_map.get(target)
+                                .ok_or(format!("Label {:?} not found", target))?;
+                        } else {
+                            self.vm.pc += 1; // 条件不满足时递增PC
+                        }
+                        Ok(None)
+                    }
+            Instruction::JumpGreaterEqual { target, .. } => {
+                        if self.vm.check_condition(JumpCondition::GreaterEqual) {
+                            self.vm.pc = *self.label_map.get(target)
+                                .ok_or(format!("Label {:?} not found", target))?;
+                        } else {
+                            self.vm.pc += 1; // 条件不满足时递增PC
+                        }
+                        Ok(None)
+                    }
+            Instruction::JumpLess { target, .. } => {
+                        if self.vm.check_condition(JumpCondition::Less) {
+                            self.vm.pc = *self.label_map.get(target)
+                                .ok_or(format!("Label {:?} not found", target))?;
+                        } else {
+                            self.vm.pc += 1; // 条件不满足时递增PC
+                        }
+                        Ok(None)
+                    }
+            Instruction::JumpLessEqual { target, .. } => {
+                        if self.vm.check_condition(JumpCondition::LessEqual) {
+                            self.vm.pc = *self.label_map.get(target)
+                                .ok_or(format!("Label {:?} not found", target))?;
+                        } else {
+                            self.vm.pc += 1; // 条件不满足时递增PC
+                        }
+                        Ok(None)
+                    }
+            Instruction::Call { target, args, result, .. } => {
+                        // 函数调用：设置参数并跳转到目标函数
+                        if self.debug_mode {
+                            println!("  -> Executing Call to {:?} with args {:?}", target, args);
+                        }
+                
+                        // 设置参数到物理寄存器r0, r1, r2, ...
+                        // 在设置之前先读取所有参数值，避免寄存器冲突
+                        let mut arg_values = Vec::new();
+                        for arg_reg in args.iter() {
+                            let arg_value = self.vm.get_virtual_register(arg_reg)?;
+                            arg_values.push(arg_value);
+                            if self.debug_mode {
+                                println!("  -> Argument {:?} = {}", arg_reg, arg_value);
+                            }
+                        }
+                
+                        // 现在设置物理寄存器
+                        for (i, arg_value) in arg_values.iter().enumerate() {
+                            self.vm.set_physical_register(i as u8, *arg_value)?;
+                            if self.debug_mode {
+                                println!("  -> Setting r{} = {}", i, arg_value);
+                            }
+                        }
+                
+                        // 保存返回地址并跳转
+                        self.vm.call_stack.push(self.vm.pc + 1);
+                        self.vm.pc = *self.label_map.get(target)
+                            .ok_or(format!("Function {:?} not found", target))?;
+                    
+                        if self.debug_mode {
+                            println!("  -> Jumping to PC: {}", self.vm.pc);
+                        }
+                
+                        Ok(None) // 继续执行
+                    }
+            Instruction::CallIndirect { function_register, args, result, .. } => {
+                        // 间接函数调用：通过寄存器中的函数地址调用
+                
+                        // 获取函数地址（标签ID）
+                        let function_address = self.vm.get_virtual_register(function_register)?;
+                        let target_label = karte_lir::LabelId(function_address as usize);
+                
+                        // 🔧 添加详细调试输出
+                        println!("CallIndirect 调试信息:");
+                        println!("  function_register: {:?}", function_register);
+                        println!("  function_address: {}", function_address);
+                        println!("  target_label: {:?}", target_label);
+                        println!("  可用的label_map: {:?}", self.label_map);
+                
+                        if self.debug_mode {
+                            println!("  -> Executing CallIndirect");
+                            println!("  -> Function address: {}, target label: {:?}", function_address, target_label);
+                        }
+                
+                        // 设置参数到寄存器r0, r1, r2, ...
+                        for (i, arg_reg) in args.iter().enumerate() {
+                            let arg_value = self.vm.get_virtual_register(arg_reg)?;
+                            self.vm.set_physical_register(i as u8, arg_value)?;
+                            if self.debug_mode {
+                                println!("  -> Setting r{} = {}", i, arg_value);
+                            }
+                        }
+                
+                        // 保存返回地址
+                        self.vm.call_stack.push(self.vm.pc + 1);
+                
+                        // 跳转到目标函数
+                        if let Some(&target_pc) = self.label_map.get(&target_label) {
+                            self.vm.pc = target_pc;
+                            println!("  -> 成功跳转到PC: {}", target_pc);
+                            if self.debug_mode {
+                                println!("  -> Jumping to PC: {}", target_pc);
+                            }
+                            Ok(None) // 继续执行
+                        } else {
+                            println!("  -> 错误：无法找到函数地址 {:?}！", target_label);
+                            return Err(format!("Function address {:?} not found in label map", target_label));
                         }
                     }
-                }
-                self.vm.set_virtual_register(dst, value)?;
-                Ok(None)
-            }
-            
-            Instruction::Add { dst, src1, src2, .. } => {
-                let v1 = self.get_operand_value(src1)?;
-                let v2 = self.get_operand_value(src2)?;
-                self.vm.set_virtual_register(dst, v1 + v2)?;
-                Ok(None)
-            }
-            
-            Instruction::Sub { dst, src1, src2, .. } => {
-                let v1 = self.get_operand_value(src1)?;
-                let v2 = self.get_operand_value(src2)?;
-                self.vm.set_virtual_register(dst, v1 - v2)?;
-                Ok(None)
-            }
-            
-            Instruction::Mul { dst, src1, src2, .. } => {
-                let v1 = self.get_operand_value(src1)?;
-                let v2 = self.get_operand_value(src2)?;
-                let result = v1 * v2;
-                if self.debug_mode {
-                    println!("  -> Mul: {} * {} = {} -> {:?}", v1, v2, result, dst);
-                }
-                self.vm.set_virtual_register(dst, result)?;
-                if self.debug_mode {
-                    println!("  -> After Mul: {:?} = {}", dst, self.vm.get_virtual_register(dst).unwrap_or(0));
-                }
-                Ok(None)
-            }
-            
-            Instruction::Div { dst, src1, src2, .. } => {
-                let v1 = self.get_operand_value(src1)?;
-                let v2 = self.get_operand_value(src2)?;
-                if v2 == 0 {
-                    return Err("Division by zero".to_string());
-                }
-                self.vm.set_virtual_register(dst, v1 / v2)?;
-                Ok(None)
-            }
-            
-            Instruction::Compare { src1, src2, .. } => {
-                let v1 = self.get_operand_value(src1)?;
-                let v2 = self.get_operand_value(src2)?;
-                self.vm.compare(v1, v2);
-                Ok(None)
-            }
-            
-            Instruction::Jump { target, .. } => {
-                self.vm.pc = *self.label_map.get(target)
-                    .ok_or(format!("Label {:?} not found", target))?;
-                Ok(None)
-            }
-            
-            Instruction::JumpEqual { target, .. } => {
-                if self.vm.check_condition(JumpCondition::Equal) {
-                    self.vm.pc = *self.label_map.get(target)
-                        .ok_or(format!("Label {:?} not found", target))?;
-                } else {
-                    self.vm.pc += 1; // 条件不满足时递增PC
-                }
-                Ok(None)
-            }
-            
-            Instruction::JumpNotEqual { target, .. } => {
-                if self.vm.check_condition(JumpCondition::NotEqual) {
-                    self.vm.pc = *self.label_map.get(target)
-                        .ok_or(format!("Label {:?} not found", target))?;
-                } else {
-                    self.vm.pc += 1; // 条件不满足时递增PC
-                }
-                Ok(None)
-            }
-            
-            Instruction::JumpGreater { target, .. } => {
-                if self.vm.check_condition(JumpCondition::Greater) {
-                    self.vm.pc = *self.label_map.get(target)
-                        .ok_or(format!("Label {:?} not found", target))?;
-                } else {
-                    self.vm.pc += 1; // 条件不满足时递增PC
-                }
-                Ok(None)
-            }
-            
-            Instruction::JumpGreaterEqual { target, .. } => {
-                if self.vm.check_condition(JumpCondition::GreaterEqual) {
-                    self.vm.pc = *self.label_map.get(target)
-                        .ok_or(format!("Label {:?} not found", target))?;
-                } else {
-                    self.vm.pc += 1; // 条件不满足时递增PC
-                }
-                Ok(None)
-            }
-            
-            Instruction::JumpLess { target, .. } => {
-                if self.vm.check_condition(JumpCondition::Less) {
-                    self.vm.pc = *self.label_map.get(target)
-                        .ok_or(format!("Label {:?} not found", target))?;
-                } else {
-                    self.vm.pc += 1; // 条件不满足时递增PC
-                }
-                Ok(None)
-            }
-            
-            Instruction::JumpLessEqual { target, .. } => {
-                if self.vm.check_condition(JumpCondition::LessEqual) {
-                    self.vm.pc = *self.label_map.get(target)
-                        .ok_or(format!("Label {:?} not found", target))?;
-                } else {
-                    self.vm.pc += 1; // 条件不满足时递增PC
-                }
-                Ok(None)
-            }
-            
-            Instruction::Call { target, args, result, .. } => {
-                // 函数调用：设置参数并跳转到目标函数
-                if self.debug_mode {
-                    println!("  -> Executing Call to {:?} with args {:?}", target, args);
-                }
+            Instruction::Return { value, .. } => {
+                        // 处理返回值
+                        if let Some(return_reg) = value {
+                            let return_value = self.vm.get_virtual_register(return_reg)?;
+                            self.vm.registers[0] = return_value; // 将返回值放在r0中
+                        }
                 
-                // 设置参数到物理寄存器r0, r1, r2, ...
-                // 在设置之前先读取所有参数值，避免寄存器冲突
-                let mut arg_values = Vec::new();
-                for arg_reg in args.iter() {
-                    let arg_value = self.vm.get_virtual_register(arg_reg)?;
-                    arg_values.push(arg_value);
-                    if self.debug_mode {
-                        println!("  -> Argument {:?} = {}", arg_reg, arg_value);
+                        // 恢复调用栈
+                        if let Some(return_pc) = self.vm.call_stack.pop() {
+                            self.vm.pc = return_pc;
+                            Ok(None) // 继续执行
+                        } else {
+                            // 从主函数返回，程序结束
+                            let result = if let Some(reg) = value {
+                                let raw_value = self.vm.get_virtual_register(reg)?;
+                                let decoded_value = self.decode_tagged_union_for_tests(raw_value);
+                                if self.debug_mode {
+                                    println!("Return value: raw={}, decoded={}", raw_value, decoded_value);
+                                }
+                                decoded_value
+                            } else {
+                                0
+                            };
+                            Ok(Some(result)) // 程序退出
+                        }
                     }
-                }
-                
-                // 现在设置物理寄存器
-                for (i, arg_value) in arg_values.iter().enumerate() {
-                    self.vm.set_physical_register(i as u8, *arg_value)?;
-                    if self.debug_mode {
-                        println!("  -> Setting r{} = {}", i, arg_value);
+            Instruction::Label { .. } => {
+                        // 标签不是真正的指令，只是标记位置
+                        Ok(None)
                     }
-                }
+            Instruction::Nop { .. } => {
+                        // 空操作
+                        Ok(None)
+                    }
+            Instruction::StructAlloc { dst, struct_type, .. } => {
+                        // 分配结构体内存
+                        // 获取结构体类型信息（在实际实现中需要结构体布局管理器）
+                        let size = 64; // 默认大小，实际应该从结构体类型获取
+                        let addr = self.memory.allocate_heap(size)?;
                 
-                // 保存返回地址并跳转
-                self.vm.call_stack.push(self.vm.pc + 1);
-                self.vm.pc = *self.label_map.get(target)
-                    .ok_or(format!("Function {:?} not found", target))?;
-                    
-                if self.debug_mode {
-                    println!("  -> Jumping to PC: {}", self.vm.pc);
-                }
+                        if self.debug_mode {
+                            println!("  -> StructAlloc: type {:?}, size {}, addr {}", struct_type, size, addr);
+                        }
                 
-                Ok(None) // 继续执行
-            }
-            
-            Instruction::CallIndirect { function_register, args, result, .. } => {
-                // 间接函数调用：通过寄存器中的函数地址调用
+                        self.vm.set_virtual_register(dst, addr as i64)?;
+                        Ok(None)
+                    }
+            Instruction::StructFieldLoad { dst, struct_addr, field_offset, .. } => {
+                        // 从结构体字段加载值
+                        let base_addr = self.vm.get_virtual_register(struct_addr)? as usize;
+                        let field_addr = base_addr + field_offset;
                 
-                // 获取函数地址（标签ID）
+                        let value = self.memory.read_memory(field_addr)?;
+                        if self.debug_mode {
+                            println!("  -> StructFieldLoad: from addr {} (base {} + offset {}) -> {}", 
+                                field_addr, base_addr, field_offset, value);
+                        }
+                
+                        self.vm.set_virtual_register(dst, value)?;
+                        Ok(None)
+                    }
+            Instruction::StructFieldStore { struct_addr, field_offset, src, .. } => {
+                        // 向结构体字段存储值
+                        let base_addr = self.vm.get_virtual_register(struct_addr)? as usize;
+                        let field_addr = base_addr + field_offset;
+                
+                        let store_value = self.get_operand_value(src)?;
+                        self.memory.write_memory(field_addr, store_value)?;
+                
+                        if self.debug_mode {
+                            println!("  -> StructFieldStore: {} to addr {} (base {} + offset {})", 
+                                store_value, field_addr, base_addr, field_offset);
+                        }
+                
+                        Ok(None)
+                    }
+            Instruction::StructFieldAddr { dst, struct_addr, field_offset, .. } => {
+                        // 获取结构体字段地址
+                        let base_addr = self.vm.get_virtual_register(struct_addr)? as usize;
+                        let field_addr = base_addr + field_offset;
+                
+                        if self.debug_mode {
+                            println!("  -> StructFieldAddr: base {} + offset {} -> {}", base_addr, field_offset, field_addr);
+                        }
+                
+                        self.vm.set_virtual_register(dst, field_addr as i64)?;
+                        Ok(None)
+                    }
+            Instruction::MemCopy { dst, src, size, .. } => {
+                        // 内存拷贝
+                        let dst_addr = self.vm.get_virtual_register(&dst)? as usize;
+                        let src_addr = self.vm.get_virtual_register(&src)? as usize;
+                        let copy_size = *size;
+                
+                        for i in 0..copy_size {
+                            let byte = self.memory.read_memory(src_addr + i)?;
+                            self.memory.write_memory(dst_addr + i, byte)?;
+                        }
+                
+                        if self.debug_mode {
+                            println!("  -> MemCopy: {} bytes from addr {} to addr {}", copy_size, src_addr, dst_addr);
+                        }
+                
+                        Ok(None)
+                    }
+            Instruction::Alloc { dst, size, alignment, allocation_type, .. } => {
+                        // 通用内存分配
+                        let alloc_size = *size;
+                        // 修复：使用计数器分配不同的地址，避免地址冲突
+                        let addr = 16000 + self.next_alloc_addr;
+                        self.next_alloc_addr += alloc_size as i64;
+                
+                        if self.debug_mode {
+                            println!("  -> Alloc: {} bytes, alignment {}, type {:?} -> addr {}", 
+                                alloc_size, alignment, allocation_type, addr);
+                        }
+                
+                        self.vm.set_virtual_register(dst, addr)?;
+                        Ok(None)
+                    }
+            Instruction::Free { addr, .. } => {
+                        // 内存释放目前是空操作
+                        self.vm.pc += 1;
+                        Ok(None)
+                    },
+            Instruction::Load64 { dst, addr, offset, .. } => {
+                        // 64位加载
+                        let base_addr = self.vm.get_virtual_register(addr)? as usize;
+                        let load_addr = (base_addr as i64 + offset) as usize;
+                        let value = self.memory.read_memory(load_addr)?;
+                
+                        if self.debug_mode {
+                            println!("  -> Load64: from addr {} (base {} + offset {}) -> {}", 
+                                load_addr, base_addr, offset, value);
+                        }
+                
+                        self.vm.set_virtual_register(dst, value)?;
+                        Ok(None)
+                    }
+            Instruction::Store64 { addr, offset, src, .. } => {
+                        // 64位存储
+                        let base_addr = self.vm.get_virtual_register(addr)? as usize;
+                        let store_addr = (base_addr as i64 + offset) as usize;
+                        let value = self.get_operand_value(src)?;
+                        self.memory.write_memory(store_addr, value)?;
+                
+                        if self.debug_mode {
+                            println!("  -> Store64: {} to addr {} (base {} + offset {})", 
+                                value, store_addr, base_addr, offset);
+                        }
+                
+                        Ok(None)
+                    }
+            Instruction::Phi { dst, incoming, .. } => {
+                        // φ节点：根据当前基本块选择正确的值
+                        // 这里需要实现φ节点的语义：根据前驱块选择值
+                        // 暂时简化实现：使用第一个值
+                        if let Some((_, operand)) = incoming.first() {
+                            let value = self.get_operand_value(operand)?;
+                            self.vm.set_virtual_register(dst, value)?;
+                        }
+                        self.vm.pc += 1;
+                        Ok(None)
+                    }
+            Instruction::JumpIndirect { function_register, span } => {
                 let function_address = self.vm.get_virtual_register(function_register)?;
                 let target_label = karte_lir::LabelId(function_address as usize);
-                
-                // 🔧 添加详细调试输出
-                println!("CallIndirect 调试信息:");
-                println!("  function_register: {:?}", function_register);
-                println!("  function_address: {}", function_address);
-                println!("  target_label: {:?}", target_label);
-                println!("  可用的label_map: {:?}", self.label_map);
-                
-                if self.debug_mode {
-                    println!("  -> Executing CallIndirect");
-                    println!("  -> Function address: {}, target label: {:?}", function_address, target_label);
-                }
-                
-                // 设置参数到寄存器r0, r1, r2, ...
-                for (i, arg_reg) in args.iter().enumerate() {
-                    let arg_value = self.vm.get_virtual_register(arg_reg)?;
-                    self.vm.set_physical_register(i as u8, arg_value)?;
-                    if self.debug_mode {
-                        println!("  -> Setting r{} = {}", i, arg_value);
-                    }
-                }
-                
-                // 保存返回地址
-                self.vm.call_stack.push(self.vm.pc + 1);
-                
-                // 跳转到目标函数
-                if let Some(&target_pc) = self.label_map.get(&target_label) {
-                    self.vm.pc = target_pc;
-                    println!("  -> 成功跳转到PC: {}", target_pc);
-                    if self.debug_mode {
-                        println!("  -> Jumping to PC: {}", target_pc);
-                    }
-                    Ok(None) // 继续执行
-                } else {
-                    println!("  -> 错误：无法找到函数地址 {:?}！", target_label);
-                    return Err(format!("Function address {:?} not found in label map", target_label));
-                }
-            }
-            
-            Instruction::Return { value, .. } => {
-                // 处理返回值
-                if let Some(return_reg) = value {
-                    let return_value = self.vm.get_virtual_register(return_reg)?;
-                    self.vm.registers[0] = return_value; // 将返回值放在r0中
-                }
-                
-                // 恢复调用栈
-                if let Some(return_pc) = self.vm.call_stack.pop() {
-                    self.vm.pc = return_pc;
-                    Ok(None) // 继续执行
-                } else {
-                    // 从主函数返回，程序结束
-                    let result = if let Some(reg) = value {
-                        let raw_value = self.vm.get_virtual_register(reg)?;
-                        let decoded_value = self.decode_tagged_union_for_tests(raw_value);
-                        if self.debug_mode {
-                            println!("Return value: raw={}, decoded={}", raw_value, decoded_value);
-                        }
-                        decoded_value
-                    } else {
-                        0
-                    };
-                    Ok(Some(result)) // 程序退出
-                }
-            }
-            
-            Instruction::Label { .. } => {
-                // 标签不是真正的指令，只是标记位置
-                Ok(None)
-            }
-            
-            Instruction::Nop { .. } => {
-                // 空操作
-                Ok(None)
-            }
-            
-            // 结构体相关指令
-            Instruction::StructAlloc { dst, struct_type, .. } => {
-                // 分配结构体内存
-                // 获取结构体类型信息（在实际实现中需要结构体布局管理器）
-                let size = 64; // 默认大小，实际应该从结构体类型获取
-                let addr = self.memory.allocate_heap(size)?;
-                
-                if self.debug_mode {
-                    println!("  -> StructAlloc: type {:?}, size {}, addr {}", struct_type, size, addr);
-                }
-                
-                self.vm.set_virtual_register(dst, addr as i64)?;
-                Ok(None)
-            }
-            
-            Instruction::StructFieldLoad { dst, struct_addr, field_offset, .. } => {
-                // 从结构体字段加载值
-                let base_addr = self.vm.get_virtual_register(struct_addr)? as usize;
-                let field_addr = base_addr + field_offset;
-                
-                let value = self.memory.read_memory(field_addr)?;
-                if self.debug_mode {
-                    println!("  -> StructFieldLoad: from addr {} (base {} + offset {}) -> {}", 
-                        field_addr, base_addr, field_offset, value);
-                }
-                
-                self.vm.set_virtual_register(dst, value)?;
-                Ok(None)
-            }
-            
-            Instruction::StructFieldStore { struct_addr, field_offset, src, .. } => {
-                // 向结构体字段存储值
-                let base_addr = self.vm.get_virtual_register(struct_addr)? as usize;
-                let field_addr = base_addr + field_offset;
-                
-                let store_value = self.get_operand_value(src)?;
-                self.memory.write_memory(field_addr, store_value)?;
-                
-                if self.debug_mode {
-                    println!("  -> StructFieldStore: {} to addr {} (base {} + offset {})", 
-                        store_value, field_addr, base_addr, field_offset);
-                }
-                
-                Ok(None)
-            }
-            
-            Instruction::StructFieldAddr { dst, struct_addr, field_offset, .. } => {
-                // 获取结构体字段地址
-                let base_addr = self.vm.get_virtual_register(struct_addr)? as usize;
-                let field_addr = base_addr + field_offset;
-                
-                if self.debug_mode {
-                    println!("  -> StructFieldAddr: base {} + offset {} -> {}", base_addr, field_offset, field_addr);
-                }
-                
-                self.vm.set_virtual_register(dst, field_addr as i64)?;
-                Ok(None)
-            }
-            
-            Instruction::MemCopy { dst, src, size, .. } => {
-                // 内存拷贝
-                let dst_addr = self.vm.get_virtual_register(&dst)? as usize;
-                let src_addr = self.vm.get_virtual_register(&src)? as usize;
-                let copy_size = *size;
-                
-                for i in 0..copy_size {
-                    let byte = self.memory.read_memory(src_addr + i)?;
-                    self.memory.write_memory(dst_addr + i, byte)?;
-                }
-                
-                if self.debug_mode {
-                    println!("  -> MemCopy: {} bytes from addr {} to addr {}", copy_size, src_addr, dst_addr);
-                }
-                
-                Ok(None)
-            }
-            
-            Instruction::Alloc { dst, size, alignment, allocation_type, .. } => {
-                // 通用内存分配
-                let alloc_size = *size;
-                // 修复：使用计数器分配不同的地址，避免地址冲突
-                let addr = 16000 + self.next_alloc_addr;
-                self.next_alloc_addr += alloc_size as i64;
-                
-                if self.debug_mode {
-                    println!("  -> Alloc: {} bytes, alignment {}, type {:?} -> addr {}", 
-                        alloc_size, alignment, allocation_type, addr);
-                }
-                
-                self.vm.set_virtual_register(dst, addr)?;
-                Ok(None)
-            }
-            
-            Instruction::Free { addr, .. } => {
-                // 内存释放目前是空操作
-                self.vm.pc += 1;
+                self.vm.pc = *self.label_map.get(&target_label)
+                    .ok_or(format!("Label {:?} not found", target_label))?;
                 Ok(None)
             },
-            
-            Instruction::Load64 { dst, addr, offset, .. } => {
-                // 64位加载
-                let base_addr = self.vm.get_virtual_register(addr)? as usize;
-                let load_addr = (base_addr as i64 + offset) as usize;
-                let value = self.memory.read_memory(load_addr)?;
-                
-                if self.debug_mode {
-                    println!("  -> Load64: from addr {} (base {} + offset {}) -> {}", 
-                        load_addr, base_addr, offset, value);
-                }
-                
-                self.vm.set_virtual_register(dst, value)?;
-                Ok(None)
-            }
-            
-            Instruction::Store64 { addr, offset, src, .. } => {
-                // 64位存储
-                let base_addr = self.vm.get_virtual_register(addr)? as usize;
-                let store_addr = (base_addr as i64 + offset) as usize;
-                let value = self.get_operand_value(src)?;
-                self.memory.write_memory(store_addr, value)?;
-                
-                if self.debug_mode {
-                    println!("  -> Store64: {} to addr {} (base {} + offset {})", 
-                        value, store_addr, base_addr, offset);
-                }
-                
-                Ok(None)
-            }
-            
-            Instruction::Phi { dst, incoming, .. } => {
-                // φ节点：根据当前基本块选择正确的值
-                // 这里需要实现φ节点的语义：根据前驱块选择值
-                // 暂时简化实现：使用第一个值
-                if let Some((_, operand)) = incoming.first() {
-                    let value = self.get_operand_value(operand)?;
-                    self.vm.set_virtual_register(dst, value)?;
-                }
-                self.vm.pc += 1;
-                Ok(None)
-            }
         }
     }
 

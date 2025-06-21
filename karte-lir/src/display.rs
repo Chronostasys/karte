@@ -55,25 +55,25 @@ impl fmt::Display for Instruction {
         match self {
             Instruction::Move { dst, src, .. } => write!(f, "mov {}, {}", dst, src),
             Instruction::Add {
-                dst, src1, src2, ..
-            } => {
-                write!(f, "add {}, {}, {}", dst, src1, src2)
-            }
+                        dst, src1, src2, ..
+                    } => {
+                        write!(f, "add {}, {}, {}", dst, src1, src2)
+                    }
             Instruction::Sub {
-                dst, src1, src2, ..
-            } => {
-                write!(f, "sub {}, {}, {}", dst, src1, src2)
-            }
+                        dst, src1, src2, ..
+                    } => {
+                        write!(f, "sub {}, {}, {}", dst, src1, src2)
+                    }
             Instruction::Mul {
-                dst, src1, src2, ..
-            } => {
-                write!(f, "mul {}, {}, {}", dst, src1, src2)
-            }
+                        dst, src1, src2, ..
+                    } => {
+                        write!(f, "mul {}, {}, {}", dst, src1, src2)
+                    }
             Instruction::Div {
-                dst, src1, src2, ..
-            } => {
-                write!(f, "div {}, {}, {}", dst, src1, src2)
-            }
+                        dst, src1, src2, ..
+                    } => {
+                        write!(f, "div {}, {}, {}", dst, src1, src2)
+                    }
             Instruction::Compare { src1, src2, .. } => write!(f, "cmp {}, {}", src1, src2),
             Instruction::Jump { target, .. } => write!(f, "jmp {}", target),
             Instruction::JumpEqual { target, .. } => write!(f, "je {}", target),
@@ -83,104 +83,105 @@ impl fmt::Display for Instruction {
             Instruction::JumpLess { target, .. } => write!(f, "jl {}", target),
             Instruction::JumpLessEqual { target, .. } => write!(f, "jle {}", target),
             Instruction::Call {
-                target,
-                args,
-                result,
-                ..
-            } => {
-                if let Some(result) = result {
-                    write!(
-                        f,
-                        "{} = call {}({})",
+                        target,
+                        args,
                         result,
-                        target,
-                        args.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(", ")
-                    )
-                } else {
-                    write!(
-                        f,
-                        "call {}({})",
-                        target,
-                        args.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(", ")
-                    )
-                }
-            }
+                        ..
+                    } => {
+                        if let Some(result) = result {
+                            write!(
+                                f,
+                                "{} = call {}({})",
+                                result,
+                                target,
+                                args.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(", ")
+                            )
+                        } else {
+                            write!(
+                                f,
+                                "call {}({})",
+                                target,
+                                args.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(", ")
+                            )
+                        }
+                    }
             Instruction::CallIndirect {
-                function_register,
-                args,
-                result,
-                ..
-            } => {
-                if let Some(result) = result {
-                    write!(
-                        f,
-                        "{} = call_indirect {}({})",
+                        function_register,
+                        args,
                         result,
-                        function_register,
-                        args.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(", ")
-                    )
-                } else {
-                    write!(
-                        f,
-                        "call_indirect {}({})",
-                        function_register,
-                        args.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(", ")
-                    )
-                }
-            }
+                        ..
+                    } => {
+                        if let Some(result) = result {
+                            write!(
+                                f,
+                                "{} = call_indirect {}({})",
+                                result,
+                                function_register,
+                                args.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(", ")
+                            )
+                        } else {
+                            write!(
+                                f,
+                                "call_indirect {}({})",
+                                function_register,
+                                args.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(", ")
+                            )
+                        }
+                    }
             Instruction::Return { value, .. } => {
-                if let Some(value) = value {
-                    write!(f, "ret {}", value)
-                } else {
-                    write!(f, "ret")
-                }
-            }
+                        if let Some(value) = value {
+                            write!(f, "ret {}", value)
+                        } else {
+                            write!(f, "ret")
+                        }
+                    }
             Instruction::Label { id, .. } => write!(f, "{}:", id),
             Instruction::Nop { .. } => write!(f, "nop"),
-            
-            // 结构体相关指令
             Instruction::StructAlloc { dst, struct_type, allocation_type, .. } => {
-                write!(f, "alloc_struct {}, {}, {}", dst, struct_type, allocation_type)
-            }
+                        write!(f, "alloc_struct {}, {}, {}", dst, struct_type, allocation_type)
+                    }
             Instruction::StructFieldLoad { dst, struct_addr, field_offset, .. } => {
-                write!(f, "load_field {}, [{}].{}", dst, struct_addr, field_offset)
-            }
+                        write!(f, "load_field {}, [{}].{}", dst, struct_addr, field_offset)
+                    }
             Instruction::StructFieldStore { struct_addr, field_offset, src, .. } => {
-                write!(f, "store_field [{}].{}, {}", struct_addr, field_offset, src)
-            }
+                        write!(f, "store_field [{}].{}, {}", struct_addr, field_offset, src)
+                    }
             Instruction::StructFieldAddr { dst, struct_addr, field_offset, .. } => {
-                write!(f, "field_addr {}, [{}].{}", dst, struct_addr, field_offset)
-            }
+                        write!(f, "field_addr {}, [{}].{}", dst, struct_addr, field_offset)
+                    }
             Instruction::MemCopy { dst, src, size, .. } => {
-                write!(f, "memcpy {}, {}, #{}", dst, src, size)
-            }
+                        write!(f, "memcpy {}, {}, #{}", dst, src, size)
+                    }
             Instruction::Alloc { dst, size, alignment, allocation_type, .. } => {
-                write!(f, "alloc {}, #{}, #{}, {:?}", dst, size, alignment, allocation_type)
-            },
+                        write!(f, "alloc {}, #{}, #{}, {:?}", dst, size, alignment, allocation_type)
+                    },
             Instruction::Free { addr, .. } => {
-                write!(f, "free {}", addr)
-            },
+                        write!(f, "free {}", addr)
+                    },
             Instruction::Load64 { dst, addr, offset, .. } => {
-                if *offset == 0 {
-                    write!(f, "load64 {}, [{}]", dst, addr)
-                } else {
-                    write!(f, "load64 {}, [{} + {}]", dst, addr, offset)
-                }
-            },
+                        if *offset == 0 {
+                            write!(f, "load64 {}, [{}]", dst, addr)
+                        } else {
+                            write!(f, "load64 {}, [{} + {}]", dst, addr, offset)
+                        }
+                    },
             Instruction::Store64 { addr, offset, src, .. } => {
-                if *offset == 0 {
-                    write!(f, "store64 [{}], {}", addr, src)
-                } else {
-                    write!(f, "store64 [{} + {}], {}", addr, offset, src)
-                }
-            },
+                        if *offset == 0 {
+                            write!(f, "store64 [{}], {}", addr, src)
+                        } else {
+                            write!(f, "store64 [{} + {}], {}", addr, offset, src)
+                        }
+                    },
             Instruction::Phi { dst, incoming, .. } => {
-                write!(f, "{} = phi(", dst)?;
-                for (i, (block, operand)) in incoming.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
-                    write!(f, "L{}: {}", block.0, operand)?;
-                }
-                write!(f, ")")
+                        write!(f, "{} = phi(", dst)?;
+                        for (i, (block, operand)) in incoming.iter().enumerate() {
+                            if i > 0 { write!(f, ", ")?; }
+                            write!(f, "L{}: {}", block.0, operand)?;
+                        }
+                        write!(f, ")")
+                    },
+            Instruction::JumpIndirect { function_register, .. } => {
+                write!(f, "jmpi {}", function_register)
             },
         }
     }

@@ -4,6 +4,7 @@ use crate::pass::transformation::*;
 use crate::pass::memory2reg::*;
 use crate::pass::register_allocation::*;
 use crate::pass::phi_elimination::*;
+use crate::pass::ssa_construction::SsaConstructionPass;
 use crate::{LirProgram, LirFunction};
 
 /// 优化级别
@@ -147,8 +148,9 @@ impl OptimizationPipeline {
         }
         
         // === 第3阶段：核心SSA优化 ===
-        // Memory2Reg：将栈变量提升到寄存器，这是SSA的核心
+        // 先插入SSA构造，再Memory2Reg
         if self.config.enable_mem2reg {
+            pass_manager.add_function_pass(Box::new(SsaConstructionPass::new()));
             pass_manager.add_function_pass(Box::new(Memory2RegPass::new()));
         }
         

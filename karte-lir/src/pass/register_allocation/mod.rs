@@ -86,6 +86,10 @@ impl FunctionPass for LinearScanRegisterAllocation {
         // 在最终改写模式下，应用分配结果
         self.apply_allocation(function, &allocation_result)
     }
+
+    fn required_analyses(&self) -> Vec<&'static str> {
+        vec!["cfg", "def-use"]
+    }
 }
 
 impl LinearScanRegisterAllocation {

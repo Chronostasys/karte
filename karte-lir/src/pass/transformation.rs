@@ -93,19 +93,14 @@ impl DeadCodeElimination {
     /// 检查指令是否有副作用
     fn has_side_effects(&self, instruction: &Instruction) -> bool {
         match instruction {
-            // 内存操作 - 有副作用
             Instruction::Store64 { .. } => true,
             Instruction::Alloc { .. } => true,
             Instruction::StructAlloc { .. } => true,
             Instruction::StructFieldStore { .. } => true,
             Instruction::MemCopy { .. } => true,
             Instruction::Free { .. } => true,
-            
-            // 函数调用 - 有副作用
             Instruction::Call { .. } => true,
             Instruction::CallIndirect { .. } => true,
-            
-            // 控制流 - 有副作用
             Instruction::Return { .. } => true,
             Instruction::Jump { .. } => true,
             Instruction::JumpEqual { .. } => true,
@@ -116,8 +111,6 @@ impl DeadCodeElimination {
             Instruction::JumpGreaterEqual { .. } => true,
             Instruction::Compare { .. } => true,
             Instruction::Label { .. } => true,
-            
-            // 纯计算指令 - 无副作用（可以被DCE移除如果结果未使用）
             Instruction::Move { .. } => false,
             Instruction::Add { .. } => false,
             Instruction::Sub { .. } => false,
@@ -128,7 +121,8 @@ impl DeadCodeElimination {
             Instruction::StructFieldAddr { .. } => false,
             Instruction::Nop { .. } => false,
             Instruction::Phi { .. } => false,
-        }
+            Instruction::JumpIndirect { .. } => true,
+                    }
     }
     
     /// 获取指令使用的寄存器
@@ -256,6 +250,9 @@ impl FunctionPass for DeadCodeElimination {
         } else {
             PassResult::Unchanged
         }
+    }
+    fn invalidated_analyses(&self) -> Vec<&'static str> {
+        vec!["cfg", "def-use"]
     }
 }
 
@@ -388,5 +385,8 @@ impl FunctionPass for ConstantFolding {
         } else {
             PassResult::Unchanged
         }
+    }
+    fn invalidated_analyses(&self) -> Vec<&'static str> {
+        vec!["cfg", "def-use"]
     }
 } 
