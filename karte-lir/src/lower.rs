@@ -774,7 +774,21 @@ impl LirLoweringContext {
 
     /// 添加指令
     fn add_instruction(&mut self, instruction: Instruction) {
+        let is_conditional_jmp = match &instruction {
+            Instruction::JumpEqual {..} |Instruction::JumpGreater {..}|
+            Instruction::JumpGreaterEqual {..} |Instruction::JumpIndirect {..}|
+            Instruction::JumpLess {..} |Instruction::JumpLessEqual {..}|
+            Instruction::JumpNotEqual {..}
+
+            =>{true}
+            _ => {false}
+        };
         self.current_function_mut().add_instruction(instruction);
+        // 如果是条件jmp，则自动在后面插入一个label
+        if is_conditional_jmp {
+            let label = self.current_function_mut().new_label();
+            self.current_function_mut().add_instruction(Instruction::Label { id: label, span: karte_diagnostics::Span::dummy() });
+        }
     }
 
     /// 🔧 专业修复：从结构体布局信息中获取字段偏移

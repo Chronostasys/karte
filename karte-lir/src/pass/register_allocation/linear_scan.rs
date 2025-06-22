@@ -1,7 +1,7 @@
 //! 线性扫描寄存器分配算法
-//! 
+//!
 //! 实现高效的线性扫描算法，包括活跃区间排序、寄存器分配、以及复杂的溢出策略。
-//! 
+//!
 //! ## 未来改进
 //! - **溢出成本模型**: 当前的溢出启发式比较简单。可以引入更复杂的成本模型，
 //!   例如考虑循环深度，来更智能地选择溢出候选，从而减少关键循环中的溢出开销。
@@ -10,12 +10,15 @@
 //! - **图着色算法**: 对于复杂的控制流，线性扫描可能会产生次优的结果。可以探索
 //!   实现一个更强大的图着色分配器作为补充，或者在优化级别较高时使用。
 
+use super::types::{
+    AllocationStats, RegisterAllocationResult, RegisterLifetime, RegisterType,
+    SimpleCallingConvention, SpillSlot,
+};
 use crate::RegisterId;
-use super::types::{RegisterLifetime, RegisterAllocationResult, SpillSlot, AllocationStats, SimpleCallingConvention, RegisterType};
 use std::collections::{HashMap, HashSet};
 
 /// 线性扫描分配器
-/// 
+///
 /// 封装了线性扫描算法的核心实现。
 pub struct LinearScanAllocator {
     calling_convention: SimpleCallingConvention,
@@ -28,37 +31,37 @@ impl LinearScanAllocator {
     /// 创建新的线性扫描分配器
     pub fn new(calling_convention: SimpleCallingConvention) -> Self {
         let mut reserved = HashSet::new();
-        reserved.insert(calling_convention.stack_pointer);  // r6
-        reserved.insert(calling_convention.frame_pointer);  // r7
-        // 🔧 修复：不再保留return_address (r5)，允许它被分配
-        
+        reserved.insert(calling_convention.stack_pointer); // r6
+        reserved.insert(calling_convention.frame_pointer); // r7
+                                                           // 🔧 修复：不再保留return_address (r5)，允许它被分配
+
         Self {
             calling_convention,
             reserved_registers: reserved,
             spill_stack: Vec::new(),
         }
     }
-    
+
     /// 执行线性扫描寄存器分配
-    /// 
+    ///
     /// 这是分配算法的主入口点。
     /// @param lifetimes - 所有虚拟寄存器的生命周期信息。
     /// @param register_types - 寄存器类型映射。
     /// @returns 分配结果。
     pub fn allocate(
-        &mut self, 
-        mut lifetimes: Vec<RegisterLifetime>, 
-        register_types: HashMap<RegisterId, RegisterType>
+        &mut self,
+        mut lifetimes: Vec<RegisterLifetime>,
+        register_types: HashMap<RegisterId, RegisterType>,
     ) -> RegisterAllocationResult {
         println!("==== StackAddress RegisterLifetime ====");
-for lt in &lifetimes {
-    if lt.register_type == RegisterType::StackAddress {
-        println!("{:?}", lt);
-    }
-}
-println!("=======================================");
+        for lt in &lifetimes {
+            if lt.register_type == RegisterType::StackAddress {
+                println!("{:?}", lt);
+            }
+        }
+        println!("=======================================");
         lifetimes.sort_by(|a, b| a.start.cmp(&b.start));
-        
+
         let mut register_mapping = HashMap::new();
         let mut spilled_registers = HashMap::new();
         let mut active_intervals: Vec<RegisterLifetime> = Vec::new();
@@ -66,14 +69,19 @@ println!("=======================================");
         let mut spill_slot_counter = 0;
         let mut max_register_pressure = 0;
         self.spill_stack.clear();
-        
+
         // 🔧 修复：预分配函数参数寄存器
         for lifetime in &lifetimes {
             if lifetime.is_function_parameter {
                 if let Some(param_index) = lifetime.parameter_index {
-                    if let Some(&physical_reg) = self.calling_convention.argument_registers.get(param_index) {
+                    if let Some(&physical_reg) =
+                        self.calling_convention.argument_registers.get(param_index)
+                    {
                         register_mapping.insert(lifetime.register, physical_reg);
-                        println!("🔧 预分配函数参数: {:?} -> r{} (参数索引: {})", lifetime.register, physical_reg, param_index);
+                        println!(
+                            "🔧 预分配函数参数: {:?} -> r{} (参数索引: {})",
+                            lifetime.register, physical_reg, param_index
+                        );
                         available_registers.retain(|&reg| reg != physical_reg);
                         active_intervals.push(lifetime.clone());
                         continue;
@@ -81,27 +89,35 @@ println!("=======================================");
                 }
             }
         }
-        
+
         // 🔧 修复：StackAddress寄存器也需要分配物理寄存器
         // 因为它们在StackFrameLowering后变成了add指令的目标寄存器
         println!("🔍 StackAddress寄存器也需要分配物理寄存器");
-        
+
         for current_lifetime in &lifetimes {
             if current_lifetime.is_function_parameter {
                 continue;
             }
             // 🔧 修复：为Data和StackAddress类型都分配物理寄存器
             // StackAddress寄存器在StackFrameLowering后变成add指令的目标寄存器，需要物理寄存器
-            if current_lifetime.register_type != RegisterType::Data && current_lifetime.register_type != RegisterType::StackAddress {
+            if current_lifetime.register_type != RegisterType::Data
+                && current_lifetime.register_type != RegisterType::StackAddress
+            {
                 continue;
             }
-            self.expire_old_intervals(&mut active_intervals, &mut available_registers, &register_mapping, current_lifetime.start);
+            self.expire_old_intervals(
+                &mut active_intervals,
+                &mut available_registers,
+                &register_mapping,
+                current_lifetime.start,
+            );
             max_register_pressure = max_register_pressure.max(active_intervals.len());
             // === 修复点：分配前检查同类型活跃区间 ===
             let mut candidate_reg = None;
             for &reg in &available_registers {
                 let conflict = active_intervals.iter().any(|lt| {
-                    lt.register_type == current_lifetime.register_type && register_mapping.get(&lt.register) == Some(&reg)
+                    lt.register_type == current_lifetime.register_type
+                        && register_mapping.get(&lt.register) == Some(&reg)
                 });
                 if !conflict {
                     candidate_reg = Some(reg);
@@ -120,7 +136,12 @@ println!("=======================================");
                 if let Some(victim) = active_intervals.iter().find(|lt| lt.can_spill()) {
                     let victim_reg = victim.register;
                     let freed_reg = register_mapping.remove(&victim_reg).unwrap();
-                    spilled_registers.insert(victim_reg, SpillSlot { slot_id: spill_slot_counter });
+                    spilled_registers.insert(
+                        victim_reg,
+                        SpillSlot {
+                            slot_id: spill_slot_counter,
+                        },
+                    );
                     spill_slot_counter += 1;
                     if let Some(pos) = self.spill_stack.iter().position(|&r| r == freed_reg) {
                         self.spill_stack.remove(pos);
@@ -134,20 +155,31 @@ println!("=======================================");
                     if current_lifetime.register_type == RegisterType::StackAddress {
                         panic!("无法为StackAddress寄存器 {:?} 分配物理寄存器，且无法溢出！这是寄存器分配器的bug", current_lifetime.register);
                     }
-                    spilled_registers.insert(current_lifetime.register, SpillSlot { slot_id: spill_slot_counter });
+                    spilled_registers.insert(
+                        current_lifetime.register,
+                        SpillSlot {
+                            slot_id: spill_slot_counter,
+                        },
+                    );
                     spill_slot_counter += 1;
                 }
             }
         }
-        
+
         // 检查分配结果，彻底禁止255魔数和超出范围的寄存器
         for (&reg, &phys) in &register_mapping {
             if phys == 255 {
-                panic!("分配结果中出现非法物理寄存器255: {:?}，这是分配器的bug！", reg);
+                panic!(
+                    "分配结果中出现非法物理寄存器255: {:?}，这是分配器的bug！",
+                    reg
+                );
             }
             // 🔧 新增：检查物理寄存器是否超出虚拟机范围（r0-r7）
             if phys >= 8 {
-                panic!("分配结果中出现超出虚拟机范围的物理寄存器r{}: {:?}，虚拟机只支持r0-r7！", phys, reg);
+                panic!(
+                    "分配结果中出现超出虚拟机范围的物理寄存器r{}: {:?}，虚拟机只支持r0-r7！",
+                    phys, reg
+                );
             }
         }
 
@@ -161,7 +193,12 @@ println!("=======================================");
                     let mut temp_available = self.get_available_physical_registers();
                     let mut temp_register_mapping = register_mapping.clone();
                     // expire已结束的区间
-                    self.expire_old_intervals(&mut temp_active, &mut temp_available, &temp_register_mapping, use_pos);
+                    self.expire_old_intervals(
+                        &mut temp_active,
+                        &mut temp_available,
+                        &temp_register_mapping,
+                        use_pos,
+                    );
                     // 检查是否有空闲物理寄存器
                     if temp_available.is_empty() {
                         // 没有空闲寄存器，主动spill一个可spill的活跃寄存器
@@ -170,16 +207,22 @@ println!("=======================================");
                             let freed_reg = temp_register_mapping.remove(&victim_reg).unwrap();
                             temp_available.push(freed_reg);
                             // 这里仅做分配决策，实际spill指令由后续pass插入
-                            println!("[restore点主动spill] reload {:?} 需要先spill {:?} (r{})", spilled_reg, victim_reg, freed_reg);
+                            println!(
+                                "[restore点主动spill] reload {:?} 需要先spill {:?} (r{})",
+                                spilled_reg, victim_reg, freed_reg
+                            );
                         } else {
-                            panic!("restore点无法分配物理寄存器：{:?}，没有可spill的活跃寄存器！", spilled_reg);
+                            panic!(
+                                "restore点无法分配物理寄存器：{:?}，没有可spill的活跃寄存器！",
+                                spilled_reg
+                            );
                         }
                     }
                     // 用空闲寄存器做reload（这里只做决策，实际reload由后续pass插入）
                 }
             }
         }
-        
+
         RegisterAllocationResult {
             stats: AllocationStats {
                 total_virtual_registers: lifetimes.len(),
@@ -192,7 +235,7 @@ println!("=======================================");
             register_types,
         }
     }
-    
+
     /// 释放已结束的活跃区间，并回收它们占用的物理寄存器
     fn expire_old_intervals(
         &mut self,
@@ -233,34 +276,53 @@ println!("=======================================");
         spill_slot_counter: &mut usize,
     ) {
         if !current.can_spill() {
-            panic!("尝试溢出非数据寄存器 {:?} (类型: {:?})，这是分配器的bug", 
-                   current.register, current.register_type);
+            panic!(
+                "尝试溢出非数据寄存器 {:?} (类型: {:?})，这是分配器的bug",
+                current.register, current.register_type
+            );
         }
-        
+
         if let Some(spill_candidate) = self.find_spill_candidate(active_intervals, current) {
             if !spill_candidate.can_spill() {
-                panic!("选择非数据寄存器 {:?} (类型: {:?}) 作为溢出候选，这是分配器的bug", 
-                       spill_candidate.register, spill_candidate.register_type);
+                panic!(
+                    "选择非数据寄存器 {:?} (类型: {:?}) 作为溢出候选，这是分配器的bug",
+                    spill_candidate.register, spill_candidate.register_type
+                );
             }
-            
+
             if spill_candidate.end > current.end {
                 let freed_reg = register_mapping.remove(&spill_candidate.register).unwrap();
                 register_mapping.insert(current.register, freed_reg);
-                spilled_registers.insert(spill_candidate.register, SpillSlot { slot_id: *spill_slot_counter });
+                spilled_registers.insert(
+                    spill_candidate.register,
+                    SpillSlot {
+                        slot_id: *spill_slot_counter,
+                    },
+                );
                 *spill_slot_counter += 1;
                 let r = spill_candidate.register;
                 active_intervals.retain(|i| i.register != r);
                 active_intervals.push(current.clone());
             } else {
-                spilled_registers.insert(current.register, SpillSlot { slot_id: *spill_slot_counter });
+                spilled_registers.insert(
+                    current.register,
+                    SpillSlot {
+                        slot_id: *spill_slot_counter,
+                    },
+                );
                 *spill_slot_counter += 1;
             }
         } else {
-            spilled_registers.insert(current.register, SpillSlot { slot_id: *spill_slot_counter });
+            spilled_registers.insert(
+                current.register,
+                SpillSlot {
+                    slot_id: *spill_slot_counter,
+                },
+            );
             *spill_slot_counter += 1;
         }
     }
-    
+
     /// 寻找最佳的溢出候选者
     fn find_spill_candidate<'a>(
         &self,
@@ -282,14 +344,19 @@ println!("=======================================");
         }
         spill_candidate
     }
-    
+
     /// 查找寄存器的下一次使用位置
     fn find_next_use(&self, lifetime: &RegisterLifetime, from_position: usize) -> usize {
-        lifetime.uses.iter().find(|&&use_pos| use_pos >= from_position).copied().unwrap_or(usize::MAX)
+        lifetime
+            .uses
+            .iter()
+            .find(|&&use_pos| use_pos >= from_position)
+            .copied()
+            .unwrap_or(usize::MAX)
     }
-    
+
     /// 获取可用的物理寄存器列表
     fn get_available_physical_registers(&self) -> Vec<u8> {
         self.calling_convention.allocatable_registers.clone()
     }
-} 
+}

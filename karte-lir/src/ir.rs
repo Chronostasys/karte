@@ -426,13 +426,21 @@ impl Instruction {
     /// 替换指令中的寄存器
     pub fn replace_register(&mut self, old_reg: RegisterId, new_reg: RegisterId) {
         match self {
-            Instruction::Move { src, .. } => {
+            Instruction::Move { dst, src, .. } => {
+                // 🔧 关键修复：替换目标寄存器
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
                 Self::replace_operand_register(src, old_reg, new_reg);
             }
-            Instruction::Add { src1, src2, .. } |
-            Instruction::Sub { src1, src2, .. } |
-            Instruction::Mul { src1, src2, .. } |
-            Instruction::Div { src1, src2, .. } => {
+            Instruction::Add { dst, src1, src2, .. } |
+            Instruction::Sub { dst, src1, src2, .. } |
+            Instruction::Mul { dst, src1, src2, .. } |
+            Instruction::Div { dst, src1, src2, .. } => {
+                // 🔧 关键修复：替换目标寄存器
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
                 Self::replace_operand_register(src1, old_reg, new_reg);
                 Self::replace_operand_register(src2, old_reg, new_reg);
             }
@@ -440,7 +448,11 @@ impl Instruction {
                 Self::replace_operand_register(src1, old_reg, new_reg);
                 Self::replace_operand_register(src2, old_reg, new_reg);
             }
-            Instruction::Load64 { addr, .. } => {
+            Instruction::Load64 { dst, addr, .. } => {
+                // 🔧 关键修复：替换目标寄存器
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
                 if *addr == old_reg {
                     *addr = new_reg;
                 }
@@ -451,7 +463,11 @@ impl Instruction {
                 }
                 Self::replace_operand_register(src, old_reg, new_reg);
             }
-            Instruction::StructFieldLoad { struct_addr, .. } => {
+            Instruction::StructFieldLoad { dst, struct_addr, .. } => {
+                // 🔧 关键修复：替换目标寄存器
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
                 if *struct_addr == old_reg {
                     *struct_addr = new_reg;
                 }
@@ -462,12 +478,16 @@ impl Instruction {
                 }
                 Self::replace_operand_register(src, old_reg, new_reg);
             }
-            Instruction::StructFieldAddr { struct_addr, .. } => {
+            Instruction::StructFieldAddr { dst, struct_addr, .. } => {
+                // 🔧 关键修复：替换目标寄存器
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
                 if *struct_addr == old_reg {
                     *struct_addr = new_reg;
                 }
             }
-            Instruction::Call { args, arg_operands, .. } => {
+            Instruction::Call { args, arg_operands, result, .. } => {
                 for arg in args {
                     if *arg == old_reg {
                         *arg = new_reg;
@@ -477,8 +497,14 @@ impl Instruction {
                 for operand in arg_operands {
                     Self::replace_operand_register(operand, old_reg, new_reg);
                 }
+                // 🔧 关键修复：替换返回值寄存器
+                if let Some(ref mut result_reg) = result {
+                    if *result_reg == old_reg {
+                        *result_reg = new_reg;
+                    }
+                }
             }
-            Instruction::CallIndirect { function_register, args, arg_operands, .. } => {
+            Instruction::CallIndirect { function_register, args, arg_operands, result, .. } => {
                 if *function_register == old_reg {
                     *function_register = new_reg;
                 }
@@ -491,6 +517,12 @@ impl Instruction {
                 for operand in arg_operands {
                     Self::replace_operand_register(operand, old_reg, new_reg);
                 }
+                // 🔧 关键修复：替换返回值寄存器
+                if let Some(ref mut result_reg) = result {
+                    if *result_reg == old_reg {
+                        *result_reg = new_reg;
+                    }
+                }
             }
             Instruction::Return { value, .. } => {
                 if let Some(ref mut reg) = value {
@@ -499,7 +531,11 @@ impl Instruction {
                     }
                 }
             }
-            Instruction::MemCopy { src, .. } => {
+            Instruction::MemCopy { dst, src, .. } => {
+                // 🔧 关键修复：替换目标寄存器
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
                 if *src == old_reg {
                     *src = new_reg;
                 }
@@ -509,7 +545,18 @@ impl Instruction {
                     *addr = new_reg;
                 }
             }
-            Instruction::Phi { incoming, .. } => {
+            Instruction::Alloc { dst, .. } |
+            Instruction::StructAlloc { dst, .. } => {
+                // 🔧 关键修复：替换目标寄存器
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+            }
+            Instruction::Phi { dst, incoming, .. } => {
+                // 🔧 关键修复：替换目标寄存器
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
                 for (_, value) in incoming {
                     Self::replace_operand_register(value, old_reg, new_reg);
                 }
@@ -669,7 +716,7 @@ impl LirFunction {
             name,
             instructions: Vec::new(),
             next_register: 0,
-            next_label: 0,
+            next_label: 1000,
             struct_types: HashMap::new(),
             stack_frame_size: 0,
             parameter_count: 0,

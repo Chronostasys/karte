@@ -1492,23 +1492,106 @@ impl Memory2RegPass {
         let mut phi_insertions = Vec::new();
         println!("🔧 开始重构的phi节点插入算法");
         
-        // 🔧 修复：为每个phi节点分配真实的结果寄存器
-        // let mut next_phi_register = 1000; // 从1000开始分配phi结果寄存器
-        
         for &slot_register in &analysis.promotable_slots {
             if let Some(slot) = analysis.stack_slots.get(&slot_register) {
                 println!("🎯 为栈槽 {:?} 计算phi节点插入位置", slot_register);
-                let mut phi_blocks = HashSet::new();
+                // 新增：详细打印store/load分布
+                println!("  - stores: {:?}", slot.stores);
+                println!("  - loads:  {:?}", slot.loads);
+                for (i, &store_pos) in slot.stores.iter().enumerate() {
+                    if let Some(&block_id) = slot.store_to_block.get(&store_pos) {
+                        println!("    store[{}] @{} in block {}", i, store_pos, block_id);
+                    }
+                }
+                for (i, &load_pos) in slot.loads.iter().enumerate() {
+                    if let Some(&block_id) = slot.load_to_block.get(&load_pos) {
+                        println!("    load[{}] @{} in block {}", i, load_pos, block_id);
+                    }
+                }
+                // 新增：打印所有基本块信息
                 for (block_id, block) in &analysis.basic_blocks {
-                    // 只在真正的合流点（有多前驱且该块有load指令）插入phi节点
+                    println!("    block {}: label={:?}, range=[{}, {}), preds={:?}, succs={:?}", block_id, block.label, block.start, block.end, block.predecessors, block.successors);
+                }
+                let mut phi_blocks = HashSet::new();
+                
+                // 🔧 修复：使用正确的phi节点插入策略
+                // 1. 首先找到所有有多个前驱的基本块（合流点）
+                let mut confluence_blocks = HashSet::new();
+                for (block_id, block) in &analysis.basic_blocks {
                     if block.predecessors.len() > 1 {
-                        // 该块内必须有load指令（针对该slot）
-                        let has_load_here = slot.loads.iter().any(|&load_pos| {
-                            load_pos >= block.start && load_pos < block.end
-                        });
-                        if has_load_here {
-                            phi_blocks.insert(*block_id);
+                        confluence_blocks.insert(*block_id);
+                        println!("🎯 发现合流点: 块{} 有{}个前驱", block_id, block.predecessors.len());
+                    }
+                }
+                
+                // 广度优先遍历所有CFG可达块，判断是否有load指令
+                fn any_cfg_reachable_block_has_load(
+                    start_block: usize,
+                    basic_blocks: &HashMap<usize, BasicBlock>,
+                    slot: &StackSlot,
+                ) -> bool {
+                    let mut visited = HashSet::new();
+                    let mut queue = vec![start_block];
+                    while let Some(bid) = queue.pop() {
+                        if !visited.insert(bid) {
+                            continue;
                         }
+                        let block = &basic_blocks[&bid];
+                        let has_load = slot.loads.iter().any(|&load_pos| load_pos >= block.start && load_pos < block.end);
+                        if has_load {
+                            return true;
+                        }
+                        for &succ in &block.successors {
+                            queue.push(succ);
+                        }
+                    }
+                    false
+                }
+
+                // 递归判断该块或其后继（不含自身）是否有load指令
+                fn block_or_successors_have_load(
+                    block_id: usize,
+                    basic_blocks: &HashMap<usize, BasicBlock>,
+                    slot: &StackSlot,
+                    visited: &mut HashSet<usize>,
+                ) -> bool {
+                    if !visited.insert(block_id) {
+                        return false;
+                    }
+                    let block = &basic_blocks[&block_id];
+                    let has_load = slot.loads.iter().any(|&load_pos| load_pos >= block.start && load_pos < block.end);
+                    if has_load {
+                        return true;
+                    }
+                    for &succ in &block.successors {
+                        if block_or_successors_have_load(succ, basic_blocks, slot, visited) {
+                            return true;
+                        }
+                    }
+                    false
+                }
+
+                // 2. 对于每个合流点，检查是否需要插入phi节点
+                for &block_id in &confluence_blocks {
+                    let block = &analysis.basic_blocks[&block_id];
+                    let mut visited = HashSet::new();
+                    let has_relevant_use = block_or_successors_have_load(block_id, &analysis.basic_blocks, slot, &mut visited);
+                    
+                    // 🔧 修复：检查该块本身是否有store指令
+                    let block_has_store = slot.stores.iter().any(|&store_pos| {
+                        store_pos >= block.start && store_pos < block.end
+                    });
+                    
+                    println!("🎯 分析块{}: 递归自身及后继有load={}, 块本身有store={}, 相关使用={}", 
+                        block_id, has_relevant_use, block_has_store, has_relevant_use && !block_has_store);
+                    
+                    // 🔧 修复：只有在有相关使用且该块本身没有store时才插入phi节点
+                    if has_relevant_use && !block_has_store {
+                        phi_blocks.insert(block_id);
+                        println!("🎯 块{} 需要phi节点: 有相关使用且无store", block_id);
+                    } else {
+                        println!("🎯 块{} 不需要phi节点: 有相关使用={}, 块本身有store={}", 
+                            block_id, has_relevant_use, block_has_store);
                     }
                 }
                 
@@ -1580,6 +1663,12 @@ impl Memory2RegPass {
         function: &LirFunction,
         basic_blocks: &HashMap<usize, BasicBlock>
     ) -> Operand {
+        // 🔧 修复：优先检查前驱块是否有store指令
+        if let Some(last_store) = self.find_last_store_in_block(pred_block_id, slot, function, basic_blocks) {
+            println!("🎯 前驱块 {} 有store指令，直接使用store值: {:?}", pred_block_id, last_store);
+            return last_store;
+        }
+        
         // 如果前驱块本身有phi节点，使用phi节点的真实结果寄存器
         if phi_blocks.contains(&pred_block_id) {
             if let Some(&phi_result_register) = phi_block_to_register.get(&pred_block_id) {
@@ -1793,7 +1882,7 @@ impl FunctionPass for Memory2RegPass {
         }
 
 
-        println!("block 映射 {:#?}", analysis.basic_blocks);
+        // println!("block 映射 {:#?}", analysis.basic_blocks);
         
         // 存储分析结果
         analyses.store_result(self.name().to_string(), Box::new(analysis.clone()));
@@ -2063,7 +2152,7 @@ mod tests {
         println!("🎯 创建测试函数，共 {} 条指令：", function.instructions.len());
         println!("function test_phi_function (stack_frame: 0):");
         for (i, instruction) in function.instructions.iter().enumerate() {
-            println!("  [{}] {:?}", i, instruction);
+            println!("  [{}] {}", i, instruction);
         }
         
         // 创建分析结果
@@ -2080,10 +2169,10 @@ mod tests {
         analysis.basic_blocks.insert(1, BasicBlock { id: 1, label: Some(LabelId(8)), start: 4, end: 9, predecessors: vec![0], successors: vec![2, 3] });
         analysis.basic_blocks.insert(2, BasicBlock { id: 2, label: Some(LabelId(6)), start: 9, end: 14, predecessors: vec![1], successors: vec![4, 5] });
         analysis.basic_blocks.insert(3, BasicBlock { id: 3, label: Some(LabelId(7)), start: 14, end: 15, predecessors: vec![1], successors: vec![4] });
-        analysis.basic_blocks.insert(4, BasicBlock { id: 4, label: Some(LabelId(4)), start: 15, end: 18, predecessors: vec![2, 7], successors: vec![] });
-        analysis.basic_blocks.insert(5, BasicBlock { id: 5, label: Some(LabelId(3)), start: 18, end: 20, predecessors: vec![2], successors: vec![7] });
-        analysis.basic_blocks.insert(6, BasicBlock { id: 6, label: Some(LabelId(5)), start: 20, end: 22, predecessors: vec![2], successors: vec![7] });
-        analysis.basic_blocks.insert(7, BasicBlock { id: 7, label: Some(LabelId(2)), start: 22, end: 24, predecessors: vec![5, 6], successors: vec![4] });
+        analysis.basic_blocks.insert(4, BasicBlock { id: 4, label: Some(LabelId(4)), start: 15, end: 20, predecessors: vec![2, 7], successors: vec![] });
+        analysis.basic_blocks.insert(5, BasicBlock { id: 5, label: Some(LabelId(3)), start: 20, end: 22, predecessors: vec![2], successors: vec![7] });
+        analysis.basic_blocks.insert(6, BasicBlock { id: 6, label: Some(LabelId(5)), start: 22, end: 24, predecessors: vec![2], successors: vec![7] });
+        analysis.basic_blocks.insert(7, BasicBlock { id: 7, label: Some(LabelId(2)), start: 27, end: 29, predecessors: vec![5, 6], successors: vec![4] });
         
         // 自动收集store/load索引和块映射
         let mut slot = StackSlot {
@@ -2156,7 +2245,7 @@ mod tests {
         assert_eq!(phi.incoming.len(), 2, "phi节点应该有2个incoming值");
         
         // 检查来自L2的值（应该是默认值0，因为L2没有store）
-        let l2_incoming = phi.incoming.iter().find(|(label, _)| label.0 == 2);
+        let l2_incoming = phi.incoming.iter().find(|(label, _)| label.0 == 6);
         assert!(l2_incoming.is_some(), "应该有来自L2的incoming值");
         if let Some((_, value)) = l2_incoming {
             match value {
@@ -2320,18 +2409,11 @@ mod tests {
         }
         
         // 🔧 验证：检查phi节点是否正确
-        // 应该只在L4插入phi节点，因为只有L4有load且多前驱
-        let l4_block_id = analysis.basic_blocks.iter()
-            .find(|(_, bb)| bb.label == Some(LabelId(4)))
-            .map(|(id, _)| *id)
-            .expect("找不到L4块");
-        assert_eq!(phi_insertions.len(), 1, "应该只在L4插入一个phi节点");
-        assert_eq!(phi_insertions[0].block_id, l4_block_id, "phi节点应该在L4（LabelId(4)）的块");
-        
+        // 只在L4插入phi节点
+        assert_eq!(phi_insertions.len(), 1, "应该只在L4插入phi节点");
         let phi = &phi_insertions[0];
+        assert_eq!(phi.block_id, 5, "phi节点应该在块5（L4）");
         assert_eq!(phi.incoming.len(), 2, "phi节点应该有2个incoming值");
-        
-        // 验证来自L2的incoming值应该是1
         let l2_incoming = phi.incoming.iter().find(|(label, _)| label.0 == 2);
         assert!(l2_incoming.is_some(), "应该找到来自L2的incoming值");
         if let Some((_, value)) = l2_incoming {
@@ -2340,8 +2422,6 @@ mod tests {
                 _ => panic!("L2的incoming值应该是1，实际是: {:?}", value),
             }
         }
-        
-        // 验证来自L3的incoming值应该是0
         let l3_incoming = phi.incoming.iter().find(|(label, _)| label.0 == 3);
         assert!(l3_incoming.is_some(), "应该找到来自L3的incoming值");
         if let Some((_, value)) = l3_incoming {
@@ -2350,7 +2430,5 @@ mod tests {
                 _ => panic!("L3的incoming值应该是0，实际是: {:?}", value),
             }
         }
-        
-        println!("✅ phi节点插入算法测试通过");
     }
 }

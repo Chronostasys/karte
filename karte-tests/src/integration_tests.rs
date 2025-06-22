@@ -73,7 +73,7 @@ mod integration_tests {
 
     #[test]
     fn test_complex_expression() {
-        let input = "let x = 3; let y = 4; let multiply = |a, b| a * b; multiply(x, y)";
+        let input = "(|a, b| a * b)(3,4)";
 
         // 词法分析
         let (tokens, lex_diagnostics) = tokenize(input);

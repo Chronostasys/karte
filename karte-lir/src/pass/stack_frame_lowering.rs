@@ -328,9 +328,9 @@ impl StackFrameLowering {
             if !prologue_inserted {
                 if let Instruction::Label { .. } = instruction {
                     if layout.total_frame_size > 0 {
-                        let prologue = self.generate_prologue(layout);
-                        new_instructions.extend(prologue);
-                        println!("🔧 在第一个标签 {:?} 之后插入序言 (栈帧大小: {})", instruction, layout.total_frame_size);
+                        // let prologue = self.generate_prologue(layout);
+                        // new_instructions.extend(prologue);
+                        // println!("🔧 在第一个标签 {:?} 之后插入序言 (栈帧大小: {})", instruction, layout.total_frame_size);
                     }
                     prologue_inserted = true;
                 }
@@ -338,11 +338,11 @@ impl StackFrameLowering {
             
             // 🔧 修复：在每个return指令之前插入尾声
             if let Instruction::Return { .. } = instruction {
-                if layout.total_frame_size > 0 {
-                    let epilogue = self.generate_epilogue(layout);
-                    new_instructions.extend(epilogue);
-                    println!("🔧 在 return 指令前插入尾声 (栈帧大小: {})", layout.total_frame_size);
-                }
+                // if layout.total_frame_size > 0 {
+                //     let epilogue = self.generate_epilogue(layout);
+                //     new_instructions.extend(epilogue);
+                //     println!("🔧 在 return 指令前插入尾声 (栈帧大小: {})", layout.total_frame_size);
+                // }
             }
             
             match instruction {

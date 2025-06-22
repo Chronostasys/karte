@@ -391,7 +391,8 @@ impl DefUseAnalysis {
                 }
             }
             Instruction::Alloc { dst, .. } => {
-                defs.push(*dst);
+                // defs.push(*dst);
+                // 会被优化成用前加载
             }
             Instruction::StructAlloc { dst, .. } => {
                 defs.push(*dst);

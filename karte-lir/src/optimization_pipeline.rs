@@ -149,11 +149,13 @@ impl OptimizationPipeline {
         
         // === 第3阶段：核心SSA优化 ===
         // 先插入SSA构造，再Memory2Reg
-        if self.config.enable_mem2reg {
-            pass_manager.add_function_pass(Box::new(SsaConstructionPass::new()));
-            pass_manager.add_function_pass(Box::new(Memory2RegPass::new()));
-        }
+        pass_manager.add_function_pass(Box::new(SsaConstructionPass::new()));
+        pass_manager.add_function_pass(Box::new(Memory2RegPass::new()));
+        // pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::DecisionOnly)));
+        // pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::FinalRewrite)));
         
+        
+        pass_manager.add_function_pass(Box::new(SimpleStackRegisterAllocation::new()));
         // === 第4阶段：φ指令消除 ===
         // 在φ指令消除之前重新运行CFG分析，因为Memory2Reg可能使CFG失效
         if self.config.enable_dce {
@@ -185,14 +187,11 @@ impl OptimizationPipeline {
         // 🔧 新架构：Pre-RA (决策) -> StackFrameLowering -> Final-RA (改写)
         
         // 阶段 7.1: Pre-RA - 寄存器分配决策（不修改代码）
-        pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::DecisionOnly)));
-        
         // // 阶段 7.2: StackFrameLowering - 栈帧管理和溢出代码生成（使用临时虚拟寄存器）
         // pass_manager.add_function_pass(Box::new(StackFrameLowering::new()));
         
         // 阶段 7.3: Final-RA - 最终寄存器分配（包括临时寄存器的分配）
-        pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::FinalRewrite)));
-        
+
         if self.config.debug {
             println!("=== 专业Pass管道配置完成（两阶段分配架构）===");
             println!("优化级别: {}", self.config.optimization_level);
@@ -214,6 +213,7 @@ impl OptimizationPipeline {
             0 => {
                 // 无优化，只做基本分析和寄存器分配
                 // 🔧 修改：使用两阶段寄存器分配架构
+
                 pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::DecisionOnly)));
                 // pass_manager.add_function_pass(Box::new(StackFrameLowering::new()));
                 pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::FinalRewrite)));
