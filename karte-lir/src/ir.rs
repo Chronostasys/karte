@@ -887,7 +887,12 @@ impl LirFunction {
     }
 
     pub fn add_instruction(&mut self, instruction: Instruction) {
-        self.instructions.push(instruction);
+        // 如果是alloc，放在开头
+        if let Instruction::Alloc { .. } = instruction {
+            self.instructions.insert(1, instruction);
+        } else {
+            self.instructions.push(instruction);
+        }
     }
 
     pub fn add_struct_type(&mut self, struct_type: StructLayout) -> StructTypeId {

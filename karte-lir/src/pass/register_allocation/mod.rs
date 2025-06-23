@@ -907,6 +907,15 @@ impl SimpleStackRegisterAllocation {
                 } else {
                     println!("  ⚠️  返回值寄存器 {:?} 在后续未被使用，跳过存储", def_reg);
                 }
+            } else {
+                // 不需要溢出，mov到目标寄存器
+                let mov_instruction = Instruction::Move {
+                    dst: def_reg,
+                    src: Operand::Register { id: RegisterId(self.calling_convention.return_register as usize) },
+                    span: Span::dummy(),
+                };
+                transformer.insert(instruction_index + 1, mov_instruction);
+
             }
         }
     }

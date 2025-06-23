@@ -191,99 +191,14 @@ impl InstructionLowerer {
                     }
                 }
                 // 降级 CallIndirect 指令
-                Instruction::CallIndirect { function_register, args, arg_operands, result, span } => {
-                    
-                    // 保存caller-saved寄存器到栈
-                    for reg in 0..=4 {
-                        new_instructions.push(Instruction::Sub {
-                            dst: self.stack_pointer_reg,
-                            src1: Operand::Register { id: self.stack_pointer_reg },
-                            src2: Operand::Immediate { value: 8 },
-                            span: *span,
-                        });
-                        new_instructions.push(Instruction::Store64 {
-                            addr: self.stack_pointer_reg,
-                            offset: 0,
-                            src: Operand::Register { id: RegisterId(reg) },
-                            span: *span,
-                        });
-                    }
-
-                    // 参数传递
-                    for (i, op) in arg_operands.iter().enumerate() {
-                        if i < 4 {
-                            new_instructions.push(Instruction::Move {
-                                dst: RegisterId(i + 1),
-                                src: Operand::Register { id: args[i] },
-                                span: *span,
-                            });
-                        }
-                    }
-
-                    let mut call_reg = *function_register;
-                    // 如果function register 是r1-r4，则需要先mov到r0
-                    if function_register.0 >= 1 && function_register.0 <= 4 {
-                        // 之前已经压栈了，现在需要load，注意offset位置
-                        new_instructions.push(Instruction::Load64 {
-                            dst: RegisterId(0),
-                            addr: self.stack_pointer_reg,
-                            offset: 32 - 8 * (function_register.0) as i64,
-                            span: *span,
-                        });
-                        call_reg = RegisterId(0);
-                    }
-
-
-                    // // 将返回标签地址压栈
-                    // new_instructions.push(Instruction::Sub {
-                    //     dst: self.stack_pointer_reg,
-                    //     src1: Operand::Register { id: self.stack_pointer_reg },
-                    //     src2: Operand::Immediate { value: 8 },
-                    //     span: *span,
-                    // });
-                    // new_instructions.push(Instruction::Store64 {
-                    //     addr: self.stack_pointer_reg,
-                    //     offset: 0,
-                    //     src: Operand::Label { id: return_label },
-                    //     span: *span,
-                    // });
+                Instruction::CallIndirect { function_register, span, .. } => {
 
                     // 间接跳转
                     // 从函数寄存器加载函数地址到临时寄存器
                     new_instructions.push(Instruction::JumpIndirect {
-                        function_register: call_reg,
+                        function_register: *function_register,
                         span: *span,
                     });
-
-                    
-                    // 返回值处理（r0已经包含返回值）
-                    if let Some(result_reg) = result {
-                        new_instructions.push(Instruction::Move {
-                            dst: *result_reg,
-                            src: Operand::Register { id: RegisterId(0) },
-                            span: *span,
-                        });
-                    }
-
-                    // 恢复caller-saved寄存器
-                    for reg in (0..=4).rev() {
-                        // 跳过result_reg，这个是返回值，不需要恢复
-                        if reg == result.unwrap_or(RegisterId(10000)).0 {
-                            continue;
-                        }
-                        new_instructions.push(Instruction::Load64 {
-                            dst: RegisterId(reg),
-                            addr: self.stack_pointer_reg,
-                            offset: 0,
-                            span: *span,
-                        });
-                        new_instructions.push(Instruction::Add {
-                            dst: self.stack_pointer_reg,
-                            src1: Operand::Register { id: self.stack_pointer_reg },
-                            src2: Operand::Immediate { value: 8 },
-                            span: *span,
-                        });
-                    }
 
                 }
                 
