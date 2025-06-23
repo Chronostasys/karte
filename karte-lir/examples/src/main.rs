@@ -1,4 +1,4 @@
-use karte_lir::{LirProgram, LirFunction, Instruction, RegisterId, Operand, LabelId};
+use karte_lir::{LirProgram, LirFunction, Instruction, Register, Operand, LabelId};
 use karte_diagnostics::Span;
 
 fn main() {
@@ -10,7 +10,7 @@ fn main() {
     
     // 添加一些测试指令
     main_fn.add_instruction(Instruction::Move {
-        dst: RegisterId(1),
+        dst: Register::Virtual(1),
         src: Operand::Immediate { value: 42 },
         span: Span::new(0, 0),
     });
@@ -20,27 +20,27 @@ fn main() {
         target: LabelId(1), // 假设目标函数标签
         args: vec![], // 空的参数寄存器列表
         arg_operands: vec![
-            Operand::Register { id: RegisterId(1) }, // 参数1
+            Operand::Register { id: Register::Virtual(1) }, // 参数1
             Operand::Immediate { value: 10 }, // 参数2
         ],
-        result: Some(RegisterId(2)), // 返回值寄存器
+        result: Some(Register::Virtual(2)), // 返回值寄存器
         span: Span::new(0, 0),
     });
     
     // 添加一个CallIndirect指令（模拟间接调用）
     main_fn.add_instruction(Instruction::CallIndirect {
-        function_register: RegisterId(3), // 函数指针寄存器
+        function_register: Register::Virtual(3), // 函数指针寄存器
         args: vec![], // 空的参数寄存器列表
         arg_operands: vec![
-            Operand::Register { id: RegisterId(2) }, // 参数1
+            Operand::Register { id: Register::Virtual(2) }, // 参数1
         ],
-        result: Some(RegisterId(4)), // 返回值寄存器
+        result: Some(Register::Virtual(4)), // 返回值寄存器
         span: Span::new(0, 0),
     });
     
     // 添加返回指令
     main_fn.add_instruction(Instruction::Return {
-        value: Some(RegisterId(4)),
+        value: Some(Register::Virtual(4)),
         span: Span::new(0, 0),
     });
     

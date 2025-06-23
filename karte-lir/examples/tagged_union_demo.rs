@@ -4,7 +4,7 @@
 //! 避免与用户数据的编码冲突。
 
 use karte_lir::{
-    LirProgram, LirFunction, Instruction, Operand, RegisterId, 
+    LirProgram, LirFunction, Instruction, Operand, Register, 
     StructLayoutManager, AllocationType, tagged_union::TaggedUnionManager
 };
 use karte_diagnostics::Span;
@@ -81,7 +81,7 @@ fn demonstrate_lir_generation() {
 
     // 演示boolean值的指令生成
     println!("Boolean True值的LIR指令:");
-    let dst_reg = RegisterId(1);
+    let dst_reg = Register::Virtual(1);
     let true_tag_id = manager.get_constructor_id("True");
     let instructions = manager.generate_allocation_instructions(
         dst_reg,
@@ -96,7 +96,7 @@ fn demonstrate_lir_generation() {
 
     // 演示带数据的构造器指令生成
     println!("\nSome(42)值的LIR指令:");
-    let dst_reg = RegisterId(2);
+    let dst_reg = Register::Virtual(2);
     let some_tag_id = manager.get_constructor_id("Some");
     let data_operand = Some(Operand::Immediate { value: 42 });
     let instructions = manager.generate_allocation_instructions(
@@ -112,8 +112,8 @@ fn demonstrate_lir_generation() {
 
     // 演示标签检查指令
     println!("\n标签检查指令 (检查是否为True):");
-    let union_addr = RegisterId(1);
-    let temp_reg = RegisterId(10);
+    let union_addr = Register::Virtual(1);
+    let temp_reg = Register::Virtual(10);
     let expected_tag_id = manager.get_constructor_id("True");
     let check_instructions = manager.generate_tag_check_instructions(
         union_addr,
@@ -128,8 +128,8 @@ fn demonstrate_lir_generation() {
 
     // 演示数据提取指令
     println!("\n数据提取指令 (从Some中提取值):");
-    let union_addr = RegisterId(2);
-    let dst_reg = RegisterId(11);
+    let union_addr = Register::Virtual(2);
+    let dst_reg = Register::Virtual(11);
     let extract_instructions = manager.generate_data_extraction_instructions(
         union_addr,
         dst_reg,

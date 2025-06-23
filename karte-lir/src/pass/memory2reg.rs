@@ -1,4 +1,4 @@
-use crate::{LirFunction, Instruction, RegisterId, LabelId, Operand, AllocationType};
+use crate::{LirFunction, Instruction, Register, LabelId, Operand, AllocationType};
 use crate::pass::{AnalysisPass, AnalysisResult, AnalysisManager, FunctionPass, PassResult};
 use crate::pass::analysis::{ControlFlowGraph, ControlFlowNode};
 use crate::pass::instruction_transformer::{IndexInstructionTransformer, HistoryBasedTransformer, IndexTransformOperation};
@@ -13,7 +13,7 @@ pub struct StackSlot {
     /// 分配指令的位置
     pub alloc_instruction: usize,
     /// 分配的寄存器（保存栈地址）
-    pub address_register: RegisterId,
+    pub address_register: Register,
     /// 栈槽大小
     pub size: usize,
     /// 是否可以提升为寄存器
@@ -43,9 +43,9 @@ pub struct BasicBlock {
 #[derive(Debug, Clone)]
 pub struct Memory2RegAnalysis {
     /// 栈槽信息
-    pub stack_slots: HashMap<RegisterId, StackSlot>,
+    pub stack_slots: HashMap<Register, StackSlot>,
     /// 可提升的栈槽
-    pub promotable_slots: Vec<RegisterId>,
+    pub promotable_slots: Vec<Register>,
     /// 基本块信息（从CFG获取）
     pub basic_blocks: HashMap<usize, BasicBlock>,
     /// 需要插入φ节点的位置
@@ -58,11 +58,11 @@ pub struct Memory2RegAnalysis {
 #[derive(Debug, Clone)]
 pub struct PhiInsertion {
     pub block_id: usize,
-    pub variable: RegisterId,
-    pub dst_register: RegisterId,
+    pub variable: Register,
+    pub dst_register: Register,
     pub incoming: Vec<(LabelId, Operand)>,  // (前驱块标签, 值)
     /// 实际分配的φ节点结果寄存器（在插入时设置）
-    pub actual_dst_register: Option<RegisterId>,
+    pub actual_dst_register: Option<Register>,
     pub bb:BasicBlock,
 }
 
@@ -379,26 +379,26 @@ impl Memory2RegPass {
             match instr {
                 Instruction::Load64 { addr, offset: load_offset, .. } => {
                     if let Some(base_offset) = stack_addr_to_offset.get(addr) {
-                        *addr = RegisterId(7); // r7 = FP (修复：使用正确的帧指针寄存器)
+                        *addr = Register::Physical(7); // r7 = FP (修复：使用正确的帧指针寄存器)
                         // stack 向下方生长
                             *load_offset += *base_offset;
                         }
                     }
                 Instruction::Store64 { addr, offset: store_offset,src,.. } => {
                     if let Some(base_offset) = stack_addr_to_offset.get(addr) {
-                        *addr = RegisterId(7); // r7 = FP (修复：使用正确的帧指针寄存器)
+                        *addr = Register::Physical(7); // r7 = FP (修复：使用正确的帧指针寄存器)
                             *store_offset += *base_offset;
                     }
 
                     if let Operand::Register { id } = src {
                         if let Some(base_offset) = stack_addr_to_offset.get(id) {
                             // 需要插入计算地址的指令，并替换src
-                            let temp_reg = RegisterId(next_temp_register);
+                            let temp_reg = Register::Virtual(next_temp_register);
                             next_temp_register += 1;
                             let new_addr_offset = *base_offset;
                             let new_instruction = Instruction::Add {
                                 dst: temp_reg,
-                                src1: Operand::Register { id: RegisterId(7) },
+                                src1: Operand::Register { id: Register::Physical(7) },
                                 src2: Operand::Immediate { value: new_addr_offset },
                                 span: Span::dummy(),
                             };
@@ -410,12 +410,12 @@ impl Memory2RegPass {
                 Instruction::Add { dst, src1, src2, .. } => {
                     if let Operand::Register { id } = src1 {
                         if let Some(_base_offset) = stack_addr_to_offset.get(id) {
-                            *src1 = Operand::Register { id: RegisterId(7) }; // r7 = FP
+                            *src1 = Operand::Register { id: Register::Physical(7) }; // r7 = FP
                         }
                     }
                     if let Operand::Register { id } = src2 {
                         if let Some(_base_offset) = stack_addr_to_offset.get(id) {
-                            *src2 = Operand::Register { id: RegisterId(7) }; // r7 = FP
+                            *src2 = Operand::Register { id: Register::Physical(7) }; // r7 = FP
                         }
                     }
                 }
@@ -458,7 +458,7 @@ impl Memory2RegPass {
             
             // 为每个store指令生成溢出存储
             for &store_pos in &slot.stores {
-                let temp_reg = RegisterId(next_temp_register);
+                let temp_reg = Register::Virtual(next_temp_register);
                 next_temp_register += 1;
                 let load_instruction = Instruction::Load64 {
                     dst: temp_reg,
@@ -474,7 +474,7 @@ impl Memory2RegPass {
                 let load_dst_reg = if let Instruction::Load64 { dst, .. } = &function.instructions[load_pos] {
                     *dst
                 } else {
-                    let temp_reg = RegisterId(next_temp_register);
+                    let temp_reg = Register::Virtual(next_temp_register);
                     next_temp_register += 1;
                     temp_reg
                 };
@@ -667,7 +667,7 @@ impl Memory2RegPass {
                         dominance_info
                     );
 
-                    if phi_result_reg.0 != 998 {
+                    if phi_result_reg.id() != 998 {
                         println!("🎯   - 替换load为move: {:?} = {:?} -> {:?} = {:?}", dst, addr, dst, phi_result_reg);
                         let new_move = Instruction::Move {
                             dst: *dst,
@@ -769,7 +769,7 @@ impl Memory2RegPass {
         function: &LirFunction,
         basic_blocks: &HashMap<usize, BasicBlock>,
         dominance_info: &Option<DominanceInfo>
-    ) -> RegisterId {
+    ) -> Register {
         // 1. 找到load指令所在的基本块
         let mut current_block_id = None;
         
@@ -808,7 +808,7 @@ impl Memory2RegPass {
                 return store_reg;
             }
             
-            return RegisterId(998);
+            return Register::Virtual(998);
         };
 
         println!("🔍 load指令位于基本块 {}", block_id);
@@ -886,7 +886,7 @@ impl Memory2RegPass {
         }
 
         println!("❌ 无法找到合适的phi节点或store值");
-        RegisterId(998)
+        Register::Virtual(998)
     }
     
     /// 检查给定的标签块是否是φ节点的目标块
@@ -1208,7 +1208,7 @@ impl Memory2RegPass {
     }
     
     /// 查找寄存器的所有定义
-    fn find_all_definitions(&self, register: RegisterId, before_pos: usize, function: &LirFunction) -> Vec<usize> {
+    fn find_all_definitions(&self, register: Register, before_pos: usize, function: &LirFunction) -> Vec<usize> {
         let mut definitions = Vec::new();
         
         // 向前扫描，找到所有对该寄存器的定义
@@ -1273,7 +1273,7 @@ impl Memory2RegPass {
     }
 
     /// 追踪寄存器值的来源，用于跨栈槽值传播
-    fn trace_register_value(&self, register: RegisterId, before_pos: usize, function: &LirFunction) -> Option<Operand> {
+    fn trace_register_value(&self, register: Register, before_pos: usize, function: &LirFunction) -> Option<Operand> {
         println!("🔍 追踪寄存器 {:?} 在位置 {} 之前的值", register, before_pos);
         
         // 向前扫描，找到最近的对该寄存器的定义
@@ -1323,7 +1323,7 @@ impl Memory2RegPass {
     }
     
     /// 追踪栈槽的存储值
-    fn trace_stack_slot_value(&self, stack_addr: RegisterId, before_pos: usize, function: &LirFunction) -> Option<Operand> {
+    fn trace_stack_slot_value(&self, stack_addr: Register, before_pos: usize, function: &LirFunction) -> Option<Operand> {
         println!("🔍 追踪栈槽 {:?} 在位置 {} 之前的存储值", stack_addr, before_pos);
         
         // 向前扫描，找到最近的对该栈槽的存储
@@ -1393,7 +1393,7 @@ impl Memory2RegPass {
     }
     
     /// 检查寄存器是否是栈地址寄存器
-    fn is_stack_address_register(&self, register: RegisterId, function: &LirFunction) -> bool {
+    fn is_stack_address_register(&self, register: Register, function: &LirFunction) -> bool {
         // 查找是否有alloc指令分配了这个寄存器作为栈地址
         for instruction in &function.instructions {
             if let Instruction::Alloc { dst, .. } = instruction {
@@ -1449,7 +1449,7 @@ impl Memory2RegPass {
     }
     
     /// 找到被引用栈槽的实际值
-    fn find_referenced_stack_value(&self, ref_addr_reg: RegisterId, function: &LirFunction) -> Option<Operand> {
+    fn find_referenced_stack_value(&self, ref_addr_reg: Register, function: &LirFunction) -> Option<Operand> {
         // 查找对被引用栈槽的存储，获取其实际值
         for instruction in &function.instructions {
             if let Instruction::Store64 { addr, src, .. } = instruction {
@@ -1465,7 +1465,7 @@ impl Memory2RegPass {
     }
 
     /// 追踪寄存器是否是从栈槽加载的，返回栈槽的地址寄存器
-    fn trace_register_to_stack_load(&self, register: RegisterId, before_pos: usize, function: &LirFunction) -> Option<RegisterId> {
+    fn trace_register_to_stack_load(&self, register: Register, before_pos: usize, function: &LirFunction) -> Option<Register> {
         // 向前搜索寄存器的定义
         for i in (0..before_pos).rev() {
             match &function.instructions[i] {
@@ -1608,7 +1608,7 @@ impl Memory2RegPass {
                 }
                 
                 // 🔧 修复：创建phi节点到结果寄存器的映射
-                let mut phi_block_to_register: HashMap<usize, RegisterId> = phi_nodes_with_registers.iter()
+                let mut phi_block_to_register: HashMap<usize, Register> = phi_nodes_with_registers.iter()
                     .map(|(block_id, reg)| (*block_id, *reg))
                     .collect();
                 
@@ -1659,7 +1659,7 @@ impl Memory2RegPass {
         phi_block_id: usize,
         slot: &StackSlot,
         phi_blocks: &HashSet<usize>,
-        phi_block_to_register: &HashMap<usize, RegisterId>,
+        phi_block_to_register: &HashMap<usize, Register>,
         function: &LirFunction,
         basic_blocks: &HashMap<usize, BasicBlock>
     ) -> Operand {
@@ -1707,7 +1707,7 @@ impl Memory2RegPass {
         function: &LirFunction,
         basic_blocks: &HashMap<usize, BasicBlock>,
         phi_blocks: &HashSet<usize>,
-        phi_block_to_register: &HashMap<usize, RegisterId>
+        phi_block_to_register: &HashMap<usize, Register>
     ) -> Option<Operand> {
         println!("🔍 在路径上查找到达定义: 从块{}到块{}", start_block_id, target_block_id);
         
@@ -1973,21 +1973,21 @@ mod tests {
         
         // 添加一些测试指令
         function.instructions.push(Instruction::Move {
-            dst: RegisterId(1),
+            dst: Register::Virtual(1),
             src: Operand::Immediate { value: 42 },
             span: Span { start: 0, end: 0 },
         });
         
         function.instructions.push(Instruction::Store64 {
-            addr: RegisterId(2),
+            addr: Register::Virtual(2),
             offset: 0,
             src: Operand::Immediate { value: 100 },
             span: Span { start: 0, end: 0 },
         });
         
         function.instructions.push(Instruction::Load64 {
-            dst: RegisterId(3),
-            addr: RegisterId(2),
+            dst: Register::Virtual(3),
+            addr: Register::Virtual(2),
             offset: 0,
             span: Span { start: 0, end: 0 },
         });
@@ -1997,7 +1997,7 @@ mod tests {
         // 添加变换操作：删除第1个指令，替换第2个指令
         transformer.remove(1);
         transformer.replace(2, Instruction::Move {
-            dst: RegisterId(3),
+            dst: Register::Virtual(3),
             src: Operand::Immediate { value: 200 },
             span: Span { start: 0, end: 0 },
         });
@@ -2013,7 +2013,7 @@ mod tests {
         
         // 第一个指令应该是原始的Move
         if let Instruction::Move { dst, src, .. } = &function.instructions[0] {
-            assert_eq!(*dst, RegisterId(1));
+            assert_eq!(*dst, Register::Virtual(1));
             assert_eq!(*src, Operand::Immediate { value: 42 });
             println!("✅ 第一个指令正确保留");
         } else {
@@ -2022,7 +2022,7 @@ mod tests {
         
         // 第二个指令应该是替换后的Move
         if let Instruction::Move { dst, src, .. } = &function.instructions[1] {
-            assert_eq!(*dst, RegisterId(3));
+            assert_eq!(*dst, Register::Virtual(3));
             assert_eq!(*src, Operand::Immediate { value: 200 });
             println!("✅ 第二个指令正确替换");
         } else {
@@ -2044,7 +2044,7 @@ mod tests {
         // 添加一些测试指令
         for i in 0..5 {
             function.instructions.push(Instruction::Move {
-                dst: RegisterId(i),
+                dst: Register::Virtual(i),
                 src: Operand::Immediate { value: i as i64 },
                 span: Span { start: 0, end: 0 },
             });
@@ -2055,12 +2055,12 @@ mod tests {
         // 添加变换操作：删除第1个，替换第3个，插入到第2个位置
         transformer.remove_at(1);
         transformer.replace_at(3, Instruction::Move {
-            dst: RegisterId(99),
+            dst: Register::Virtual(99),
             src: Operand::Immediate { value: 999 },
             span: Span { start: 0, end: 0 },
         });
         transformer.insert_at(2, Instruction::Move {
-            dst: RegisterId(88),
+            dst: Register::Virtual(88),
             src: Operand::Immediate { value: 888 },
             span: Span { start: 0, end: 0 },
         });
@@ -2076,28 +2076,28 @@ mod tests {
         
         // 验证指令顺序
         if let Instruction::Move { dst, src, .. } = &function.instructions[0] {
-            assert_eq!(*dst, RegisterId(0));
+            assert_eq!(*dst, Register::Virtual(0));
             assert_eq!(*src, Operand::Immediate { value: 0 });
         }
         
         // 2 被替换了
         if let Instruction::Move { dst, src, .. } = &function.instructions[1] {
-            assert_eq!(*dst, RegisterId(88));
+            assert_eq!(*dst, Register::Virtual(88));
             assert_eq!(*src, Operand::Immediate { value: 888 });
         }
         
         if let Instruction::Move { dst, src, .. } = &function.instructions[2] {
-            assert_eq!(*dst, RegisterId(2));
+            assert_eq!(*dst, Register::Virtual(2));
             assert_eq!(*src, Operand::Immediate { value: 2 });
         }
         
         if let Instruction::Move { dst, src, .. } = &function.instructions[3] {
-            assert_eq!(*dst, RegisterId(99));
+            assert_eq!(*dst, Register::Virtual(99));
             assert_eq!(*src, Operand::Immediate { value: 999 });
         }
         
         if let Instruction::Move { dst, src, .. } = &function.instructions[4] {
-            assert_eq!(*dst, RegisterId(4));
+            assert_eq!(*dst, Register::Virtual(4));
             assert_eq!(*src, Operand::Immediate { value: 4 });
         }
         
@@ -2113,21 +2113,21 @@ mod tests {
         
         // 添加指令：模拟用户提供的示例
         function.instructions.push(Instruction::Label { id: LabelId(1), span: Span::dummy() });
-        function.instructions.push(Instruction::Alloc { dst: RegisterId(0), size: 8, alignment: 8, allocation_type: AllocationType::Stack, span: Span::dummy() });
-        function.instructions.push(Instruction::Alloc { dst: RegisterId(1), size: 8, alignment: 8, allocation_type: AllocationType::Stack, span: Span::dummy() });
-        function.instructions.push(Instruction::Alloc { dst: RegisterId(2), size: 8, alignment: 8, allocation_type: AllocationType::Stack, span: Span::dummy() });
+        function.instructions.push(Instruction::Alloc { dst: Register::Physical(0), size: 8, alignment: 8, allocation_type: AllocationType::Stack, span: Span::dummy() });
+        function.instructions.push(Instruction::Alloc { dst: Register::Virtual(1), size: 8, alignment: 8, allocation_type: AllocationType::Stack, span: Span::dummy() });
+        function.instructions.push(Instruction::Alloc { dst: Register::Virtual(2), size: 8, alignment: 8, allocation_type: AllocationType::Stack, span: Span::dummy() });
         
         function.instructions.push(Instruction::Label { id: LabelId(8), span: Span::dummy() });
-        function.instructions.push(Instruction::Store64 { addr: RegisterId(1), offset: 0, src: Operand::Immediate { value: 1 }, span: Span::dummy() });
-        function.instructions.push(Instruction::Load64 { dst: RegisterId(3), addr: RegisterId(1), offset: 0, span: Span::dummy() });
-        function.instructions.push(Instruction::Compare { src1: Operand::Register { id: RegisterId(3) }, src2: Operand::Immediate { value: 0 }, span: Span::dummy() });
+        function.instructions.push(Instruction::Store64 { addr: Register::Virtual(1), offset: 0, src: Operand::Immediate { value: 1 }, span: Span::dummy() });
+        function.instructions.push(Instruction::Load64 { dst: Register::Virtual(3), addr: Register::Virtual(1), offset: 0, span: Span::dummy() });
+        function.instructions.push(Instruction::Compare { src1: Operand::Register { id: Register::Virtual(3) }, src2: Operand::Immediate { value: 0 }, span: Span::dummy() });
         function.instructions.push(Instruction::JumpNotEqual { target: LabelId(6), span: Span::dummy() });
         function.instructions.push(Instruction::Jump { target: LabelId(7), span: Span::dummy() });
         
         function.instructions.push(Instruction::Label { id: LabelId(6), span: Span::dummy() });
-        function.instructions.push(Instruction::Store64 { addr: RegisterId(2), offset: 0, src: Operand::Immediate { value: 0 }, span: Span::dummy() });
-        function.instructions.push(Instruction::Load64 { dst: RegisterId(4), addr: RegisterId(2), offset: 0, span: Span::dummy() });
-        function.instructions.push(Instruction::Compare { src1: Operand::Register { id: RegisterId(4) }, src2: Operand::Immediate { value: 0 }, span: Span::dummy() });
+        function.instructions.push(Instruction::Store64 { addr: Register::Virtual(2), offset: 0, src: Operand::Immediate { value: 0 }, span: Span::dummy() });
+        function.instructions.push(Instruction::Load64 { dst: Register::Virtual(4), addr: Register::Virtual(2), offset: 0, span: Span::dummy() });
+        function.instructions.push(Instruction::Compare { src1: Operand::Register { id: Register::Virtual(4) }, src2: Operand::Immediate { value: 0 }, span: Span::dummy() });
         function.instructions.push(Instruction::JumpNotEqual { target: LabelId(3), span: Span::dummy() });
         function.instructions.push(Instruction::Jump { target: LabelId(5), span: Span::dummy() });
         
@@ -2135,15 +2135,15 @@ mod tests {
         function.instructions.push(Instruction::Jump { target: LabelId(4), span: Span::dummy() });
         
         function.instructions.push(Instruction::Label { id: LabelId(4), span: Span::dummy() });
-        function.instructions.push(Instruction::Load64 { dst: RegisterId(5), addr: RegisterId(0), offset: 0, span: Span::dummy() });
-        function.instructions.push(Instruction::Return { value: Some(RegisterId(5)), span: Span::dummy() });
+        function.instructions.push(Instruction::Load64 { dst: Register::Virtual(5), addr: Register::Physical(0), offset: 0, span: Span::dummy() });
+        function.instructions.push(Instruction::Return { value: Some(Register::Virtual(5)), span: Span::dummy() });
         
         function.instructions.push(Instruction::Label { id: LabelId(3), span: Span::dummy() });
-        function.instructions.push(Instruction::Store64 { addr: RegisterId(0), offset: 0, src: Operand::Immediate { value: 1 }, span: Span::dummy() });
+        function.instructions.push(Instruction::Store64 { addr: Register::Physical(0), offset: 0, src: Operand::Immediate { value: 1 }, span: Span::dummy() });
         function.instructions.push(Instruction::Jump { target: LabelId(2), span: Span::dummy() });
         
         function.instructions.push(Instruction::Label { id: LabelId(5), span: Span::dummy() });
-        function.instructions.push(Instruction::Store64 { addr: RegisterId(0), offset: 0, src: Operand::Immediate { value: 2 }, span: Span::dummy() });
+        function.instructions.push(Instruction::Store64 { addr: Register::Physical(0), offset: 0, src: Operand::Immediate { value: 2 }, span: Span::dummy() });
         function.instructions.push(Instruction::Jump { target: LabelId(2), span: Span::dummy() });
         
         function.instructions.push(Instruction::Label { id: LabelId(2), span: Span::dummy() });
@@ -2158,7 +2158,7 @@ mod tests {
         // 创建分析结果
         let mut analysis = Memory2RegAnalysis {
             stack_slots: HashMap::new(),
-            promotable_slots: vec![RegisterId(0)],
+            promotable_slots: vec![Register::Physical(0)],
             basic_blocks: HashMap::new(),
             phi_insertions: Vec::new(),
             dominance_info: None,
@@ -2177,7 +2177,7 @@ mod tests {
         // 自动收集store/load索引和块映射
         let mut slot = StackSlot {
             alloc_instruction: 1,
-            address_register: RegisterId(0),
+            address_register: Register::Physical(0),
             size: 8,
             promotable: true,
             loads: Vec::new(),
@@ -2194,13 +2194,13 @@ mod tests {
         }
         for (i, instr) in function.instructions.iter().enumerate() {
             match instr {
-                Instruction::Store64 { addr, .. } if *addr == RegisterId(0) => {
+                Instruction::Store64 { addr, .. } if *addr == Register::Physical(0) => {
                     slot.stores.push(i);
                     if let Some(&block_id) = inst_to_block.get(&i) {
                         slot.store_to_block.insert(i, block_id);
                     }
                 }
-                Instruction::Load64 { addr, .. } if *addr == RegisterId(0) => {
+                Instruction::Load64 { addr, .. } if *addr == Register::Physical(0) => {
                     slot.loads.push(i);
                     if let Some(&block_id) = inst_to_block.get(&i) {
                         slot.load_to_block.insert(i, block_id);
@@ -2209,7 +2209,7 @@ mod tests {
                 _ => {}
             }
         }
-        analysis.stack_slots.insert(RegisterId(0), slot);
+        analysis.stack_slots.insert(Register::Physical(0), slot);
         
         let dominance_info = DominanceInfo::default();
         
@@ -2276,38 +2276,38 @@ mod tests {
         
         // 添加指令：模拟2.log中的代码
         function.instructions.push(Instruction::Label { id: LabelId(1), span: Span::dummy() });
-        function.instructions.push(Instruction::Alloc { dst: RegisterId(0), size: 8, alignment: 8, allocation_type: AllocationType::Stack, span: Span::dummy() });
-        function.instructions.push(Instruction::Alloc { dst: RegisterId(1), size: 8, alignment: 8, allocation_type: AllocationType::Stack, span: Span::dummy() });
-        function.instructions.push(Instruction::Alloc { dst: RegisterId(2), size: 8, alignment: 8, allocation_type: AllocationType::Stack, span: Span::dummy() });
-        function.instructions.push(Instruction::Alloc { dst: RegisterId(3), size: 8, alignment: 8, allocation_type: AllocationType::Stack, span: Span::dummy() });
+        function.instructions.push(Instruction::Alloc { dst: Register::Physical(0), size: 8, alignment: 8, allocation_type: AllocationType::Stack, span: Span::dummy() });
+        function.instructions.push(Instruction::Alloc { dst: Register::Virtual(1), size: 8, alignment: 8, allocation_type: AllocationType::Stack, span: Span::dummy() });
+        function.instructions.push(Instruction::Alloc { dst: Register::Virtual(2), size: 8, alignment: 8, allocation_type: AllocationType::Stack, span: Span::dummy() });
+        function.instructions.push(Instruction::Alloc { dst: Register::Virtual(3), size: 8, alignment: 8, allocation_type: AllocationType::Stack, span: Span::dummy() });
         
         function.instructions.push(Instruction::Label { id: LabelId(5), span: Span::dummy() });
-        function.instructions.push(Instruction::Store64 { addr: RegisterId(3), offset: 0, src: Operand::Immediate { value: 1 }, span: Span::dummy() });
-        function.instructions.push(Instruction::Load64 { dst: RegisterId(5), addr: RegisterId(3), offset: 0, span: Span::dummy() });
-        function.instructions.push(Instruction::Move { dst: RegisterId(8), src: Operand::Immediate { value: 1 }, span: Span::dummy() });
-        function.instructions.push(Instruction::Sub { dst: RegisterId(4), src1: Operand::Register { id: RegisterId(8) }, src2: Operand::Register { id: RegisterId(5) }, span: Span::dummy() });
-        function.instructions.push(Instruction::Store64 { addr: RegisterId(2), offset: 0, src: Operand::Register { id: RegisterId(4) }, span: Span::dummy() });
-        function.instructions.push(Instruction::Load64 { dst: RegisterId(10), addr: RegisterId(2), offset: 0, span: Span::dummy() });
-        function.instructions.push(Instruction::Move { dst: RegisterId(11), src: Operand::Immediate { value: 1 }, span: Span::dummy() });
-        function.instructions.push(Instruction::Sub { dst: RegisterId(9), src1: Operand::Register { id: RegisterId(11) }, src2: Operand::Register { id: RegisterId(10) }, span: Span::dummy() });
-        function.instructions.push(Instruction::Store64 { addr: RegisterId(1), offset: 0, src: Operand::Register { id: RegisterId(9) }, span: Span::dummy() });
-        function.instructions.push(Instruction::Load64 { dst: RegisterId(12), addr: RegisterId(1), offset: 0, span: Span::dummy() });
-        function.instructions.push(Instruction::Compare { src1: Operand::Register { id: RegisterId(12) }, src2: Operand::Immediate { value: 1 }, span: Span::dummy() });
+        function.instructions.push(Instruction::Store64 { addr: Register::Virtual(3), offset: 0, src: Operand::Immediate { value: 1 }, span: Span::dummy() });
+        function.instructions.push(Instruction::Load64 { dst: Register::Virtual(5), addr: Register::Virtual(3), offset: 0, span: Span::dummy() });
+        function.instructions.push(Instruction::Move { dst: Register::Virtual(8), src: Operand::Immediate { value: 1 }, span: Span::dummy() });
+        function.instructions.push(Instruction::Sub { dst: Register::Virtual(4), src1: Operand::Register { id: Register::Virtual(8) }, src2: Operand::Register { id: Register::Virtual(5) }, span: Span::dummy() });
+        function.instructions.push(Instruction::Store64 { addr: Register::Virtual(2), offset: 0, src: Operand::Register { id: Register::Virtual(4) }, span: Span::dummy() });
+        function.instructions.push(Instruction::Load64 { dst: Register::Virtual(10), addr: Register::Virtual(2), offset: 0, span: Span::dummy() });
+        function.instructions.push(Instruction::Move { dst: Register::Virtual(11), src: Operand::Immediate { value: 1 }, span: Span::dummy() });
+        function.instructions.push(Instruction::Sub { dst: Register::Virtual(9), src1: Operand::Register { id: Register::Virtual(11) }, src2: Operand::Register { id: Register::Virtual(10) }, span: Span::dummy() });
+        function.instructions.push(Instruction::Store64 { addr: Register::Virtual(1), offset: 0, src: Operand::Register { id: Register::Virtual(9) }, span: Span::dummy() });
+        function.instructions.push(Instruction::Load64 { dst: Register::Virtual(12), addr: Register::Virtual(1), offset: 0, span: Span::dummy() });
+        function.instructions.push(Instruction::Compare { src1: Operand::Register { id: Register::Virtual(12) }, src2: Operand::Immediate { value: 1 }, span: Span::dummy() });
         function.instructions.push(Instruction::JumpEqual { target: LabelId(2), span: Span::dummy() });
-        function.instructions.push(Instruction::Compare { src1: Operand::Register { id: RegisterId(12) }, src2: Operand::Immediate { value: 0 }, span: Span::dummy() });
+        function.instructions.push(Instruction::Compare { src1: Operand::Register { id: Register::Virtual(12) }, src2: Operand::Immediate { value: 0 }, span: Span::dummy() });
         function.instructions.push(Instruction::JumpEqual { target: LabelId(3), span: Span::dummy() });
         
         function.instructions.push(Instruction::Label { id: LabelId(2), span: Span::dummy() });
-        function.instructions.push(Instruction::Store64 { addr: RegisterId(0), offset: 0, src: Operand::Immediate { value: 1 }, span: Span::dummy() });
+        function.instructions.push(Instruction::Store64 { addr: Register::Physical(0), offset: 0, src: Operand::Immediate { value: 1 }, span: Span::dummy() });
         function.instructions.push(Instruction::Jump { target: LabelId(4), span: Span::dummy() });
         
         function.instructions.push(Instruction::Label { id: LabelId(3), span: Span::dummy() });
-        function.instructions.push(Instruction::Store64 { addr: RegisterId(0), offset: 0, src: Operand::Immediate { value: 0 }, span: Span::dummy() });
+        function.instructions.push(Instruction::Store64 { addr: Register::Physical(0), offset: 0, src: Operand::Immediate { value: 0 }, span: Span::dummy() });
         function.instructions.push(Instruction::Jump { target: LabelId(4), span: Span::dummy() });
         
         function.instructions.push(Instruction::Label { id: LabelId(4), span: Span::dummy() });
-        function.instructions.push(Instruction::Load64 { dst: RegisterId(13), addr: RegisterId(0), offset: 0, span: Span::dummy() });
-        function.instructions.push(Instruction::Return { value: Some(RegisterId(13)), span: Span::dummy() });
+        function.instructions.push(Instruction::Load64 { dst: Register::Virtual(13), addr: Register::Physical(0), offset: 0, span: Span::dummy() });
+        function.instructions.push(Instruction::Return { value: Some(Register::Virtual(13)), span: Span::dummy() });
         
         println!("🎯 创建返回1的测试函数，共 {} 条指令：", function.instructions.len());
         
@@ -2327,7 +2327,7 @@ mod tests {
         // 将CFG结果转换为Memory2RegAnalysis需要的格式
         let mut analysis = Memory2RegAnalysis {
             stack_slots: HashMap::new(),
-            promotable_slots: vec![RegisterId(0)],
+            promotable_slots: vec![Register::Physical(0)],
             basic_blocks: HashMap::new(),
             phi_insertions: Vec::new(),
             dominance_info: None,
@@ -2349,7 +2349,7 @@ mod tests {
         // 自动收集store/load索引和块映射
         let mut slot = StackSlot {
             alloc_instruction: 1,
-            address_register: RegisterId(0),
+            address_register: Register::Physical(0),
             size: 8,
             promotable: true,
             loads: Vec::new(),
@@ -2368,13 +2368,13 @@ mod tests {
         
         for (i, instr) in function.instructions.iter().enumerate() {
             match instr {
-                Instruction::Store64 { addr, .. } if *addr == RegisterId(0) => {
+                Instruction::Store64 { addr, .. } if *addr == Register::Physical(0) => {
                     slot.stores.push(i);
                     if let Some(&block_id) = inst_to_block.get(&i) {
                         slot.store_to_block.insert(i, block_id);
                     }
                 }
-                Instruction::Load64 { addr, .. } if *addr == RegisterId(0) => {
+                Instruction::Load64 { addr, .. } if *addr == Register::Physical(0) => {
                     slot.loads.push(i);
                     if let Some(&block_id) = inst_to_block.get(&i) {
                         slot.load_to_block.insert(i, block_id);
@@ -2383,7 +2383,7 @@ mod tests {
                 _ => {}
             }
         }
-        analysis.stack_slots.insert(RegisterId(0), slot);
+        analysis.stack_slots.insert(Register::Physical(0), slot);
         
         let dominance_info = DominanceInfo::default();
         

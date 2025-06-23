@@ -3,7 +3,7 @@
 //! 负责处理所有LIR指令的执行，提供完整的指令集支持
 
 use super::{ExecutionEngine, ProgramManager, InstructionResult};
-use karte_lir::{Instruction, RegisterId, Operand, LabelId};
+use karte_lir::{Instruction, Register, Operand, LabelId};
 use std::collections::HashMap;
 
 /// 指令处理器
@@ -123,14 +123,14 @@ impl InstructionProcessor {
     /// 处理移动指令
     fn handle_move(
         &mut self,
-        dst: &RegisterId,
+        dst: &Register,
         src: &Operand,
         engine: &mut ExecutionEngine,
     ) -> Result<InstructionResult, String> {
         // 检查是否是特殊的存储操作
         // 如果src是特殊标记寄存器(999)，这表示是一个存储操作
         if let Operand::Register { id } = src {
-            if id.0 == 999 {
+            if id.id() == 999 {
                 // 这是一个存储操作：dst是内存地址，src是要存储的值
                 let addr = engine.get_register(dst)? as usize;
                 let value = engine.get_register(id)?;
@@ -152,7 +152,7 @@ impl InstructionProcessor {
     /// 处理加法指令
     fn handle_add(
         &mut self,
-        dst: &RegisterId,
+        dst: &Register,
         src1: &Operand,
         src2: &Operand,
         engine: &mut ExecutionEngine,
@@ -166,7 +166,7 @@ impl InstructionProcessor {
     /// 处理减法指令
     fn handle_sub(
         &mut self,
-        dst: &RegisterId,
+        dst: &Register,
         src1: &Operand,
         src2: &Operand,
         engine: &mut ExecutionEngine,
@@ -180,7 +180,7 @@ impl InstructionProcessor {
     /// 处理乘法指令
     fn handle_mul(
         &mut self,
-        dst: &RegisterId,
+        dst: &Register,
         src1: &Operand,
         src2: &Operand,
         engine: &mut ExecutionEngine,
@@ -194,7 +194,7 @@ impl InstructionProcessor {
     /// 处理除法指令
     fn handle_div(
         &mut self,
-        dst: &RegisterId,
+        dst: &Register,
         src1: &Operand,
         src2: &Operand,
         engine: &mut ExecutionEngine,
@@ -250,8 +250,8 @@ impl InstructionProcessor {
     fn handle_call(
         &mut self,
         target: &LabelId,
-        args: &[RegisterId],
-        result: Option<&RegisterId>,
+        args: &[Register],
+        result: Option<&Register>,
         engine: &mut ExecutionEngine,
         program_manager: &ProgramManager,
     ) -> Result<InstructionResult, String> {
@@ -264,7 +264,7 @@ impl InstructionProcessor {
             // 如果有足够的参数寄存器，设置参数寄存器
             if i < engine.get_calling_convention().argument_registers.len() {
                 let param_reg = engine.get_calling_convention().argument_registers[i];
-                engine.set_register(&RegisterId(param_reg as usize), arg_value)?;
+                engine.set_register(&Register::Virtual(param_reg as usize), arg_value)?;
             }
         }
 
@@ -283,7 +283,7 @@ impl InstructionProcessor {
 
     fn handle_jump_indirect(
         &mut self,
-        function_register: &RegisterId,
+        function_register: &Register,
         engine: &mut ExecutionEngine,
         program_manager: &ProgramManager,
     ) -> Result<InstructionResult, String> {
@@ -292,7 +292,7 @@ impl InstructionProcessor {
         let target_pc = program_manager.get_label_pc(&target_label)?;
         // push call frame
         let current_pc = engine.get_pc();
-        engine.push_call_frame(current_pc + 1, Some(RegisterId(0)))?;
+        engine.push_call_frame(current_pc + 1, Some(Register::Physical(0)))?;
 
         Ok(InstructionResult::Jump(target_pc))
     }
@@ -300,9 +300,9 @@ impl InstructionProcessor {
     /// 处理间接函数调用
     fn handle_call_indirect(
         &mut self,
-        function_register: &RegisterId,
-        args: &[RegisterId],
-        result: Option<&RegisterId>,
+        function_register: &Register,
+        args: &[Register],
+        result: Option<&Register>,
         engine: &mut ExecutionEngine,
         program_manager: &ProgramManager,
     ) -> Result<InstructionResult, String> {
@@ -329,7 +329,7 @@ impl InstructionProcessor {
             // 如果有足够的参数寄存器，设置参数寄存器
             if i < engine.get_calling_convention().argument_registers.len() {
                 let param_reg = engine.get_calling_convention().argument_registers[i];
-                engine.set_register(&RegisterId(param_reg as usize), arg_value)?;
+                engine.set_register(&Register::Virtual(param_reg as usize), arg_value)?;
                 println!("  -> 设置参数寄存器r{} = {}", param_reg, arg_value);
             }
         }
@@ -363,7 +363,7 @@ impl InstructionProcessor {
     /// 处理函数返回
     fn handle_return(
         &mut self,
-        value: Option<&RegisterId>,
+        value: Option<&Register>,
         engine: &mut ExecutionEngine,
     ) -> Result<InstructionResult, String> {
         let return_value = if let Some(reg) = value {
@@ -378,7 +378,7 @@ impl InstructionProcessor {
     /// 处理Store64指令
     fn handle_store64(
         &mut self,
-        addr: &RegisterId,
+        addr: &Register,
         offset: i64,
         src: &Operand,
         engine: &mut ExecutionEngine,
@@ -397,8 +397,8 @@ impl InstructionProcessor {
     /// 处理Load64指令
     fn handle_load64(
         &mut self,
-        dst: &RegisterId,
-        addr: &RegisterId,
+        dst: &Register,
+        addr: &Register,
         offset: i64,
         engine: &mut ExecutionEngine,
     ) -> Result<InstructionResult, String> {
@@ -416,7 +416,7 @@ impl InstructionProcessor {
     /// 处理Alloc指令
     fn handle_alloc(
         &mut self,
-        dst: &RegisterId,
+        dst: &Register,
         size: usize,
         _alignment: usize,
         engine: &mut ExecutionEngine,
@@ -439,8 +439,8 @@ impl InstructionProcessor {
     /// 处理结构体字段加载
     fn handle_struct_field_load(
         &mut self,
-        dst: &RegisterId,
-        struct_addr: &RegisterId,
+        dst: &Register,
+        struct_addr: &Register,
         field_offset: usize,
         engine: &mut ExecutionEngine,
     ) -> Result<InstructionResult, String> {

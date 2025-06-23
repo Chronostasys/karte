@@ -1,5 +1,5 @@
 use crate::{
-    Instruction, LabelId, LirFunction, LirProgram, Operand, RegisterId,
+    Instruction, LabelId, LirFunction, LirProgram, Operand, Register,
     StructTypeId, AllocationType, StructLayoutManager, StructField, StructLayout,
     tagged_union::{TaggedUnionManager, TaggedUnionTag},
 };
@@ -39,7 +39,7 @@ pub struct LirLoweringContext {
     /// Tagged Union管理器
     tagged_union_manager: TaggedUnionManager,
     /// 栈分配追踪（统一的值存储策略）
-    stack_allocations: HashMap<String, RegisterId>,
+    stack_allocations: HashMap<String, Register>,
     /// 🔧 专业修复：全局结构体类型信息
     global_struct_types: HashMap<String, StructLayout>,
 }
@@ -104,12 +104,12 @@ impl LirLoweringContext {
     }
 
     /// 为值分配栈槽（Stack-First策略）
-    fn allocate_stack_slot_for_value(&mut self, value: &Value) -> RegisterId {
+    fn allocate_stack_slot_for_value(&mut self, value: &Value) -> Register {
         self.allocate_stack_slot_for_value_with_instruction(value, true)
     }
     
     /// 为值分配栈槽，可以选择是否生成alloc指令
-    fn allocate_stack_slot_for_value_with_instruction(&mut self, value: &Value, generate_alloc: bool) -> RegisterId {
+    fn allocate_stack_slot_for_value_with_instruction(&mut self, value: &Value, generate_alloc: bool) -> Register {
         let key = value_to_key(value);
         
         // 🔧 关键修复：检查是否已经为这个值分配了栈槽
@@ -171,12 +171,12 @@ impl LirLoweringContext {
     }
 
     /// 为值分配寄存器（简化版：主要用于函数参数）
-    fn allocate_register_for_value(&mut self, value: &Value) -> RegisterId {
+    fn allocate_register_for_value(&mut self, value: &Value) -> Register {
         // 检查是否是函数参数 - 函数参数仍然使用寄存器传递
         if let Value::Variable { name } = value {
             if let Some(param_index) = self.current_function_params.iter().position(|p| p == name) {
                 // 函数参数使用固定的寄存器：r1, r2, r3, r4（跳过r0作为特殊用途）
-                return RegisterId(param_index + 1);
+                return Register::Virtual(param_index + 1);
             }
         }
         
@@ -266,7 +266,7 @@ impl LirLoweringContext {
                     
                     // 将参数值存储到栈（如果需要）
                     if let Some(param_index) = self.current_function_params.iter().position(|p| p == name) {
-                        let param_reg = RegisterId(param_index + 1);
+                        let param_reg = Register::Virtual(param_index + 1);
                         self.add_instruction(Instruction::Store64 {
                             addr: stack_addr,
                             offset: 0,
@@ -349,7 +349,7 @@ impl LirLoweringContext {
         if let Value::Variable { name } = value {
             if self.current_function_params.contains(name) {
                 if let Some(param_index) = self.current_function_params.iter().position(|p| p == name) {
-                    let param_reg = RegisterId(param_index + 1); // 参数寄存器: r1, r2, r3, r4
+                    let param_reg = Register::Virtual(param_index + 1); // 参数寄存器: r1, r2, r3, r4
                     println!("🔧 函数参数 {} 在lower_to_rvalue中直接使用寄存器 {:?}", name, param_reg);
                     return Operand::Register { id: param_reg };
                 }
@@ -427,7 +427,7 @@ impl LirLoweringContext {
         if let Value::Variable { name } = value {
             if self.current_function_params.contains(name) {
                 if let Some(param_index) = self.current_function_params.iter().position(|p| p == name) {
-                    let param_reg = RegisterId(param_index + 1); // 参数寄存器: r1, r2, r3, r4
+                    let param_reg = Register::Virtual(param_index + 1); // 参数寄存器: r1, r2, r3, r4
                     println!("🔧 函数参数 {} 直接使用寄存器 {:?}", name, param_reg);
                     return Operand::Register { id: param_reg };
                 }
@@ -504,7 +504,7 @@ impl LirLoweringContext {
     }
     
     /// 初始化栈上的值
-         fn initialize_stack_value(&mut self, value: &Value, stack_addr: RegisterId) {
+         fn initialize_stack_value(&mut self, value: &Value, stack_addr: Register) {
          match value {
              Value::Boolean { value } => {
                  // Bool特殊处理：直接存储0/1值，不使用Tagged Union
@@ -650,7 +650,7 @@ impl LirLoweringContext {
     }
 
     /// 处理结构体值，分配内存并初始化字段
-    fn handle_struct_value(&mut self, name: &str, fields: &std::collections::BTreeMap<String, Value>) -> Result<RegisterId, String> {
+    fn handle_struct_value(&mut self, name: &str, fields: &std::collections::BTreeMap<String, Value>) -> Result<Register, String> {
         // 🔧 修复：按照fix_struct.md文档的正确实现，同时兼容内置结构体
         // 1. 计算布局：根据结构体类型定义，计算出结构体的总大小和每个字段的偏移量
         let layout = if let Some(global_layout) = self.global_struct_types.get(name) {
@@ -841,7 +841,7 @@ impl LirLoweringContext {
     }
     
     /// 为boolean值创建Tagged Union结构体
-    fn create_tagged_union_for_boolean(&mut self, value: bool) -> RegisterId {
+    fn create_tagged_union_for_boolean(&mut self, value: bool) -> Register {
         let tag = if value {
             TaggedUnionTag::bool_true()
         } else {
@@ -866,7 +866,7 @@ impl LirLoweringContext {
     }
     
     /// 为构造器创建Tagged Union结构体
-    fn create_tagged_union_for_constructor(&mut self, name: &str, arg: Option<&Value>) -> RegisterId {
+    fn create_tagged_union_for_constructor(&mut self, name: &str, arg: Option<&Value>) -> Register {
         let tag_id = self.tagged_union_manager.get_constructor_id(name);
         let struct_addr = self.current_function_mut().new_register();
         
@@ -891,7 +891,7 @@ impl LirLoweringContext {
     }
     
     /// 为限定构造器创建Tagged Union结构体
-    fn create_tagged_union_for_qualified_constructor(&mut self, type_name: &str, constructor_name: &str, arg: Option<&Value>) -> RegisterId {
+    fn create_tagged_union_for_qualified_constructor(&mut self, type_name: &str, constructor_name: &str, arg: Option<&Value>) -> Register {
         let tag_id = self.tagged_union_manager.get_qualified_constructor_id(type_name, constructor_name);
         let struct_addr = self.current_function_mut().new_register();
         
@@ -1498,7 +1498,7 @@ fn lower_statement(
                     let mut actual_arg_regs = vec![];
                     for (i, arg_op) in arg_operands.iter().enumerate() {
                         if i < 4 { // 最多支持4个参数
-                            let param_reg = RegisterId(i + 1); // 参数寄存器: r1, r2, r3, r4
+                            let param_reg = ctx.current_function_mut().new_register();
                             ctx.add_instruction(Instruction::Move {
                                 dst: param_reg,
                                 src: arg_op.clone(),
@@ -1531,7 +1531,7 @@ fn lower_statement(
                     if let Some(result_register) = result_reg {
                         let target_key = value_to_key(target.as_ref().unwrap());
                         // 将目标值映射为寄存器中的值，而不是栈地址
-                        let temp_value = Value::Temp { id: TempId(result_register.0) };
+                        let temp_value = Value::Temp { id: TempId(result_register.id()) };
                         // 简化：不再维护复杂的值映射，Stack-First策略已经处理了存储
                     }
                 }
@@ -1584,7 +1584,7 @@ fn lower_statement(
                         let mut actual_arg_regs = vec![];
                         for (i, arg_op) in arg_operands.iter().enumerate() {
                             if i < 4 { // 最多支持4个参数
-                                let param_reg = RegisterId(i + 1); // 参数寄存器: r1, r2, r3, r4
+                                let param_reg = ctx.current_function_mut().new_register();
                                 ctx.add_instruction(Instruction::Move {
                                     dst: param_reg,
                                     src: arg_op.clone(),
@@ -1655,7 +1655,7 @@ fn lower_statement(
                         let mut actual_arg_regs = vec![];
                         for (i, arg_op) in arg_operands.iter().enumerate() {
                             if i < 4 { // 最多支持4个参数
-                                let param_reg = RegisterId(i + 1); // 参数寄存器: r1, r2, r3, r4
+                                let param_reg =ctx.current_function_mut().new_register(); 
                                 ctx.add_instruction(Instruction::Move {
                                     dst: param_reg,
                                     src: arg_op.clone(),
@@ -1714,7 +1714,7 @@ fn lower_statement(
                     if let Some(result_register) = result_reg {
                         let target_key = value_to_key(target_value);
                         // 将目标值映射为寄存器中的值，而不是栈地址
-                        let temp_value = Value::Temp { id: TempId(result_register.0) };
+                        let temp_value = Value::Temp { id: TempId(result_register.id()) };
                         // 简化：不再维护复杂的值映射，Stack-First策略已经处理了存储
                     }
                 }

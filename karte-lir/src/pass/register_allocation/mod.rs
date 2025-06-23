@@ -40,7 +40,7 @@ pub use linear_scan::LinearScanAllocator;
 pub use types::*;
 
 use super::{AnalysisManager, FunctionPass, PassResult};
-use crate::{AllocationType, IndexInstructionTransformer, Instruction, LirFunction, Operand, RegisterId};
+use crate::{AllocationType, IndexInstructionTransformer, Instruction, LirFunction, Operand, Register};
 use karte_diagnostics::Span;
 use std::collections::{HashMap, HashSet};
 // 🔧 新增：导入instruction_transformer.rs中的智能变换系统
@@ -150,8 +150,11 @@ impl SimpleCallingConvention {
     }
     
     /// 检查寄存器是否是特殊寄存器
-    fn is_special_register(&self, reg: u8) -> bool {
-        self.special_registers.contains(&reg)
+    fn is_special_register(&self, reg: Register) -> bool {
+        match reg {
+            Register::Physical(id) => self.special_registers.contains(&id),
+            Register::Virtual(_) => false,
+        }
     }
     
     /// 检查寄存器是否是参数寄存器
@@ -212,7 +215,7 @@ impl FunctionPass for SimpleStackRegisterAllocation {
 
 impl SimpleStackRegisterAllocation {
     /// 收集函数中所有使用的虚拟寄存器
-    fn collect_virtual_registers(&self, function: &LirFunction) -> Vec<RegisterId> {
+    fn collect_virtual_registers(&self, function: &LirFunction) -> Vec<Register> {
         let mut registers = HashSet::new();
         
         println!("🔍 开始收集虚拟寄存器...");
@@ -233,9 +236,9 @@ impl SimpleStackRegisterAllocation {
         println!("🔍 收集到的所有寄存器: {:?}", registers);
         
         // 🔧 关键修复：确保确定性的寄存器顺序
-        let mut sorted_registers: Vec<RegisterId> = registers.into_iter()
+        let mut sorted_registers: Vec<Register> = registers.into_iter()
             .filter(|reg| {
-                let is_special = self.calling_convention.is_special_register(reg.0 as u8);
+                let is_special = self.calling_convention.is_special_register(*reg);
                 if is_special {
                     println!("  过滤特殊寄存器: {:?}", reg);
                 }
@@ -244,7 +247,7 @@ impl SimpleStackRegisterAllocation {
             .collect();
         
         // 按寄存器ID排序，确保每次运行结果一致
-        sorted_registers.sort_by_key(|reg| reg.0);
+        sorted_registers.sort_by_key(|reg| reg.id());
         
         println!("🎯 发现虚拟寄存器: {:?}", sorted_registers);
         sorted_registers
@@ -254,8 +257,8 @@ impl SimpleStackRegisterAllocation {
     fn build_calling_convention_allocation_map(
         &self, 
         function: &LirFunction, 
-        virtual_registers: &[RegisterId]
-    ) -> HashMap<RegisterId, AllocationTarget> {
+        virtual_registers: &[Register]
+    ) -> HashMap<Register, AllocationTarget> {
         println!("🎯 开始遵循调用约定的寄存器分配：{}", function.name);
         
         // 🔧 关键修复：首先进行生命周期分析
@@ -298,12 +301,32 @@ impl SimpleStackRegisterAllocation {
             used_physical_regs.insert(self.calling_convention.return_register);
             println!("  返回值寄存器 {:?} -> r{}", return_reg, self.calling_convention.return_register);
         }
+
+        // 第三步：根据我们的cc给函数参数和返回值插入映射
+        println!("🔧 第三步：分配函数调用寄存器");
+        for inst in &function.instructions {
+            match inst {
+                Instruction::Call {  args, result, span,.. } |
+                Instruction::CallIndirect {  args, result, span, .. } => {
+                    for (i,arg) in args.iter().enumerate() {
+                        allocation_map.insert(*arg, AllocationTarget::Register( self.calling_convention.argument_registers[i]));
+                        used_physical_regs.insert( self.calling_convention.argument_registers[i]);
+                    }
+                    // 返回值映射 cc的返回值
+                    if let Some(reg) = result  {
+                        allocation_map.insert(*reg, AllocationTarget::Register( self.calling_convention.return_register));
+                        used_physical_regs.insert( self.calling_convention.return_register);
+                    }
+                }
+                _ => {}
+            }
+        }
         
-        // 第三步：基于生命周期分析为其他虚拟寄存器分配物理寄存器
-        println!("🔧 第三步：分配其他虚拟寄存器");
+        // 第四步：基于生命周期分析为其他虚拟寄存器分配物理寄存器
+        println!("🔧 第四步：分配其他虚拟寄存器");
         
         // 🔧 关键修复：按生命周期开始时间排序，确保确定性分配
-        let mut remaining_registers: Vec<RegisterId> = virtual_registers.iter()
+        let mut remaining_registers: Vec<Register> = virtual_registers.iter()
             .filter(|&reg| !allocation_map.contains_key(reg))
             .copied()
             .collect();
@@ -311,7 +334,7 @@ impl SimpleStackRegisterAllocation {
         remaining_registers.sort_by(|&a, &b| {
             let start_a = lifetime_map.get(&a).map(|(start, _)| *start).unwrap_or(0);
             let start_b = lifetime_map.get(&b).map(|(start, _)| *start).unwrap_or(0);
-            start_a.cmp(&start_b).then_with(|| a.0.cmp(&b.0)) // 生命周期相同时按ID排序
+            start_a.cmp(&start_b).then_with(|| a.id().cmp(&b.id())) // 生命周期相同时按ID排序
         });
         
         // 🔧 调试：显示排序后的寄存器顺序
@@ -388,14 +411,14 @@ impl SimpleStackRegisterAllocation {
     /// 🔧 新方法：检查是否可以复用物理寄存器（基于生命周期分析）
     fn can_reuse_physical_register(
         &self,
-        virtual_reg: RegisterId,
+        virtual_reg: Register,
         physical_reg: u8,
-        allocation_map: &HashMap<RegisterId, AllocationTarget>,
-        lifetime_map: &HashMap<RegisterId, (usize, usize)>,
+        allocation_map: &HashMap<Register, AllocationTarget>,
+        lifetime_map: &HashMap<Register, (usize, usize)>,
     ) -> bool {
         let (current_start, current_end) = lifetime_map.get(&virtual_reg).copied().unwrap_or((0, 0));
         
-        println!("🔍 检查 {:?} 是否可以复用物理寄存器 r{}", virtual_reg, physical_reg);
+        println!("🔍 检查 {} 是否可以复用物理寄存器 r{}", virtual_reg, physical_reg);
         println!("  当前寄存器生命周期: [{}, {}]", current_start, current_end);
         
         // 查找所有已分配到该物理寄存器的虚拟寄存器
@@ -427,7 +450,7 @@ impl SimpleStackRegisterAllocation {
     }
     
     /// 🔧 新方法：查找函数的返回值寄存器
-    fn find_return_register(&self, function: &LirFunction) -> Option<RegisterId> {
+    fn find_return_register(&self, function: &LirFunction) -> Option<Register> {
         // 查找return指令中使用的寄存器
         for instruction in &function.instructions {
             if let Instruction::Return { value: Some(reg), .. } = instruction {
@@ -441,7 +464,7 @@ impl SimpleStackRegisterAllocation {
     fn apply_allocation_with_spilling(
         &mut self,
         function: &mut LirFunction,
-        allocation_map: &HashMap<RegisterId, AllocationTarget>,
+        allocation_map: &HashMap<Register, AllocationTarget>,
     ) -> PassResult {
         println!("🔧 开始基于生命周期分析的寄存器分配");
         
@@ -470,8 +493,8 @@ impl SimpleStackRegisterAllocation {
         
         if spilled_count > 0 {
             transformer.insert(1, Instruction::Sub {
-                dst: RegisterId(6), // SP
-                src1: Operand::Register { id: RegisterId(6) },
+                dst: Register::Physical(6), // SP
+                src1: Operand::Register { id: Register::Physical(6) },
                 src2: Operand::Immediate { value: (spilled_count * 8) as i64 },
                 span: Span::dummy(),
             });
@@ -519,7 +542,7 @@ impl SimpleStackRegisterAllocation {
         &self,
         transformer: &mut IndexInstructionTransformer,
         call_index: usize,
-        allocation_map: &HashMap<RegisterId, AllocationTarget>,
+        allocation_map: &HashMap<Register, AllocationTarget>,
     ) {
         println!("🎯 在函数调用前溢出所有寄存器");
         
@@ -530,8 +553,8 @@ impl SimpleStackRegisterAllocation {
         for &physical_reg in &self.calling_convention.allocatable_registers {
             // 1. 先调整栈指针（为存储分配空间）
             let adjust_sp_instruction = Instruction::Sub {
-                dst: RegisterId(6), // SP
-                src1: Operand::Register { id: RegisterId(6) },
+                dst: Register::Physical(6), // SP
+                src1: Operand::Register { id: Register::Physical(6) },
                 src2: Operand::Immediate { value: 8 },
                 span: Span::dummy(),
             };
@@ -540,9 +563,9 @@ impl SimpleStackRegisterAllocation {
             
             // 2. 存储寄存器值到新的栈顶位置
             let store_instruction = Instruction::Store64 {
-                addr: RegisterId(6), // SP（已经调整过的）
+                addr: Register::Physical(6), // SP（已经调整过的）
                 offset: 0, // 存储到当前栈顶
-                src: Operand::Register { id: RegisterId(physical_reg as usize) },
+                src: Operand::Register { id: Register::Virtual(physical_reg as usize) },
                 span: Span::dummy(),
             };
             transformer.insert(insert_index, store_instruction);
@@ -555,7 +578,7 @@ impl SimpleStackRegisterAllocation {
         &self,
         transformer: &mut IndexInstructionTransformer,
         after_call_index: usize,
-        allocation_map: &HashMap<RegisterId, AllocationTarget>,
+        allocation_map: &HashMap<Register, AllocationTarget>,
     ) {
         println!("🎯 在函数调用后恢复所有寄存器");
         
@@ -566,8 +589,8 @@ impl SimpleStackRegisterAllocation {
         for &physical_reg in self.calling_convention.allocatable_registers.iter().rev() {
             // 1. 从栈顶加载寄存器值
             let load_instruction = Instruction::Load64 {
-                dst: RegisterId(physical_reg as usize),
-                addr: RegisterId(6), // SP
+                dst: Register::Virtual(physical_reg as usize),
+                addr: Register::Physical(6), // SP
                 offset: 0, // 从当前栈顶加载
                 span: Span::dummy(),
             };
@@ -576,8 +599,8 @@ impl SimpleStackRegisterAllocation {
             
             // 2. 调整栈指针（释放存储空间）
             let adjust_sp_instruction = Instruction::Add {
-                dst: RegisterId(6), // SP
-                src1: Operand::Register { id: RegisterId(6) },
+                dst: Register::Physical(6), // SP
+                src1: Operand::Register { id: Register::Physical(6) },
                 src2: Operand::Immediate { value: 8 },
                 span: Span::dummy(),
             };
@@ -592,7 +615,7 @@ impl SimpleStackRegisterAllocation {
         transformer: &mut IndexInstructionTransformer,
         instruction_index: usize,
         instruction: &Instruction,
-        allocation_map: &HashMap<RegisterId, AllocationTarget>,
+        allocation_map: &HashMap<Register, AllocationTarget>,
     ) {
         // 获取指令使用的寄存器
         let used_registers = instruction.get_used_registers();
@@ -602,8 +625,8 @@ impl SimpleStackRegisterAllocation {
             if let Some(AllocationTarget::Spill(slot_id)) = allocation_map.get(&used_reg) {
                 // 插入加载指令
                 let load_instruction = Instruction::Load64 {
-                    dst: RegisterId(0), // 使用 r0 作为临时寄存器
-                    addr: RegisterId(6), // SP
+                    dst: Register::Physical(0), // 使用 r0 作为临时寄存器
+                    addr: Register::Physical(6), // SP
                     offset: -((*slot_id as i64 + 1) * 8), // 栈向下增长
                     span: Span::dummy(),
                 };
@@ -616,9 +639,9 @@ impl SimpleStackRegisterAllocation {
             if let Some(AllocationTarget::Spill(slot_id)) = allocation_map.get(&def_reg) {
                 // 插入存储指令
                 let store_instruction = Instruction::Store64 {
-                    addr: RegisterId(6), // SP
+                    addr: Register::Physical(6), // SP
                     offset: -((*slot_id as i64 + 1) * 8), // 栈向下增长
-                    src: Operand::Register { id: RegisterId(0) }, // 从 r0 存储
+                    src: Operand::Register { id: Register::Physical(0) }, // 从 r0 存储
                     span: Span::dummy(),
                 };
                 transformer.insert(instruction_index + 1, store_instruction);
@@ -630,7 +653,7 @@ impl SimpleStackRegisterAllocation {
     fn rewrite_registers(
         &self,
         function: &mut LirFunction,
-        allocation_map: &HashMap<RegisterId, AllocationTarget>,
+        allocation_map: &HashMap<Register, AllocationTarget>,
     ) {
         // 🔧 性能优化：预先计算所有寄存器替换映射，避免重复计算
         let replacements = self.build_register_replacements(allocation_map);
@@ -645,8 +668,8 @@ impl SimpleStackRegisterAllocation {
     /// 🔧 新方法：预先构建寄存器替换映射
     fn build_register_replacements(
         &self,
-        allocation_map: &HashMap<RegisterId, AllocationTarget>,
-    ) -> HashMap<RegisterId, RegisterId> {
+        allocation_map: &HashMap<Register, AllocationTarget>,
+    ) -> HashMap<Register, Register> {
         let mut replacements = HashMap::new();
         
         // 🔧 关键修复：只处理原始虚拟寄存器到最终物理寄存器的映射
@@ -654,22 +677,22 @@ impl SimpleStackRegisterAllocation {
         for (virtual_reg, target) in allocation_map {
             // 🔧 重要：只处理真正的虚拟寄存器（ID >= 6，r0-r5是物理寄存器）
             // 这样可以避免链式替换的问题
-            if virtual_reg.0 < 6 {  
-                println!("  跳过物理寄存器: {:?}", virtual_reg);
-                continue;
-            }
+            // if virtual_reg.id() < 6 {
+            //     println!("  跳过物理寄存器: {:?}", virtual_reg);
+            //     continue;
+            // }
             
             match target {
                 AllocationTarget::Register(physical_reg) => {
                     // 分配到物理寄存器的虚拟寄存器
-                    let new_reg = RegisterId(*physical_reg as usize);
+                    let new_reg = Register::Physical(*physical_reg);
                     replacements.insert(*virtual_reg, new_reg);
                     println!("  替换映射: {:?} -> r{}", virtual_reg, physical_reg);
                 }
                 AllocationTarget::Spill(spill_slot) => {
                     // 🔧 关键修复：溢出寄存器需要被重写为对应的临时寄存器
                     let temp_reg = self.get_temp_register_for_spill(*spill_slot);
-                    let new_reg = RegisterId(temp_reg);
+                    let new_reg = Register::Physical(temp_reg as _);
                     replacements.insert(*virtual_reg, new_reg);
                     println!("  替换映射: {:?} -> r{} (临时寄存器，槽{})", virtual_reg, temp_reg, spill_slot);
                 }
@@ -683,25 +706,25 @@ impl SimpleStackRegisterAllocation {
     fn apply_register_replacements(
         &self,
         instruction: &mut Instruction,
-        replacements: &HashMap<RegisterId, RegisterId>,
+        replacements: &HashMap<Register, Register>,
     ) {
         // 🔧 调试：打印指令替换前的状态
-        println!("🔧 替换前指令: {:?}", instruction);
+        println!("🔧 替换前指令: {}", instruction);
         
         // 🔧 性能优化：只对指令中实际存在的虚拟寄存器进行替换
         for (old_reg, new_reg) in replacements {
             if self.instruction_contains_register(instruction, *old_reg) {
-                println!("  🔄 替换寄存器 {:?} -> {:?}", old_reg, new_reg);
+                println!("  🔄 替换寄存器 {} -> {}", old_reg, new_reg);
                 instruction.replace_register(*old_reg, *new_reg);
             }
         }
         
         // 🔧 调试：打印指令替换后的状态
-        println!("🔧 替换后指令: {:?}", instruction);
+        println!("🔧 替换后指令: {}", instruction);
     }
     
     /// 🔧 新方法：检查指令是否包含指定的寄存器
-    fn instruction_contains_register(&self, instruction: &Instruction, reg: RegisterId) -> bool {
+    fn instruction_contains_register(&self, instruction: &Instruction, reg: Register) -> bool {
         // 检查目标寄存器
         if let Some(def_reg) = instruction.get_def_register() {
             if def_reg == reg {
@@ -715,7 +738,7 @@ impl SimpleStackRegisterAllocation {
     }
 
     /// 🔧 新方法：构建活跃度映射
-    fn build_liveness_map(&self, lifetimes: &[types::RegisterLifetime]) -> HashMap<usize, HashSet<RegisterId>> {
+    fn build_liveness_map(&self, lifetimes: &[types::RegisterLifetime]) -> HashMap<usize, HashSet<Register>> {
         let mut liveness_map = HashMap::new();
         
         // 为每个指令位置构建活跃寄存器集合
@@ -746,8 +769,8 @@ impl SimpleStackRegisterAllocation {
         transformer: &mut IndexInstructionTransformer,
         instruction_index: usize,
         instruction: &Instruction,
-        allocation_map: &HashMap<RegisterId, AllocationTarget>,
-        liveness_map: &HashMap<usize, HashSet<RegisterId>>,
+        allocation_map: &HashMap<Register, AllocationTarget>,
+        liveness_map: &HashMap<usize, HashSet<Register>>,
     ) {
         println!("🔧 处理指令 {}: {:?}", instruction_index, instruction);
         
@@ -770,8 +793,8 @@ impl SimpleStackRegisterAllocation {
                     let temp_physical_reg = self.get_temp_register_for_spill(*slot_id);
                     
                     let load_instruction = Instruction::Load64 {
-                        dst: RegisterId(temp_physical_reg),
-                        addr: RegisterId(6), // SP
+                        dst: Register::Physical(temp_physical_reg as _),
+                        addr: Register::Physical(6), // SP
                         offset: -((*slot_id as i64 + 1) * 8),
                         span: Span::dummy(),
                     };
@@ -792,9 +815,9 @@ impl SimpleStackRegisterAllocation {
                     let temp_physical_reg = self.get_temp_register_for_spill(*slot_id);
                     
                     let store_instruction = Instruction::Store64 {
-                        addr: RegisterId(6), // SP
+                        addr: Register::Physical(6), // SP
                         offset: -((*slot_id as i64 + 1) * 8),
-                        src: Operand::Register { id: RegisterId(temp_physical_reg) },
+                        src: Operand::Register { id: Register::Physical(temp_physical_reg as _) },
                         span: Span::dummy(),
                     };
                     transformer.insert(instruction_index + 1, store_instruction);
@@ -819,9 +842,9 @@ impl SimpleStackRegisterAllocation {
     /// 🔧 新方法：检查寄存器是否在后续指令中被使用
     fn check_if_used_later(
         &self,
-        register: RegisterId,
+        register: Register,
         current_index: usize,
-        liveness_map: &HashMap<usize, HashSet<RegisterId>>,
+        liveness_map: &HashMap<usize, HashSet<Register>>,
     ) -> bool {
         // 检查从当前指令之后的位置是否还有活跃的使用
         for (index, live_registers) in liveness_map {
@@ -838,8 +861,8 @@ impl SimpleStackRegisterAllocation {
         transformer: &mut IndexInstructionTransformer,
         instruction_index: usize,
         instruction: &Instruction,
-        allocation_map: &HashMap<RegisterId, AllocationTarget>,
-        liveness_map: &HashMap<usize, HashSet<RegisterId>>,
+        allocation_map: &HashMap<Register, AllocationTarget>,
+        liveness_map: &HashMap<usize, HashSet<Register>>,
     ) {
         println!("🔧 特殊处理函数调用指令 {}: {:?}", instruction_index, instruction);
         
@@ -869,8 +892,8 @@ impl SimpleStackRegisterAllocation {
                         used_reg, slot_id, temp_physical_reg);
                     
                     let load_instruction = Instruction::Load64 {
-                        dst: RegisterId(temp_physical_reg),
-                        addr: RegisterId(6), // SP
+                        dst: Register::Physical(temp_physical_reg as _),
+                        addr: Register::Physical(6), // SP
                         offset: -((*slot_id as i64 + 1) * 8),
                         span: Span::dummy(),
                     };
@@ -897,9 +920,9 @@ impl SimpleStackRegisterAllocation {
                     
                     // 返回值寄存器使用调用约定的返回寄存器 r0
                     let store_instruction = Instruction::Store64 {
-                        addr: RegisterId(6), // SP
+                        addr: Register::Physical(6), // SP
                         offset: -((*slot_id as i64 + 1) * 8),
-                        src: Operand::Register { id: RegisterId(self.calling_convention.return_register as usize) },
+                        src: Operand::Register { id: Register::Physical(self.calling_convention.return_register) },
                         span: Span::dummy(),
                     };
                     // 🔧 关键：在函数调用后插入存储指令
@@ -907,16 +930,17 @@ impl SimpleStackRegisterAllocation {
                 } else {
                     println!("  ⚠️  返回值寄存器 {:?} 在后续未被使用，跳过存储", def_reg);
                 }
-            } else {
-                // 不需要溢出，mov到目标寄存器
-                let mov_instruction = Instruction::Move {
-                    dst: def_reg,
-                    src: Operand::Register { id: RegisterId(self.calling_convention.return_register as usize) },
-                    span: Span::dummy(),
-                };
-                transformer.insert(instruction_index + 1, mov_instruction);
-
             }
+            //  else {
+            //     // 不需要溢出，mov到目标寄存器
+            //     let mov_instruction = Instruction::Move {
+            //         dst: def_reg,
+            //         src: Operand::Register { id: Register::Virtual(self.calling_convention.return_register as usize) },
+            //         span: Span::dummy(),
+            //     };
+            //     transformer.insert(instruction_index + 1, mov_instruction);
+
+            // }
         }
     }
     
@@ -924,7 +948,7 @@ impl SimpleStackRegisterAllocation {
     fn get_unique_temp_register_for_call(
         &self,
         next_temp_register: &mut usize,
-        temp_register_assignments: &HashMap<RegisterId, usize>,
+        temp_register_assignments: &HashMap<Register, usize>,
     ) -> usize {
         // 从可分配寄存器中选择一个未被使用的
         for &physical_reg in &self.calling_convention.allocatable_registers {
@@ -944,9 +968,9 @@ impl SimpleStackRegisterAllocation {
     /// 🔧 新方法：检查寄存器是否在函数调用后被使用
     fn check_if_used_after_call(
         &self,
-        register: RegisterId,
+        register: Register,
         call_index: usize,
-        liveness_map: &HashMap<usize, HashSet<RegisterId>>,
+        liveness_map: &HashMap<usize, HashSet<Register>>,
     ) -> bool {
         // 检查从函数调用后的位置开始，是否还有活跃的使用
         for (index, live_registers) in liveness_map {
@@ -961,7 +985,7 @@ impl SimpleStackRegisterAllocation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AllocationType, Instruction, LirFunction, Operand, RegisterId};
+    use crate::{AllocationType, Instruction, LirFunction, Operand, Register};
     use karte_diagnostics::Span;
 
     #[test]
@@ -969,11 +993,11 @@ mod tests {
         // 创建一个简单的测试函数
         let mut function = LirFunction {
             name: "test_function".to_string(),
-            parameter_registers: vec![RegisterId(100), RegisterId(101)],
+            parameter_registers: vec![Register::Virtual(100), Register::Virtual(101)],
             instructions: vec![
                 // alloc指令 - 栈分配
                 Instruction::Alloc {
-                    dst: RegisterId(200),
+                    dst: Register::Virtual(200),
                     size: 8,
                     alignment: 8,
                     allocation_type: AllocationType::Stack,
@@ -981,7 +1005,7 @@ mod tests {
                 },
                 // alloc指令 - 堆分配
                 Instruction::Alloc {
-                    dst: RegisterId(201),
+                    dst: Register::Virtual(201),
                     size: 16,
                     alignment: 8,
                     allocation_type: AllocationType::Heap,
@@ -989,19 +1013,19 @@ mod tests {
                 },
                 // add指令 - 栈地址计算
                 Instruction::Add {
-                    dst: RegisterId(202),
-                    src1: Operand::Register { id: RegisterId(7) }, // FP
+                    dst: Register::Virtual(202),
+                    src1: Operand::Register { id: Register::Physical(7) }, // FP
                     src2: Operand::Immediate { value: -8 },
                     span: Span::dummy(),
                 },
                 // 普通数据操作
                 Instruction::Add {
-                    dst: RegisterId(203),
+                    dst: Register::Virtual(203),
                     src1: Operand::Register {
-                        id: RegisterId(100),
+                        id: Register::Virtual(100),
                     },
                     src2: Operand::Register {
-                        id: RegisterId(101),
+                        id: Register::Virtual(101),
                     },
                     span: Span::dummy(),
                 },
@@ -1019,37 +1043,37 @@ mod tests {
 
         // 验证函数参数类型
         assert_eq!(
-            register_types.get(&RegisterId(100)),
+            register_types.get(&Register::Virtual(100)),
             Some(&RegisterType::FunctionParameter)
         );
         assert_eq!(
-            register_types.get(&RegisterId(101)),
+            register_types.get(&Register::Virtual(101)),
             Some(&RegisterType::FunctionParameter)
         );
 
         // 验证栈地址寄存器类型
         assert_eq!(
-            register_types.get(&RegisterId(200)),
+            register_types.get(&Register::Virtual(200)),
             Some(&RegisterType::StackAddress)
         ); // 栈alloc
         assert_eq!(
-            register_types.get(&RegisterId(202)),
+            register_types.get(&Register::Virtual(202)),
             Some(&RegisterType::StackAddress)
         ); // FP + offset
 
         // 验证数据寄存器类型
         assert_eq!(
-            register_types.get(&RegisterId(201)),
+            register_types.get(&Register::Virtual(201)),
             Some(&RegisterType::Data)
         ); // 堆alloc
         assert_eq!(
-            register_types.get(&RegisterId(203)),
+            register_types.get(&Register::Virtual(203)),
             Some(&RegisterType::Data)
         ); // 普通计算
 
         // 验证生命周期中的寄存器类型
         for lifetime in &lifetimes {
-            match lifetime.register.0 {
+            match lifetime.register.id() {
                 100 | 101 => assert_eq!(lifetime.register_type, RegisterType::FunctionParameter),
                 200 | 202 => assert_eq!(lifetime.register_type, RegisterType::StackAddress),
                 201 | 203 => assert_eq!(lifetime.register_type, RegisterType::Data),
@@ -1075,7 +1099,7 @@ mod tests {
 #[cfg(test)]
 mod simple_stack_tests {
     use super::*;
-    use crate::{Instruction, LirFunction, Operand, RegisterId};
+    use crate::{Instruction, LirFunction, Operand, Register};
     use karte_diagnostics::Span;
     use std::collections::HashMap;
 
@@ -1091,91 +1115,91 @@ mod simple_stack_tests {
                 Instruction::Label { id: crate::LabelId(1), span: Span::dummy() },
                 // mov r1, #1
                 Instruction::Move {
-                    dst: RegisterId(1),
+                    dst: Register::Virtual(1),
                     src: Operand::Immediate { value: 1 },
                     span: Span::dummy(),
                 },
                 // mov r2, #2
                 Instruction::Move {
-                    dst: RegisterId(2),
+                    dst: Register::Virtual(2),
                     src: Operand::Immediate { value: 2 },
                     span: Span::dummy(),
                 },
                 // mov r3, #3
                 Instruction::Move {
-                    dst: RegisterId(3),
+                    dst: Register::Virtual(3),
                     src: Operand::Immediate { value: 3 },
                     span: Span::dummy(),
                 },
                 // mov r4, #4
                 Instruction::Move {
-                    dst: RegisterId(4),
+                    dst: Register::Virtual(4),
                     src: Operand::Immediate { value: 4 },
                     span: Span::dummy(),
                 },
                 // mov r5, #5
                 Instruction::Move {
-                    dst: RegisterId(5),
+                    dst: Register::Virtual(5),
                     src: Operand::Immediate { value: 5 },
                     span: Span::dummy(),
                 },
                 // mov r8, #6
                 Instruction::Move {
-                    dst: RegisterId(8),
+                    dst: Register::Virtual(8),
                     src: Operand::Immediate { value: 6 },
                     span: Span::dummy(),
                 },
                 // mov r9, #7
                 Instruction::Move {
-                    dst: RegisterId(9),
+                    dst: Register::Virtual(9),
                     src: Operand::Immediate { value: 7 },
                     span: Span::dummy(),
                 },
                 // add r10, r8, r9
                 Instruction::Add {
-                    dst: RegisterId(10),
-                    src1: Operand::Register { id: RegisterId(8) },
-                    src2: Operand::Register { id: RegisterId(9) },
+                    dst: Register::Virtual(10),
+                    src1: Operand::Register { id: Register::Virtual(8) },
+                    src2: Operand::Register { id: Register::Virtual(9) },
                     span: Span::dummy(),
                 },
                 // add r11, r5, r10
                 Instruction::Add {
-                    dst: RegisterId(11),
-                    src1: Operand::Register { id: RegisterId(5) },
-                    src2: Operand::Register { id: RegisterId(10) },
+                    dst: Register::Virtual(11),
+                    src1: Operand::Register { id: Register::Virtual(5) },
+                    src2: Operand::Register { id: Register::Virtual(10) },
                     span: Span::dummy(),
                 },
                 // add r12, r4, r11
                 Instruction::Add {
-                    dst: RegisterId(12),
-                    src1: Operand::Register { id: RegisterId(4) },
-                    src2: Operand::Register { id: RegisterId(11) },
+                    dst: Register::Virtual(12),
+                    src1: Operand::Register { id: Register::Virtual(4) },
+                    src2: Operand::Register { id: Register::Virtual(11) },
                     span: Span::dummy(),
                 },
                 // add r13, r3, r12
                 Instruction::Add {
-                    dst: RegisterId(13),
-                    src1: Operand::Register { id: RegisterId(3) },
-                    src2: Operand::Register { id: RegisterId(12) },
+                    dst: Register::Virtual(13),
+                    src1: Operand::Register { id: Register::Virtual(3) },
+                    src2: Operand::Register { id: Register::Virtual(12) },
                     span: Span::dummy(),
                 },
                 // add r14, r2, r13
                 Instruction::Add {
-                    dst: RegisterId(14),
-                    src1: Operand::Register { id: RegisterId(2) },
-                    src2: Operand::Register { id: RegisterId(13) },
+                    dst: Register::Virtual(14),
+                    src1: Operand::Register { id: Register::Virtual(2) },
+                    src2: Operand::Register { id: Register::Virtual(13) },
                     span: Span::dummy(),
                 },
                 // add r15, r1, r14
                 Instruction::Add {
-                    dst: RegisterId(15),
-                    src1: Operand::Register { id: RegisterId(1) },
-                    src2: Operand::Register { id: RegisterId(14) },
+                    dst: Register::Virtual(15),
+                    src1: Operand::Register { id: Register::Virtual(1) },
+                    src2: Operand::Register { id: Register::Virtual(14) },
                     span: Span::dummy(),
                 },
                 // ret r15
                 Instruction::Return {
-                    value: Some(RegisterId(15)),
+                    value: Some(Register::Virtual(15)),
                     span: Span::dummy(),
                 },
             ],
@@ -1208,7 +1232,7 @@ mod simple_stack_tests {
         // 验证是否插入了栈空间分配指令
         let has_stack_allocation = function.instructions.iter().any(|inst| {
             matches!(inst, Instruction::Sub { dst, src2, .. } 
-                if dst.0 == 6 && matches!(src2, Operand::Immediate { value } if *value > 0))
+                if dst.id() == 6 && matches!(src2, Operand::Immediate { value } if *value > 0))
         });
         
         // 验证寄存器是否被正确重写
@@ -1217,8 +1241,8 @@ mod simple_stack_tests {
             let def_reg = inst.get_def_register();
             
             // 检查所有使用的寄存器都是物理寄存器 (r0-r7)
-            let used_ok = used_regs.iter().all(|reg| reg.0 <= 7);
-            let def_ok = def_reg.map_or(true, |reg| reg.0 <= 7);
+            let used_ok = used_regs.iter().all(|reg| reg.id() <= 7);
+            let def_ok = def_reg.map_or(true, |reg| reg.id() <= 7);
             
             used_ok && def_ok
         });
@@ -1241,7 +1265,7 @@ mod simple_stack_tests {
         // 创建一个更复杂的函数，包含多个虚拟寄存器和函数调用
         let mut function = LirFunction {
             name: "complex_test".to_string(),
-            parameter_registers: vec![RegisterId(0)],
+            parameter_registers: vec![Register::Physical(0)],
             next_register: 200,
             next_label: 10,
             struct_types: HashMap::new(),
@@ -1250,7 +1274,7 @@ mod simple_stack_tests {
             instructions: vec![
                 // 分配结构体
                 Instruction::Alloc {
-                    dst: RegisterId(100),
+                    dst: Register::Virtual(100),
                     size: 16,
                     alignment: 8,
                     allocation_type: AllocationType::Stack,
@@ -1258,79 +1282,79 @@ mod simple_stack_tests {
                 },
                 // 存储函数地址
                 Instruction::Store64 {
-                    addr: RegisterId(100),
+                    addr: Register::Virtual(100),
                     offset: 0,
                     src: Operand::Immediate { value: 1 },
                     span: Span::dummy(),
                 },
                 // 设置多个虚拟寄存器
                 Instruction::Move {
-                    dst: RegisterId(101),
+                    dst: Register::Virtual(101),
                     src: Operand::Immediate { value: 42 },
                     span: Span::dummy(),
                 },
                 Instruction::Move {
-                    dst: RegisterId(102),
+                    dst: Register::Virtual(102),
                     src: Operand::Immediate { value: 43 },
                     span: Span::dummy(),
                 },
                 Instruction::Move {
-                    dst: RegisterId(103),
+                    dst: Register::Virtual(103),
                     src: Operand::Immediate { value: 44 },
                     span: Span::dummy(),
                 },
                 Instruction::Move {
-                    dst: RegisterId(104),
+                    dst: Register::Virtual(104),
                     src: Operand::Immediate { value: 45 },
                     span: Span::dummy(),
                 },
                 Instruction::Move {
-                    dst: RegisterId(105),
+                    dst: Register::Virtual(105),
                     src: Operand::Immediate { value: 46 },
                     span: Span::dummy(),
                 },
                 // 加载函数地址
                 Instruction::Load64 {
-                    dst: RegisterId(106),
-                    addr: RegisterId(100),
+                    dst: Register::Virtual(106),
+                    addr: Register::Virtual(100),
                     offset: 0,
                     span: Span::dummy(),
                 },
                 // 函数调用
                 Instruction::CallIndirect {
-                    function_register: RegisterId(106),
-                    args: vec![RegisterId(101)],
-                    arg_operands: vec![Operand::Register { id: RegisterId(101) }],
-                    result: Some(RegisterId(107)),
+                    function_register: Register::Virtual(106),
+                    args: vec![Register::Virtual(101)],
+                    arg_operands: vec![Operand::Register { id: Register::Virtual(101) }],
+                    result: Some(Register::Virtual(107)),
                     span: Span::dummy(),
                 },
                 // 使用函数调用结果和之前的寄存器
                 Instruction::Add {
-                    dst: RegisterId(108),
-                    src1: Operand::Register { id: RegisterId(107) },
-                    src2: Operand::Register { id: RegisterId(102) },
+                    dst: Register::Virtual(108),
+                    src1: Operand::Register { id: Register::Virtual(107) },
+                    src2: Operand::Register { id: Register::Virtual(102) },
                     span: Span::dummy(),
                 },
                 Instruction::Add {
-                    dst: RegisterId(109),
-                    src1: Operand::Register { id: RegisterId(108) },
-                    src2: Operand::Register { id: RegisterId(103) },
+                    dst: Register::Virtual(109),
+                    src1: Operand::Register { id: Register::Virtual(108) },
+                    src2: Operand::Register { id: Register::Virtual(103) },
                     span: Span::dummy(),
                 },
                 Instruction::Add {
-                    dst: RegisterId(110),
-                    src1: Operand::Register { id: RegisterId(109) },
-                    src2: Operand::Register { id: RegisterId(104) },
+                    dst: Register::Virtual(110),
+                    src1: Operand::Register { id: Register::Virtual(109) },
+                    src2: Operand::Register { id: Register::Virtual(104) },
                     span: Span::dummy(),
                 },
                 Instruction::Add {
-                    dst: RegisterId(111),
-                    src1: Operand::Register { id: RegisterId(110) },
-                    src2: Operand::Register { id: RegisterId(105) },
+                    dst: Register::Virtual(111),
+                    src1: Operand::Register { id: Register::Virtual(110) },
+                    src2: Operand::Register { id: Register::Virtual(105) },
                     span: Span::dummy(),
                 },
                 Instruction::Return {
-                    value: Some(RegisterId(111)),
+                    value: Some(Register::Virtual(111)),
                     span: Span::dummy(),
                 },
             ],
@@ -1369,11 +1393,11 @@ mod simple_stack_tests {
                     found_call_indirect = true;
                     println!("🔍 发现call_indirect指令在位置 {}", i);
                 }
-                Instruction::Store64 { addr, offset, .. } if *addr == RegisterId(6) => {
+                Instruction::Store64 { addr, offset, .. } if *addr == Register::Physical(6) => {
                     store_addresses.push(offset);
                     println!("🔍 发现store64指令: offset={}", offset);
                 }
-                Instruction::Load64 { addr, offset, .. } if *addr == RegisterId(6) => {
+                Instruction::Load64 { addr, offset, .. } if *addr == Register::Physical(6) => {
                     load_addresses.push(offset);
                     println!("🔍 发现load64指令: offset={}", offset);
                 }
@@ -1432,7 +1456,7 @@ pub fn run_simple_stack_register_allocation(function: &mut LirFunction) -> PassR
 #[cfg(test)]
 mod file_test {
     use super::*;
-    use crate::{Instruction, LirFunction, Operand, RegisterId};
+    use crate::{Instruction, LirFunction, Operand, Register};
     use karte_diagnostics::Span;
     use std::collections::HashMap;
 
@@ -1616,12 +1640,12 @@ mod file_test {
     }
     
     /// 解析寄存器
-    fn parse_register(s: &str) -> Result<RegisterId, String> {
+    fn parse_register(s: &str) -> Result<Register, String> {
         if s.starts_with('r') {
             let num_str = &s[1..];
             let num: usize = num_str.parse()
                 .map_err(|_| format!("Invalid register number: {}", s))?;
-            Ok(RegisterId(num))
+            Ok(Register::Virtual(num))
         } else {
             Err(format!("Invalid register format: {}", s))
         }
@@ -1692,8 +1716,8 @@ L1:
             let def_reg = inst.get_def_register();
             
             // 检查所有使用的寄存器都是物理寄存器 (r0-r7)
-            let used_ok = used_regs.iter().all(|reg| reg.0 <= 7);
-            let def_ok = def_reg.map_or(true, |reg| reg.0 <= 7);
+            let used_ok = used_regs.iter().all(|reg| reg.id() <= 7);
+            let def_ok = def_reg.map_or(true, |reg| reg.id() <= 7);
             
             used_ok && def_ok
         });
@@ -1701,7 +1725,7 @@ L1:
         // 验证是否有栈空间分配（因为有很多虚拟寄存器）
         let has_stack_allocation = function.instructions.iter().any(|inst| {
             matches!(inst, Instruction::Sub { dst, src2, .. } 
-                if dst.0 == 6 && matches!(src2, Operand::Immediate { value } if *value > 0))
+                if dst.id() == 6 && matches!(src2, Operand::Immediate { value } if *value > 0))
         });
         
         println!("\n✅ 验证结果:");
@@ -1750,15 +1774,15 @@ L1:
             if let Instruction::CallIndirect { function_register, args, .. } = instruction {
                 found_call_indirect = true;
                 println!("🔍 发现call_indirect指令:");
-                println!("  函数地址寄存器: r{}", function_register.0);
-                println!("  参数寄存器: {:?}", args.iter().map(|r| format!("r{}", r.0)).collect::<Vec<_>>());
+                println!("  函数地址寄存器: r{}", function_register.id());
+                println!("  参数寄存器: {:?}", args.iter().map(|r| format!("r{}", r.id())).collect::<Vec<_>>());
                 
                 // 验证函数地址寄存器在合理范围内
-                assert!(function_register.0 <= 4, "函数地址寄存器应该在r0-r4范围内");
+                assert!(function_register.id() <= 4, "函数地址寄存器应该在r0-r4范围内");
                 
                 // 验证参数寄存器在合理范围内
                 for arg in args {
-                    assert!(arg.0 <= 4, "参数寄存器应该在r0-r4范围内");
+                    assert!(arg.id() <= 4, "参数寄存器应该在r0-r4范围内");
                 }
             }
         }
@@ -1775,11 +1799,11 @@ L1:
                         if dst == function_register {
                             found_load64_before_call = true;
                             println!("🔍 发现load64指令为call_indirect准备函数地址:");
-                            println!("  load64 r{}, [r{}]", dst.0, addr.0);
-                            println!("  call_indirect r{}(...)", function_register.0);
+                            println!("  load64 r{}, [r{}]", dst.id(), addr.id());
+                            println!("  call_indirect r{}(...)", function_register.id());
                             
                             // 验证地址寄存器在合理范围内 (r0-r7)
-                            assert!(addr.0 <= 7, "地址寄存器应该在r0-r7范围内");
+                            assert!(addr.id() <= 7, "地址寄存器应该在r0-r7范围内");
                             break;
                         }
                     }
@@ -1798,25 +1822,25 @@ L1:
         // 创建一个有参数的函数
         let mut function = LirFunction {
             name: "test_func".to_string(),
-            parameter_registers: vec![RegisterId(100), RegisterId(101), RegisterId(102)], // 3个参数
+            parameter_registers: vec![Register::Virtual(100), Register::Virtual(101), Register::Virtual(102)], // 3个参数
             instructions: vec![
                 Instruction::Label { id: crate::LabelId(1), span: Span::dummy() },
                 // 使用参数寄存器
                 Instruction::Add {
-                    dst: RegisterId(200),
-                    src1: Operand::Register { id: RegisterId(100) }, // 第一个参数
-                    src2: Operand::Register { id: RegisterId(101) }, // 第二个参数
+                    dst: Register::Virtual(200),
+                    src1: Operand::Register { id: Register::Virtual(100) }, // 第一个参数
+                    src2: Operand::Register { id: Register::Virtual(101) }, // 第二个参数
                     span: Span::dummy(),
                 },
                 Instruction::Add {
-                    dst: RegisterId(201),
-                    src1: Operand::Register { id: RegisterId(200) },
-                    src2: Operand::Register { id: RegisterId(102) }, // 第三个参数
+                    dst: Register::Virtual(201),
+                    src1: Operand::Register { id: Register::Virtual(200) },
+                    src2: Operand::Register { id: Register::Virtual(102) }, // 第三个参数
                     span: Span::dummy(),
                 },
                 // 返回结果
                 Instruction::Return {
-                    value: Some(RegisterId(201)),
+                    value: Some(Register::Virtual(201)),
                     span: Span::dummy(),
                 },
             ],
@@ -1857,16 +1881,16 @@ L1:
                 Instruction::Add { src1, src2, .. } => {
                     // 检查是否使用了正确的参数寄存器
                     if let (Operand::Register { id: reg1 }, Operand::Register { id: reg2 }) = (src1, src2) {
-                        if (reg1.0 == 1 && reg2.0 == 2) || (reg1.0 == 2 && reg2.0 == 1) {
+                        if (reg1.id() == 1 && reg2.id() == 2) || (reg1.id() == 2 && reg2.id() == 1) {
                             found_param_usage = true;
-                            println!("✅ 找到正确的参数寄存器使用: r{} + r{}", reg1.0, reg2.0);
+                            println!("✅ 找到正确的参数寄存器使用: r{} + r{}", reg1.id(), reg2.id());
                         }
                     }
                 }
                 Instruction::Return { value: Some(reg), .. } => {
-                    if reg.0 == 0 {
+                    if reg.id() == 0 {
                         found_return_assignment = true;
-                        println!("✅ 找到正确的返回值寄存器: r{}", reg.0);
+                        println!("✅ 找到正确的返回值寄存器: r{}", reg.id());
                     }
                 }
                 _ => {}

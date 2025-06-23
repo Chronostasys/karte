@@ -3,7 +3,7 @@
 //! 提供统一的指令变换接口，支持基于索引的安全变换操作。
 //! 所有 pass 都应该使用这个系统来进行指令的插入、删除和替换操作。
 
-use crate::{LirFunction, Instruction, RegisterId, Operand};
+use crate::{LirFunction, Instruction, Register, Operand};
 use karte_diagnostics::Span;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -577,21 +577,21 @@ mod tests {
         
         // 添加一些测试指令
         function.instructions.push(Instruction::Move {
-            dst: RegisterId(1),
+            dst: Register::Virtual(1),
             src: Operand::Immediate { value: 42 },
             span: Span { start: 0, end: 0 },
         });
         
         function.instructions.push(Instruction::Store64 {
-            addr: RegisterId(2),
+            addr: Register::Virtual(2),
             offset: 0,
             src: Operand::Immediate { value: 100 },
             span: Span { start: 0, end: 0 },
         });
         
         function.instructions.push(Instruction::Load64 {
-            dst: RegisterId(3),
-            addr: RegisterId(2),
+            dst: Register::Virtual(3),
+            addr: Register::Virtual(2),
             offset: 0,
             span: Span { start: 0, end: 0 },
         });
@@ -601,7 +601,7 @@ mod tests {
         // 添加变换操作：删除第1个指令，替换第2个指令
         transformer.remove(1);
         transformer.replace(2, Instruction::Move {
-            dst: RegisterId(3),
+            dst: Register::Virtual(3),
             src: Operand::Immediate { value: 200 },
             span: Span { start: 0, end: 0 },
         });
@@ -617,7 +617,7 @@ mod tests {
         
         // 第一个指令应该是原始的Move
         if let Instruction::Move { dst, src, .. } = &function.instructions[0] {
-            assert_eq!(*dst, RegisterId(1));
+            assert_eq!(*dst, Register::Virtual(1));
             assert_eq!(*src, Operand::Immediate { value: 42 });
             println!("✅ 第一个指令正确保留");
         } else {
@@ -626,7 +626,7 @@ mod tests {
         
         // 第二个指令应该是替换后的Move
         if let Instruction::Move { dst, src, .. } = &function.instructions[1] {
-            assert_eq!(*dst, RegisterId(3));
+            assert_eq!(*dst, Register::Virtual(3));
             assert_eq!(*src, Operand::Immediate { value: 200 });
             println!("✅ 第二个指令正确替换");
         } else {
@@ -648,7 +648,7 @@ mod tests {
         // 添加一些测试指令
         for i in 0..5 {
             function.instructions.push(Instruction::Move {
-                dst: RegisterId(i),
+                dst: Register::Virtual(i),
                 src: Operand::Immediate { value: i as i64 },
                 span: Span { start: 0, end: 0 },
             });
@@ -659,12 +659,12 @@ mod tests {
         // 添加变换操作：删除第1个，替换第3个，插入到第2个位置
         transformer.remove_at(1);
         transformer.replace_at(3, Instruction::Move {
-            dst: RegisterId(99),
+            dst: Register::Virtual(99),
             src: Operand::Immediate { value: 999 },
             span: Span { start: 0, end: 0 },
         });
         transformer.insert_at(2, Instruction::Move {
-            dst: RegisterId(88),
+            dst: Register::Virtual(88),
             src: Operand::Immediate { value: 888 },
             span: Span { start: 0, end: 0 },
         });
@@ -680,27 +680,27 @@ mod tests {
         
         // 验证指令顺序
         if let Instruction::Move { dst, src, .. } = &function.instructions[0] {
-            assert_eq!(*dst, RegisterId(0));
+            assert_eq!(*dst, Register::Virtual(0));
             assert_eq!(*src, Operand::Immediate { value: 0 });
         }
         
         if let Instruction::Move { dst, src, .. } = &function.instructions[1] {
-            assert_eq!(*dst, RegisterId(88));
+            assert_eq!(*dst, Register::Virtual(88));
             assert_eq!(*src, Operand::Immediate { value: 888 });
         }
         
         if let Instruction::Move { dst, src, .. } = &function.instructions[2] {
-            assert_eq!(*dst, RegisterId(2));
+            assert_eq!(*dst, Register::Virtual(2));
             assert_eq!(*src, Operand::Immediate { value: 2 });
         }
         
         if let Instruction::Move { dst, src, .. } = &function.instructions[3] {
-            assert_eq!(*dst, RegisterId(99));
+            assert_eq!(*dst, Register::Virtual(99));
             assert_eq!(*src, Operand::Immediate { value: 999 });
         }
         
         if let Instruction::Move { dst, src, .. } = &function.instructions[4] {
-            assert_eq!(*dst, RegisterId(4));
+            assert_eq!(*dst, Register::Virtual(4));
             assert_eq!(*src, Operand::Immediate { value: 4 });
         }
         
@@ -719,7 +719,7 @@ mod tests {
         // 添加一些测试指令
         for i in 0..6 {
             function.instructions.push(Instruction::Move {
-                dst: RegisterId(i),
+                dst: Register::Virtual(i),
                 src: Operand::Immediate { value: i as i64 },
                 span: Span { start: 0, end: 0 },
             });
@@ -730,13 +730,13 @@ mod tests {
         // 添加多种变换操作
         transformer.remove(1); // index-based
         transformer.replace(2, Instruction::Move {
-            dst: RegisterId(100),
+            dst: Register::Virtual(100),
             src: Operand::Immediate { value: 100 },
             span: Span { start: 0, end: 0 },
         }); // index-based
         transformer.remove_at(4); // history-based
         transformer.insert_at(3, Instruction::Move {
-            dst: RegisterId(200),
+            dst: Register::Virtual(200),
             src: Operand::Immediate { value: 200 },
             span: Span { start: 0, end: 0 },
         }); // history-based

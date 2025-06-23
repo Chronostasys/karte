@@ -3,7 +3,7 @@
 //! 实现LIR指令的执行逻辑，包括算术运算、控制流、内存访问等
 
 use super::{VirtualMachine, JumpCondition, MemoryManager};
-use karte_lir::{Instruction, LabelId, LirProgram, Operand, RegisterId};
+use karte_lir::{Instruction, LabelId, LirProgram, Operand, Register};
 use std::collections::HashMap;
 
 /// 指令执行器
@@ -101,7 +101,7 @@ impl InstructionExecutor {
                 let mut function_copy = function.clone();
                 
                 // 设置栈指针寄存器（使用特殊的栈指针寄存器）
-                let stack_reg = RegisterId(999997); // 特殊的栈指针寄存器
+                let stack_reg = Register::Virtual(999997); // 特殊的栈指针寄存器
                 allocator.set_stack_register(stack_reg);
                 
                 // 使用支持溢出的分配方法
@@ -168,7 +168,7 @@ impl InstructionExecutor {
                     if let Operand::Register { id } = src {
                         // 检查是否是从r0读取的Move指令（检查虚拟寄存器或物理寄存器映射）
                         let is_from_r0 = self.vm.register_mapping.get(id).copied() == Some(0) || 
-                                        id == &karte_lir::RegisterId(0);
+                                        id == &karte_lir::Register::Physical(0);
                         if is_from_r0 {
                             if self.debug_mode {
                                 println!("PC: {}, Skipping redundant Move after Call: {:?}", self.vm.pc, instruction);
@@ -271,7 +271,7 @@ impl InstructionExecutor {
         match instruction {
             Instruction::Move { dst, src, .. } => {
                         // 检查是否是溢出相关的特殊指令
-                        if dst.0 == 999998 {
+                        if dst.id() == 999998 {
                             // 这是一个存储到内存的溢出指令
                             // 在真实实现中，这里应该将值存储到栈中
                             if self.debug_mode {

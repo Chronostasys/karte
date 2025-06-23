@@ -1,6 +1,6 @@
 use karte_diagnostics::Span;
 use std::collections::HashMap;
-pub use karte_common::calling_convention::RegisterId;
+pub use karte_common::calling_convention::Register;
 
 /// 标签标识符（用于跳转目标）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -47,16 +47,16 @@ pub enum AllocationType {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Operand {
     /// 寄存器
-    Register { id: RegisterId },
+    Register { id: Register },
     /// 立即数（整数）
     Immediate { value: i64 },
     /// 标签引用
     Label { id: LabelId },
     /// 内存地址（基址 + 偏移）
-    Memory { base: RegisterId, offset: i64 },
+    Memory { base: Register, offset: i64 },
     /// 结构体字段地址
     StructField { 
-        struct_addr: RegisterId, 
+        struct_addr: Register, 
         field_offset: usize 
     },
     /// 内存ID引用
@@ -68,14 +68,14 @@ pub enum Operand {
 pub enum Instruction {
     /// 移动指令：mov dst, src
     Move {
-        dst: RegisterId,
+        dst: Register,
         src: Operand,
         span: Span,
     },
 
     /// 算术指令：add dst, src1, src2
     Add {
-        dst: RegisterId,
+        dst: Register,
         src1: Operand,
         src2: Operand,
         span: Span,
@@ -83,7 +83,7 @@ pub enum Instruction {
 
     /// 减法指令：sub dst, src1, src2
     Sub {
-        dst: RegisterId,
+        dst: Register,
         src1: Operand,
         src2: Operand,
         span: Span,
@@ -91,7 +91,7 @@ pub enum Instruction {
 
     /// 乘法指令：mul dst, src1, src2
     Mul {
-        dst: RegisterId,
+        dst: Register,
         src1: Operand,
         src2: Operand,
         span: Span,
@@ -99,7 +99,7 @@ pub enum Instruction {
 
     /// 除法指令：div dst, src1, src2
     Div {
-        dst: RegisterId,
+        dst: Register,
         src1: Operand,
         src2: Operand,
         span: Span,
@@ -157,33 +157,33 @@ pub enum Instruction {
     /// 函数调用指令
     Call {
         target: LabelId,
-        args: Vec<RegisterId>,
+        args: Vec<Register>,
         /// 🔧 新增：参数操作数，用于指令降级
         arg_operands: Vec<Operand>,
-        result: Option<RegisterId>,
+        result: Option<Register>,
         span: Span,
     },
 
     /// 间接函数调用指令（通过寄存器存储的函数地址调用）
     CallIndirect {
-        function_register: RegisterId,
-        args: Vec<RegisterId>,
+        function_register: Register,
+        args: Vec<Register>,
         /// 🔧 新增：参数操作数，用于指令降级
         arg_operands: Vec<Operand>,
-        result: Option<RegisterId>,
+        result: Option<Register>,
         span: Span,
     },
 
     /// 间接跳转指令
 
     JumpIndirect {
-        function_register: RegisterId,
+        function_register: Register,
         span: Span,
     },
 
     /// 返回指令：ret [register]
     Return {
-        value: Option<RegisterId>,
+        value: Option<Register>,
         span: Span,
     },
 
@@ -202,7 +202,7 @@ pub enum Instruction {
 
     /// 分配结构体内存
     StructAlloc {
-        dst: RegisterId,
+        dst: Register,
         struct_type: StructTypeId,
         allocation_type: AllocationType,
         span: Span,
@@ -210,15 +210,15 @@ pub enum Instruction {
 
     /// 加载结构体字段
     StructFieldLoad {
-        dst: RegisterId,
-        struct_addr: RegisterId,
+        dst: Register,
+        struct_addr: Register,
         field_offset: usize,
         span: Span,
     },
 
     /// 存储结构体字段
     StructFieldStore {
-        struct_addr: RegisterId,
+        struct_addr: Register,
         field_offset: usize,
         src: Operand,
         span: Span,
@@ -226,23 +226,23 @@ pub enum Instruction {
 
     /// 获取结构体字段地址
     StructFieldAddr {
-        dst: RegisterId,
-        struct_addr: RegisterId,
+        dst: Register,
+        struct_addr: Register,
         field_offset: usize,
         span: Span,
     },
 
     /// 内存拷贝指令（用于结构体赋值）
     MemCopy {
-        dst: RegisterId,
-        src: RegisterId,
+        dst: Register,
+        src: Register,
         size: usize,
         span: Span,
     },
 
     /// 内存分配指令
     Alloc {
-        dst: RegisterId,
+        dst: Register,
         size: usize,
         alignment: usize,
         allocation_type: AllocationType,
@@ -251,21 +251,21 @@ pub enum Instruction {
 
     /// 内存释放指令
     Free {
-        addr: RegisterId,
+        addr: Register,
         span: Span,
     },
 
     /// 加载内存值（8字节）
     Load64 {
-        dst: RegisterId,
-        addr: RegisterId,
+        dst: Register,
+        addr: Register,
         offset: i64,
         span: Span,
     },
 
     /// 存储内存值（8字节）
     Store64 {
-        addr: RegisterId,
+        addr: Register,
         offset: i64,
         src: Operand,
         span: Span,
@@ -274,7 +274,7 @@ pub enum Instruction {
     /// φ(Phi)节点 - SSA形式的控制流汇合
     /// 在控制流汇合点选择来自不同前驱块的值
     Phi {
-        dst: RegisterId,
+        dst: Register,
         /// 来自不同前驱块的值：(前驱块标签, 值)
         incoming: Vec<(LabelId, Operand)>,
         span: Span,
@@ -295,7 +295,7 @@ impl InstructionId {
 
 impl Instruction {
     /// 获取指令定义的寄存器（目标寄存器）
-    pub fn get_def_register(&self) -> Option<RegisterId> {
+    pub fn get_def_register(&self) -> Option<Register> {
         match self {
             Instruction::Move { dst, .. } |
             Instruction::Add { dst, .. } |
@@ -316,7 +316,7 @@ impl Instruction {
     }
 
     /// 替换指令定义的寄存器
-    pub fn replace_def_register(&mut self, old_reg: RegisterId, new_reg: RegisterId) {
+    pub fn replace_def_register(&mut self, old_reg: Register, new_reg: Register) {
         match self {
             Instruction::Move { dst, .. } |
             Instruction::Add { dst, .. } |
@@ -351,7 +351,7 @@ impl Instruction {
     }
 
     /// 获取指令使用的寄存器
-    pub fn get_used_registers(&self) -> Vec<RegisterId> {
+    pub fn get_used_registers(&self) -> Vec<Register> {
         let mut used = Vec::new();
         
         match self {
@@ -424,7 +424,7 @@ impl Instruction {
     }
 
     /// 替换指令中的寄存器
-    pub fn replace_register(&mut self, old_reg: RegisterId, new_reg: RegisterId) {
+    pub fn replace_register(&mut self, old_reg: Register, new_reg: Register) {
         match self {
             Instruction::Move { dst, src, .. } => {
                 // 🔧 关键修复：替换目标寄存器
@@ -566,7 +566,7 @@ impl Instruction {
     }
 
     /// 辅助方法：从操作数中提取寄存器
-    fn add_operand_registers(&self, operand: &Operand, registers: &mut Vec<RegisterId>) {
+    fn add_operand_registers(&self, operand: &Operand, registers: &mut Vec<Register>) {
         match operand {
             Operand::Register { id } => registers.push(*id),
             Operand::Memory { base, .. } => registers.push(*base),
@@ -576,7 +576,7 @@ impl Instruction {
     }
 
     /// 辅助方法：替换操作数中的寄存器
-    fn replace_operand_register(operand: &mut Operand, old_reg: RegisterId, new_reg: RegisterId) {
+    fn replace_operand_register(operand: &mut Operand, old_reg: Register, new_reg: Register) {
         match operand {
             Operand::Register { id } => {
                 if *id == old_reg {
@@ -619,7 +619,7 @@ impl Instruction {
     /// 获取指令定义和使用的寄存器
     /// 
     /// 返回元组 (定义的寄存器, 使用的寄存器)
-    pub(crate) fn get_defined_and_used_registers(&self) -> (Vec<RegisterId>, Vec<RegisterId>) {
+    pub(crate) fn get_defined_and_used_registers(&self) -> (Vec<Register>, Vec<Register>) {
         let mut defined = vec![];
         let mut used = vec![];
 
@@ -707,7 +707,7 @@ pub struct LirFunction {
     /// 🔧 新增：函数参数数量
     pub parameter_count: usize,
     /// 🔧 新增：函数参数寄存器列表
-    pub parameter_registers: Vec<RegisterId>,
+    pub parameter_registers: Vec<Register>,
 }
 
 impl LirFunction {
@@ -733,7 +733,7 @@ impl LirFunction {
         for i in 0..param_count {
             // 调用约定：r1-r4 是参数寄存器
             if i < 4 {
-                function.parameter_registers.push(RegisterId(i + 1));
+                function.parameter_registers.push(Register::Virtual(i + 1));
             }
         }
         
@@ -741,42 +741,42 @@ impl LirFunction {
     }
 
     /// 分配一个新的寄存器，跳过栈指针寄存器(RegisterId(6))、帧指针寄存器(RegisterId(7))和函数参数寄存器
-    pub fn new_register(&mut self) -> RegisterId {
+    pub fn new_register(&mut self) -> Register {
         // 栈指针寄存器是RegisterId(6)，帧指针寄存器是RegisterId(7)
         const STACK_POINTER_REG: usize = 6;
         const FRAME_POINTER_REG: usize = 7;
         // 🔧 修复：跳过已分配的函数参数寄存器
-        let parameter_registers: Vec<usize> = self.parameter_registers.iter().map(|r| r.0).collect();
+        let parameter_registers: Vec<usize> = self.parameter_registers.iter().map(|r| r.id()).collect();
         
         loop {
-            let id = RegisterId(self.next_register);
+            let id = Register::Virtual(self.next_register);
             self.next_register += 1;
             
             // 🔧 关键修复：跳过栈指针和帧指针寄存器
-            if id.0 == STACK_POINTER_REG || id.0 == FRAME_POINTER_REG {
+            if id.id() == STACK_POINTER_REG || id.id() == FRAME_POINTER_REG {
                 continue; // 跳过这些特殊寄存器
             }
             
             // 🔧 修复：如果分配到了函数参数寄存器，跳过它
-            if !parameter_registers.contains(&id.0) {
+            if !parameter_registers.contains(&id.id()) {
                 return id;
             }
         }
     }
     
     /// 专门用于栈操作的寄存器分配（只返回栈指针寄存器）
-    pub fn get_stack_pointer_register(&self) -> RegisterId {
-        RegisterId(6) // 栈指针寄存器
+    pub fn get_stack_pointer_register(&self) -> Register {
+        Register::Physical(6) // 栈指针寄存器
     }
     
     /// 检查一个寄存器是否是栈指针寄存器
-    pub fn is_stack_pointer_register(&self, reg: &RegisterId) -> bool {
-        reg.0 == 6
+    pub fn is_stack_pointer_register(&self, reg: &Register) -> bool {
+        reg.id() == 6
     }
     
     /// 检查一个寄存器是否是帧指针寄存器
-    pub fn is_frame_pointer_register(&self, reg: &RegisterId) -> bool {
-        reg.0 == 7
+    pub fn is_frame_pointer_register(&self, reg: &Register) -> bool {
+        reg.id() == 7
     }
 
     /// 验证指令是否违反栈指针寄存器使用规则

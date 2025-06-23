@@ -14,7 +14,7 @@ use super::types::{
     AllocationStats, RegisterAllocationResult, RegisterLifetime, RegisterType,
     SimpleCallingConvention, SpillSlot,
 };
-use crate::RegisterId;
+use crate::Register;
 use std::collections::{HashMap, HashSet};
 
 /// 线性扫描分配器
@@ -51,7 +51,7 @@ impl LinearScanAllocator {
     pub fn allocate(
         &mut self,
         mut lifetimes: Vec<RegisterLifetime>,
-        register_types: HashMap<RegisterId, RegisterType>,
+        register_types: HashMap<Register, RegisterType>,
     ) -> RegisterAllocationResult {
         println!("==== StackAddress RegisterLifetime ====");
         for lt in &lifetimes {
@@ -241,7 +241,7 @@ impl LinearScanAllocator {
         &mut self,
         active_intervals: &mut Vec<RegisterLifetime>,
         available_registers: &mut Vec<u8>,
-        register_mapping: &HashMap<RegisterId, u8>,
+        register_mapping: &HashMap<Register, u8>,
         current_position: usize,
     ) {
         let mut i = 0;
@@ -271,8 +271,8 @@ impl LinearScanAllocator {
         &self,
         active_intervals: &mut Vec<RegisterLifetime>,
         current: &RegisterLifetime,
-        register_mapping: &mut HashMap<RegisterId, u8>,
-        spilled_registers: &mut HashMap<RegisterId, SpillSlot>,
+        register_mapping: &mut HashMap<Register, u8>,
+        spilled_registers: &mut HashMap<Register, SpillSlot>,
         spill_slot_counter: &mut usize,
     ) {
         if !current.can_spill() {

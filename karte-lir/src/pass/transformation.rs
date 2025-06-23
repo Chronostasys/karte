@@ -1,6 +1,6 @@
 use super::{FunctionPass, AnalysisManager, PassResult};
 use super::instruction_transformer::IndexInstructionTransformer;
-use crate::{LirFunction, Instruction, RegisterId, Operand};
+use crate::{LirFunction, Instruction, Register, Operand};
 use std::collections::{HashMap, HashSet};
 
 /// 死代码消除 Pass
@@ -126,7 +126,7 @@ impl DeadCodeElimination {
     }
     
     /// 获取指令使用的寄存器
-    fn get_used_registers(&self, instruction: &Instruction) -> Vec<RegisterId> {
+    fn get_used_registers(&self, instruction: &Instruction) -> Vec<Register> {
         let mut used = Vec::new();
         
         match instruction {
@@ -190,7 +190,7 @@ impl DeadCodeElimination {
     }
     
     /// 添加操作数中的寄存器
-    fn add_operand_registers(&self, operand: &Operand, registers: &mut Vec<RegisterId>) {
+    fn add_operand_registers(&self, operand: &Operand, registers: &mut Vec<Register>) {
         match operand {
             Operand::Register { id } => registers.push(*id),
             Operand::Memory { base, .. } => registers.push(*base),
@@ -199,7 +199,7 @@ impl DeadCodeElimination {
     }
     
     /// 检查指令是否定义了指定寄存器
-    fn defines_register(&self, instruction: &Instruction, register: &RegisterId) -> bool {
+    fn defines_register(&self, instruction: &Instruction, register: &Register) -> bool {
         match instruction {
             Instruction::Move { dst, .. } |
             Instruction::Add { dst, .. } |
@@ -219,7 +219,7 @@ impl DeadCodeElimination {
     }
     
     /// 获取指令定义的寄存器
-    fn get_defined_register(&self, instruction: &Instruction) -> Option<RegisterId> {
+    fn get_defined_register(&self, instruction: &Instruction) -> Option<Register> {
         match instruction {
             Instruction::Move { dst, .. } |
             Instruction::Add { dst, .. } |
@@ -345,7 +345,7 @@ impl ConstantFolding {
     }
     
     /// 获取操作数的常量值
-    fn get_constant_value<'a>(&self, operand: &'a Operand, constants: &'a HashMap<RegisterId, i64>) -> Option<&'a i64> {
+    fn get_constant_value<'a>(&self, operand: &'a Operand, constants: &'a HashMap<Register, i64>) -> Option<&'a i64> {
         match operand {
             Operand::Immediate { value } => Some(value),
             Operand::Register { id } => constants.get(id),
@@ -354,7 +354,7 @@ impl ConstantFolding {
     }
     
     /// 获取指令定义的寄存器
-    fn get_defined_register(&self, instruction: &Instruction) -> Option<RegisterId> {
+    fn get_defined_register(&self, instruction: &Instruction) -> Option<Register> {
         match instruction {
             Instruction::Move { dst, .. } |
             Instruction::Add { dst, .. } |

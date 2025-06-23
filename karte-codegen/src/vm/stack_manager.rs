@@ -7,7 +7,7 @@
 //! - 返回地址管理
 
 use super::calling_convention::{CallingConvention, PhysicalRegister};
-use karte_lir::RegisterId;
+use karte_lir::Register;
 use std::collections::HashMap;
 
 /// 栈帧布局
@@ -26,7 +26,7 @@ pub struct StackFrame {
     /// 保存的寄存器映射 (寄存器 -> 栈偏移)
     pub saved_registers: HashMap<PhysicalRegister, i64>,
     /// 局部变量映射 (变量ID -> 栈偏移)
-    pub local_variables: HashMap<RegisterId, i64>,
+    pub local_variables: HashMap<Register, i64>,
 }
 
 impl StackFrame {
@@ -44,7 +44,7 @@ impl StackFrame {
     }
 
     /// 分配局部变量存储空间
-    pub fn allocate_local(&mut self, var_id: RegisterId, size: usize, alignment: usize) -> i64 {
+    pub fn allocate_local(&mut self, var_id: Register, size: usize, alignment: usize) -> i64 {
         // 对齐当前偏移量
         let aligned_offset = align_up(self.locals_size, alignment);
         let offset = -(aligned_offset as i64 + size as i64);
@@ -75,7 +75,7 @@ impl StackFrame {
     }
 
     /// 获取局部变量的栈偏移
-    pub fn get_local_offset(&self, var_id: &RegisterId) -> Option<i64> {
+    pub fn get_local_offset(&self, var_id: &Register) -> Option<i64> {
         self.local_variables.get(var_id).copied()
     }
 
@@ -264,11 +264,11 @@ mod tests {
         let mut frame = StackFrame::new();
         
         // 分配局部变量
-        let var1 = RegisterId(1);
+        let var1 = Register::Virtual(1);
         let offset1 = frame.allocate_local(var1, 8, 8);
         assert_eq!(offset1, -8);
         
-        let var2 = RegisterId(2);
+        let var2 = Register::Virtual(2);
         let offset2 = frame.allocate_local(var2, 4, 4);
         assert_eq!(offset2, -12);
         

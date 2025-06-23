@@ -1,5 +1,5 @@
 use super::{AnalysisPass, AnalysisResult, AnalysisManager};
-use crate::{LirFunction, Instruction, RegisterId, LabelId, Operand};
+use crate::{LirFunction, Instruction, Register, LabelId, Operand};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::any::Any;
 
@@ -41,13 +41,13 @@ impl AnalysisResult for ControlFlowGraph {
 #[derive(Debug)]
 pub struct DefUseChains {
     /// 每个寄存器的定义位置 (寄存器ID -> 指令位置列表)
-    pub definitions: HashMap<RegisterId, Vec<usize>>,
+    pub definitions: HashMap<Register, Vec<usize>>,
     /// 每个寄存器的使用位置 (寄存器ID -> 指令位置列表)
-    pub uses: HashMap<RegisterId, Vec<usize>>,
+    pub uses: HashMap<Register, Vec<usize>>,
     /// 每个指令定义的寄存器
-    pub instruction_defs: HashMap<usize, Vec<RegisterId>>,
+    pub instruction_defs: HashMap<usize, Vec<Register>>,
     /// 每个指令使用的寄存器
-    pub instruction_uses: HashMap<usize, Vec<RegisterId>>,
+    pub instruction_uses: HashMap<usize, Vec<Register>>,
 }
 
 impl AnalysisResult for DefUseChains {
@@ -60,11 +60,11 @@ impl AnalysisResult for DefUseChains {
 #[derive(Debug)]
 pub struct LivenessAnalysis {
     /// 每个基本块入口处的活跃变量
-    pub live_in: HashMap<usize, HashSet<RegisterId>>,
+    pub live_in: HashMap<usize, HashSet<Register>>,
     /// 每个基本块出口处的活跃变量
-    pub live_out: HashMap<usize, HashSet<RegisterId>>,
+    pub live_out: HashMap<usize, HashSet<Register>>,
     /// 每个指令位置的活跃变量
-    pub live_at_instruction: HashMap<usize, HashSet<RegisterId>>,
+    pub live_at_instruction: HashMap<usize, HashSet<Register>>,
 }
 
 impl AnalysisResult for LivenessAnalysis {
@@ -334,7 +334,7 @@ impl DefUseAnalysis {
     }
     
     /// 分析单条指令的定义和使用
-    fn analyze_instruction(&self, instruction: &Instruction) -> (Vec<RegisterId>, Vec<RegisterId>) {
+    fn analyze_instruction(&self, instruction: &Instruction) -> (Vec<Register>, Vec<Register>) {
         let mut defs = Vec::new();
         let mut uses = Vec::new();
         
@@ -434,7 +434,7 @@ impl DefUseAnalysis {
     }
     
     /// 分析操作数的使用
-    fn analyze_operand_uses(&self, operand: &Operand, uses: &mut Vec<RegisterId>) {
+    fn analyze_operand_uses(&self, operand: &Operand, uses: &mut Vec<Register>) {
         match operand {
             Operand::Register { id } => {
                 uses.push(*id);

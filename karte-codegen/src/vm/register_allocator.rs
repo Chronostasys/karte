@@ -3,7 +3,7 @@
 //! 实现了线性扫描寄存器分配算法，支持寄存器溢出到内存
 
 use super::{NUM_REGISTERS, VirtualMachine};
-use karte_lir::{Instruction, LirFunction, RegisterId, Operand, LabelId};
+use karte_lir::{Instruction, LirFunction, Register, Operand, LabelId};
 use karte_diagnostics::Span;
 use std::collections::HashMap;
 
@@ -11,7 +11,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub struct RegisterLifetime {
     /// 寄存器ID
-    pub register: RegisterId,
+    pub register: Register,
     /// 首次使用位置
     pub start: usize,
     /// 最后使用位置
@@ -28,7 +28,7 @@ pub struct SpillSlot {
     /// 栈偏移量（用于实际内存访问）
     pub stack_offset: i64,
     /// 被溢出的寄存器
-    pub spilled_register: RegisterId,
+    pub spilled_register: Register,
 }
 
 /// 寄存器分配器
@@ -40,24 +40,24 @@ pub struct RegisterAllocator {
     /// 寄存器生命周期信息
     lifetimes: Vec<RegisterLifetime>,
     /// 虚拟寄存器到物理寄存器的分配结果
-    allocation: HashMap<RegisterId, u8>,
+    allocation: HashMap<Register, u8>,
     /// 溢出槽管理
     spill_slots: Vec<SpillSlot>,
     /// 虚拟寄存器到溢出槽的映射
-    spilled_registers: HashMap<RegisterId, usize>,
+    spilled_registers: HashMap<Register, usize>,
     /// 下一个可用的溢出槽偏移量
     next_spill_offset: i64,
     /// 栈指针寄存器（用于访问溢出槽）
-    stack_register: Option<RegisterId>,
+    stack_register: Option<Register>,
 }
 
 /// 寄存器分配结果
 #[derive(Debug, Clone)]
 pub struct RegisterAllocationResult {
     /// 成功分配的寄存器映射
-    pub register_assignments: HashMap<RegisterId, u8>,
+    pub register_assignments: HashMap<Register, u8>,
     /// 溢出的寄存器映射
-    pub spill_assignments: HashMap<RegisterId, SpillSlot>,
+    pub spill_assignments: HashMap<Register, SpillSlot>,
 }
 
 /// 分配统计信息
@@ -91,13 +91,13 @@ impl RegisterAllocator {
     }
 
     /// 设置栈指针寄存器
-    pub fn set_stack_register(&mut self, stack_reg: RegisterId) {
+    pub fn set_stack_register(&mut self, stack_reg: Register) {
         self.stack_register = Some(stack_reg);
     }
 
     /// 分析函数中虚拟寄存器的生命周期
     pub fn analyze_lifetimes(&mut self, function: &LirFunction) {
-        let mut register_uses: HashMap<RegisterId, (Option<usize>, Option<usize>)> = HashMap::new();
+        let mut register_uses: HashMap<Register, (Option<usize>, Option<usize>)> = HashMap::new();
 
         // 扫描所有指令，记录每个寄存器的使用位置
         for (pos, instruction) in function.instructions.iter().enumerate() {
@@ -162,7 +162,7 @@ impl RegisterAllocator {
     }
 
     /// 识别在循环中使用的寄存器
-    fn identify_loop_registers(&self, function: &LirFunction) -> std::collections::HashSet<RegisterId> {
+    fn identify_loop_registers(&self, function: &LirFunction) -> std::collections::HashSet<Register> {
         let mut loop_registers = std::collections::HashSet::new();
         
         // 查找所有跳转指令，识别可能的循环结构
@@ -208,7 +208,7 @@ impl RegisterAllocator {
     }
 
     /// 从指令中提取所有涉及的寄存器
-    fn extract_registers_from_instruction(&self, instruction: &Instruction) -> Vec<RegisterId> {
+    fn extract_registers_from_instruction(&self, instruction: &Instruction) -> Vec<Register> {
         let mut registers = Vec::new();
 
         match instruction {
@@ -266,7 +266,7 @@ impl RegisterAllocator {
     }
 
     /// 查找与给定寄存器在同一条指令中使用的其他寄存器
-    fn find_instruction_conflicts(&self, function: &LirFunction, target_lifetime: &RegisterLifetime) -> Vec<RegisterId> {
+    fn find_instruction_conflicts(&self, function: &LirFunction, target_lifetime: &RegisterLifetime) -> Vec<Register> {
         let mut conflicts = Vec::new();
         
         // 检查目标寄存器生命周期内的每条指令
@@ -289,7 +289,7 @@ impl RegisterAllocator {
     }
 
     /// 使用线性扫描算法进行寄存器分配（支持溢出）
-    pub fn allocate_registers_with_spill(&mut self, function: &mut LirFunction) -> Result<HashMap<RegisterId, u8>, String> {
+    pub fn allocate_registers_with_spill(&mut self, function: &mut LirFunction) -> Result<HashMap<Register, u8>, String> {
         self.allocation.clear();
         self.spilled_registers.clear();
         self.spill_slots.clear();
@@ -393,7 +393,7 @@ impl RegisterAllocator {
     }
 
     /// 检查两个寄存器是否在同一条指令中使用
-    fn registers_used_together(&self, function: &LirFunction, reg1: &RegisterId, reg2: &RegisterId) -> bool {
+    fn registers_used_together(&self, function: &LirFunction, reg1: &Register, reg2: &Register) -> bool {
         for instruction in &function.instructions {
             let registers = self.extract_registers_from_instruction(instruction);
             if registers.contains(reg1) && registers.contains(reg2) {
@@ -467,7 +467,7 @@ impl RegisterAllocator {
 
         // 生成存储指令：mov [stack + offset], register
         let store_instruction = Instruction::Move {
-            dst: RegisterId(999999), // 临时标记，后续会被替换为内存操作
+            dst: Register::Virtual(999999), // 临时标记，后续会被替换为内存操作
             src: Operand::Register { id: lifetime.register },
             span: Span::dummy(),
         };
@@ -502,7 +502,7 @@ impl RegisterAllocator {
                             
                             // 创建存储指令：mov [stack + offset], register
                             let store_instruction = Instruction::Move {
-                                dst: RegisterId(999998), // 特殊标记表示这是内存目标
+                                dst: Register::Virtual(999998), // 特殊标记表示这是内存目标
                                 src: Operand::Register { id: spilled_reg },
                                 span: Span::dummy(),
                             };
@@ -524,7 +524,7 @@ impl RegisterAllocator {
     }
 
     /// 使用线性扫描算法进行寄存器分配（旧版本，保持向后兼容）
-    pub fn allocate_registers(&mut self) -> Result<HashMap<RegisterId, u8>, String> {
+    pub fn allocate_registers(&mut self) -> Result<HashMap<Register, u8>, String> {
         self.allocation.clear();
         let mut active_intervals: Vec<RegisterLifetime> = Vec::new();
 
@@ -606,7 +606,7 @@ impl RegisterAllocator {
         &mut self,
         active_intervals: &mut Vec<RegisterLifetime>,
         current: &RegisterLifetime,
-    ) -> Result<HashMap<RegisterId, u8>, String> {
+    ) -> Result<HashMap<Register, u8>, String> {
         // 找到结束最晚的活跃区间
         if let Some(max_end_idx) = active_intervals
             .iter()

@@ -3,7 +3,7 @@
 //! 定义了虚拟机的核心状态，包括寄存器文件、内存、标志位等
 
 use super::{NUM_REGISTERS, MEMORY_SIZE, STACK_SIZE};
-use karte_lir::RegisterId;
+use karte_lir::Register;
 use std::collections::HashMap;
 
 // 导入SpillSlot结构体
@@ -33,9 +33,9 @@ pub struct VirtualMachine {
     /// 调用栈
     pub call_stack: Vec<usize>,
     /// 虚拟寄存器到物理寄存器的映射
-    pub register_mapping: HashMap<RegisterId, u8>,
+    pub register_mapping: HashMap<Register, u8>,
     /// 虚拟寄存器到溢出槽的映射
-    pub spill_slot_mapping: HashMap<RegisterId, SpillSlot>,
+    pub spill_slot_mapping: HashMap<Register, SpillSlot>,
 }
 
 impl VirtualMachine {
@@ -73,7 +73,7 @@ impl VirtualMachine {
     }
 
     /// 获取虚拟寄存器的值（支持物理寄存器映射和溢出处理）
-    pub fn get_virtual_register(&self, reg_id: &RegisterId) -> Result<i64, String> {
+    pub fn get_virtual_register(&self, reg_id: &Register) -> Result<i64, String> {
         if let Some(&physical_reg) = self.register_mapping.get(reg_id) {
             if physical_reg == 255 {
                 // 这是一个溢出寄存器，需要从栈加载
@@ -111,7 +111,7 @@ impl VirtualMachine {
     }
 
     /// 设置虚拟寄存器的值（支持物理寄存器映射和溢出处理）
-    pub fn set_virtual_register(&mut self, reg_id: &RegisterId, value: i64) -> Result<(), String> {
+    pub fn set_virtual_register(&mut self, reg_id: &Register, value: i64) -> Result<(), String> {
         if let Some(&physical_reg) = self.register_mapping.get(reg_id) {
             if physical_reg == 255 {
                 // 这是一个溢出寄存器，需要写入栈

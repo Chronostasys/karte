@@ -12,7 +12,7 @@
 //! 3. **寄存器类型分析**: 使用新的寄存器类型系统来正确识别和分类寄存器，
 //!    包括栈地址寄存器、函数参数等。
 
-use crate::{LirFunction, RegisterId, Instruction, Operand, LabelId};
+use crate::{LirFunction, Register, Instruction, Operand, LabelId};
 use super::types::{RegisterLifetime, RegisterType, SimpleCallingConvention};
 use crate::pass::analysis::{ControlFlowGraph, DefUseChains};
 use std::collections::{HashMap, HashSet};
@@ -34,7 +34,7 @@ impl LifetimeAnalyzer {
     /// 🔧 新增：分析寄存器类型
     /// 
     /// 根据指令模式识别寄存器的语义类型
-    fn analyze_register_types(&self, function: &LirFunction) -> HashMap<RegisterId, RegisterType> {
+    fn analyze_register_types(&self, function: &LirFunction) -> HashMap<Register, RegisterType> {
         let mut register_types = HashMap::new();
         
         // 1. 识别函数参数寄存器
@@ -63,7 +63,7 @@ impl LifetimeAnalyzer {
                 Instruction::Add { dst, src1, src2, .. } => {
                     if let Operand::Register { id: fp_reg } = src1 {
                         // 检查是否是帧指针寄存器（r7）
-                        if fp_reg.0 == 7 {
+                        if fp_reg.id() == 7 {
                             // 检查第二个操作数是否是立即数（偏移量）
                             if let Operand::Immediate { .. } = src2 {
                                 register_types.insert(*dst, RegisterType::StackAddress);
@@ -93,7 +93,7 @@ impl LifetimeAnalyzer {
     /// 
     /// @param function - 需要分析的LIR函数。
     /// @returns 一个元组，包含 (生命周期列表, 寄存器类型映射)。
-    pub fn analyze_simple(&self, function: &LirFunction) -> (Vec<RegisterLifetime>, HashMap<RegisterId, RegisterType>) {
+    pub fn analyze_simple(&self, function: &LirFunction) -> (Vec<RegisterLifetime>, HashMap<Register, RegisterType>) {
         let mut lifetimes = HashMap::new();
         let mut register_types = self.analyze_register_types(function);
         
@@ -159,7 +159,7 @@ impl LifetimeAnalyzer {
         
         // 🔧 修复：确保生命周期列表的确定性顺序
         let mut lifetime_list: Vec<_> = lifetimes.into_values().collect();
-        lifetime_list.sort_by_key(|lt| (lt.register.0, lt.start, lt.end));
+        lifetime_list.sort_by_key(|lt| (lt.register.id(), lt.start, lt.end));
         (lifetime_list, register_types)
     }
 
@@ -176,7 +176,7 @@ impl LifetimeAnalyzer {
         function: &LirFunction, 
         cfg: &ControlFlowGraph,
         def_use: &DefUseChains
-    ) -> (Vec<RegisterLifetime>, HashMap<RegisterId, RegisterType>) {
+    ) -> (Vec<RegisterLifetime>, HashMap<Register, RegisterType>) {
         let liveness = self.compute_liveness(cfg, def_use);
         let mut lifetimes = HashMap::new();
         let mut register_types = self.analyze_register_types(function);
@@ -252,7 +252,7 @@ impl LifetimeAnalyzer {
         
         // 🔧 修复：确保生命周期列表的确定性顺序
         let mut lifetime_list: Vec<_> = lifetimes.into_values().collect();
-        lifetime_list.sort_by_key(|lt| (lt.register.0, lt.start, lt.end));
+        lifetime_list.sort_by_key(|lt| (lt.register.id(), lt.start, lt.end));
         (lifetime_list, register_types)
     }
     
@@ -264,7 +264,7 @@ impl LifetimeAnalyzer {
         &self,
         cfg: &ControlFlowGraph,
         def_use: &DefUseChains
-    ) -> HashMap<usize, HashSet<RegisterId>> {
+    ) -> HashMap<usize, HashSet<Register>> {
         let mut block_use = HashMap::new();
         let mut block_def = HashMap::new();
         
@@ -285,8 +285,8 @@ impl LifetimeAnalyzer {
             block_def.insert(node.block_id, def_set);
         }
         
-        let mut live_in: HashMap<usize, HashSet<RegisterId>> = HashMap::new();
-        let mut live_out: HashMap<usize, HashSet<RegisterId>> = HashMap::new();
+        let mut live_in: HashMap<usize, HashSet<Register>> = HashMap::new();
+        let mut live_out: HashMap<usize, HashSet<Register>> = HashMap::new();
         
         for node in &cfg.nodes {
             live_in.insert(node.block_id, HashSet::new());
@@ -343,9 +343,9 @@ impl LifetimeAnalyzer {
     /// 使用活跃度信息精确化生命周期结束点
     fn refine_lifetime_end(
         &self,
-        register: RegisterId,
+        register: Register,
         initial_end: usize,
-        liveness: &HashMap<usize, HashSet<RegisterId>>
+        liveness: &HashMap<usize, HashSet<Register>>
     ) -> usize {
         for instr_idx in (0..=initial_end).rev() {
             if let Some(live_set) = liveness.get(&instr_idx) {

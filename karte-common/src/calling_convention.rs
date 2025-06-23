@@ -6,11 +6,39 @@
 use std::{collections::HashSet, fmt};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct RegisterId(pub usize);
+pub enum Register{
+    Virtual(usize),
+    Physical(u8)
+}
 
-impl fmt::Display for RegisterId {
+impl fmt::Display for Register {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "r{}", self.0)
+        match self {
+            Register::Virtual(id) => write!(f, "v{}", id),
+            Register::Physical(id) => write!(f, "r{}", id),
+        }
+    }
+}
+
+impl Register{
+    pub fn is_virtual(&self) -> bool {
+        matches!(self, Register::Virtual(_))
+    }
+    pub fn is_physical(&self) -> bool {
+        matches!(self, Register::Physical(_))
+    }
+    pub fn id(&self) -> usize {
+        match self {
+            Register::Virtual(id) => *id,
+            Register::Physical(id) => *id as usize,
+        }
+    }
+
+    pub fn as_physical(&self) -> Register {
+        match self {
+            Register::Virtual(id) => Register::Physical(*id as _),
+            Register::Physical(_) => *self,
+        }
     }
 }
 

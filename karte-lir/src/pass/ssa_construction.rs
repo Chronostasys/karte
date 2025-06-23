@@ -7,7 +7,7 @@
 //! 4. 内存到寄存器的提升
 
 use super::{FunctionPass, AnalysisManager, PassResult, AnalysisResult};
-use crate::{LirFunction, Instruction, RegisterId, Operand, AllocationType};
+use crate::{LirFunction, Instruction, Register, Operand, AllocationType};
 use karte_diagnostics::Span;
 use karte_mir::BasicBlockId;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -19,9 +19,9 @@ pub struct SsaConstructionResult {
     /// 值的 SSA 版本映射
     pub value_versions: HashMap<String, usize>,
     /// 寄存器的定义使用链
-    pub def_use_chains: HashMap<RegisterId, DefUseChain>,
+    pub def_use_chains: HashMap<Register, DefUseChain>,
     /// Phi 节点信息
-    pub phi_nodes: HashMap<RegisterId, PhiNode>,
+    pub phi_nodes: HashMap<Register, PhiNode>,
     /// 支配边界信息
     pub dominance_frontiers: HashMap<usize, HashSet<usize>>,
 }
@@ -41,9 +41,9 @@ pub struct DefUseChain {
 #[derive(Debug, Clone)]
 pub struct PhiNode {
     /// 结果寄存器
-    pub result: RegisterId,
+    pub result: Register,
     /// 输入操作数 (块ID, 寄存器)
-    pub inputs: Vec<(usize, RegisterId)>,
+    pub inputs: Vec<(usize, Register)>,
     /// 插入位置（基本块ID）
     pub block_id: usize,
 }
@@ -342,7 +342,7 @@ impl SsaConstructionPass {
     }
     
     /// 插入 Phi 节点
-    fn insert_phi_nodes(&mut self, function: &mut LirFunction) -> Result<HashMap<RegisterId, PhiNode>, String> {
+    fn insert_phi_nodes(&mut self, function: &mut LirFunction) -> Result<HashMap<Register, PhiNode>, String> {
         let mut phi_nodes = HashMap::new();
         
         // 分析变量定义
@@ -381,7 +381,7 @@ impl SsaConstructionPass {
     }
     
     /// 分析变量定义
-    fn analyze_variable_definitions(&self, function: &LirFunction) -> Result<HashMap<RegisterId, HashSet<usize>>, String> {
+    fn analyze_variable_definitions(&self, function: &LirFunction) -> Result<HashMap<Register, HashSet<usize>>, String> {
         let mut defs = HashMap::new();
         
         for (block_idx, block) in self.control_flow_graph.iter().enumerate() {
@@ -403,7 +403,7 @@ impl SsaConstructionPass {
     }
     
     /// 获取指令定义的寄存器
-    fn get_defined_register(&self, instruction: &Instruction) -> Option<RegisterId> {
+    fn get_defined_register(&self, instruction: &Instruction) -> Option<Register> {
         match instruction {
             Instruction::Move { dst, .. } |
             Instruction::Add { dst, .. } |
@@ -423,17 +423,17 @@ impl SsaConstructionPass {
     }
     
     /// 判断是否需要在指定块插入 Phi 节点
-    fn needs_phi_node(&self, _register: RegisterId, block_id: usize) -> bool {
+    fn needs_phi_node(&self, _register: Register, block_id: usize) -> bool {
         // 简化实现：如果块有多个前驱，就可能需要 Phi 节点
         self.control_flow_graph.get(block_id)
             .map_or(false, |block| block.predecessors.len() > 1)
     }
     
     /// 执行变量重命名
-    fn rename_variables(&mut self, function: &mut LirFunction, phi_nodes: &HashMap<RegisterId, PhiNode>) -> Result<HashMap<String, usize>, String> {
+    fn rename_variables(&mut self, function: &mut LirFunction, phi_nodes: &HashMap<Register, PhiNode>) -> Result<HashMap<String, usize>, String> {
         let mut value_versions = HashMap::new();
         let mut version_counters = HashMap::new();
-        let mut version_stacks: HashMap<RegisterId, Vec<usize>> = HashMap::new();
+        let mut version_stacks: HashMap<Register, Vec<usize>> = HashMap::new();
         
         // 从入口块开始重命名
         self.rename_block(0, function, phi_nodes, &mut value_versions, &mut version_counters, &mut version_stacks)?;
@@ -446,10 +446,10 @@ impl SsaConstructionPass {
         &self,
         block_id: usize,
         function: &mut LirFunction,
-        phi_nodes: &HashMap<RegisterId, PhiNode>,
+        phi_nodes: &HashMap<Register, PhiNode>,
         value_versions: &mut HashMap<String, usize>,
-        version_counters: &mut HashMap<RegisterId, usize>,
-        version_stacks: &mut HashMap<RegisterId, Vec<usize>>,
+        version_counters: &mut HashMap<Register, usize>,
+        version_stacks: &mut HashMap<Register, Vec<usize>>,
     ) -> Result<(), String> {
         let block = &self.control_flow_graph[block_id];
         let (start, end) = block.instruction_range;
@@ -464,7 +464,7 @@ impl SsaConstructionPass {
                     *version += 1;
                     
                     version_stacks.entry(def_reg).or_insert_with(Vec::new).push(*version);
-                    value_versions.insert(format!("r{}", def_reg.0), *version);
+                    value_versions.insert(format!("r{}", def_reg.id()), *version);
                 }
             }
         }

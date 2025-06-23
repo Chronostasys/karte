@@ -256,9 +256,9 @@ mod tests {
         let mut main_fn = LirFunction::new("main".to_string());
         
         // 创建一个简单的程序：计算 2 + 3
-        let r1 = main_fn.new_register();
-        let r2 = main_fn.new_register();
-        let r3 = main_fn.new_register();
+        let r1 = main_fn.new_register().as_physical();
+        let r2 = main_fn.new_register().as_physical();
+        let r3 = main_fn.new_register().as_physical();
         let entry_label = main_fn.new_label();
         
         main_fn.add_instruction(Instruction::Label { 

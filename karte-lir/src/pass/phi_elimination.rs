@@ -6,7 +6,7 @@
 use super::{FunctionPass, AnalysisManager, PassResult};
 use super::analysis::ControlFlowGraph;
 use super::instruction_transformer::IndexInstructionTransformer;
-use crate::{LirFunction, Instruction, RegisterId, Operand, LabelId};
+use crate::{LirFunction, Instruction, Register, Operand, LabelId};
 use karte_diagnostics::Span;
 use std::collections::{HashMap, HashSet, VecDeque};
 

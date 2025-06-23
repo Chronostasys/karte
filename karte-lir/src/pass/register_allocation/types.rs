@@ -3,7 +3,7 @@
 //! 定义了寄存器分配过程中使用的主要数据结构，
 //! 如分配结果、生命周期、溢出槽等。
 
-use crate::RegisterId;
+use crate::Register;
 use std::collections::HashMap;
 use std::any::Any;
 use crate::pass::AnalysisResult;
@@ -53,11 +53,11 @@ impl RegisterType {
 #[derive(Debug, Clone)]
 pub struct RegisterAllocationResult {
     /// 虚拟寄存器到物理寄存器的映射
-    pub register_mapping: HashMap<RegisterId, u8>,
+    pub register_mapping: HashMap<Register, u8>,
     /// 溢出的寄存器及其逻辑栈槽信息
-    pub spilled_registers: HashMap<RegisterId, SpillSlot>,
+    pub spilled_registers: HashMap<Register, SpillSlot>,
     /// 🔧 新增：寄存器类型映射
-    pub register_types: HashMap<RegisterId, RegisterType>,
+    pub register_types: HashMap<Register, RegisterType>,
     /// 分配统计信息
     pub stats: AllocationStats,
 }
@@ -98,7 +98,7 @@ pub struct AllocationStats {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegisterLifetime {
     /// 虚拟寄存器ID
-    pub register: RegisterId,
+    pub register: Register,
     /// 生命周期起始指令索引
     pub start: usize,
     /// 生命周期结束指令索引
@@ -116,7 +116,7 @@ pub struct RegisterLifetime {
 impl RegisterLifetime {
     /// 创建一个新的生命周期实例（主要用于测试）
     #[cfg(test)]
-    pub fn new(register: RegisterId, start: usize, end: usize) -> Self {
+    pub fn new(register: Register, start: usize, end: usize) -> Self {
         Self {
             register,
             start,

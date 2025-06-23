@@ -4,7 +4,7 @@
 
 use super::{ProgramManager, HeapAllocator};
 use crate::vm::{VirtualMachine, MemoryManager, CallingConvention, StackManager, ComparisonFlags, JumpCondition};
-use karte_lir::{RegisterId, Operand};
+use karte_lir::{Register, Operand};
 
 /// 调用栈帧
 #[derive(Debug, Clone)]
@@ -12,7 +12,7 @@ pub struct CallFrame {
     /// 返回地址（程序计数器）
     pub return_pc: usize,
     /// 结果寄存器（可选）
-    pub result_register: Option<RegisterId>,
+    pub result_register: Option<Register>,
 }
 
 /// 执行引擎
@@ -75,7 +75,7 @@ impl ExecutionEngine {
         // 所有LIR指令中的寄存器ID现在直接对应物理寄存器ID
         // 建立1:1的映射关系
         for reg_id in 0..8 {
-            self.vm.register_mapping.insert(karte_lir::RegisterId(reg_id), reg_id as u8);
+            self.vm.register_mapping.insert(karte_lir::Register::Physical(reg_id), reg_id as u8);
         }
         
         if self.debug_mode {
@@ -107,7 +107,7 @@ impl ExecutionEngine {
     }
 
     /// 设置虚拟寄存器的值
-    pub fn set_register(&mut self, reg: &RegisterId, value: i64) -> Result<(), String> {
+    pub fn set_register(&mut self, reg: &Register, value: i64) -> Result<(), String> {
         if self.debug_mode {
             println!("设置寄存器 {:?} = {}, 映射状态: {:?}", reg, value, self.vm.register_mapping.get(reg));
         }
@@ -115,7 +115,7 @@ impl ExecutionEngine {
     }
 
     /// 获取虚拟寄存器的值
-    pub fn get_register(&self, reg: &RegisterId) -> Result<i64, String> {
+    pub fn get_register(&self, reg: &Register) -> Result<i64, String> {
         let value = self.vm.get_virtual_register(reg)?;
         if self.debug_mode {
             println!("获取寄存器 {:?} = {}, 映射状态: {:?}", reg, value, self.vm.register_mapping.get(reg));
@@ -227,7 +227,7 @@ impl ExecutionEngine {
     }
 
     /// 推送调用栈帧
-    pub fn push_call_frame(&mut self, return_pc: usize, result_register: Option<RegisterId>) -> Result<(), String> {
+    pub fn push_call_frame(&mut self, return_pc: usize, result_register: Option<Register>) -> Result<(), String> {
         let frame = CallFrame {
             return_pc,
             result_register,

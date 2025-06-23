@@ -171,7 +171,7 @@ impl TaggedUnionManager {
     /// 生成Tagged Union分配指令
     pub fn generate_allocation_instructions(
         &self,
-        dst_register: RegisterId,
+        dst_register: Register,
         tag_id: i64,
         data_value: Option<Operand>,
         span: karte_diagnostics::Span,
@@ -219,9 +219,9 @@ impl TaggedUnionManager {
     /// 生成Tagged Union标签检查指令（用于模式匹配）
     pub fn generate_tag_check_instructions(
         &self,
-        union_addr: RegisterId,
+        union_addr: Register,
         expected_tag_id: i64,
-        temp_register: RegisterId,
+        temp_register: Register,
         span: karte_diagnostics::Span,
     ) -> Vec<Instruction> {
         vec![
@@ -244,8 +244,8 @@ impl TaggedUnionManager {
     /// 生成Tagged Union数据提取指令
     pub fn generate_data_extraction_instructions(
         &self,
-        union_addr: RegisterId,
-        dst_register: RegisterId,
+        union_addr: Register,
+        dst_register: Register,
         span: karte_diagnostics::Span,
     ) -> Vec<Instruction> {
         vec![
@@ -335,7 +335,7 @@ mod tests {
     #[test]
     fn test_instruction_generation() {
         let manager = TaggedUnionManager::new();
-        let dst_reg = RegisterId(1);
+        let dst_reg = Register::Virtual(1);
         let tag_id = manager.get_tag_id(&TaggedUnionTag::bool_true()).unwrap();
         let span = Span::dummy();
         

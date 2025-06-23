@@ -9,7 +9,7 @@
 //! 4. 处理寄存器溢出的 load/store 操作
 
 use super::{FunctionPass, PassResult, AnalysisManager};
-use crate::{LirFunction, RegisterId, Instruction, Operand, LabelId, AllocationType};
+use crate::{LirFunction, Register, Instruction, Operand, LabelId, AllocationType};
 use crate::pass::register_allocation::{RegisterAllocationResult, SpillSlot};
 use std::collections::HashMap;
 use karte_diagnostics::Span;
@@ -28,7 +28,7 @@ pub struct StackFrameLayout {
     /// 总栈帧大小
     pub total_frame_size: usize,
     /// 本地变量（alloc）的偏移映射
-    pub local_var_offsets: HashMap<RegisterId, i64>,
+    pub local_var_offsets: HashMap<Register, i64>,
     /// 溢出槽的偏移映射
     pub spill_slot_offsets: HashMap<usize, i64>,
     /// 下一个可分配的偏移量
@@ -46,7 +46,7 @@ impl StackFrameLayout {
     }
 
     /// 分配本地变量槽位
-    pub fn allocate_local_var(&mut self, var_reg: RegisterId, size: usize) -> i64 {
+    pub fn allocate_local_var(&mut self, var_reg: Register, size: usize) -> i64 {
         let offset = self.next_offset;
         self.local_var_offsets.insert(var_reg, offset);
         self.next_offset -= size as i64;
@@ -69,9 +69,9 @@ impl StackFrameLayout {
 /// StackFrameLowering Pass
 pub struct StackFrameLowering {
     /// 栈指针寄存器
-    stack_pointer: RegisterId,
+    stack_pointer: Register,
     /// 帧指针寄存器  
-    frame_pointer: RegisterId,
+    frame_pointer: Register,
 }
 
 impl StackFrameLowering {
@@ -79,8 +79,8 @@ impl StackFrameLowering {
         Self {
             // 根据调用约定：r6 = SP, r7 = FP
             // 🔧 关键修复：使用物理寄存器ID而不是虚拟寄存器ID
-            stack_pointer: RegisterId(6),
-            frame_pointer: RegisterId(7),
+            stack_pointer: Register::Physical(6),
+            frame_pointer: Register::Physical(7),
         }
     }
     
@@ -114,7 +114,7 @@ impl StackFrameLowering {
         let mut current_offset = 0i64;
 
         // 🔧 关键修复：使用寄存器类型系统来识别栈地址寄存器
-        let stack_address_registers: HashSet<RegisterId> = allocation_result.register_types
+        let stack_address_registers: HashSet<Register> = allocation_result.register_types
             .iter()
             .filter_map(|(reg_id, reg_type)| {
                 if *reg_type == RegisterType::StackAddress {
@@ -229,14 +229,14 @@ impl StackFrameLowering {
         // 🔧 关键修复：在恢复栈帧之前，检查返回值寄存器是否与帧指针冲突
         // 如果冲突，需要使用临时寄存器来避免数据损坏
         
-        let return_register = RegisterId(0); // r0 是返回值寄存器
+        let return_register = Register::Physical(0); // r0 是返回值寄存器
         
-        if self.frame_pointer.0 == return_register.0 {
+        if self.frame_pointer.id() == return_register.id() {
             // 🔧 返回值寄存器与帧指针寄存器相同，需要特殊处理
             println!("🔧 检测到返回值寄存器与帧指针冲突，使用临时寄存器");
             
             // 使用临时寄存器 r4 来避免冲突
-            let temp_reg = RegisterId(4);
+            let temp_reg = Register::Virtual(4);
             
             // 1. 将返回值保存到临时寄存器
             epilogue.push(Instruction::Move {

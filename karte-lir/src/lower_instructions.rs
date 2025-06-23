@@ -3,15 +3,15 @@
 //! 将高级LIR指令（如Alloc、Load64、Store64等）降级为更基础的指令组合
 //! 这样虚拟机只需要支持最基础的指令集
 
-use crate::{Instruction, RegisterId, Operand, LirFunction, LirProgram, AllocationType, LabelId};
+use crate::{Instruction, Register, Operand, LirFunction, LirProgram, AllocationType, LabelId};
 use karte_diagnostics::Span;
 
 /// 指令降级器
 pub struct InstructionLowerer {
     /// 栈指针寄存器（固定使用寄存器6）
-    stack_pointer_reg: RegisterId,
+    stack_pointer_reg: Register,
     /// 帧指针寄存器（固定使用寄存器7）
-    frame_pointer_reg: RegisterId,
+    frame_pointer_reg: Register,
 }
 
 impl InstructionLowerer {
@@ -19,9 +19,9 @@ impl InstructionLowerer {
     pub fn new() -> Self {
         Self {
             // 使用寄存器6作为栈指针（SP），与调用约定匹配
-            stack_pointer_reg: RegisterId(6),
+            stack_pointer_reg: Register::Physical(6),
             // 使用寄存器7作为帧指针（FP），与调用约定匹配
-            frame_pointer_reg: RegisterId(7),
+            frame_pointer_reg: Register::Physical(7),
         }
     }
 
@@ -109,7 +109,7 @@ impl InstructionLowerer {
                         new_instructions.push(Instruction::Store64 {
                             addr: self.stack_pointer_reg,
                             offset: 0,
-                            src: Operand::Register { id: RegisterId(reg) },
+                            src: Operand::Register { id: Register::Virtual(reg) },
                             span: *span,
                         });
                     }
@@ -118,7 +118,7 @@ impl InstructionLowerer {
                     for (i, op) in arg_operands.iter().enumerate() {
                         if i < 4 {
                             new_instructions.push(Instruction::Move {
-                                dst: RegisterId(i + 1),
+                                dst: Register::Virtual(i + 1),
                                 src: op.clone(),
                                 span: *span,
                             });
@@ -153,7 +153,7 @@ impl InstructionLowerer {
 
                     // 从栈上弹出返回地址（丢弃）
                     new_instructions.push(Instruction::Load64 {
-                        dst: RegisterId(0), // 临时使用r0
+                        dst: Register::Physical(0), // 临时使用r0
                         addr: self.stack_pointer_reg,
                         offset: 0,
                         span: *span,
@@ -168,7 +168,7 @@ impl InstructionLowerer {
                     // 恢复caller-saved寄存器
                     for reg in (0..=4).rev() {
                         new_instructions.push(Instruction::Load64 {
-                            dst: RegisterId(reg),
+                            dst: Register::Virtual(reg),
                             addr: self.stack_pointer_reg,
                             offset: 0,
                             span: *span,
@@ -185,7 +185,7 @@ impl InstructionLowerer {
                     if let Some(result_reg) = result {
                         new_instructions.push(Instruction::Move {
                             dst: *result_reg,
-                            src: Operand::Register { id: RegisterId(0) },
+                            src: Operand::Register { id: Register::Physical(0) },
                             span: *span,
                         });
                     }
@@ -252,7 +252,7 @@ impl InstructionLowerer {
     /// 降级 Alloc 指令为栈指针操作
     fn lower_alloc(
         &mut self,
-        dst: &RegisterId,
+        dst: &Register,
         size: usize,
         _alignment: usize,
         allocation_type: &AllocationType,
@@ -310,8 +310,8 @@ impl InstructionLowerer {
     /// 降级 Load64 指令为基础内存操作
     fn lower_load64(
         &mut self,
-        dst: &RegisterId,
-        addr: &RegisterId,
+        dst: &Register,
+        addr: &Register,
         offset: i64,
         span: &Span,
         instructions: &mut Vec<Instruction>,
@@ -330,7 +330,7 @@ impl InstructionLowerer {
     /// 降级 Store64 指令为基础内存操作
     fn lower_store64(
         &mut self,
-        addr: &RegisterId,
+        addr: &Register,
         offset: i64,
         src: &Operand,
         span: &Span,
@@ -351,7 +351,7 @@ impl InstructionLowerer {
     /// 降级 StructAlloc 指令
     fn lower_struct_alloc(
         &mut self,
-        dst: &RegisterId,
+        dst: &Register,
         struct_type: &crate::StructTypeId,
         allocation_type: &AllocationType,
         span: &Span,
@@ -369,8 +369,8 @@ impl InstructionLowerer {
     /// 降级 StructFieldLoad 指令
     fn lower_struct_field_load(
         &mut self,
-        dst: &RegisterId,
-        struct_addr: &RegisterId,
+        dst: &Register,
+        struct_addr: &Register,
         field_offset: usize,
         span: &Span,
         instructions: &mut Vec<Instruction>,
@@ -382,7 +382,7 @@ impl InstructionLowerer {
     /// 降级 StructFieldStore 指令
     fn lower_struct_field_store(
         &mut self,
-        struct_addr: &RegisterId,
+        struct_addr: &Register,
         field_offset: usize,
         src: &Operand,
         span: &Span,
@@ -395,7 +395,7 @@ impl InstructionLowerer {
     /// 降级 Phi 指令 - 专业实现
     fn lower_phi(
         &mut self,
-        dst: &RegisterId,
+        dst: &Register,
         incoming: &Vec<(crate::LabelId, Operand)>,
         span: &Span,
         instructions: &mut Vec<Instruction>,

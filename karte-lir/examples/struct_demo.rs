@@ -3,7 +3,7 @@
 //! 这个文件演示了改进后的LIR系统对结构体的专业支持
 
 use karte_lir::{
-    LirProgram, LirFunction, Instruction, Operand, RegisterId, 
+    LirProgram, LirFunction, Instruction, Operand, Register, 
     StructLayoutManager, StructLayout, StructField, StructTypeId, AllocationType
 };
 use karte_diagnostics::Span;
