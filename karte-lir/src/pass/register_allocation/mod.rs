@@ -1269,7 +1269,7 @@ mod simple_stack_tests {
 
             // 检查所有使用的寄存器都是物理寄存器 (r0-r7)
             let used_ok = used_regs.iter().all(|reg| reg.id() <= 7);
-            let def_ok = def_reg.is_none_or(|reg| reg.id() <= 7);
+            let def_ok = def_reg.is_none() || def_reg.unwrap().id() <= 7;
 
             used_ok && def_ok
         });
@@ -1767,7 +1767,10 @@ L1:
 
             // 检查所有使用的寄存器都是物理寄存器 (r0-r7)
             let used_ok = used_regs.iter().all(|reg| reg.id() <= 7);
-            let def_ok = def_reg.is_none_or(|reg| reg.id() <= 7);
+            let def_ok = match def_reg {
+                None => true,
+                Some(reg) => reg.id() <= 7
+            };
 
             used_ok && def_ok
         });
