@@ -12,6 +12,7 @@ use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
+use karte_codegen::vm::professional_executor::ProfessionalExecutor;
 
 #[derive(Parser)]
 #[command(name = "karte")]
@@ -201,12 +202,12 @@ fn compile_to_lir(
                     "  - 指令数变化: {} -> {}",
                     stats.instructions_before, stats.instructions_after
                 );
-                if stats.instructions_before > 0 {
-                    let reduction = (stats.instructions_before - stats.instructions_after) as f64
-                        / stats.instructions_before as f64
-                        * 100.0;
-                    println!("  - 指令减少: {:.1}%", reduction);
-                }
+                // if stats.instructions_before > 0 {
+                //     let reduction = (stats.instructions_before - stats.instructions_after) as f64
+                //         / stats.instructions_before as f64
+                //         * 100.0;
+                //     println!("  - 指令减少: {:.1}%", reduction);
+                // }
             }
         }
         Err(errors) => {
@@ -239,10 +240,56 @@ fn compile_to_lir(
     Ok(lir_program)
 }
 
+/// 🔧 新增：获取环境变量中的JIT设置
+fn should_use_jit() -> bool {
+    env::var("KARTE_JIT").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(true)
+}
+
+/// 🔧 修改：改进的execute_lir函数，支持JIT
 fn execute_lir(lir_program: &LirProgram, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
     if verbose {
         println!("\n--- Executing LIR ---");
     }
+
+    // 🔧 新增：检查是否应该使用JIT
+    let use_jit = should_use_jit();
+    
+    if use_jit && verbose {
+        println!("尝试使用JIT执行器...");
+    }
+
+    // 🔧 新增：优先尝试JIT执行，失败则回退到解释器
+    if use_jit {
+        match ProfessionalExecutor::new_with_jit(verbose) {
+            Ok(mut executor) => {
+                if verbose {
+                    println!("使用JIT执行器");
+                }
+                match executor.execute_with_jit(lir_program) {
+                    Ok(exit_code) => {
+                        if verbose {
+                            println!("JIT执行完成，退出码: {}", exit_code);
+                        }
+                        return Ok(());
+                    }
+                    Err(err) => {
+                        if verbose {
+                            println!("JIT执行失败，回退到解释器: {}", err);
+                        }
+                        // 继续到解释器执行
+                    }
+                }
+            }
+            Err(err) => {
+                if verbose {
+                    println!("无法创建JIT执行器，回退到解释器: {}", err);
+                }
+                // 继续到解释器执行
+            }
+        }
+    }
+
+    // 🔧 保持原有的解释器执行逻辑
     match execute(lir_program) {
         Ok(value) => {
             println!("Result: {}", value);
@@ -364,7 +411,7 @@ fn run_repl(optimization_level: OptimizationLevel, verbose: bool) {
                 }
 
                 if let Err(err) =
-                    process_expression(input, optimization_level, verbose, false, None)
+                    process_expression(input, optimization_level, true, false, None)
                 {
                     error!("Error: {}", err);
                 }
@@ -381,11 +428,8 @@ fn main() {
     env_logger::init();
 
     let cli = Cli::parse();
-    let optimization_level: OptimizationLevel = cli.optimization.into();
 
-    if cli.verbose {
-        env::set_var("RUST_LOG", "info");
-    }
+    let optimization_level = cli.optimization.into();
 
     match cli.command {
         Some(Commands::Run {
@@ -393,86 +437,95 @@ fn main() {
             emit_lir,
             output,
         }) => {
-            let input = input.or(cli.input);
-            if let Some(input) = input {
-                // 检查是否为文件路径
-                if Path::new(&input).exists() && Path::new(&input).is_file() {
-                    if let Err(err) = process_file(
-                        &input,
-                        optimization_level,
-                        cli.verbose,
-                        emit_lir,
-                        output.as_deref(),
-                    ) {
-                        error!("Error processing file '{}': {}", input, err);
+            match input {
+                Some(ref input_str) => {
+                    if Path::new(input_str).exists() {
+                        if let Err(err) = process_file(
+                            input_str,
+                            optimization_level,
+                            cli.verbose,
+                            emit_lir,
+                            output.as_deref(),
+                        ) {
+                            error!("Error: {}", err);
+                            std::process::exit(1);
+                        }
+                    } else {
+                        if let Err(err) = process_expression(
+                            input_str,
+                            optimization_level,
+                            cli.verbose,
+                            emit_lir,
+                            output.as_deref(),
+                        ) {
+                            error!("Error: {}", err);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                None => {
+                    run_repl(optimization_level, cli.verbose);
+                }
+            }
+        }
+        Some(Commands::Compile { input, output }) => {
+            let lir_program =
+                match compile_to_lir(&fs::read_to_string(&input).unwrap(), &input, optimization_level, cli.verbose) {
+                    Ok(program) => program,
+                    Err(err) => {
+                        error!("Compilation failed: {}", err);
                         std::process::exit(1);
                     }
-                } else if let Err(err) = process_expression(
-                    &input,
-                    optimization_level,
-                    cli.verbose,
-                    emit_lir,
-                    output.as_deref(),
-                ) {
-                    error!("Error processing expression: {}", err);
-                    std::process::exit(1);
-                }
-            } else {
-                error!("No input provided. Use 'karte run <input>' or 'karte repl' for interactive mode.");
-                std::process::exit(1);
-            }
-        }
+                };
 
-        Some(Commands::Compile { input, output }) => {
-            let output = output.unwrap_or_else(|| {
-                let mut path = Path::new(&input).to_path_buf();
-                path.set_extension("lir");
-                path.to_string_lossy().to_string()
+            let output_file = output.unwrap_or_else(|| {
+                Path::new(&input)
+                    .with_extension("lir")
+                    .to_string_lossy()
+                    .to_string()
             });
 
-            if let Err(err) =
-                process_file(&input, optimization_level, cli.verbose, true, Some(&output))
-            {
-                error!("Error compiling file '{}': {}", input, err);
+            let lir_code = format!("{}", lir_program);
+            if let Err(err) = fs::write(&output_file, lir_code) {
+                error!("Failed to write output: {}", err);
                 std::process::exit(1);
             }
-        }
 
+            println!("Compiled to: {}", output_file);
+        }
         Some(Commands::Execute { input }) => {
             if let Err(err) = load_and_execute_lir(&input, cli.verbose) {
-                error!("Error executing LIR file '{}': {}", input, err);
+                error!("Error: {}", err);
                 std::process::exit(1);
             }
         }
-
         Some(Commands::Repl) => {
             run_repl(optimization_level, cli.verbose);
         }
-
         None => {
-            // 兼容旧版本的用法
-            if let Some(input) = cli.input {
-                // 检查是否为文件路径
-                if Path::new(&input).exists() && Path::new(&input).is_file() {
+            if let Some(ref input) = cli.input {
+                if Path::new(input).exists() {
                     if let Err(err) = process_file(
-                        &input,
+                        input,
                         optimization_level,
                         cli.verbose,
                         cli.emit_lir,
                         cli.output.as_deref(),
                     ) {
-                        error!("Error processing file '{}': {}", input, err);
+                        error!("Error: {}", err);
                         std::process::exit(1);
                     }
-                } else if let Err(err) = process_expression(
-                    &input,
-                    optimization_level,
-                    cli.verbose,
-                    cli.emit_lir,
-                    cli.output.as_deref(),
-                ) {
-                    error!("Error processing expression: {}", err);
-                    std::process::exit(1);
+                } else {
+                    if let Err(err) = process_expression(
+                        input,
+                        optimization_level,
+                        cli.verbose,
+                        cli.emit_lir,
+                        cli.output.as_deref(),
+                    ) {
+                        error!("Error: {}", err);
+                        std::process::exit(1);
+                    }
                 }
             } else {
                 run_repl(optimization_level, cli.verbose);
