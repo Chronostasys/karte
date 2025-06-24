@@ -156,7 +156,7 @@ impl<'a> Parser<'a> {
                     statements.push(self.parse_statement()?);
                     continue;
                 }
-                
+
                 // 检查是否为赋值语句 (identifier = ...)
                 if self.position + 1 < self.tokens.len() {
                     if let Some(next_token) = self.tokens.get(self.position + 1) {
@@ -171,12 +171,12 @@ impl<'a> Parser<'a> {
 
             // 不是语句，尝试解析表达式
             let expr = self.parse_expression()?;
-            
+
             // 检查是否有分号 - 如果有分号，这是一个表达式语句
             if let Some(token) = self.peek() {
                 if matches!(token.token, Token::Semicolon) {
                     self.advance(); // consume ';'
-                    // 这是一个表达式语句，加入statements
+                                    // 这是一个表达式语句，加入statements
                     let expr_span = expr.span();
                     statements.push(Statement::Expression {
                         expr,
@@ -185,7 +185,7 @@ impl<'a> Parser<'a> {
                     continue;
                 }
             }
-            
+
             // 没有分号，这是最终表达式
             final_expr = Some(Box::new(expr));
             break;
@@ -223,10 +223,14 @@ impl<'a> Parser<'a> {
 
         // 表达式语句 - 这里可能是赋值或其他表达式
         let expr = self.parse_expression()?;
-        
+
         // 如果是赋值表达式，将其转换为赋值语句
         match expr {
-            Expr::Assignment { target, value, span } => {
+            Expr::Assignment {
+                target,
+                value,
+                span,
+            } => {
                 // 期望分号
                 if let Some(token) = self.peek() {
                     if matches!(token.token, Token::Semicolon) {
@@ -243,7 +247,7 @@ impl<'a> Parser<'a> {
                         expected: "';'".to_string(),
                     });
                 }
-                
+
                 Ok(Statement::Assignment {
                     target: *target,
                     value: *value,
@@ -252,26 +256,26 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 // 普通表达式语句
-        let span = expr.span();
+                let span = expr.span();
 
-        // 期望分号
-        if let Some(token) = self.peek() {
-            if matches!(token.token, Token::Semicolon) {
-                self.advance();
-            } else {
-                return Err(ParseError::UnexpectedToken {
-                    expected: "';'".to_string(),
-                    found: token.token.clone(),
-                    span: token.span,
-                });
-            }
-        } else {
-            return Err(ParseError::UnexpectedEof {
-                expected: "';'".to_string(),
-            });
-        }
+                // 期望分号
+                if let Some(token) = self.peek() {
+                    if matches!(token.token, Token::Semicolon) {
+                        self.advance();
+                    } else {
+                        return Err(ParseError::UnexpectedToken {
+                            expected: "';'".to_string(),
+                            found: token.token.clone(),
+                            span: token.span,
+                        });
+                    }
+                } else {
+                    return Err(ParseError::UnexpectedEof {
+                        expected: "';'".to_string(),
+                    });
+                }
 
-        Ok(Statement::Expression { expr, span })
+                Ok(Statement::Expression { expr, span })
             }
         }
     }
@@ -396,17 +400,17 @@ impl<'a> Parser<'a> {
                 let name = name.clone();
                 let variant_span = token.span;
                 self.advance();
-                
+
                 // 检查是否有数据类型 (暂时只支持单个类型名)
                 let data_type = if let Some(next_token) = self.peek() {
                     if matches!(next_token.token, Token::LeftParen) {
                         self.advance(); // consume '('
-                        
+
                         if let Some(type_token) = self.peek() {
                             if let Token::Identifier(type_name) = &type_token.token {
                                 let type_name = type_name.clone();
                                 self.advance();
-                                
+
                                 // 期望 ')'
                                 if let Some(close_token) = self.peek() {
                                     if matches!(close_token.token, Token::RightParen) {
@@ -479,7 +483,7 @@ impl<'a> Parser<'a> {
             if matches!(token.token, Token::RightBrace) {
                 let end_span = token.span;
                 self.advance();
-                
+
                 // 期望分号（在块表达式中）
                 if let Some(token) = self.peek() {
                     if matches!(token.token, Token::Semicolon) {
@@ -487,9 +491,9 @@ impl<'a> Parser<'a> {
                     }
                     // 注意：不强制要求分号，因为enum可能是程序的最后一个语句
                 }
-                
+
                 let span = Span::new(start_span.start, end_span.end);
-                
+
                 Ok(Statement::TypeDef {
                     name: type_name,
                     variants,
@@ -562,7 +566,7 @@ impl<'a> Parser<'a> {
                 let name = name.clone();
                 let field_span = token.span;
                 self.advance();
-                
+
                 // 期望 ":"
                 if let Some(colon_token) = self.peek() {
                     if matches!(colon_token.token, Token::Colon) {
@@ -579,7 +583,7 @@ impl<'a> Parser<'a> {
                         expected: "':'".to_string(),
                     });
                 }
-                
+
                 // 解析字段类型（支持引用类型）
                 let field_type = self.parse_field_type_name()?;
 
@@ -619,7 +623,7 @@ impl<'a> Parser<'a> {
             if matches!(token.token, Token::RightBrace) {
                 let end_span = token.span;
                 self.advance();
-                
+
                 // 期望分号（在块表达式中）
                 if let Some(token) = self.peek() {
                     if matches!(token.token, Token::Semicolon) {
@@ -627,9 +631,9 @@ impl<'a> Parser<'a> {
                     }
                     // 注意：不强制要求分号，因为struct可能是程序的最后一个语句
                 }
-                
+
                 let span = Span::new(start_span.start, end_span.end);
-                
+
                 Ok(Statement::StructDef {
                     name: struct_name,
                     fields,
@@ -697,10 +701,13 @@ impl<'a> Parser<'a> {
     /// 检查标识符是否为已知的构造器
     fn is_constructor(&self, name: &str) -> bool {
         // 识别内置构造器和可能的自定义构造器（首字母大写）
-        matches!(name, "None" | "Some" | "Left" | "Right" | "Ok" | "Err" | "True" | "False") ||
-        (name.chars().next().map_or(false, |c| c.is_uppercase()) && name.chars().all(|c| c.is_alphanumeric()))
+        matches!(
+            name,
+            "None" | "Some" | "Left" | "Right" | "Ok" | "Err" | "True" | "False"
+        ) || (name.chars().next().is_some_and(|c| c.is_uppercase())
+            && name.chars().all(|c| c.is_alphanumeric()))
     }
-    
+
     /// 解析字段类型名，支持引用类型和泛型类型语法
     fn parse_field_type_name(&mut self) -> Result<String, ParseError> {
         self.parse_type_expression()
@@ -719,20 +726,20 @@ impl<'a> Parser<'a> {
                 Token::Identifier(type_name) => {
                     let type_name = type_name.clone();
                     self.advance();
-                    
+
                     // 检查是否有泛型参数
                     if let Some(next_token) = self.peek() {
                         if matches!(next_token.token, Token::Less) {
                             self.advance(); // consume '<'
-                            
+
                             // 解析泛型参数
                             let mut generic_args = Vec::new();
-                            
+
                             loop {
                                 // 解析一个泛型参数
                                 let arg_type = self.parse_type_expression()?;
                                 generic_args.push(arg_type);
-                                
+
                                 // 检查是否有更多参数
                                 if let Some(comma_token) = self.peek() {
                                     if matches!(comma_token.token, Token::Comma) {
@@ -754,7 +761,7 @@ impl<'a> Parser<'a> {
                                     });
                                 }
                             }
-                            
+
                             // 构造泛型类型字符串
                             Ok(format!("{}<{}>", type_name, generic_args.join(", ")))
                         } else {
@@ -765,13 +772,11 @@ impl<'a> Parser<'a> {
                         Ok(type_name)
                     }
                 }
-                _ => {
-                    Err(ParseError::UnexpectedToken {
-                        expected: "type name".to_string(),
-                        found: token.token.clone(),
-                        span: token.span,
-                    })
-                }
+                _ => Err(ParseError::UnexpectedToken {
+                    expected: "type name".to_string(),
+                    found: token.token.clone(),
+                    span: token.span,
+                }),
             }
         } else {
             Err(ParseError::UnexpectedEof {
@@ -799,11 +804,11 @@ impl<'a> Parser<'a> {
                         } else {
                             false
                         }
-                    },
+                    }
                     Token::RightBrace => {
                         // 空的 {} 也可能是struct字面量
                         true
-                    },
+                    }
                     _ => {
                         // 其他token（如 _、数字、match等）不是struct字面量
                         false
@@ -1129,14 +1134,16 @@ impl<'a> Parser<'a> {
                         if let Some(next_token) = self.peek() {
                             if matches!(next_token.token, Token::DoubleColon) {
                                 self.advance(); // consume '::'
-                                
+
                                 // 期望构造器名
                                 if let Some(constructor_token) = self.peek() {
-                                    if let Token::Identifier(constructor_name) = &constructor_token.token {
+                                    if let Token::Identifier(constructor_name) =
+                                        &constructor_token.token
+                                    {
                                         let constructor_name = constructor_name.clone();
                                         let constructor_span = constructor_token.span;
                                         self.advance();
-                                        
+
                                         // 检查是否有参数
                                         if let Some(arg_token) = self.peek() {
                                             if matches!(arg_token.token, Token::LeftParen) {
@@ -1152,12 +1159,16 @@ impl<'a> Parser<'a> {
                                                         expected: "expression or ')'".to_string(),
                                                     });
                                                 };
-                                                
+
                                                 if let Some(close_token) = self.peek() {
-                                                    if matches!(close_token.token, Token::RightParen) {
+                                                    if matches!(
+                                                        close_token.token,
+                                                        Token::RightParen
+                                                    ) {
                                                         let end_span = close_token.span;
                                                         self.advance(); // consume ')'
-                                                        let full_span = Span::new(span.start, end_span.end);
+                                                        let full_span =
+                                                            Span::new(span.start, end_span.end);
                                                         Ok(Expr::QualifiedConstructor {
                                                             type_name: name,
                                                             constructor_name,
@@ -1178,7 +1189,8 @@ impl<'a> Parser<'a> {
                                                 }
                                             } else {
                                                 // 无参数限定构造器
-                                                let full_span = Span::new(span.start, constructor_span.end);
+                                                let full_span =
+                                                    Span::new(span.start, constructor_span.end);
                                                 Ok(Expr::QualifiedConstructor {
                                                     type_name: name,
                                                     constructor_name,
@@ -1188,7 +1200,8 @@ impl<'a> Parser<'a> {
                                             }
                                         } else {
                                             // 无参数限定构造器
-                                            let full_span = Span::new(span.start, constructor_span.end);
+                                            let full_span =
+                                                Span::new(span.start, constructor_span.end);
                                             Ok(Expr::QualifiedConstructor {
                                                 type_name: name,
                                                 constructor_name,
@@ -1208,7 +1221,9 @@ impl<'a> Parser<'a> {
                                         expected: "constructor name".to_string(),
                                     })
                                 }
-                            } else if matches!(next_token.token, Token::LeftParen) && self.is_constructor(&name) {
+                            } else if matches!(next_token.token, Token::LeftParen)
+                                && self.is_constructor(&name)
+                            {
                                 // 只有已知构造器才处理构造器调用 Constructor(arg)
                                 self.advance(); // consume '('
                                 let arg = if let Some(peeked) = self.peek() {
@@ -1252,29 +1267,31 @@ impl<'a> Parser<'a> {
                                 if self.is_likely_struct_literal() {
                                     // 结构体字面量: StructName { field1: value1, field2: value2 }
                                     self.advance(); // consume '{'
-                                    
+
                                     let mut fields = Vec::new();
-                                    
+
                                     // 解析字段初始化列表
                                     while let Some(token) = self.peek() {
                                         if matches!(token.token, Token::RightBrace) {
                                             break;
                                         }
-                                        
+
                                         // 解析字段名
-                                        let field_name = if let Token::Identifier(field_name) = &token.token {
+                                        let field_name = if let Token::Identifier(field_name) =
+                                            &token.token
+                                        {
                                             let field_name = field_name.clone();
                                             let field_span = token.span;
                                             self.advance();
-                                            
+
                                             // 期望 ':'
                                             if let Some(colon_token) = self.peek() {
                                                 if matches!(colon_token.token, Token::Colon) {
                                                     self.advance(); // consume ':'
-                                                    
+
                                                     // 解析字段值
                                                     let field_value = self.parse_expression()?;
-                                                    
+
                                                     karte_hir::ast::FieldInit {
                                                         name: field_name,
                                                         value: field_value,
@@ -1299,9 +1316,9 @@ impl<'a> Parser<'a> {
                                                 span: token.span,
                                             });
                                         };
-                                        
+
                                         fields.push(field_name);
-                                        
+
                                         // 检查是否有逗号
                                         if let Some(token) = self.peek() {
                                             if matches!(token.token, Token::Comma) {
@@ -1317,7 +1334,7 @@ impl<'a> Parser<'a> {
                                             }
                                         }
                                     }
-                                    
+
                                     // 期望 '}'
                                     if let Some(token) = self.peek() {
                                         if matches!(token.token, Token::RightBrace) {
@@ -1431,12 +1448,12 @@ impl<'a> Parser<'a> {
 
                         // 尝试解析表达式
                         let expr = self.parse_expression()?;
-                        
+
                         // 检查是否有分号
                         if let Some(next_token) = self.peek() {
                             if matches!(next_token.token, Token::Semicolon) {
                                 self.advance(); // consume ';'
-                                // 这是一个表达式语句
+                                                // 这是一个表达式语句
                                 let expr_span = expr.span();
                                 statements.push(Statement::Expression {
                                     expr,
@@ -1555,14 +1572,14 @@ impl<'a> Parser<'a> {
         while let Some(token) = self.peek() {
             if matches!(token.token, Token::Dot) {
                 self.advance(); // consume '.'
-                
+
                 // 期望字段名
                 if let Some(field_token) = self.peek() {
                     if let Token::Identifier(field_name) = &field_token.token {
                         let field_name = field_name.clone();
                         let end_span = field_token.span;
                         self.advance();
-                        
+
                         let span = Span::new(expr.span().start, end_span.end);
                         expr = Expr::FieldAccess {
                             object: Box::new(expr),
@@ -1717,14 +1734,16 @@ impl<'a> Parser<'a> {
                         if let Some(next_token) = self.peek() {
                             if matches!(next_token.token, Token::DoubleColon) {
                                 self.advance(); // consume '::'
-                                
+
                                 // 期望构造器名
                                 if let Some(constructor_token) = self.peek() {
-                                    if let Token::Identifier(constructor_name) = &constructor_token.token {
+                                    if let Token::Identifier(constructor_name) =
+                                        &constructor_token.token
+                                    {
                                         let constructor_name = constructor_name.clone();
                                         let constructor_span = constructor_token.span;
                                         self.advance();
-                                        
+
                                         // 检查是否有参数模式
                                         if let Some(arg_token) = self.peek() {
                                             if matches!(arg_token.token, Token::LeftParen) {
@@ -1740,12 +1759,16 @@ impl<'a> Parser<'a> {
                                                         expected: "pattern or ')'".to_string(),
                                                     });
                                                 };
-                                                
+
                                                 if let Some(close_token) = self.peek() {
-                                                    if matches!(close_token.token, Token::RightParen) {
+                                                    if matches!(
+                                                        close_token.token,
+                                                        Token::RightParen
+                                                    ) {
                                                         let end_span = close_token.span;
                                                         self.advance(); // consume ')'
-                                                        let full_span = Span::new(span.start, end_span.end);
+                                                        let full_span =
+                                                            Span::new(span.start, end_span.end);
                                                         Ok(karte_hir::Pattern::QualifiedConstructor {
                                                             type_name: name,
                                                             constructor_name,
@@ -1766,7 +1789,8 @@ impl<'a> Parser<'a> {
                                                 }
                                             } else {
                                                 // 无参数限定构造器模式
-                                                let full_span = Span::new(span.start, constructor_span.end);
+                                                let full_span =
+                                                    Span::new(span.start, constructor_span.end);
                                                 Ok(karte_hir::Pattern::QualifiedConstructor {
                                                     type_name: name,
                                                     constructor_name,
@@ -1776,7 +1800,8 @@ impl<'a> Parser<'a> {
                                             }
                                         } else {
                                             // 无参数限定构造器模式
-                                            let full_span = Span::new(span.start, constructor_span.end);
+                                            let full_span =
+                                                Span::new(span.start, constructor_span.end);
                                             Ok(karte_hir::Pattern::QualifiedConstructor {
                                                 type_name: name,
                                                 constructor_name,
@@ -1970,7 +1995,7 @@ impl<'a> Parser<'a> {
     /// 解析if表达式: if condition then branch else branch
     fn parse_if(&mut self) -> Result<Expr, ParseError> {
         let start_span = self.peek().unwrap().span;
-        
+
         // 期望 'if'
         if let Some(token) = self.peek() {
             if let Token::Identifier(name) = &token.token {
@@ -1999,7 +2024,7 @@ impl<'a> Parser<'a> {
         // 解析条件表达式
         let condition = self.parse_expression()?;
 
-        // 期望 'then' 或 '{' 
+        // 期望 'then' 或 '{'
         if let Some(token) = self.peek() {
             if let Token::Identifier(name) = &token.token {
                 if name == "then" {
@@ -2065,7 +2090,7 @@ impl<'a> Parser<'a> {
     /// 解析while表达式: while condition do body
     fn parse_while(&mut self) -> Result<Expr, ParseError> {
         let start_span = self.peek().unwrap().span;
-        
+
         // 期望 'while'
         if let Some(token) = self.peek() {
             if let Token::Identifier(name) = &token.token {
@@ -2234,8 +2259,8 @@ pub fn parse_with_type_check(tokens: &[TokenWithSpan]) -> (Option<ParseResult>, 
 #[cfg(test)]
 mod assignment_tests {
     use super::*;
+
     use karte_lexer::tokenize;
-    use karte_hir::*;
 
     #[test]
     fn test_assignment_expression() {
@@ -2284,7 +2309,11 @@ mod assignment_tests {
 
             // 内层赋值：b = 5
             match value.as_ref() {
-                Expr::Assignment { target: inner_target, value: inner_value, .. } => {
+                Expr::Assignment {
+                    target: inner_target,
+                    value: inner_value,
+                    ..
+                } => {
                     match inner_target.as_ref() {
                         Expr::Identifier { name, .. } => {
                             assert_eq!(name, "b");
@@ -2322,7 +2351,10 @@ mod assignment_tests {
                 _ => panic!("赋值目标应该是标识符"),
             }
             match value.as_ref() {
-                Expr::BinaryOp { op: BinaryOperator::Add, .. } => {
+                Expr::BinaryOp {
+                    op: BinaryOperator::Add,
+                    ..
+                } => {
                     // 正确，是加法表达式
                 }
                 _ => panic!("赋值值应该是加法表达式"),
@@ -2383,7 +2415,12 @@ mod assignment_tests {
             }
             // 右侧应该是 y + (z * 2)，不是 (y + z) * 2
             match value.as_ref() {
-                Expr::BinaryOp { op: BinaryOperator::Add, left, right, .. } => {
+                Expr::BinaryOp {
+                    op: BinaryOperator::Add,
+                    left,
+                    right,
+                    ..
+                } => {
                     match left.as_ref() {
                         Expr::Identifier { name, .. } => {
                             assert_eq!(name, "y");
@@ -2391,7 +2428,10 @@ mod assignment_tests {
                         _ => panic!("加法左侧应该是标识符 y"),
                     }
                     match right.as_ref() {
-                        Expr::BinaryOp { op: BinaryOperator::Multiply, .. } => {
+                        Expr::BinaryOp {
+                            op: BinaryOperator::Multiply,
+                            ..
+                        } => {
                             // 正确，乘法有更高优先级
                         }
                         _ => panic!("加法右侧应该是乘法表达式"),

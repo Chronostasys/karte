@@ -1,5 +1,5 @@
 //! 虚拟机内存管理
-//! 
+//!
 //! 提供内存分配、访问和管理功能
 
 use super::{MEMORY_SIZE, STACK_SIZE};
@@ -127,7 +127,7 @@ impl MemoryManager {
         println!("=== Memory State ===");
         println!("Heap pointer: {}", self.heap_pointer);
         println!("Stack pointer: {}", self.stack_pointer);
-        
+
         let stats = self.get_memory_stats();
         println!("Memory statistics: {:?}", stats);
 
@@ -164,4 +164,4 @@ impl Default for MemoryManager {
     fn default() -> Self {
         Self::new()
     }
-} 
+}

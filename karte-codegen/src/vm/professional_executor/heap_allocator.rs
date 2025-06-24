@@ -1,5 +1,5 @@
 //! 堆分配器
-//! 
+//!
 //! 提供专业的堆内存分配功能，支持：
 //! - 基本的堆内存分配
 //! - 对象类型管理
@@ -12,7 +12,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, PartialEq)]
 pub enum HeapObjectType {
     /// 闭包环境对象
-    ClosureEnv { 
+    ClosureEnv {
         /// 环境大小（字节数）
         size: usize,
         /// 字段数量
@@ -25,14 +25,9 @@ pub enum HeapObjectType {
         field_count: usize,
     },
     /// 数组对象
-    Array {
-        element_size: usize,
-        length: usize,
-    },
+    Array { element_size: usize, length: usize },
     /// 原始数据块
-    Raw {
-        size: usize,
-    },
+    Raw { size: usize },
 }
 
 /// 堆对象元数据
@@ -62,7 +57,7 @@ struct MemoryBlock {
 }
 
 /// 专业堆分配器
-/// 
+///
 /// 使用简单的first-fit分配策略，专注于正确性而非性能
 #[derive(Debug)]
 pub struct HeapAllocator {
@@ -86,7 +81,7 @@ pub struct HeapAllocator {
 
 impl HeapAllocator {
     /// 创建新的堆分配器
-    /// 
+    ///
     /// # 参数
     /// - `heap_start`: 堆内存起始地址
     /// - `heap_size`: 堆内存总大小
@@ -111,10 +106,10 @@ impl HeapAllocator {
     }
 
     /// 分配闭包环境对象
-    /// 
+    ///
     /// # 参数
     /// - `field_count`: 环境中字段的数量
-    /// 
+    ///
     /// # 返回值
     /// 返回分配的地址，失败时返回错误
     pub fn allocate_closure_env(&mut self, field_count: usize) -> Result<usize, String> {
@@ -131,9 +126,14 @@ impl HeapAllocator {
     }
 
     /// 分配结构体对象
-    pub fn allocate_struct(&mut self, name: String, field_count: usize, size: usize) -> Result<usize, String> {
+    pub fn allocate_struct(
+        &mut self,
+        name: String,
+        field_count: usize,
+        size: usize,
+    ) -> Result<usize, String> {
         let aligned_size = align_up(size, 8);
-        
+
         let obj_type = HeapObjectType::Struct {
             name,
             size: aligned_size,
@@ -146,10 +146,8 @@ impl HeapAllocator {
     /// 分配原始内存块
     pub fn allocate_raw(&mut self, size: usize) -> Result<usize, String> {
         let aligned_size = align_up(size, 8);
-        
-        let obj_type = HeapObjectType::Raw {
-            size: aligned_size,
-        };
+
+        let obj_type = HeapObjectType::Raw { size: aligned_size };
 
         self.allocate_object(obj_type, aligned_size)
     }
@@ -157,14 +155,16 @@ impl HeapAllocator {
     /// 通用对象分配函数
     fn allocate_object(&mut self, obj_type: HeapObjectType, size: usize) -> Result<usize, String> {
         // 查找合适的空闲块
-        let block_index = self.find_suitable_block(size)
+        let block_index = self
+            .find_suitable_block(size)
             .ok_or_else(|| format!("堆内存不足：需要 {} 字节", size))?;
 
         let alloc_addr = self.free_blocks[block_index].start_addr;
         let old_block_size = self.free_blocks[block_index].size;
 
         // 分割块（如果剩余空间足够）
-        if old_block_size > size + 16 { // 16字节的最小块大小
+        if old_block_size > size + 16 {
+            // 16字节的最小块大小
             let remaining_block = MemoryBlock {
                 start_addr: alloc_addr + size,
                 size: old_block_size - size,
@@ -188,7 +188,7 @@ impl HeapAllocator {
         };
 
         self.allocated_objects.insert(alloc_addr, heap_object);
-        
+
         // 更新统计信息
         self.total_allocated += size;
         self.peak_usage = self.peak_usage.max(self.total_allocated);
@@ -212,9 +212,9 @@ impl HeapAllocator {
 
     /// 检查地址是否有效
     pub fn is_valid_address(&self, address: usize) -> bool {
-        address >= self.heap_start && 
-        address < self.heap_start + self.heap_size &&
-        self.allocated_objects.contains_key(&address)
+        address >= self.heap_start
+            && address < self.heap_start + self.heap_size
+            && self.allocated_objects.contains_key(&address)
     }
 
     /// 获取分配统计信息
@@ -238,7 +238,7 @@ impl HeapAllocator {
         self.total_allocated = 0;
         self.peak_usage = 0;
 
-        // 重新添加整个堆作为一个空闲块  
+        // 重新添加整个堆作为一个空闲块
         self.free_blocks.push(MemoryBlock {
             start_addr: self.heap_start,
             size: self.heap_size,
@@ -254,17 +254,22 @@ impl HeapAllocator {
         println!("已分配对象数: {}", self.allocated_objects.len());
         println!("总分配字节: {}", self.total_allocated);
         println!("峰值使用: {} 字节", self.peak_usage);
-        
+
         println!("已分配对象:");
         for (addr, obj) in &self.allocated_objects {
             println!("  0x{:x}: {:?}", addr, obj.object_type);
         }
-        
+
         println!("空闲块:");
         for (i, block) in self.free_blocks.iter().enumerate() {
             if block.is_free {
-                println!("  块{}: 0x{:x} - 0x{:x} ({} 字节)", 
-                    i, block.start_addr, block.start_addr + block.size, block.size);
+                println!(
+                    "  块{}: 0x{:x} - 0x{:x} ({} 字节)",
+                    i,
+                    block.start_addr,
+                    block.start_addr + block.size,
+                    block.size
+                );
             }
         }
     }
@@ -301,11 +306,11 @@ mod tests {
     #[test]
     fn test_closure_env_allocation() {
         let mut allocator = HeapAllocator::new(0x10000, 1024);
-        
+
         // 分配一个有3个字段的闭包环境
         let addr = allocator.allocate_closure_env(3).unwrap();
         assert_eq!(addr, 0x10000);
-        
+
         let obj = allocator.get_object(addr).unwrap();
         match &obj.object_type {
             HeapObjectType::ClosureEnv { field_count, .. } => {
@@ -318,10 +323,10 @@ mod tests {
     #[test]
     fn test_multiple_allocations() {
         let mut allocator = HeapAllocator::new(0x10000, 1024);
-        
+
         let addr1 = allocator.allocate_closure_env(2).unwrap();
         let addr2 = allocator.allocate_closure_env(1).unwrap();
-        
+
         assert_ne!(addr1, addr2);
         assert!(allocator.is_valid_address(addr1));
         assert!(allocator.is_valid_address(addr2));
@@ -330,10 +335,10 @@ mod tests {
     #[test]
     fn test_allocation_stats() {
         let mut allocator = HeapAllocator::new(0x10000, 1024);
-        
+
         allocator.allocate_closure_env(2).unwrap();
         allocator.allocate_raw(64).unwrap();
-        
+
         let stats = allocator.get_allocation_stats();
         assert!(stats.total_allocated > 0);
         assert_eq!(stats.active_objects, 2);
@@ -348,4 +353,4 @@ mod tests {
         assert_eq!(align_up(15, 8), 16);
         assert_eq!(align_up(16, 8), 16);
     }
-} 
+}

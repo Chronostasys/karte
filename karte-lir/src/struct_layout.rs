@@ -1,9 +1,9 @@
 //! 结构体布局管理模块
-//! 
+//!
 //! 负责计算结构体的内存布局，包括字段偏移、对齐和大小计算
 
 use crate::{StructField, StructLayout};
-use karte_hir::types::{Type, StructField as HirStructField};
+use karte_hir::types::{StructField as HirStructField, Type};
 use std::collections::HashMap;
 
 /// 结构体布局管理器
@@ -25,7 +25,7 @@ impl StructLayoutManager {
             type_sizes: HashMap::new(),
             type_alignments: HashMap::new(),
         };
-        
+
         // 初始化基本类型的大小和对齐信息
         manager.init_basic_types();
         manager
@@ -34,10 +34,10 @@ impl StructLayoutManager {
     /// 初始化基本类型信息
     fn init_basic_types(&mut self) {
         // 64位平台的标准类型大小
-        self.type_sizes.insert("number".to_string(), 8);    // i64
-        self.type_sizes.insert("boolean".to_string(), 1);   // bool
+        self.type_sizes.insert("number".to_string(), 8); // i64
+        self.type_sizes.insert("boolean".to_string(), 1); // bool
         self.type_sizes.insert("reference".to_string(), 8); // 指针
-        self.type_sizes.insert("unit".to_string(), 0);      // ()
+        self.type_sizes.insert("unit".to_string(), 0); // ()
 
         // 对齐要求（通常与大小相同，但不超过机器字大小）
         self.type_alignments.insert("number".to_string(), 8);
@@ -47,7 +47,11 @@ impl StructLayoutManager {
     }
 
     /// 计算结构体布局
-    pub fn compute_layout(&mut self, name: &str, fields: &[HirStructField]) -> Result<StructLayout, String> {
+    pub fn compute_layout(
+        &mut self,
+        name: &str,
+        fields: &[HirStructField],
+    ) -> Result<StructLayout, String> {
         // 检查缓存
         if let Some(cached) = self.layout_cache.get(name) {
             return Ok(cached.clone());
@@ -55,35 +59,39 @@ impl StructLayoutManager {
 
         // 计算布局
         let layout = self.compute_layout_internal(name, fields)?;
-        
+
         // 缓存结果
         self.layout_cache.insert(name.to_string(), layout.clone());
-        
+
         Ok(layout)
     }
 
     /// 内部布局计算逻辑
-    fn compute_layout_internal(&mut self, name: &str, fields: &[HirStructField]) -> Result<StructLayout, String> {
+    fn compute_layout_internal(
+        &mut self,
+        name: &str,
+        fields: &[HirStructField],
+    ) -> Result<StructLayout, String> {
         let mut struct_fields = Vec::new();
         let mut current_offset = 0;
         let mut max_alignment = 1;
 
         for hir_field in fields {
             let (field_size, field_alignment) = self.get_type_info(&hir_field.field_type)?;
-            
+
             // 更新最大对齐要求
             max_alignment = max_alignment.max(field_alignment);
-            
+
             // 计算字段对齐偏移
             let aligned_offset = align_up(current_offset, field_alignment);
-            
+
             let lir_field = StructField {
                 name: hir_field.name.clone(),
                 offset: aligned_offset,
                 size: field_size,
                 alignment: field_alignment,
             };
-            
+
             struct_fields.push(lir_field);
             current_offset = aligned_offset + field_size;
         }
@@ -119,7 +127,7 @@ impl StructLayoutManager {
                     Ok((8, 8)) // 其他Sum类型用8字节（标签+数据）
                 }
             }
-            Type::Var(_) => Ok((8, 8)), // 类型变量默认8字节
+            Type::Var(_) => Ok((8, 8)),  // 类型变量默认8字节
             Type::Unknown => Ok((8, 8)), // 未知类型默认8字节
         }
     }
@@ -141,7 +149,7 @@ impl StructLayoutManager {
     /// 验证结构体布局的一致性
     pub fn validate_layout(&self, layout: &StructLayout) -> Result<(), String> {
         let mut expected_offset = 0;
-        
+
         for field in &layout.fields {
             // 检查对齐
             if field.offset % field.alignment != 0 {
@@ -150,7 +158,7 @@ impl StructLayoutManager {
                     field.name, field.offset, field.alignment
                 ));
             }
-            
+
             // 检查偏移顺序
             if field.offset < expected_offset {
                 return Err(format!(
@@ -158,7 +166,7 @@ impl StructLayoutManager {
                     field.name, field.offset, expected_offset
                 ));
             }
-            
+
             expected_offset = field.offset + field.size;
         }
 
@@ -199,7 +207,7 @@ impl StructLayoutManager {
         };
 
         let mut suggestions = Vec::new();
-        
+
         // 检查填充过多
         if padding_ratio > 0.25 {
             suggestions.push("考虑重新排列字段以减少填充开销".to_string());
@@ -248,12 +256,12 @@ fn align_up(value: usize, alignment: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use karte_hir::types::{Type, StructField as HirStructField};
+    use karte_hir::types::{StructField as HirStructField, Type};
 
     #[test]
     fn test_basic_struct_layout() {
         let mut manager = StructLayoutManager::new();
-        
+
         let fields = vec![
             HirStructField {
                 name: "x".to_string(),
@@ -266,7 +274,7 @@ mod tests {
         ];
 
         let layout = manager.compute_layout("Point", &fields).unwrap();
-        
+
         assert_eq!(layout.total_size, 16);
         assert_eq!(layout.alignment, 8);
         assert_eq!(layout.fields.len(), 2);
@@ -277,7 +285,7 @@ mod tests {
     #[test]
     fn test_mixed_type_struct() {
         let mut manager = StructLayoutManager::new();
-        
+
         let fields = vec![
             HirStructField {
                 name: "flag".to_string(),
@@ -290,7 +298,7 @@ mod tests {
         ];
 
         let layout = manager.compute_layout("Mixed", &fields).unwrap();
-        
+
         // bool (1 byte) + 7 bytes padding + i64 (8 bytes) = 16 bytes
         assert_eq!(layout.total_size, 16);
         assert_eq!(layout.alignment, 8);
@@ -350,4 +358,4 @@ mod tests {
         let padding = manager.calculate_padding_overhead(&layout);
         assert_eq!(padding, 7); // 7 bytes of padding
     }
-} 
+}

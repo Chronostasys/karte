@@ -6,6 +6,9 @@ authors.workspace = true
 description = "Lexical analyzer for Karte compiler"
 license.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 logos.workspace = true
 thiserror.workspace = true

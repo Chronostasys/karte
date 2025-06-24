@@ -6,6 +6,9 @@ authors.workspace = true
 description = "Command-line interface for Karte compiler"
 license.workspace = true
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "karte"
 path = "src/main.rs"
@@ -20,3 +23,4 @@ karte-hir = { path = "../karte-hir" }
 karte-lir = { path = "../karte-lir" }
 env_logger.workspace = true
 log.workspace = true
+clap = { version = "4.4", features = ["derive"] }

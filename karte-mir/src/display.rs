@@ -115,7 +115,11 @@ impl fmt::Display for Statement {
                 args,
                 ..
             } => {
-                let args_str = args.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", ");
+                let args_str = args
+                    .iter()
+                    .map(|a| a.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 if let Some(target) = target {
                     write!(f, "{} = call {}({})", target, function, args_str)
                 } else {
@@ -130,16 +134,18 @@ impl fmt::Display for Statement {
                 ..
             } => write!(f, "{} = {}.{}", target, object, field),
             Statement::Dereference {
-                target,
-                reference,
-                ..
+                target, reference, ..
             } => write!(f, "{} = *{}", target, reference),
             Statement::ConstructorArgExtract {
                 target,
                 constructor,
                 arg_index,
                 ..
-            } => write!(f, "{} = constructor_arg_extract {} {}", target, constructor, arg_index),
+            } => write!(
+                f,
+                "{} = constructor_arg_extract {} {}",
+                target, constructor, arg_index
+            ),
             Statement::FieldAssign {
                 object,
                 field,
@@ -151,7 +157,23 @@ impl fmt::Display for Statement {
                 size,
                 object_type,
                 ..
-            } => write!(f, "{} = heap_alloc {} bytes ({})", target, size, object_type),
+            } => write!(
+                f,
+                "{} = heap_alloc {} bytes ({})",
+                target, size, object_type
+            ),
+            Statement::Phi {
+                target, incoming, ..
+            } => {
+                write!(f, "{} = phi(", target)?;
+                for (i, (block_id, value)) in incoming.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "bb{}: {}", block_id.0, value)?;
+                }
+                write!(f, ")")
+            }
         }
     }
 }
@@ -228,4 +250,4 @@ impl fmt::Display for MirProgram {
         }
         Ok(())
     }
-} 
+}

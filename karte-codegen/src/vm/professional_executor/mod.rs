@@ -1,5 +1,5 @@
 //! 专业虚拟机执行引擎模块
-//! 
+//!
 //! 这个模块提供了重新设计的执行引擎，具有以下特点：
 //! - 简化的执行流程，专注于正确性
 //! - 与传统执行器兼容的接口
@@ -7,21 +7,20 @@
 //! - 专业的调用约定和栈管理
 
 pub mod execution_engine;
+pub mod heap_allocator;
 pub mod instruction_processor;
 pub mod program_manager;
-pub mod heap_allocator;
 
 pub use execution_engine::*;
+pub use heap_allocator::*;
 pub use instruction_processor::*;
 pub use program_manager::*;
-pub use heap_allocator::*;
 
-use super::{VirtualMachine, MemoryManager, CallingConvention, StackManager};
-use karte_lir::{LirProgram, LabelId, Instruction};
-use std::collections::HashMap;
+use super::{MemoryManager, StackManager, VirtualMachine};
+use karte_lir::{LabelId, LirProgram};
 
 /// 专业执行器的核心结构
-/// 
+///
 /// 这个结构负责协调各个组件，提供统一的执行接口
 #[derive(Debug)]
 pub struct ProfessionalExecutor {
@@ -47,7 +46,7 @@ impl ProfessionalExecutor {
     }
 
     /// 执行LIR程序
-    /// 
+    ///
     /// 这是专业执行器的主要接口，提供与传统执行器兼容的功能
     pub fn execute_program(&mut self, program: &LirProgram) -> Result<i64, String> {
         if self.debug_mode {
@@ -56,17 +55,17 @@ impl ProfessionalExecutor {
 
         // 1. 加载程序
         self.program_manager.load_program(program)?;
-        
+
         // 2. 初始化执行环境
         self.execution_engine.initialize(&self.program_manager)?;
-        
+
         // 3. 执行程序
         let result = self.run_main_function()?;
-        
+
         if self.debug_mode {
             println!("=== 专业执行器完成，结果: {} ===", result);
         }
-        
+
         Ok(result)
     }
 
@@ -74,28 +73,32 @@ impl ProfessionalExecutor {
     fn run_main_function(&mut self) -> Result<i64, String> {
         // 获取主函数信息
         let main_info = self.program_manager.get_main_function_info()?;
-        
+
         // 设置程序计数器到主函数入口
         self.execution_engine.set_pc(main_info.entry_pc);
-        
+
         // 执行指令循环
         loop {
             // 获取当前指令
-            let instruction = self.program_manager.get_instruction_at_pc(
-                self.execution_engine.get_pc()
-            )?;
-            
+            let instruction = self
+                .program_manager
+                .get_instruction_at_pc(self.execution_engine.get_pc())?;
+
             if self.debug_mode {
-                println!("PC: {}, 执行: {:?}", self.execution_engine.get_pc(), instruction);
+                println!(
+                    "PC: {}, 执行: {}",
+                    self.execution_engine.get_pc(),
+                    instruction
+                );
             }
-            
+
             // 处理指令
             let result = self.instruction_processor.process_instruction(
-                &instruction,
+                instruction,
                 &mut self.execution_engine,
-                &self.program_manager
+                &self.program_manager,
             )?;
-            
+
             // 检查是否需要退出
             match result {
                 InstructionResult::Continue => {
@@ -114,12 +117,15 @@ impl ProfessionalExecutor {
                             // 设置返回值到结果寄存器
                             self.execution_engine.set_register(&result_reg, value)?;
                         }
-                        
+
                         // 设置返回地址
                         self.execution_engine.set_pc(call_frame.return_pc);
-                        
+
                         if self.debug_mode {
-                            println!("返回到调用点: PC={}, 返回值={}", call_frame.return_pc, value);
+                            println!(
+                                "返回到调用点: PC={}, 返回值={}",
+                                call_frame.return_pc, value
+                            );
                         }
                     } else {
                         // 这是主函数的返回，程序结束
@@ -131,13 +137,13 @@ impl ProfessionalExecutor {
                     return Ok(code);
                 }
             }
-            
+
             // 防止无限循环
             if self.execution_engine.get_pc() >= self.program_manager.instruction_count() {
                 break;
             }
         }
-        
+
         // 默认返回0
         Ok(0)
     }
@@ -186,4 +192,4 @@ pub struct MainFunctionInfo {
     pub entry_pc: usize,
     /// 函数标签ID
     pub entry_label: LabelId,
-} 
+}

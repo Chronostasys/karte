@@ -1,5 +1,5 @@
 //! Karte 虚拟机栈管理
-//! 
+//!
 //! 实现专业的栈帧管理，包括：
 //! - 栈帧的创建和销毁
 //! - 局部变量分配
@@ -7,7 +7,7 @@
 //! - 返回地址管理
 
 use super::calling_convention::{CallingConvention, PhysicalRegister};
-use karte_lir::RegisterId;
+use karte_lir::Register;
 use std::collections::HashMap;
 
 /// 栈帧布局
@@ -26,7 +26,13 @@ pub struct StackFrame {
     /// 保存的寄存器映射 (寄存器 -> 栈偏移)
     pub saved_registers: HashMap<PhysicalRegister, i64>,
     /// 局部变量映射 (变量ID -> 栈偏移)
-    pub local_variables: HashMap<RegisterId, i64>,
+    pub local_variables: HashMap<Register, i64>,
+}
+
+impl Default for StackFrame {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StackFrame {
@@ -44,18 +50,18 @@ impl StackFrame {
     }
 
     /// 分配局部变量存储空间
-    pub fn allocate_local(&mut self, var_id: RegisterId, size: usize, alignment: usize) -> i64 {
+    pub fn allocate_local(&mut self, var_id: Register, size: usize, alignment: usize) -> i64 {
         // 对齐当前偏移量
         let aligned_offset = align_up(self.locals_size, alignment);
         let offset = -(aligned_offset as i64 + size as i64);
-        
+
         // 记录变量位置
         self.local_variables.insert(var_id, offset);
-        
+
         // 更新局部变量区大小
         self.locals_size = aligned_offset + size;
         self.recalculate_total_size();
-        
+
         offset
     }
 
@@ -75,7 +81,7 @@ impl StackFrame {
     }
 
     /// 获取局部变量的栈偏移
-    pub fn get_local_offset(&self, var_id: &RegisterId) -> Option<i64> {
+    pub fn get_local_offset(&self, var_id: &Register) -> Option<i64> {
         self.local_variables.get(var_id).copied()
     }
 
@@ -117,36 +123,38 @@ impl StackManager {
     }
 
     /// 创建新的栈帧（函数入口）
-    pub fn enter_function(&mut self, 
-                         saved_registers: &[PhysicalRegister],
-                         local_var_size: usize,
-                         max_outgoing_args: usize) -> StackFrame {
+    pub fn enter_function(
+        &mut self,
+        saved_registers: &[PhysicalRegister],
+        local_var_size: usize,
+        max_outgoing_args: usize,
+    ) -> StackFrame {
         let mut frame = StackFrame::new();
-        
+
         // 设置传出参数区大小
         frame.set_outgoing_args_size(max_outgoing_args * 8); // 假设每个参数8字节
-        
+
         // 分配保存寄存器的空间
         for &reg in saved_registers {
             frame.allocate_saved_register(reg);
         }
-        
+
         // 预留局部变量空间
         if local_var_size > 0 {
             frame.locals_size = local_var_size;
             frame.recalculate_total_size();
         }
-        
+
         // 更新栈指针
         self.stack_pointer -= frame.total_size as i64;
         frame.base_offset = self.frame_pointer;
-        
+
         // 保存当前栈帧
         self.frame_stack.push(frame.clone());
-        
+
         // 更新帧指针
         self.frame_pointer = self.stack_pointer + frame.total_size as i64;
-        
+
         frame
     }
 
@@ -155,7 +163,7 @@ impl StackManager {
         if let Some(frame) = self.frame_stack.pop() {
             // 恢复栈指针
             self.stack_pointer += frame.total_size as i64;
-            
+
             // 恢复帧指针
             if let Some(parent_frame) = self.frame_stack.last() {
                 self.frame_pointer = parent_frame.base_offset;
@@ -163,7 +171,7 @@ impl StackManager {
                 // 回到栈基址
                 self.frame_pointer = self.stack_pointer;
             }
-            
+
             Some(frame)
         } else {
             None
@@ -212,7 +220,7 @@ impl StackManager {
     pub fn depth(&self) -> usize {
         self.frame_stack.len()
     }
-    
+
     /// 打印栈管理器状态
     pub fn print_state(&self) {
         println!("=== Stack Manager State ===");
@@ -262,20 +270,20 @@ mod tests {
     #[test]
     fn test_stack_frame_allocation() {
         let mut frame = StackFrame::new();
-        
+
         // 分配局部变量
-        let var1 = RegisterId(1);
+        let var1 = Register::Virtual(1);
         let offset1 = frame.allocate_local(var1, 8, 8);
         assert_eq!(offset1, -8);
-        
-        let var2 = RegisterId(2);
+
+        let var2 = Register::Virtual(2);
         let offset2 = frame.allocate_local(var2, 4, 4);
         assert_eq!(offset2, -12);
-        
+
         // 分配保存寄存器
         let reg_offset = frame.allocate_saved_register(5);
         assert_eq!(reg_offset, -20);
-        
+
         // 检查总大小
         assert_eq!(frame.total_size, 32); // 对齐到16字节边界
     }
@@ -284,14 +292,14 @@ mod tests {
     fn test_stack_manager() {
         let cc = CallingConvention::standard();
         let mut stack_mgr = StackManager::new(cc, 1000);
-        
+
         // 进入函数
         let saved_regs = vec![5, 7];
         let frame = stack_mgr.enter_function(&saved_regs, 16, 2);
-        
+
         assert_eq!(stack_mgr.depth(), 1);
         assert!(frame.total_size > 0);
-        
+
         // 离开函数
         let popped_frame = stack_mgr.leave_function();
         assert!(popped_frame.is_some());
@@ -306,4 +314,4 @@ mod tests {
         assert_eq!(align_up(15, 16), 16);
         assert_eq!(align_up(17, 16), 32);
     }
-} 
+}

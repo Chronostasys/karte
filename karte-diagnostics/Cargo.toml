@@ -6,6 +6,9 @@ authors.workspace = true
 description = "Diagnostic system for Karte compiler"
 license.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 thiserror.workspace = true
 serde.workspace = true

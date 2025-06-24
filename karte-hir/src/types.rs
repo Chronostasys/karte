@@ -147,17 +147,14 @@ impl Type {
             ) => {
                 n1 == n2
                     && v1.len() == v2.len()
-                    && v1
-                        .iter()
-                        .zip(v2.iter())
-                        .all(|(variant1, variant2)| {
-                            variant1.name == variant2.name
-                                && match (&variant1.data_type, &variant2.data_type) {
-                                    (None, None) => true,
-                                    (Some(t1), Some(t2)) => t1.structural_eq(t2),
-                                    _ => false,
-                                }
-                        })
+                    && v1.iter().zip(v2.iter()).all(|(variant1, variant2)| {
+                        variant1.name == variant2.name
+                            && match (&variant1.data_type, &variant2.data_type) {
+                                (None, None) => true,
+                                (Some(t1), Some(t2)) => t1.structural_eq(t2),
+                                _ => false,
+                            }
+                    })
             }
             (
                 Type::Struct {
@@ -171,16 +168,12 @@ impl Type {
             ) => {
                 n1 == n2
                     && f1.len() == f2.len()
-                    && f1
-                        .iter()
-                        .zip(f2.iter())
-                        .all(|(field1, field2)| {
-                            field1.name == field2.name && field1.field_type.structural_eq(&field2.field_type)
-                        })
+                    && f1.iter().zip(f2.iter()).all(|(field1, field2)| {
+                        field1.name == field2.name
+                            && field1.field_type.structural_eq(&field2.field_type)
+                    })
             }
-            (Type::Reference { inner: i1 }, Type::Reference { inner: i2 }) => {
-                i1.structural_eq(i2)
-            }
+            (Type::Reference { inner: i1 }, Type::Reference { inner: i2 }) => i1.structural_eq(i2),
             (Type::Var(v1), Type::Var(v2)) => v1 == v2,
             (Type::Unknown, Type::Unknown) => true,
             _ => false,
@@ -313,7 +306,10 @@ impl Type {
         match self {
             Type::Number => Type::Number,
             Type::Unit => Type::Unit,
-            Type::Function { params, return_type } => Type::Function {
+            Type::Function {
+                params,
+                return_type,
+            } => Type::Function {
                 params: params.iter().map(|p| p.substitute(subst)).collect(),
                 return_type: Box::new(return_type.substitute(subst)),
             },
@@ -356,7 +352,10 @@ impl Type {
     pub fn free_vars(&self) -> Vec<TypeVar> {
         match self {
             Type::Number | Type::Unit | Type::Unknown => vec![],
-            Type::Function { params, return_type } => {
+            Type::Function {
+                params,
+                return_type,
+            } => {
                 let mut vars = Vec::new();
                 for param in params {
                     vars.extend(param.free_vars());
