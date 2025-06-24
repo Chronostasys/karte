@@ -105,7 +105,10 @@ impl fmt::Display for TypeCheckError {
                 write!(f, "Empty match expression")
             }
             TypeCheckError::MissingFields {
-                struct_name, expected, found, ..
+                struct_name,
+                expected,
+                found,
+                ..
             } => {
                 write!(
                     f,
@@ -114,7 +117,9 @@ impl fmt::Display for TypeCheckError {
                 )
             }
             TypeCheckError::UnknownField {
-                struct_name, field_name, ..
+                struct_name,
+                field_name,
+                ..
             } => {
                 write!(f, "Unknown field {} in struct {}", field_name, struct_name)
             }

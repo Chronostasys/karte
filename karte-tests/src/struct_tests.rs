@@ -1,13 +1,11 @@
 #[cfg(test)]
-
+use crate::execute_from_string;
 #[cfg(test)]
 use karte_hir::{type_check, Type};
 #[cfg(test)]
 use karte_lexer::tokenize;
 #[cfg(test)]
 use karte_parser::parse;
-#[cfg(test)]
-use crate::execute_from_string;
 
 #[cfg(test)]
 fn test_evaluate(input: &str) -> Result<i64, String> {
@@ -23,14 +21,14 @@ fn test_type_check(input: &str) -> Result<Type, String> {
 
     let (expr, parse_diagnostics) = parse(&tokens);
     diagnostics.extend(parse_diagnostics);
-    
+
     if diagnostics.has_errors() {
         return Err(format!("Parser errors: {:?}", diagnostics));
     }
 
     let expr = expr.ok_or("Parse failed")?;
     let (result_type, type_diagnostics) = type_check(&expr);
-    
+
     if type_diagnostics.has_errors() {
         return Err(format!("Type check errors: {:?}", type_diagnostics));
     }
@@ -54,7 +52,7 @@ mod basic_struct_tests {
             Point { x: 10, y: 20 }
         "#;
         let result = test_evaluate(program).unwrap();
-        
+
         // 由于现在返回i64，我们通过字段访问来验证结构体
         // 这里我们简单地验证结构体构造成功（返回非错误值）
         assert!(result >= 0); // 结构体构造应该成功
@@ -119,7 +117,7 @@ mod basic_struct_tests {
             Wrapper { value: 42 }
         "#;
         let result = test_evaluate(program).unwrap();
-        
+
         // 由于现在返回i64，我们简单地验证结构体构造成功
         assert!(result >= 0); // 结构体构造应该成功
     }
@@ -202,12 +200,24 @@ mod struct_type_checking_tests {
             Point { x: 10, y: 20 }
         "#;
         let result_type = test_type_check(program).unwrap();
-        
+
         if let Type::Struct { name, fields } = result_type {
             assert_eq!(name, "Point");
             assert_eq!(fields.len(), 2);
-            assert_eq!(fields[0], StructField { name: "x".to_string(), field_type: Type::Number });
-            assert_eq!(fields[1], StructField { name: "y".to_string(), field_type: Type::Number });
+            assert_eq!(
+                fields[0],
+                StructField {
+                    name: "x".to_string(),
+                    field_type: Type::Number
+                }
+            );
+            assert_eq!(
+                fields[1],
+                StructField {
+                    name: "y".to_string(),
+                    field_type: Type::Number
+                }
+            );
         } else {
             panic!("Expected struct type, got {:?}", result_type);
         }
@@ -288,13 +298,16 @@ mod struct_error_tests {
         // 至少类型检查应该检测到错误
         if result.is_ok() && type_result.is_ok() {
             // 如果都成功了，我们验证实际构造的struct
-            if let Ok(_) = result {
+            if result.is_ok() {
                 // 如果构造成功，说明可能允许部分字段初始化
                 // 这里我们只验证没有错误
             }
         } else {
             // 如果其中任何一个报错，那就是预期的行为
-            assert!(result.is_err() || type_result.is_err(), "Expected error for missing struct field");
+            assert!(
+                result.is_err() || type_result.is_err(),
+                "Expected error for missing struct field"
+            );
         }
     }
 
@@ -322,7 +335,10 @@ mod struct_error_tests {
             x.field
         "#;
         let result = test_evaluate(program);
-        assert!(result.is_err(), "Expected error for field access on non-struct");
+        assert!(
+            result.is_err(),
+            "Expected error for field access on non-struct"
+        );
     }
 }
 
@@ -394,24 +410,37 @@ mod recursive_struct_tests {
             assert_eq!(fields[1].name, "next");
 
             // 检查 'next' 字段的类型是否为 Option<&Node>
-            if let Type::Sum { name: sum_name, variants } = &fields[1].field_type {
+            if let Type::Sum {
+                name: sum_name,
+                variants,
+            } = &fields[1].field_type
+            {
                 assert_eq!(*sum_name, "Option");
                 assert_eq!(variants.len(), 2);
                 assert_eq!(variants[0].name, "Some");
                 assert_eq!(variants[1].name, "None");
 
                 if let Some(Type::Reference { inner: inner_ref }) = &variants[0].data_type {
-                    if let Type::Struct { name: struct_name, .. } = &**inner_ref {
+                    if let Type::Struct {
+                        name: struct_name, ..
+                    } = &**inner_ref
+                    {
                         assert_eq!(struct_name, "Node");
                     } else {
-                        panic!("Expected inner reference to be a struct, but got {:?}", inner_ref);
+                        panic!(
+                            "Expected inner reference to be a struct, but got {:?}",
+                            inner_ref
+                        );
                     }
                 } else {
                     panic!("Expected Some variant to have a reference type");
                 }
                 assert!(variants[1].data_type.is_none());
             } else {
-                panic!("Expected 'next' field to be Option type, but got {:?}", fields[1].field_type);
+                panic!(
+                    "Expected 'next' field to be Option type, but got {:?}",
+                    fields[1].field_type
+                );
             }
         } else {
             panic!("Expected struct type, got {:?}", result_type);
@@ -450,7 +479,11 @@ mod recursive_struct_tests {
             }
         "#;
         let result = test_evaluate(program).unwrap();
-        assert_eq!(result, 1, "应该匹配Some分支并返回(*n).value (即1)，但实际返回了{}", result);
+        assert_eq!(
+            result, 1,
+            "应该匹配Some分支并返回(*n).value (即1)，但实际返回了{}",
+            result
+        );
     }
 
     #[test]
@@ -480,7 +513,7 @@ mod recursive_struct_tests {
         let result_type = test_type_check(program).unwrap();
         assert_eq!(result_type, Type::Number);
     }
-    
+
     #[test]
     fn test_illegal_indirect_recursion() {
         // 测试非法的间接递归
@@ -517,7 +550,11 @@ mod option_constructor_bug_tests {
             }
         "#;
         let result = test_evaluate(program).unwrap();
-        assert_eq!(result, 1, "应该匹配Some分支并返回(*n).value (即1)，但实际返回了{}", result);
+        assert_eq!(
+            result, 1,
+            "应该匹配Some分支并返回(*n).value (即1)，但实际返回了{}",
+            result
+        );
     }
 
     #[test]
@@ -530,7 +567,11 @@ mod option_constructor_bug_tests {
             }
         "#;
         let result = test_evaluate(program).unwrap();
-        assert_eq!(result, 42, "应该匹配Some分支并返回42，但实际返回了{}", result);
+        assert_eq!(
+            result, 42,
+            "应该匹配Some分支并返回42，但实际返回了{}",
+            result
+        );
     }
 
     #[test]
@@ -543,14 +584,18 @@ mod option_constructor_bug_tests {
             }
         "#;
         let result = test_evaluate(program).unwrap();
-        assert_eq!(result, 999, "应该匹配None分支并返回999，但实际返回了{}", result);
+        assert_eq!(
+            result, 999,
+            "应该匹配None分支并返回999，但实际返回了{}",
+            result
+        );
     }
 
     #[test]
     fn test_some_reference_vs_value_debug() {
         // 比较Some(42)和Some(&n)的行为差异
         println!("=== Debug: test_some_reference_vs_value_debug ===");
-        
+
         // 测试1: Some(42) - 应该工作
         let program1 = r#"
             match Some(42) {
@@ -558,11 +603,11 @@ mod option_constructor_bug_tests {
                 None -> -1
             }
         "#;
-        
+
         println!("Program1 (Some(42)): {}", program1);
         let result1 = test_evaluate(program1).unwrap();
         println!("Result1: {}", result1);
-        
+
         // 测试2: Some(&n) - 有问题
         let program2 = r#"
             let n = 42;
@@ -571,11 +616,11 @@ mod option_constructor_bug_tests {
                 None -> -1
             }
         "#;
-        
+
         println!("Program2 (Some(&n)): {}", program2);
         let result2 = test_evaluate(program2).unwrap();
         println!("Result2: {}", result2);
-        
+
         // 两个结果应该相同
         assert_eq!(result1, 42, "Some(42)应该返回42");
         assert_eq!(result2, 42, "Some(&n)应该返回42，但实际返回了{}", result2);
@@ -590,13 +635,13 @@ mod option_constructor_bug_tests {
                 None -> 0
             }
         "#;
-        
+
         println!("=== Debug: test_some_without_reference_debug ===");
         println!("Program: {}", program);
-        
+
         let result = test_evaluate(program).unwrap();
         println!("Result: {}", result);
-        
+
         assert_eq!(result, 42, "Some(42)应该返回42，但实际返回了{}", result);
     }
 
@@ -608,14 +653,18 @@ mod option_constructor_bug_tests {
             let ref_n = &n;
             *ref_n
         "#;
-        
+
         println!("=== Debug: test_simple_reference_debug ===");
         println!("Program: {}", program);
-        
+
         let result = test_evaluate(program).unwrap();
         println!("Result: {}", result);
-        
-        assert_eq!(result, 42, "简单引用解引用应该返回42，但实际返回了{}", result);
+
+        assert_eq!(
+            result, 42,
+            "简单引用解引用应该返回42，但实际返回了{}",
+            result
+        );
     }
 
     #[test]
@@ -628,13 +677,17 @@ mod option_constructor_bug_tests {
                 None -> 0
             }
         "#;
-        
+
         println!("=== Debug: test_some_with_reference_simple ===");
         println!("Program: {}", program);
-        
+
         let result = test_evaluate(program).unwrap();
         println!("Result: {}", result);
-        
-        assert_eq!(result, 42, "应该匹配Some分支并解引用返回42，但实际返回了{}", result);
+
+        assert_eq!(
+            result, 42,
+            "应该匹配Some分支并解引用返回42，但实际返回了{}",
+            result
+        );
     }
-} 
+}

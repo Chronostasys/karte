@@ -123,7 +123,10 @@ mod tests {
     #[test]
     fn test_type_check_arity_mismatch() {
         let lambda = Expr::Lambda {
-            params: vec![Parameter::simple("x".to_string()), Parameter::simple("y".to_string())],
+            params: vec![
+                Parameter::simple("x".to_string()),
+                Parameter::simple("y".to_string()),
+            ],
             body: Box::new(Expr::BinaryOp {
                 left: Box::new(Expr::Identifier {
                     name: "x".to_string(),

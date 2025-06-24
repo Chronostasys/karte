@@ -1,12 +1,6 @@
 use crate::ir::*;
 use std::fmt;
 
-impl fmt::Display for RegisterId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "r{}", self.0)
-    }
-}
-
 impl fmt::Display for LabelId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "L{}", self.0)
@@ -48,7 +42,10 @@ impl fmt::Display for Operand {
                     write!(f, "[{} + {}]", base, offset)
                 }
             }
-            Operand::StructField { struct_addr, field_offset } => {
+            Operand::StructField {
+                struct_addr,
+                field_offset,
+            } => {
                 write!(f, "[{} + field{}]", struct_addr, field_offset)
             }
             Operand::MemoryRef { id } => write!(f, "{}", id),
@@ -100,14 +97,20 @@ impl fmt::Display for Instruction {
                         "{} = call {}({})",
                         result,
                         target,
-                        args.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(", ")
+                        args.iter()
+                            .map(|r| r.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     )
                 } else {
                     write!(
                         f,
                         "call {}({})",
                         target,
-                        args.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(", ")
+                        args.iter()
+                            .map(|r| r.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     )
                 }
             }
@@ -123,14 +126,20 @@ impl fmt::Display for Instruction {
                         "{} = call_indirect {}({})",
                         result,
                         function_register,
-                        args.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(", ")
+                        args.iter()
+                            .map(|r| r.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     )
                 } else {
                     write!(
                         f,
                         "call_indirect {}({})",
                         function_register,
-                        args.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(", ")
+                        args.iter()
+                            .map(|r| r.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     )
                 }
             }
@@ -143,42 +152,93 @@ impl fmt::Display for Instruction {
             }
             Instruction::Label { id, .. } => write!(f, "{}:", id),
             Instruction::Nop { .. } => write!(f, "nop"),
-            
-            // 结构体相关指令
-            Instruction::StructAlloc { dst, struct_type, allocation_type, .. } => {
-                write!(f, "alloc_struct {}, {}, {}", dst, struct_type, allocation_type)
+            Instruction::StructAlloc {
+                dst,
+                struct_type,
+                allocation_type,
+                ..
+            } => {
+                write!(
+                    f,
+                    "alloc_struct {}, {}, {}",
+                    dst, struct_type, allocation_type
+                )
             }
-            Instruction::StructFieldLoad { dst, struct_addr, field_offset, .. } => {
+            Instruction::StructFieldLoad {
+                dst,
+                struct_addr,
+                field_offset,
+                ..
+            } => {
                 write!(f, "load_field {}, [{}].{}", dst, struct_addr, field_offset)
             }
-            Instruction::StructFieldStore { struct_addr, field_offset, src, .. } => {
+            Instruction::StructFieldStore {
+                struct_addr,
+                field_offset,
+                src,
+                ..
+            } => {
                 write!(f, "store_field [{}].{}, {}", struct_addr, field_offset, src)
             }
-            Instruction::StructFieldAddr { dst, struct_addr, field_offset, .. } => {
+            Instruction::StructFieldAddr {
+                dst,
+                struct_addr,
+                field_offset,
+                ..
+            } => {
                 write!(f, "field_addr {}, [{}].{}", dst, struct_addr, field_offset)
             }
             Instruction::MemCopy { dst, src, size, .. } => {
                 write!(f, "memcpy {}, {}, #{}", dst, src, size)
             }
-            Instruction::Alloc { dst, size, alignment, allocation_type, .. } => {
-                write!(f, "alloc {}, #{}, #{}, {}", dst, size, alignment, allocation_type)
+            Instruction::Alloc {
+                dst,
+                size,
+                alignment,
+                allocation_type,
+                ..
+            } => {
+                write!(
+                    f,
+                    "alloc {}, #{}, #{}, {:?}",
+                    dst, size, alignment, allocation_type
+                )
             }
             Instruction::Free { addr, .. } => {
                 write!(f, "free {}", addr)
             }
-            Instruction::Load64 { dst, addr, offset, .. } => {
+            Instruction::Load64 {
+                dst, addr, offset, ..
+            } => {
                 if *offset == 0 {
                     write!(f, "load64 {}, [{}]", dst, addr)
                 } else {
                     write!(f, "load64 {}, [{} + {}]", dst, addr, offset)
                 }
             }
-            Instruction::Store64 { addr, offset, src, .. } => {
+            Instruction::Store64 {
+                addr, offset, src, ..
+            } => {
                 if *offset == 0 {
                     write!(f, "store64 [{}], {}", addr, src)
                 } else {
                     write!(f, "store64 [{} + {}], {}", addr, offset, src)
                 }
+            }
+            Instruction::Phi { dst, incoming, .. } => {
+                write!(f, "{} = phi(", dst)?;
+                for (i, (block, operand)) in incoming.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "L{}: {}", block.0, operand)?;
+                }
+                write!(f, ")")
+            }
+            Instruction::JumpIndirect {
+                function_register, ..
+            } => {
+                write!(f, "jmpi {}", function_register)
             }
         }
     }
@@ -186,9 +246,17 @@ impl fmt::Display for Instruction {
 
 impl fmt::Display for StructLayout {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "struct {} (size: {}, align: {}) {{", self.name, self.total_size, self.alignment)?;
+        writeln!(
+            f,
+            "struct {} (size: {}, align: {}) {{",
+            self.name, self.total_size, self.alignment
+        )?;
         for field in &self.fields {
-            writeln!(f, "  {} @ {} (size: {}, align: {})", field.name, field.offset, field.size, field.alignment)?;
+            writeln!(
+                f,
+                "  {} @ {} (size: {}, align: {})",
+                field.name, field.offset, field.size, field.alignment
+            )?;
         }
         writeln!(f, "}}")
     }
@@ -196,8 +264,12 @@ impl fmt::Display for StructLayout {
 
 impl fmt::Display for LirFunction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "function {} (stack_frame: {}):", self.name, self.stack_frame_size)?;
-        
+        writeln!(
+            f,
+            "function {} (stack_frame: {}):",
+            self.name, self.stack_frame_size
+        )?;
+
         // 显示结构体类型定义
         if !self.struct_types.is_empty() {
             writeln!(f, "  # Struct types:")?;
@@ -206,7 +278,7 @@ impl fmt::Display for LirFunction {
             }
             writeln!(f)?;
         }
-        
+
         for instr in &self.instructions {
             if let Instruction::Label { .. } = instr {
                 writeln!(f, "{}", instr)?;
@@ -225,4 +297,4 @@ impl fmt::Display for LirProgram {
         }
         Ok(())
     }
-} 
+}

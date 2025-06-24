@@ -22,16 +22,19 @@
 //! - **内存管理**: 支持栈分配和堆分配
 //! - **对齐优化**: 自动计算字段对齐和填充
 
+pub mod display;
 pub mod ir;
 pub mod lower;
-pub mod display;
+pub mod lower_instructions;
+pub mod optimization_pipeline;
+pub mod pass;
 pub mod struct_layout;
 pub mod tagged_union;
-pub mod lower_instructions;
 
 pub use ir::*;
-pub use struct_layout::*;
 pub use lower::*;
-pub use display::*;
-pub use tagged_union::*;
 pub use lower_instructions::*;
+pub use optimization_pipeline::*;
+pub use pass::*;
+pub use struct_layout::*;
+pub use tagged_union::*;

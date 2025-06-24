@@ -6,7 +6,11 @@ authors.workspace = true
 description.workspace = true
 license.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 karte-diagnostics = { path = "../karte-diagnostics" }
 karte-mir = { path = "../karte-mir" }
 karte-hir = { path = "../karte-hir" }
+karte-common = { path = "../karte-common" }

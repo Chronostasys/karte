@@ -1,10 +1,10 @@
 //! 执行引擎
-//! 
+//!
 //! 负责管理虚拟机状态、内存和栈，提供基本的执行环境
 
-use super::{ProgramManager, HeapAllocator};
-use crate::vm::{VirtualMachine, MemoryManager, CallingConvention, StackManager, ComparisonFlags, JumpCondition};
-use karte_lir::{RegisterId, Operand};
+use super::{HeapAllocator, ProgramManager};
+use crate::vm::{CallingConvention, ComparisonFlags, MemoryManager, StackManager, VirtualMachine};
+use karte_lir::{Operand, Register};
 
 /// 调用栈帧
 #[derive(Debug, Clone)]
@@ -12,11 +12,11 @@ pub struct CallFrame {
     /// 返回地址（程序计数器）
     pub return_pc: usize,
     /// 结果寄存器（可选）
-    pub result_register: Option<RegisterId>,
+    pub result_register: Option<Register>,
 }
 
 /// 执行引擎
-/// 
+///
 /// 管理虚拟机的核心状态，包括寄存器、内存和栈
 #[derive(Debug)]
 pub struct ExecutionEngine {
@@ -41,11 +41,11 @@ impl ExecutionEngine {
     pub fn new(debug_mode: bool) -> Self {
         let calling_convention = CallingConvention::standard();
         let stack_base = 1024 * 1024; // 1MB 栈基址
-        
+
         // 堆从内存的前512KB开始
         let heap_start = 0x1000; // 4KB开始，避免NULL指针区域
         let heap_size = 512 * 1024; // 512KB堆空间
-        
+
         Self {
             vm: VirtualMachine::new(),
             memory: MemoryManager::new(),
@@ -62,34 +62,43 @@ impl ExecutionEngine {
         // 重置虚拟机状态
         self.vm.reset();
         self.memory.reset();
-        
-        // 初始化栈指针和帧指针
+
+        // 初始化栈指针和帧指针（使用物理寄存器）
         // 栈从内存的高地址向低地址增长
-        // 栈基址应该在内存数组的有效范围内（0到MEMORY_SIZE-1）
-        let stack_base = (super::super::MEMORY_SIZE - 1) as i64;  // 使用MEMORY_SIZE-1作为栈基址
-        self.vm.set_physical_register(self.calling_convention.stack_pointer, stack_base)?;
-        self.vm.set_physical_register(self.calling_convention.frame_pointer, stack_base)?;
-        self.vm.set_physical_register(self.calling_convention.return_address, 0)?;
-        
-        // 建立虚拟寄存器到物理寄存器的映射
-        // 这对于专业执行器来说是关键的
-        self.vm.register_mapping.insert(karte_lir::RegisterId(0), 0); // r0 -> physical r0
-        self.vm.register_mapping.insert(karte_lir::RegisterId(1), 1); // r1 -> physical r1
-        self.vm.register_mapping.insert(karte_lir::RegisterId(2), 2); // r2 -> physical r2
-        self.vm.register_mapping.insert(karte_lir::RegisterId(3), 3); // r3 -> physical r3
-        self.vm.register_mapping.insert(karte_lir::RegisterId(4), 4); // r4 -> physical r4
-        self.vm.register_mapping.insert(karte_lir::RegisterId(5), 5); // r5 -> physical r5
-        self.vm.register_mapping.insert(karte_lir::RegisterId(6), 6); // r6 -> physical r6 (栈指针)
-        self.vm.register_mapping.insert(karte_lir::RegisterId(7), 7); // r7 -> physical r7 (帧指针)
-        
+        // 使用更安全的栈基址：从内存中间开始，留出足够的栈空间
+        let stack_base = (super::super::MEMORY_SIZE / 2) as i64; // 使用内存中间作为栈基址
+        self.vm
+            .set_physical_register(self.calling_convention.stack_pointer, stack_base)?;
+        self.vm
+            .set_physical_register(self.calling_convention.frame_pointer, stack_base)?;
+        self.vm
+            .set_physical_register(self.calling_convention.return_address, 0)?;
+
+        // 🔧 修复：现在寄存器分配已经在LIR Pass中完成，execution engine不需要做任何映射
+        // 所有LIR指令中的寄存器ID现在直接对应物理寄存器ID
+        // 建立1:1的映射关系
+        for reg_id in 0..8 {
+            self.vm
+                .register_mapping
+                .insert(karte_lir::Register::Physical(reg_id), reg_id);
+        }
+
         if self.debug_mode {
             println!("执行引擎初始化完成");
             println!("  栈基址: {}", stack_base);
             println!("  内存大小: {} bytes", super::super::MEMORY_SIZE);
             println!("  调用约定: {:?}", self.calling_convention);
-            println!("  寄存器映射: {:?}", self.vm.register_mapping);
+            println!("  寄存器映射: 1:1 直接映射 (RegisterId(i) -> r[i])");
+            println!(
+                "  物理寄存器r{}(SP): {}",
+                self.calling_convention.stack_pointer, stack_base
+            );
+            println!(
+                "  物理寄存器r{}(FP): {}",
+                self.calling_convention.frame_pointer, stack_base
+            );
         }
-        
+
         Ok(())
     }
 
@@ -109,18 +118,28 @@ impl ExecutionEngine {
     }
 
     /// 设置虚拟寄存器的值
-    pub fn set_register(&mut self, reg: &RegisterId, value: i64) -> Result<(), String> {
+    pub fn set_register(&mut self, reg: &Register, value: i64) -> Result<(), String> {
         if self.debug_mode {
-            println!("设置寄存器 {:?} = {}, 映射状态: {:?}", reg, value, self.vm.register_mapping.get(reg));
+            println!(
+                "设置寄存器 {:?} = {}, 映射状态: {:?}",
+                reg,
+                value,
+                self.vm.register_mapping.get(reg)
+            );
         }
         self.vm.set_virtual_register(reg, value)
     }
 
     /// 获取虚拟寄存器的值
-    pub fn get_register(&self, reg: &RegisterId) -> Result<i64, String> {
+    pub fn get_register(&self, reg: &Register) -> Result<i64, String> {
         let value = self.vm.get_virtual_register(reg)?;
         if self.debug_mode {
-            println!("获取寄存器 {:?} = {}, 映射状态: {:?}", reg, value, self.vm.register_mapping.get(reg));
+            println!(
+                "获取寄存器 {:?} = {}, 映射状态: {:?}",
+                reg,
+                value,
+                self.vm.register_mapping.get(reg)
+            );
         }
         Ok(value)
     }
@@ -128,12 +147,8 @@ impl ExecutionEngine {
     /// 获取操作数的值
     pub fn get_operand_value(&self, operand: &Operand) -> Result<i64, String> {
         match operand {
-            Operand::Register { id } => {
-                self.get_register(id)
-            }
-            Operand::Immediate { value } => {
-                Ok(*value)
-            }
+            Operand::Register { id } => self.get_register(id),
+            Operand::Immediate { value } => Ok(*value),
             Operand::Memory { base, offset } => {
                 let base_addr = self.get_register(base)?;
                 let addr = (base_addr + offset) as usize;
@@ -143,9 +158,7 @@ impl ExecutionEngine {
                     Err("Memory access out of bounds".to_string())
                 }
             }
-            _ => {
-                Err(format!("Unsupported operand type: {:?}", operand))
-            }
+            _ => Err(format!("Unsupported operand type: {:?}", operand)),
         }
     }
 
@@ -181,12 +194,14 @@ impl ExecutionEngine {
 
     /// 设置返回值寄存器
     pub fn set_return_value(&mut self, value: i64) -> Result<(), String> {
-        self.vm.set_physical_register(self.calling_convention.return_register, value)
+        self.vm
+            .set_physical_register(self.calling_convention.return_register, value)
     }
 
     /// 获取返回值寄存器的值
     pub fn get_return_value(&self) -> Result<i64, String> {
-        self.vm.get_physical_register(self.calling_convention.return_register)
+        self.vm
+            .get_physical_register(self.calling_convention.return_register)
     }
 
     /// 存储值到内存
@@ -229,33 +244,43 @@ impl ExecutionEngine {
     }
 
     /// 推送调用栈帧
-    pub fn push_call_frame(&mut self, return_pc: usize, result_register: Option<RegisterId>) -> Result<(), String> {
+    pub fn push_call_frame(
+        &mut self,
+        return_pc: usize,
+        result_register: Option<Register>,
+    ) -> Result<(), String> {
         let frame = CallFrame {
             return_pc,
             result_register,
         };
-        
+
         self.call_stack.push(frame);
-        
+
         if self.debug_mode {
-            println!("推送调用栈帧: 返回PC={}, 结果寄存器={:?}", return_pc, result_register);
+            println!(
+                "推送调用栈帧: 返回PC={}, 结果寄存器={:?}",
+                return_pc, result_register
+            );
         }
-        
+
         Ok(())
     }
 
     /// 弹出调用栈帧
     pub fn pop_call_frame(&mut self) -> Result<Option<CallFrame>, String> {
         let frame = self.call_stack.pop();
-        
+
         if self.debug_mode {
             if let Some(ref f) = frame {
-                println!("弹出调用栈帧: 返回PC={}, 结果寄存器={:?}", f.return_pc, f.result_register);
+                println!(
+                    "弹出调用栈帧: 返回PC={}, 结果寄存器={:?}",
+                    f.return_pc, f.result_register
+                );
             } else {
                 println!("调用栈为空，无法弹出栈帧");
             }
         }
-        
+
         Ok(frame)
     }
 
@@ -275,11 +300,10 @@ impl ExecutionEngine {
             }
             "struct" => {
                 let field_count = if size > 8 { (size - 8) / 8 } else { 0 };
-                self.heap_allocator.allocate_struct(object_type.to_string(), field_count, size)?
+                self.heap_allocator
+                    .allocate_struct(object_type.to_string(), field_count, size)?
             }
-            _ => {
-                self.heap_allocator.allocate_raw(size)?
-            }
+            _ => self.heap_allocator.allocate_raw(size)?,
         };
         Ok(addr as i64)
     }
@@ -324,7 +348,7 @@ impl ExecutionEngine {
             self.vm.print_state();
             self.memory.print_memory_state();
             self.stack_manager.print_state();
-            
+
             println!("堆分配统计:");
             let heap_stats = self.heap_allocator.get_allocation_stats();
             println!("  分配对象数: {}", heap_stats.active_objects);
@@ -333,4 +357,4 @@ impl ExecutionEngine {
             println!("  堆利用率: {:.1}%", heap_stats.heap_utilization);
         }
     }
-} 
+}

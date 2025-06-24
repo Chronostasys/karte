@@ -13,9 +13,19 @@ fn format_pattern(pattern: &Pattern) -> String {
                 name.clone()
             }
         }
-        Pattern::QualifiedConstructor { type_name, constructor_name, arg, .. } => {
+        Pattern::QualifiedConstructor {
+            type_name,
+            constructor_name,
+            arg,
+            ..
+        } => {
             if let Some(arg) = arg {
-                format!("{}::{}({})", type_name, constructor_name, format_pattern(arg))
+                format!(
+                    "{}::{}({})",
+                    type_name,
+                    constructor_name,
+                    format_pattern(arg)
+                )
             } else {
                 format!("{}::{}", type_name, constructor_name)
             }
@@ -371,7 +381,9 @@ impl fmt::Display for Expr {
             Expr::Number { value, .. } => write!(f, "{}", value),
             Expr::Unit { .. } => write!(f, "()"),
             Expr::Identifier { name, .. } => write!(f, "{}", name),
-            Expr::BinaryOp { left, op, right, .. } => write!(f, "({} {} {})", left, op, right),
+            Expr::BinaryOp {
+                left, op, right, ..
+            } => write!(f, "({} {} {})", left, op, right),
             Expr::UnaryOp { op, operand, .. } => write!(f, "({} {})", op, operand),
             Expr::Lambda { params, body, .. } => {
                 let params_str = params
@@ -428,7 +440,12 @@ impl fmt::Display for Expr {
                     write!(f, "{}", name)
                 }
             }
-            Expr::QualifiedConstructor { type_name, constructor_name, arg, .. } => {
+            Expr::QualifiedConstructor {
+                type_name,
+                constructor_name,
+                arg,
+                ..
+            } => {
                 if let Some(arg) = arg {
                     write!(f, "{}::{}({})", type_name, constructor_name, arg)
                 } else {
@@ -438,14 +455,25 @@ impl fmt::Display for Expr {
             Expr::Boolean { value, .. } => {
                 write!(f, "{}", if *value { "true" } else { "false" })
             }
-            Expr::If { condition, then_branch, else_branch, .. } => {
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 if let Some(else_branch) = else_branch {
-                    write!(f, "if {} then {} else {}", condition, then_branch, else_branch)
+                    write!(
+                        f,
+                        "if {} then {} else {}",
+                        condition, then_branch, else_branch
+                    )
                 } else {
                     write!(f, "if {} then {}", condition, then_branch)
                 }
             }
-            Expr::While { condition, body, .. } => {
+            Expr::While {
+                condition, body, ..
+            } => {
                 write!(f, "while {} do {}", condition, body)
             }
             Expr::StructLiteral { name, fields, .. } => {

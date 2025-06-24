@@ -1,6 +1,5 @@
 use karte_diagnostics::Span;
 use std::collections::HashMap;
-use std::fmt;
 
 /// 基本块标识符
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -24,7 +23,10 @@ pub enum Value {
     /// 临时变量
     Temp { id: TempId },
     /// 构造器值
-    Constructor { name: String, arg: Option<Box<Value>> },
+    Constructor {
+        name: String,
+        arg: Option<Box<Value>>,
+    },
     /// 限定构造器值
     QualifiedConstructor {
         type_name: String,
@@ -34,7 +36,7 @@ pub enum Value {
     /// 结构体值
     Struct {
         name: String,
-        fields: std::collections::HashMap<String, Value>,
+        fields: std::collections::BTreeMap<String, Value>,
     },
     /// 函数值
     Function { name: String },
@@ -118,16 +120,19 @@ pub enum Statement {
         object_type: String,
         span: Span,
     },
+    /// Phi 节点 - SSA 形式中的值选择
+    Phi {
+        target: Value,
+        incoming: Vec<(BasicBlockId, Value)>, // (前驱块ID, 值)
+        span: Span,
+    },
 }
 
 /// 终结语句 - 控制基本块的跳转
 #[derive(Debug, Clone, PartialEq)]
 pub enum Terminator {
     /// 无条件跳转
-    Goto {
-        target: BasicBlockId,
-        span: Span,
-    },
+    Goto { target: BasicBlockId, span: Span },
     /// 条件跳转
     Branch {
         condition: Value,
@@ -136,10 +141,7 @@ pub enum Terminator {
         span: Span,
     },
     /// 返回
-    Return {
-        value: Option<Value>,
-        span: Span,
-    },
+    Return { value: Option<Value>, span: Span },
     /// 匹配跳转
     Match {
         value: Value,
@@ -171,7 +173,18 @@ pub enum Pattern {
     Boolean { value: bool },
 }
 
-/// 基本块
+/// SSA 形式的值定义信息
+#[derive(Debug, Clone, PartialEq)]
+pub struct ValueDefinition {
+    /// 定义这个值的语句
+    pub defining_statement: Option<usize>, // 在基本块中的语句索引
+    /// 定义这个值的基本块
+    pub defining_block: BasicBlockId,
+    /// 值的版本号（SSA 中每个值只被定义一次）
+    pub version: usize,
+}
+
+/// 基本块（原始版本，保持向后兼容性）
 #[derive(Debug, Clone, PartialEq)]
 pub struct BasicBlock {
     pub id: BasicBlockId,
@@ -194,6 +207,49 @@ impl BasicBlock {
 
     pub fn set_terminator(&mut self, terminator: Terminator) {
         self.terminator = Some(terminator);
+    }
+}
+
+/// SSA 形式的基本块
+#[derive(Debug, Clone, PartialEq)]
+pub struct SsaBlock {
+    pub id: BasicBlockId,
+    pub statements: Vec<Statement>,
+    pub terminator: Option<Terminator>,
+    /// 前驱块
+    pub predecessors: Vec<BasicBlockId>,
+    /// 后继块
+    pub successors: Vec<BasicBlockId>,
+    /// 这个块中定义的值
+    pub definitions: HashMap<String, ValueDefinition>,
+    /// 这个块需要的 Phi 节点
+    pub phi_nodes: Vec<Statement>,
+}
+
+impl SsaBlock {
+    pub fn new(id: BasicBlockId) -> Self {
+        Self {
+            id,
+            statements: Vec::new(),
+            terminator: None,
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+            definitions: HashMap::new(),
+            phi_nodes: Vec::new(),
+        }
+    }
+
+    /// 从 BasicBlock 转换为 SsaBlock
+    pub fn from_basic_block(block: BasicBlock) -> Self {
+        Self {
+            id: block.id,
+            statements: block.statements,
+            terminator: block.terminator,
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+            definitions: HashMap::new(),
+            phi_nodes: Vec::new(),
+        }
     }
 }
 
@@ -246,6 +302,20 @@ impl MirFunction {
     }
 }
 
+/// 结构体字段定义 (MIR级别)
+#[derive(Debug, Clone, PartialEq)]
+pub struct MirStructField {
+    pub name: String,
+    pub field_type: String, // 简化的类型名称
+}
+
+/// 结构体类型定义 (MIR级别)
+#[derive(Debug, Clone, PartialEq)]
+pub struct MirStructType {
+    pub name: String,
+    pub fields: Vec<MirStructField>,
+}
+
 /// MIR程序
 #[derive(Debug, Clone, PartialEq)]
 pub struct MirProgram {
@@ -253,6 +323,14 @@ pub struct MirProgram {
     pub main_function: Option<String>,
     pub main_return_value: Option<Value>,
     pub temp_values: HashMap<TempId, Value>,
+    /// 结构体类型定义
+    pub struct_types: HashMap<String, MirStructType>,
+}
+
+impl Default for MirProgram {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MirProgram {
@@ -262,7 +340,17 @@ impl MirProgram {
             main_function: None,
             main_return_value: None,
             temp_values: HashMap::new(),
+            struct_types: HashMap::new(),
         }
+    }
+
+    pub fn add_struct_type(&mut self, struct_type: MirStructType) {
+        self.struct_types
+            .insert(struct_type.name.clone(), struct_type);
+    }
+
+    pub fn get_struct_type(&self, name: &str) -> Option<&MirStructType> {
+        self.struct_types.get(name)
     }
 
     pub fn add_function(&mut self, function: MirFunction) {
@@ -298,4 +386,4 @@ pub enum UnaryOperator {
     Plus,
     Minus,
     Not,
-} 
+}

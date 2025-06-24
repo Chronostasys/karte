@@ -31,8 +31,8 @@ mod tests {
     }
 }
 
-pub mod lower;
-pub mod ir;
 pub mod display;
+pub mod ir;
+pub mod lower;
 
 pub use ir::*;

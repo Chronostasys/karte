@@ -1,13 +1,12 @@
 #[cfg(test)]
-
+use crate::execute_from_string;
+#[cfg(test)]
 #[cfg(test)]
 use karte_hir::{type_check, Type};
 #[cfg(test)]
 use karte_lexer::tokenize;
 #[cfg(test)]
 use karte_parser::parse;
-#[cfg(test)]
-use crate::execute_from_string;
 
 #[cfg(test)]
 fn test_evaluate(input: &str) -> Result<i64, String> {
@@ -23,14 +22,14 @@ fn test_type_check(input: &str) -> Result<Type, String> {
 
     let (expr, parse_diagnostics) = parse(&tokens);
     diagnostics.extend(parse_diagnostics);
-    
+
     if diagnostics.has_errors() {
         return Err(format!("Parser errors: {:?}", diagnostics));
     }
 
     let expr = expr.ok_or("Parse failed")?;
     let (result_type, type_diagnostics) = type_check(&expr);
-    
+
     if type_diagnostics.has_errors() {
         return Err(format!("Type check errors: {:?}", type_diagnostics));
     }
@@ -79,8 +78,14 @@ mod simple_custom_types {
     fn test_different_enum_variants() {
         // 测试不同的枚举变体
         let programs = vec![
-            (r#"{ enum Color { Red, Green, Blue }; match Green { Green -> 1, _ -> 0 } }"#, 1),
-            (r#"{ enum Color { Red, Green, Blue }; match Blue { Blue -> 1, _ -> 0 } }"#, 1),
+            (
+                r#"{ enum Color { Red, Green, Blue }; match Green { Green -> 1, _ -> 0 } }"#,
+                1,
+            ),
+            (
+                r#"{ enum Color { Red, Green, Blue }; match Blue { Blue -> 1, _ -> 0 } }"#,
+                1,
+            ),
         ];
 
         for (program, expected_result) in programs {
@@ -93,13 +98,16 @@ mod simple_custom_types {
     fn test_enum_pattern_match_all_cases() {
         // 注意：由于当前实现的限制，模式匹配可能优先选择第一个匹配的模式
         // 这里我们测试确实可以匹配到对应的值
-        let result = test_evaluate(r#"{ enum Color { Red, Green, Blue }; match Red { Red -> 1, Green -> 2, Blue -> 3 } }"#).unwrap();
+        let result = test_evaluate(
+            r#"{ enum Color { Red, Green, Blue }; match Red { Red -> 1, Green -> 2, Blue -> 3 } }"#,
+        )
+        .unwrap();
         assert_eq!(result, 1);
-        
-        // 测试Green匹配 - 先测试Red不匹配的情况  
+
+        // 测试Green匹配 - 先测试Red不匹配的情况
         let result = test_evaluate(r#"{ enum Color { Red, Green, Blue }; match Green { Green -> 2, Red -> 1, Blue -> 3 } }"#).unwrap();
         assert_eq!(result, 2);
-        
+
         // 测试Blue匹配
         let result = test_evaluate(r#"{ enum Color { Red, Green, Blue }; match Blue { Blue -> 3, Red -> 1, Green -> 2 } }"#).unwrap();
         assert_eq!(result, 3);
@@ -234,13 +242,13 @@ mod type_checking_tests {
                 assert_eq!(variants.len(), 2);
                 assert_eq!(variants[0].name, "Some");
                 assert_eq!(variants[1].name, "None");
-                
+
                 // 检查Some变体的数据类型
                 match &variants[0].data_type {
-                    Some(Type::Number) => {},
+                    Some(Type::Number) => {}
                     _ => panic!("Expected Some to have Number data type"),
                 }
-                
+
                 // 检查None变体没有数据类型
                 assert_eq!(variants[1].data_type, None);
             }
@@ -301,11 +309,11 @@ mod complex_scenarios {
         "#;
         println!("开始执行test_nested_custom_types");
         // 解析表达式
-        let (tokens, mut diagnostics) = tokenize(program);
+        let (tokens, diagnostics) = tokenize(program);
         assert!(!diagnostics.has_errors());
-        let (expr, parse_diagnostics) = parse(&tokens);
+        let (expr, _parse_diagnostics) = parse(&tokens);
         let expr = expr.unwrap();
-        
+
         let result = crate::execute_with_pipeline_debug(&expr, true).unwrap();
         println!("执行结果: {}", result);
         assert_eq!(result, 42);
@@ -397,11 +405,11 @@ mod qualified_constructors {
         "#;
         println!("开始执行test_qualified_constructor_with_arg");
         // 解析表达式
-        let (tokens, mut diagnostics) = tokenize(program);
+        let (tokens, diagnostics) = tokenize(program);
         assert!(!diagnostics.has_errors());
-        let (expr, parse_diagnostics) = parse(&tokens);
+        let (expr, _parse_diagnostics) = parse(&tokens);
         let expr = expr.unwrap();
-        
+
         let result = crate::execute_with_pipeline_debug(&expr, true).unwrap();
         println!("执行结果: {}", result);
         assert_eq!(result, 42); // 简化为数字比较
@@ -457,18 +465,18 @@ mod nested_sum_types {
         "#;
         println!("开始执行test_nested_sum_type_definition");
         // 解析表达式
-        let (tokens, mut diagnostics) = tokenize(program);
+        let (tokens, diagnostics) = tokenize(program);
         assert!(!diagnostics.has_errors());
-        let (expr, parse_diagnostics) = parse(&tokens);
+        let (expr, _parse_diagnostics) = parse(&tokens);
         let expr = expr.unwrap();
-        
+
         let result = crate::execute_with_pipeline_debug(&expr, true).unwrap();
         println!("执行结果: {}", result);
         // 简化测试：只验证没有错误，构造器现在返回负数
         assert!(result != 0); // 只要不是0就说明有值
     }
 
-    #[test] 
+    #[test]
     fn test_nested_sum_type_pattern_match() {
         // 测试嵌套sum type的模式匹配
         let program = r#"
@@ -490,4 +498,4 @@ mod nested_sum_types {
             assert_eq!(result.unwrap(), 2);
         }
     }
-} 
+}

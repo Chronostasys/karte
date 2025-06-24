@@ -1,12 +1,8 @@
 use crate::{
-    BasicBlockId, MirFunction, MirProgram, Statement, Terminator, TempId, Value, 
-    BinaryOperator as MirBinaryOp, UnaryOperator as MirUnaryOp,
-    MatchArm, Pattern,
+    BasicBlockId, BinaryOperator as MirBinaryOp, MatchArm, MirFunction, MirProgram, Pattern,
+    Statement, Terminator, UnaryOperator as MirUnaryOp, Value,
 };
-use karte_hir::{
-    Expr, BinaryOperator as HirBinaryOp, UnaryOperator as HirUnaryOp
-};
-use karte_diagnostics::Span;
+use karte_hir::{BinaryOperator as HirBinaryOp, Expr, UnaryOperator as HirUnaryOp};
 use std::collections::HashMap;
 
 /// HIR到MIR的lowering上下文
@@ -40,12 +36,13 @@ impl<'a> LoweringContext<'a> {
     pub fn start_function(&mut self, name: String, params: Vec<String>) {
         let function = MirFunction::new(name.clone(), params.clone());
         let entry_block = function.entry_block;
-        
+
         // 将参数添加到变量作用域
         for param in params {
-            self.variables.insert(param.clone(), Value::Variable { name: param });
+            self.variables
+                .insert(param.clone(), Value::Variable { name: param });
         }
-        
+
         self.program.add_function(function);
         self.current_function_name = Some(name);
         self.current_block = Some(entry_block);
@@ -111,24 +108,24 @@ impl<'a> LoweringContext<'a> {
 pub fn lower_expr_to_mir(expr: &Expr) -> Result<MirProgram, Vec<String>> {
     let mut program = MirProgram::new();
     let mut context = LoweringContext::new(&mut program);
-    
+
     // 创建主函数
     context.start_function("main".to_string(), vec![]);
-    
+
     // 为主函数结果创建临时变量
     let result_temp = context.new_temp();
-    
+
     // 降级表达式
     lower_expression(&mut context, expr, &result_temp)?;
-    
+
     // 添加返回语句
     context.set_terminator(Terminator::Return {
         value: Some(result_temp.clone()),
         span: expr.span(),
     });
-    
+
     context.finish_function();
-    
+
     if context.errors.is_empty() {
         program.set_main("main".to_string());
         // 保存主函数的返回值
@@ -154,7 +151,7 @@ fn lower_expression(
                 span,
             });
         }
-        
+
         Expr::Unit { .. } => {
             ctx.add_statement(Statement::Assign {
                 target: destination.clone(),
@@ -162,7 +159,7 @@ fn lower_expression(
                 span,
             });
         }
-        
+
         Expr::Boolean { value, .. } => {
             // 使用新的Boolean值表示，用于简化逻辑操作符处理
             ctx.add_statement(Statement::Assign {
@@ -171,7 +168,7 @@ fn lower_expression(
                 span,
             });
         }
-        
+
         Expr::Identifier { name, .. } => {
             if let Some(value) = ctx.variables.get(name) {
                 match value {
@@ -197,11 +194,13 @@ fn lower_expression(
                 return Err(ctx.errors.clone());
             }
         }
-        
-        Expr::BinaryOp { left, op, right, .. } => {
+
+        Expr::BinaryOp {
+            left, op, right, ..
+        } => {
             let left_val = lower_expression_to_temp(ctx, left)?;
             let right_val = lower_expression_to_temp(ctx, right)?;
-            
+
             ctx.add_statement(Statement::BinaryOp {
                 target: destination.clone(),
                 left: left_val,
@@ -210,10 +209,10 @@ fn lower_expression(
                 span,
             });
         }
-        
+
         Expr::UnaryOp { op, operand, .. } => {
             let operand_val = lower_expression_to_temp(ctx, operand)?;
-            
+
             ctx.add_statement(Statement::UnaryOp {
                 target: destination.clone(),
                 op: convert_unary_op(op),
@@ -221,21 +220,26 @@ fn lower_expression(
                 span,
             });
         }
-        
-        Expr::If { condition, then_branch, else_branch, .. } => {
+
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             let condition_val = lower_expression_to_temp(ctx, condition)?;
-            
+
             let then_block = ctx.new_block();
             let else_block = ctx.new_block();
             let merge_block = ctx.new_block();
-            
+
             ctx.set_terminator(Terminator::Branch {
                 condition: condition_val,
                 then_block,
                 else_block,
                 span,
             });
-            
+
             // then 分支
             ctx.set_current_block(then_block);
             lower_expression(ctx, then_branch, destination)?;
@@ -243,10 +247,10 @@ fn lower_expression(
                 target: merge_block,
                 span: then_branch.span(),
             });
-            
+
             // else 分支
             if let Some(else_branch) = else_branch {
-            ctx.set_current_block(else_block);
+                ctx.set_current_block(else_block);
                 lower_expression(ctx, else_branch, destination)?;
                 ctx.set_terminator(Terminator::Goto {
                     target: merge_block,
@@ -260,23 +264,30 @@ fn lower_expression(
                     source: Value::Unit,
                     span,
                 });
-            ctx.set_terminator(Terminator::Goto {
-                target: merge_block,
+                ctx.set_terminator(Terminator::Goto {
+                    target: merge_block,
                     span,
-            });
+                });
             }
-            
+
             ctx.set_current_block(merge_block);
         }
-        
-        Expr::While { condition, body, span } => {
+
+        Expr::While {
+            condition,
+            body,
+            span,
+        } => {
             let loop_head = ctx.new_block();
             let loop_body = ctx.new_block();
             let loop_exit = ctx.new_block();
 
             // Jump to loop head
-            ctx.set_terminator(Terminator::Goto { target: loop_head, span: *span });
-            
+            ctx.set_terminator(Terminator::Goto {
+                target: loop_head,
+                span: *span,
+            });
+
             // In loop head, check condition
             ctx.set_current_block(loop_head);
             let cond_val = lower_expression_to_temp(ctx, condition)?;
@@ -291,8 +302,11 @@ fn lower_expression(
             ctx.set_current_block(loop_body);
             let temp_body_result = ctx.new_temp();
             lower_expression(ctx, body, &temp_body_result)?;
-            ctx.set_terminator(Terminator::Goto { target: loop_head, span: body.span() });
-            
+            ctx.set_terminator(Terminator::Goto {
+                target: loop_head,
+                span: body.span(),
+            });
+
             // Continue from exit block
             ctx.set_current_block(loop_exit);
             // while loops evaluate to Unit
@@ -302,22 +316,22 @@ fn lower_expression(
                 span: *span,
             });
         }
-        
+
         Expr::Lambda { params, body, .. } => {
             // 1. 分析Lambda体中使用的自由变量（闭包捕获）
             let mut free_vars = Vec::new();
             let mut captured_var_locations = Vec::new();
-            
+
             // 收集Lambda体中引用的所有变量
             let referenced_vars = collect_referenced_variables(body);
             let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
-            
+
             // 找出不是参数的变量（即需要捕获的自由变量）
             for var_name in referenced_vars {
                 if !param_names.contains(&var_name) {
                     if let Some(value) = ctx.variables.get(&var_name).cloned() {
                         free_vars.push(var_name.clone());
-                        
+
                         // 为每个捕获的变量在堆上分配共享内存位置
                         let shared_location = ctx.new_temp();
                         ctx.add_statement(Statement::HeapAlloc {
@@ -326,24 +340,27 @@ fn lower_expression(
                             object_type: "shared_var".to_string(),
                             span,
                         });
-                        
+
                         // 将当前变量值存储到共享位置
                         ctx.add_statement(Statement::Store {
                             target: shared_location.clone(),
                             value: value.clone(),
                             span,
                         });
-                        
+
                         // 更新外部变量映射为共享内存的引用
-                        ctx.variables.insert(var_name.clone(), Value::Reference {
-                            value: Box::new(shared_location.clone())
-                        });
-                        
+                        ctx.variables.insert(
+                            var_name.clone(),
+                            Value::Reference {
+                                value: Box::new(shared_location.clone()),
+                            },
+                        );
+
                         captured_var_locations.push(shared_location);
                     }
                 }
             }
-            
+
             // 2. 生成唯一的函数名
             let lambda_name = format!("lambda${}", ctx.lambda_counter);
             ctx.lambda_counter += 1;
@@ -351,13 +368,18 @@ fn lower_expression(
             // 3. 创建闭包结构体
             if captured_var_locations.is_empty() {
                 // 无捕获变量，创建简单的函数闭包
-                let mut closure_fields = std::collections::HashMap::new();
-                closure_fields.insert("function_ptr".to_string(), Value::Function { name: lambda_name.clone() });
+                let mut closure_fields = std::collections::BTreeMap::new();
+                closure_fields.insert(
+                    "function_ptr".to_string(),
+                    Value::Function {
+                        name: lambda_name.clone(),
+                    },
+                );
                 closure_fields.insert("env_ptr".to_string(), Value::Number { value: 0 }); // 空环境
-                
+
                 ctx.add_statement(Statement::Assign {
                     target: destination.clone(),
-                    source: Value::Struct { 
+                    source: Value::Struct {
                         name: "Closure".to_string(),
                         fields: closure_fields,
                     },
@@ -380,7 +402,9 @@ fn lower_expression(
                         target: offset_temp.clone(),
                         left: env_temp.clone(),
                         op: crate::ir::BinaryOperator::Add,
-                        right: Value::Number { value: (i * 8) as i64 },
+                        right: Value::Number {
+                            value: (i * 8) as i64,
+                        },
                         span,
                     });
                     ctx.add_statement(Statement::Store {
@@ -391,13 +415,18 @@ fn lower_expression(
                 }
 
                 // 创建闭包结构体
-                let mut closure_fields = std::collections::HashMap::new();
-                closure_fields.insert("function_ptr".to_string(), Value::Function { name: lambda_name.clone() });
+                let mut closure_fields = std::collections::BTreeMap::new();
+                closure_fields.insert(
+                    "function_ptr".to_string(),
+                    Value::Function {
+                        name: lambda_name.clone(),
+                    },
+                );
                 closure_fields.insert("env_ptr".to_string(), env_temp);
-                
+
                 ctx.add_statement(Statement::Assign {
                     target: destination.clone(),
-                    source: Value::Struct { 
+                    source: Value::Struct {
                         name: "Closure".to_string(),
                         fields: closure_fields,
                     },
@@ -412,7 +441,7 @@ fn lower_expression(
                 vec![]
             };
             all_params.extend(param_names.clone());
-            
+
             // 暂存当前函数上下文
             let original_function_name = ctx.current_function_name.clone();
             let original_block = ctx.current_block;
@@ -420,10 +449,12 @@ fn lower_expression(
 
             // 5. 开始新函数
             ctx.start_function(lambda_name.clone(), all_params);
-            
+
             // 如果有环境参数，需要从环境中恢复捕获变量的共享位置
             if !captured_var_locations.is_empty() {
-                let env_var = Value::Variable { name: "__env".to_string() };
+                let env_var = Value::Variable {
+                    name: "__env".to_string(),
+                };
                 for (i, var_name) in free_vars.iter().enumerate() {
                     let shared_location_temp = ctx.new_temp();
                     let offset_temp = ctx.new_temp();
@@ -431,7 +462,9 @@ fn lower_expression(
                         target: offset_temp.clone(),
                         left: env_var.clone(),
                         op: crate::ir::BinaryOperator::Add,
-                        right: Value::Number { value: (i * 8) as i64 },
+                        right: Value::Number {
+                            value: (i * 8) as i64,
+                        },
                         span,
                     });
                     ctx.add_statement(Statement::Dereference {
@@ -439,24 +472,30 @@ fn lower_expression(
                         reference: offset_temp.clone(),
                         span,
                     });
-                    
+
                     // 在lambda内部，变量也映射为共享内存的引用
-                    ctx.variables.insert(var_name.clone(), Value::Reference {
-                        value: Box::new(shared_location_temp)
-                    });
+                    ctx.variables.insert(
+                        var_name.clone(),
+                        Value::Reference {
+                            value: Box::new(shared_location_temp),
+                        },
+                    );
                 }
             }
-            
+
             let return_val = ctx.new_temp();
             lower_expression(ctx, body, &return_val)?;
-            ctx.set_terminator(Terminator::Return { value: Some(return_val), span: body.span() });
-            
+            ctx.set_terminator(Terminator::Return {
+                value: Some(return_val),
+                span: body.span(),
+            });
+
             // 恢复原始函数上下文
             ctx.current_function_name = original_function_name;
             ctx.current_block = original_block;
             ctx.variables = original_vars;
         }
-        
+
         Expr::FunctionCall { function, args, .. } => {
             // 特殊处理：如果是直接lambda调用且没有捕获，生成优化的调用
             if let Expr::Lambda { .. } = function.as_ref() {
@@ -468,7 +507,7 @@ fn lower_expression(
                         .iter()
                         .map(|arg| lower_expression_to_temp(ctx, arg))
                         .collect::<Result<_, _>>()?;
-                    
+
                     // 提取function_ptr并直接调用
                     let function_ptr_temp = ctx.new_temp();
                     ctx.add_statement(Statement::FieldAccess {
@@ -477,7 +516,7 @@ fn lower_expression(
                         field: "function_ptr".to_string(),
                         span,
                     });
-                    
+
                     ctx.add_statement(Statement::Call {
                         target: Some(destination.clone()),
                         function: function_ptr_temp,
@@ -487,16 +526,16 @@ fn lower_expression(
                     return Ok(());
                 }
             }
-            
+
             let func_val = lower_expression_to_temp(ctx, function)?;
-            
+
             // 对于所有其他函数调用，生成运行时closure检查
             // 1. 生成参数列表
             let arg_vals: Vec<Value> = args
                 .iter()
                 .map(|arg| lower_expression_to_temp(ctx, arg))
                 .collect::<Result<_, _>>()?;
-            
+
             // 2. 检查函数值是否已知为直接函数
             match &func_val {
                 Value::Function { name: _ } => {
@@ -508,13 +547,18 @@ fn lower_expression(
                         span,
                     });
                 }
-                Value::Closure { captured_values, function_name } => {
+                Value::Closure {
+                    captured_values,
+                    function_name,
+                } => {
                     // 旧式闭包调用（兼容性）
                     let mut all_args = captured_values.clone();
                     all_args.extend(arg_vals);
                     ctx.add_statement(Statement::Call {
                         target: Some(destination.clone()),
-                        function: Value::Function { name: function_name.clone() },
+                        function: Value::Function {
+                            name: function_name.clone(),
+                        },
                         args: all_args,
                         span,
                     });
@@ -522,7 +566,7 @@ fn lower_expression(
                 _ => {
                     // 其他情况：可能是closure结构体或其他类型
                     // 生成运行时closure处理逻辑
-                    
+
                     // 1. 尝试提取function_ptr字段
                     let function_ptr_temp = ctx.new_temp();
                     ctx.add_statement(Statement::FieldAccess {
@@ -531,7 +575,7 @@ fn lower_expression(
                         field: "function_ptr".to_string(),
                         span,
                     });
-                    
+
                     // 2. 尝试提取env_ptr字段
                     let env_ptr_temp = ctx.new_temp();
                     ctx.add_statement(Statement::FieldAccess {
@@ -540,7 +584,7 @@ fn lower_expression(
                         field: "env_ptr".to_string(),
                         span,
                     });
-                    
+
                     // 3. 检查env_ptr是否为0
                     let zero_val = Value::Number { value: 0 };
                     let is_zero_temp = ctx.new_temp();
@@ -551,12 +595,12 @@ fn lower_expression(
                         right: zero_val,
                         span,
                     });
-                    
+
                     // 4. 创建分支：env_ptr == 0 时直接调用，否则传递env_ptr
                     let then_block = ctx.new_block();
                     let else_block = ctx.new_block();
                     let merge_block = ctx.new_block();
-                    
+
                     // 设置条件分支
                     ctx.set_terminator(Terminator::Branch {
                         condition: is_zero_temp,
@@ -564,7 +608,7 @@ fn lower_expression(
                         else_block,
                         span,
                     });
-                    
+
                     // then分支: env_ptr == 0，无环境调用
                     ctx.set_current_block(then_block);
                     ctx.add_statement(Statement::Call {
@@ -577,7 +621,7 @@ fn lower_expression(
                         target: merge_block,
                         span,
                     });
-                    
+
                     // else分支: env_ptr != 0，传递环境
                     ctx.set_current_block(else_block);
                     let mut env_args = vec![env_ptr_temp];
@@ -592,14 +636,18 @@ fn lower_expression(
                         target: merge_block,
                         span,
                     });
-                    
+
                     // 切换到合并块
                     ctx.set_current_block(merge_block);
                 }
             }
         }
-        
-        Expr::Block { statements, final_expr, span } => {
+
+        Expr::Block {
+            statements,
+            final_expr,
+            span,
+        } => {
             for stmt in statements {
                 lower_statement(ctx, stmt)?;
             }
@@ -613,7 +661,7 @@ fn lower_expression(
                 });
             }
         }
-        
+
         Expr::Statement { stmt, .. } => {
             lower_statement(ctx, stmt)?;
             // Statements used as expressions evaluate to Unit
@@ -623,7 +671,7 @@ fn lower_expression(
                 span,
             });
         }
-        
+
         Expr::Constructor { name, arg, .. } => {
             let constructor_value = if let Some(arg) = arg {
                 let arg_val = lower_expression_to_temp(ctx, arg)?;
@@ -637,15 +685,20 @@ fn lower_expression(
                     arg: None,
                 }
             };
-            
+
             ctx.add_statement(Statement::Assign {
                 target: destination.clone(),
                 source: constructor_value,
                 span,
             });
         }
-        
-        Expr::QualifiedConstructor { type_name, constructor_name, arg, .. } => {
+
+        Expr::QualifiedConstructor {
+            type_name,
+            constructor_name,
+            arg,
+            ..
+        } => {
             let constructor_value = if let Some(arg) = arg {
                 let arg_val = lower_expression_to_temp(ctx, arg)?;
                 Value::QualifiedConstructor {
@@ -660,26 +713,26 @@ fn lower_expression(
                     arg: None,
                 }
             };
-            
+
             ctx.add_statement(Statement::Assign {
                 target: destination.clone(),
                 source: constructor_value,
                 span,
             });
         }
-        
+
         Expr::Match { expr, arms, .. } => {
             // 1. 计算匹配表达式的值
             let match_value = lower_expression_to_temp(ctx, expr)?;
-            
+
             // 2. 为每个匹配分支创建基本块
             let mut mir_arms = Vec::new();
             let mut arm_blocks = Vec::new();
-            
+
             for arm in arms {
                 let arm_block = ctx.new_block();
                 arm_blocks.push(arm_block);
-                
+
                 // 转换HIR模式到MIR模式
                 let mir_pattern = convert_pattern(&arm.pattern)?;
                 mir_arms.push(MatchArm {
@@ -687,10 +740,10 @@ fn lower_expression(
                     target: arm_block,
                 });
             }
-            
+
             // 3. 创建合并块（所有分支的结果汇聚到这里）
             let merge_block = ctx.new_block();
-            
+
             // 4. 设置当前块的终结器为Match
             ctx.set_terminator(Terminator::Match {
                 value: match_value.clone(),
@@ -698,54 +751,58 @@ fn lower_expression(
                 default: None, // 暂时不支持默认分支
                 span,
             });
-            
+
             // 5. 为每个分支生成代码
             for (i, arm) in arms.iter().enumerate() {
                 let arm_block = arm_blocks[i];
                 ctx.set_current_block(arm_block);
-                
+
                 // 处理模式绑定（如果有的话）
                 handle_pattern_bindings(ctx, &arm.pattern, &match_value)?;
-                
+
                 // 生成分支体的代码
                 lower_expression(ctx, &arm.body, destination)?;
-            
+
                 // 跳转到合并块
-            ctx.set_terminator(Terminator::Goto {
+                ctx.set_terminator(Terminator::Goto {
                     target: merge_block,
                     span: arm.span,
                 });
             }
-            
+
             // 6. 切换到合并块
             ctx.set_current_block(merge_block);
         }
-        
+
         Expr::StructLiteral { name, fields, span } => {
             // 1. 计算所有字段的值
-            let mut mir_fields = std::collections::HashMap::new();
+            let mut mir_fields = std::collections::BTreeMap::new();
             for field in fields {
                 let field_value = lower_expression_to_temp(ctx, &field.value)?;
                 mir_fields.insert(field.name.clone(), field_value);
             }
-            
+
             // 2. 创建结构体值并赋值给目标
             let struct_value = Value::Struct {
                 name: name.clone(),
                 fields: mir_fields,
             };
-            
+
             ctx.add_statement(Statement::Assign {
                 target: destination.clone(),
                 source: struct_value,
                 span: *span,
             });
         }
-        
-        Expr::FieldAccess { object, field, span } => {
+
+        Expr::FieldAccess {
+            object,
+            field,
+            span,
+        } => {
             // 1. 计算对象表达式的值
             let object_value = lower_expression_to_temp(ctx, object)?;
-            
+
             // 2. 创建字段访问语句
             ctx.add_statement(Statement::FieldAccess {
                 target: destination.clone(),
@@ -754,27 +811,27 @@ fn lower_expression(
                 span: *span,
             });
         }
-        
+
         Expr::Reference { expr, span } => {
             // 1. 计算被引用表达式的值
             let referenced_value = lower_expression_to_temp(ctx, expr)?;
-            
+
             // 2. 创建引用值并赋值给目标
             let reference_value = Value::Reference {
                 value: Box::new(referenced_value),
             };
-            
+
             ctx.add_statement(Statement::Assign {
                 target: destination.clone(),
                 source: reference_value,
                 span: *span,
             });
         }
-        
+
         Expr::Dereference { expr, span } => {
             // 1. 计算被解引用表达式的值
             let reference_value = lower_expression_to_temp(ctx, expr)?;
-            
+
             // 2. 添加解引用语句
             ctx.add_statement(Statement::Dereference {
                 target: destination.clone(),
@@ -782,14 +839,18 @@ fn lower_expression(
                 span: *span,
             });
         }
-        
-        Expr::Assignment { target, value, span } => {
+
+        Expr::Assignment {
+            target,
+            value,
+            span,
+        } => {
             // 赋值表达式：执行赋值操作，然后将Unit赋值给目标
             // 注意：赋值表达式的值是Unit，但需要先执行赋值操作
-            
+
             // 1. 计算右值
             let value_temp = lower_expression_to_temp(ctx, value)?;
-            
+
             match target.as_ref() {
                 Expr::Identifier { name, .. } => {
                     // 变量赋值：检查变量是否为引用类型
@@ -825,29 +886,28 @@ fn lower_expression(
                                 span: *span,
                             });
                         } else {
-                            return Err(vec![format!("Undefined variable in field assignment: {}", name)]);
+                            return Err(vec![format!(
+                                "Undefined variable in field assignment: {}",
+                                name
+                            )]);
                         }
                     } else {
-                        return Err(vec!["Complex field assignment not yet supported in MIR".to_string()]);
+                        return Err(vec![
+                            "Complex field assignment not yet supported in MIR".to_string()
+                        ]);
                     }
                 }
                 _ => {
                     return Err(vec!["Invalid assignment target in MIR lowering".to_string()]);
                 }
             }
-            
+
             // 3. 赋值表达式的结果是Unit
             ctx.add_statement(Statement::Assign {
                 target: destination.clone(),
                 source: Value::Unit,
                 span: *span,
             });
-        }
-        
-        _ => {
-            ctx.errors
-                .push(format!(" lowering for {:?} is not implemented", expr));
-            return Err(ctx.errors.clone());
         }
     }
     Ok(())
@@ -867,13 +927,30 @@ fn lower_statement(
             let temp = ctx.new_temp();
             lower_expression(ctx, expr, &temp)?;
         }
-        karte_hir::Statement::TypeDef { .. } | karte_hir::Statement::StructDef { .. } => {
+        karte_hir::Statement::TypeDef { .. } => {
             // 类型定义在编译期处理，MIR中无需体现
+        }
+        karte_hir::Statement::StructDef { name, fields, .. } => {
+            // 🔧 专业修复：收集结构体定义信息，传递给MIR
+            let mir_fields: Vec<crate::MirStructField> = fields
+                .iter()
+                .map(|field| crate::MirStructField {
+                    name: field.name.clone(),
+                    field_type: field.field_type.clone(),
+                })
+                .collect();
+
+            let mir_struct_type = crate::MirStructType {
+                name: name.clone(),
+                fields: mir_fields,
+            };
+
+            ctx.program.add_struct_type(mir_struct_type);
         }
         karte_hir::Statement::Assignment { target, value, .. } => {
             // 赋值语句：将值计算到临时变量，然后赋值给目标
             let value_temp = lower_expression_to_temp(ctx, value)?;
-            
+
             match target {
                 Expr::Identifier { name, .. } => {
                     // 变量赋值：检查变量是否为引用类型
@@ -909,10 +986,15 @@ fn lower_statement(
                                 span: karte_diagnostics::Span::new(0, 0),
                             });
                         } else {
-                            return Err(vec![format!("Undefined variable in field assignment: {}", name)]);
+                            return Err(vec![format!(
+                                "Undefined variable in field assignment: {}",
+                                name
+                            )]);
                         }
                     } else {
-                        return Err(vec!["Complex field assignment not yet supported in MIR".to_string()]);
+                        return Err(vec![
+                            "Complex field assignment not yet supported in MIR".to_string()
+                        ]);
                     }
                 }
                 _ => {
@@ -925,10 +1007,7 @@ fn lower_statement(
 }
 
 /// 辅助函数，将表达式降级到一个新的临时变量中
-fn lower_expression_to_temp(
-    ctx: &mut LoweringContext,
-    expr: &Expr,
-) -> Result<Value, Vec<String>> {
+fn lower_expression_to_temp(ctx: &mut LoweringContext, expr: &Expr) -> Result<Value, Vec<String>> {
     let temp = ctx.new_temp();
     lower_expression(ctx, expr, &temp)?;
     Ok(temp)
@@ -982,14 +1061,21 @@ fn collect_vars_recursive(expr: &Expr, vars: &mut Vec<String>) {
         Expr::UnaryOp { operand, .. } => {
             collect_vars_recursive(operand, vars);
         }
-        Expr::If { condition, then_branch, else_branch, .. } => {
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             collect_vars_recursive(condition, vars);
             collect_vars_recursive(then_branch, vars);
             if let Some(else_branch) = else_branch {
                 collect_vars_recursive(else_branch, vars);
             }
         }
-        Expr::While { condition, body, .. } => {
+        Expr::While {
+            condition, body, ..
+        } => {
             collect_vars_recursive(condition, vars);
             collect_vars_recursive(body, vars);
         }
@@ -997,7 +1083,7 @@ fn collect_vars_recursive(expr: &Expr, vars: &mut Vec<String>) {
             // 对于lambda，只收集真正的外部捕获变量，排除lambda参数
             let mut lambda_vars = Vec::new();
             collect_vars_recursive(body, &mut lambda_vars);
-            
+
             // 过滤掉lambda参数
             let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
             for var in lambda_vars {
@@ -1012,7 +1098,11 @@ fn collect_vars_recursive(expr: &Expr, vars: &mut Vec<String>) {
                 collect_vars_recursive(arg, vars);
             }
         }
-        Expr::Block { statements, final_expr, .. } => {
+        Expr::Block {
+            statements,
+            final_expr,
+            ..
+        } => {
             for stmt in statements {
                 collect_vars_in_statement(stmt, vars);
             }
@@ -1059,26 +1149,46 @@ fn convert_pattern(pattern: &karte_hir::Pattern) -> Result<Pattern, Vec<String>>
                 // 对于构造器模式的参数，我们只支持变量绑定
                 match arg.as_ref() {
                     karte_hir::Pattern::Variable { name, .. } => Some(name.clone()),
-                    _ => return Err(vec!["Only variable patterns are supported in constructor arguments".to_string()]),
+                    _ => {
+                        return Err(vec![
+                            "Only variable patterns are supported in constructor arguments"
+                                .to_string(),
+                        ])
+                    }
                 }
             } else {
                 None
             };
-            Ok(Pattern::Constructor { name: name.clone(), arg: mir_arg })
+            Ok(Pattern::Constructor {
+                name: name.clone(),
+                arg: mir_arg,
+            })
         }
         karte_hir::Pattern::Number { value, .. } => Ok(Pattern::Number { value: *value }),
         karte_hir::Pattern::Boolean { value, .. } => Ok(Pattern::Boolean { value: *value }),
-        karte_hir::Pattern::QualifiedConstructor { constructor_name, arg, .. } => {
+        karte_hir::Pattern::QualifiedConstructor {
+            constructor_name,
+            arg,
+            ..
+        } => {
             let mir_arg = if let Some(arg) = arg {
                 match arg.as_ref() {
                     karte_hir::Pattern::Variable { name, .. } => Some(name.clone()),
-                    _ => return Err(vec!["Only variable patterns are supported in qualified constructor arguments".to_string()]),
+                    _ => {
+                        return Err(vec![
+                        "Only variable patterns are supported in qualified constructor arguments"
+                            .to_string(),
+                    ])
+                    }
                 }
             } else {
                 None
             };
             // 对于限定构造器，我们使用构造器名称
-            Ok(Pattern::Constructor { name: constructor_name.clone(), arg: mir_arg })
+            Ok(Pattern::Constructor {
+                name: constructor_name.clone(),
+                arg: mir_arg,
+            })
         }
     }
 }
@@ -1094,12 +1204,15 @@ fn handle_pattern_bindings(
             // 变量模式：将整个匹配值绑定到变量
             ctx.variables.insert(name.clone(), match_value.clone());
         }
-        karte_hir::Pattern::Constructor { arg: Some(arg_pattern), .. } => {
+        karte_hir::Pattern::Constructor {
+            arg: Some(arg_pattern),
+            ..
+        } => {
             // 构造器模式带参数：需要提取构造器的参数
             if let karte_hir::Pattern::Variable { name, .. } = arg_pattern.as_ref() {
                 // 创建一个临时变量来存储提取的参数
                 let arg_temp = ctx.new_temp();
-                
+
                 // 添加一个特殊的语句来从构造器中提取参数
                 // 这个语句告诉运行时从match_value构造器中提取参数
                 ctx.add_statement(Statement::ConstructorArgExtract {
@@ -1108,15 +1221,18 @@ fn handle_pattern_bindings(
                     arg_index: 0, // 第一个参数
                     span: karte_diagnostics::Span::new(0, 0),
                 });
-                
+
                 ctx.variables.insert(name.clone(), arg_temp);
             }
         }
-        karte_hir::Pattern::QualifiedConstructor { arg: Some(arg_pattern), .. } => {
+        karte_hir::Pattern::QualifiedConstructor {
+            arg: Some(arg_pattern),
+            ..
+        } => {
             // 限定构造器模式带参数
             if let karte_hir::Pattern::Variable { name, .. } = arg_pattern.as_ref() {
                 let arg_temp = ctx.new_temp();
-                
+
                 // 添加构造器参数提取语句
                 ctx.add_statement(Statement::ConstructorArgExtract {
                     target: arg_temp.clone(),
@@ -1124,7 +1240,7 @@ fn handle_pattern_bindings(
                     arg_index: 0,
                     span: karte_diagnostics::Span::new(0, 0),
                 });
-                
+
                 ctx.variables.insert(name.clone(), arg_temp);
             }
         }
@@ -1138,8 +1254,8 @@ fn handle_pattern_bindings(
 #[cfg(test)]
 mod assignment_lowering_tests {
     use super::*;
-    use karte_hir::{Expr, Statement as HirStatement};
     use karte_diagnostics::Span;
+    use karte_hir::{Expr, Statement as HirStatement};
 
     fn make_span() -> Span {
         Span::new(0, 0)
@@ -1182,15 +1298,16 @@ mod assignment_lowering_tests {
 
         let program = result.unwrap();
         assert!(program.functions.contains_key("main"), "应该有main函数");
-        
+
         let main_fn = &program.functions["main"];
         assert!(!main_fn.basic_blocks.is_empty(), "main函数应该有基本块");
-        
+
         // 检查是否包含Assign语句（用于赋值）
         let entry_block = &main_fn.basic_blocks[&main_fn.entry_block];
-        let has_assign = entry_block.statements.iter().any(|stmt| {
-            matches!(stmt, Statement::Assign { .. })
-        });
+        let has_assign = entry_block
+            .statements
+            .iter()
+            .any(|stmt| matches!(stmt, Statement::Assign { .. }));
         assert!(has_assign, "应该包含Assign语句用于赋值");
     }
 
@@ -1218,7 +1335,13 @@ mod assignment_lowering_tests {
 
         // 检查是否包含Assign语句，值为42
         let has_assign = entry_block.statements.iter().any(|stmt| {
-            matches!(stmt, Statement::Assign { source: Value::Number { value: 42 }, .. })
+            matches!(
+                stmt,
+                Statement::Assign {
+                    source: Value::Number { value: 42 },
+                    ..
+                }
+            )
         });
         assert!(has_assign, "应该包含值为42的Assign语句");
     }
@@ -1253,9 +1376,11 @@ mod assignment_lowering_tests {
         let entry_block = &main_fn.basic_blocks[&main_fn.entry_block];
 
         // 检查是否包含Assign语句（至少一个，因为嵌套赋值可能有不同的实现方式）
-        let assign_count = entry_block.statements.iter().filter(|stmt| {
-            matches!(stmt, Statement::Assign { .. })
-        }).count();
+        let assign_count = entry_block
+            .statements
+            .iter()
+            .filter(|stmt| matches!(stmt, Statement::Assign { .. }))
+            .count();
         assert!(assign_count >= 1, "应该至少有一个Assign语句用于连续赋值");
     }
 
@@ -1285,18 +1410,21 @@ mod assignment_lowering_tests {
                 // 如果成功，检查是否生成了一些语句
                 let main_fn = &program.functions["main"];
                 let entry_block = &main_fn.basic_blocks[&main_fn.entry_block];
-                
+
                 // 检查是否包含FieldAssign语句或者其他相关语句
-                let has_field_assign = entry_block.statements.iter().any(|stmt| {
-                    matches!(stmt, Statement::FieldAssign { field, .. } if field == "field")
-                });
-                let has_assign = entry_block.statements.iter().any(|stmt| {
-                    matches!(stmt, Statement::Assign { .. })
-                });
-                
+                let has_field_assign = entry_block.statements.iter().any(
+                    |stmt| matches!(stmt, Statement::FieldAssign { field, .. } if field == "field"),
+                );
+                let has_assign = entry_block
+                    .statements
+                    .iter()
+                    .any(|stmt| matches!(stmt, Statement::Assign { .. }));
+
                 // 至少应该有某种形式的语句
-                assert!(has_field_assign || has_assign || !entry_block.statements.is_empty(), 
-                       "字段赋值应该生成某些MIR语句");
+                assert!(
+                    has_field_assign || has_assign || !entry_block.statements.is_empty(),
+                    "字段赋值应该生成某些MIR语句"
+                );
             }
             Err(_) => {
                 // 如果失败，这可能是预期的，因为字段赋值可能还在开发中
@@ -1305,7 +1433,7 @@ mod assignment_lowering_tests {
         }
     }
 
-    #[test] 
+    #[test]
     fn test_variable_collection_with_assignment() {
         // 测试变量收集功能是否包含赋值中的变量
         let expr = Expr::Assignment {
@@ -1328,6 +1456,8 @@ mod assignment_lowering_tests {
 
 #[cfg(test)]
 mod closure_struct_tests {
+    use karte_diagnostics::Span;
+
     use super::*;
 
     fn make_span() -> Span {
@@ -1338,12 +1468,12 @@ mod closure_struct_tests {
     fn test_lambda_without_captures_lowering() {
         // lambda (x) => x + 1
         use karte_hir::Parameter;
-        
+
         let lambda_expr = Expr::Lambda {
-            params: vec![Parameter { 
-                name: "x".to_string(), 
+            params: vec![Parameter {
+                name: "x".to_string(),
                 type_annotation: Some("Number".to_string()),
-                span: make_span()
+                span: make_span(),
             }],
             body: Box::new(Expr::BinaryOp {
                 left: Box::new(Expr::Identifier {
@@ -1369,9 +1499,16 @@ mod closure_struct_tests {
 
         // 检查是否生成了Closure结构体
         let has_closure_struct = entry_block.statements.iter().any(|stmt| {
-            if let Statement::Assign { source: Value::Struct { name, fields }, .. } = stmt {
-                name == "Closure" && 
-                fields.get("env_ptr").map(|v| matches!(v, Value::Number { value: 0 })).unwrap_or(false)
+            if let Statement::Assign {
+                source: Value::Struct { name, fields },
+                ..
+            } = stmt
+            {
+                name == "Closure"
+                    && fields
+                        .get("env_ptr")
+                        .map(|v| matches!(v, Value::Number { value: 0 }))
+                        .unwrap_or(false)
             } else {
                 false
             }
@@ -1380,12 +1517,14 @@ mod closure_struct_tests {
 
         // 检查是否生成了lambda函数
         assert!(program.functions.len() >= 2, "应该生成主函数和lambda函数");
-        
-        let lambda_fn_name = program.functions.keys()
+
+        let lambda_fn_name = program
+            .functions
+            .keys()
             .find(|name| name.starts_with("lambda$"))
             .expect("应该有lambda函数");
         let lambda_fn = &program.functions[lambda_fn_name];
-        
+
         // 无捕获的lambda不应该有__env参数
         assert_eq!(lambda_fn.params.len(), 1, "无捕获lambda应该只有1个参数");
         assert_eq!(lambda_fn.params[0], "x", "参数应该是x");
@@ -1395,23 +1534,21 @@ mod closure_struct_tests {
     fn test_lambda_with_captures_lowering() {
         // let y = 42; lambda (x) => x + y
         use karte_hir::{Parameter, Statement as HirStatement};
-        
+
         let expr = Expr::Block {
-            statements: vec![
-                HirStatement::Let {
-                    name: "y".to_string(),
-                    value: Expr::Number {
-                        value: 42,
-                        span: make_span(),
-                    },
+            statements: vec![HirStatement::Let {
+                name: "y".to_string(),
+                value: Expr::Number {
+                    value: 42,
                     span: make_span(),
                 },
-            ],
+                span: make_span(),
+            }],
             final_expr: Some(Box::new(Expr::Lambda {
-                params: vec![Parameter { 
-                    name: "x".to_string(), 
+                params: vec![Parameter {
+                    name: "x".to_string(),
                     type_annotation: Some("Number".to_string()),
-                    span: make_span()
+                    span: make_span(),
                 }],
                 body: Box::new(Expr::BinaryOp {
                     left: Box::new(Expr::Identifier {
@@ -1444,16 +1581,24 @@ mod closure_struct_tests {
         assert!(has_heap_alloc, "应该生成闭包环境的堆分配语句");
 
         // 检查是否生成了Store语句（存储捕获的变量）
-        let has_store = entry_block.statements.iter().any(|stmt| {
-            matches!(stmt, Statement::Store { .. })
-        });
+        let has_store = entry_block
+            .statements
+            .iter()
+            .any(|stmt| matches!(stmt, Statement::Store { .. }));
         assert!(has_store, "应该生成Store语句来存储捕获的变量");
 
         // 检查是否生成了非零env_ptr的Closure结构体
         let has_closure_with_env = entry_block.statements.iter().any(|stmt| {
-            if let Statement::Assign { source: Value::Struct { name, fields }, .. } = stmt {
-                name == "Closure" && 
-                fields.get("env_ptr").map(|v| !matches!(v, Value::Number { value: 0 })).unwrap_or(false)
+            if let Statement::Assign {
+                source: Value::Struct { name, fields },
+                ..
+            } = stmt
+            {
+                name == "Closure"
+                    && fields
+                        .get("env_ptr")
+                        .map(|v| !matches!(v, Value::Number { value: 0 }))
+                        .unwrap_or(false)
             } else {
                 false
             }
@@ -1461,11 +1606,13 @@ mod closure_struct_tests {
         assert!(has_closure_with_env, "应该生成env_ptr非零的Closure结构体");
 
         // 检查lambda函数是否有环境参数
-        let lambda_fn_name = program.functions.keys()
+        let lambda_fn_name = program
+            .functions
+            .keys()
             .find(|name| name.starts_with("lambda$"))
             .expect("应该有lambda函数");
         let lambda_fn = &program.functions[lambda_fn_name];
-        
+
         // 有捕获的lambda应该有__env参数 + 原始参数
         assert_eq!(lambda_fn.params.len(), 2, "有捕获lambda应该有2个参数");
         assert_eq!(lambda_fn.params[0], "__env", "第一个参数应该是__env");
@@ -1476,13 +1623,13 @@ mod closure_struct_tests {
     fn test_closure_struct_function_call() {
         // 测试闭包结构体的函数调用
         use karte_hir::Parameter;
-        
+
         let call_expr = Expr::FunctionCall {
             function: Box::new(Expr::Lambda {
-                params: vec![Parameter { 
-                    name: "x".to_string(), 
+                params: vec![Parameter {
+                    name: "x".to_string(),
                     type_annotation: Some("Number".to_string()),
-                    span: make_span()
+                    span: make_span(),
                 }],
                 body: Box::new(Expr::Identifier {
                     name: "x".to_string(),
@@ -1505,9 +1652,10 @@ mod closure_struct_tests {
         let entry_block = &main_fn.basic_blocks[&main_fn.entry_block];
 
         // 检查是否生成了Call语句
-        let has_call = entry_block.statements.iter().any(|stmt| {
-            matches!(stmt, Statement::Call { .. })
-        });
+        let has_call = entry_block
+            .statements
+            .iter()
+            .any(|stmt| matches!(stmt, Statement::Call { .. }));
         assert!(has_call, "应该生成Call语句");
     }
 
@@ -1515,23 +1663,21 @@ mod closure_struct_tests {
     fn test_heap_allocation_statements() {
         // 测试堆分配相关语句的生成
         use karte_hir::{Parameter, Statement as HirStatement};
-        
+
         let expr = Expr::Block {
-            statements: vec![
-                HirStatement::Let {
-                    name: "captured".to_string(),
-                    value: Expr::Number {
-                        value: 100,
-                        span: make_span(),
-                    },
+            statements: vec![HirStatement::Let {
+                name: "captured".to_string(),
+                value: Expr::Number {
+                    value: 100,
                     span: make_span(),
                 },
-            ],
+                span: make_span(),
+            }],
             final_expr: Some(Box::new(Expr::Lambda {
-                params: vec![Parameter { 
-                    name: "param".to_string(), 
+                params: vec![Parameter {
+                    name: "param".to_string(),
                     type_annotation: Some("Number".to_string()),
-                    span: make_span()
+                    span: make_span(),
                 }],
                 body: Box::new(Expr::Identifier {
                     name: "captured".to_string(),
@@ -1550,18 +1696,30 @@ mod closure_struct_tests {
         let entry_block = &main_fn.basic_blocks[&main_fn.entry_block];
 
         // 验证各种堆操作语句
-        let heap_alloc_count = entry_block.statements.iter().filter(|stmt| {
-            matches!(stmt, Statement::HeapAlloc { .. })
-        }).count();
-        assert_eq!(heap_alloc_count, 1, "应该有1个HeapAlloc语句");
+        let heap_alloc_count = entry_block
+            .statements
+            .iter()
+            .filter(|stmt| matches!(stmt, Statement::HeapAlloc { .. }))
+            .count();
+        assert_eq!(
+            heap_alloc_count, 2,
+            "应该有2个HeapAlloc语句：1个为捕获变量分配共享内存，1个为闭包环境分配内存"
+        );
 
-        let store_count = entry_block.statements.iter().filter(|stmt| {
-            matches!(stmt, Statement::Store { .. })
-        }).count();
-        assert_eq!(store_count, 1, "应该有1个Store语句（存储捕获的变量）");
+        let store_count = entry_block
+            .statements
+            .iter()
+            .filter(|stmt| matches!(stmt, Statement::Store { .. }))
+            .count();
+        assert_eq!(
+            store_count, 2,
+            "应该有2个Store语句：1个存储捕获变量到共享内存，1个存储共享内存位置到闭包环境"
+        );
 
         // 检查lambda函数中的变量恢复
-        let lambda_fn_name = program.functions.keys()
+        let lambda_fn_name = program
+            .functions
+            .keys()
             .find(|name| name.starts_with("lambda$"))
             .expect("应该有lambda函数");
         let lambda_fn = &program.functions[lambda_fn_name];
@@ -1569,10 +1727,9 @@ mod closure_struct_tests {
 
         // 应该有语句来恢复捕获的变量（通过引用和解引用）
         let has_var_recovery = lambda_entry_block.statements.iter().any(|stmt| {
-            matches!(stmt, Statement::Assign { .. }) || matches!(stmt, Statement::Dereference { .. })
+            matches!(stmt, Statement::Assign { .. })
+                || matches!(stmt, Statement::Dereference { .. })
         });
         assert!(has_var_recovery, "lambda函数应该有语句来恢复捕获的变量");
     }
 }
-
- 

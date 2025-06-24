@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
     "karte-lexer",
-    "karte-cli", "karte-codegen", "karte-diagnostics", "karte-hir", "karte-lir", "karte-mir", "karte-lsp", "karte-parser", "karte-tests",
+    "karte-cli", "karte-codegen", "karte-diagnostics", "karte-hir", "karte-lir", "karte-mir", "karte-lsp", "karte-parser", "karte-tests", "karte-common",
 ]
 
 [workspace.package]
@@ -11,6 +11,9 @@ edition = "2021"
 authors = []
 description = "A modern compiler with rich documentation and professional design"
 license = "MIT"
+
+[workspace.lints.clippy]
+needless_range_loop = "allow"
 
 [workspace.dependencies]
 # 错误处理

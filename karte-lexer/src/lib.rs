@@ -207,7 +207,10 @@ impl<'a> Lexer<'a> {
 
 /// 关键字识别器
 pub fn is_keyword(ident: &str) -> bool {
-    matches!(ident, "let" | "match" | "enum" | "struct" | "true" | "false" | "if" | "else" | "while")
+    matches!(
+        ident,
+        "let" | "match" | "enum" | "struct" | "true" | "false" | "if" | "else" | "while"
+    )
 }
 
 /// 从标识符创建关键字或标识符token

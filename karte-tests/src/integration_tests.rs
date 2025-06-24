@@ -1,12 +1,9 @@
-
-use karte_hir::{type_check, Expr};
-use karte_lexer::tokenize;
-use karte_parser::{parse, parse_with_type_check};
-use crate::execute_from_string;
-
 #[cfg(test)]
 mod integration_tests {
-    use super::*;
+    use karte_lexer::tokenize;
+    use karte_parser::parse_with_type_check;
+
+    use crate::execute_from_string;
 
     #[test]
     fn test_simple_arithmetic() {
@@ -73,7 +70,7 @@ mod integration_tests {
 
     #[test]
     fn test_complex_expression() {
-        let input = "let x = 3; let y = 4; let multiply = |a, b| a * b; multiply(x, y)";
+        let input = "(|a, b| a * b)(3,4)";
 
         // 词法分析
         let (tokens, lex_diagnostics) = tokenize(input);

@@ -1,14 +1,8 @@
 //! 控制流测试 - 测试if和while表达式
 
-
-use karte_hir::type_checker::type_check;
-use karte_lexer::tokenize;
-use karte_parser::parse;
-use crate::execute_from_string;
-
 #[cfg(test)]
 mod if_expression_tests {
-    use super::*;
+    use crate::execute_from_string;
 
     #[test]
     fn test_if_true_simple() {
@@ -55,7 +49,7 @@ mod if_expression_tests {
 
 #[cfg(test)]
 mod while_expression_tests {
-    use super::*;
+    use crate::execute_from_string;
 
     #[test]
     fn test_while_false_never_executes() {
@@ -83,8 +77,10 @@ mod while_expression_tests {
 
 #[cfg(test)]
 mod type_checking_tests {
-    use super::*;
-    use karte_hir::types::Type;
+
+    use karte_hir::{type_check, types::Type};
+    use karte_lexer::tokenize;
+    use karte_parser::parse;
 
     #[test]
     fn test_if_expression_type_checking() {
@@ -92,7 +88,7 @@ mod type_checking_tests {
         let (tokens, _) = tokenize(input);
         let (ast, _) = parse(&tokens);
         assert!(ast.is_some());
-        
+
         let (result_type, diagnostics) = type_check(ast.as_ref().unwrap());
         assert!(!diagnostics.has_errors());
         assert_eq!(result_type, Type::Number);
@@ -104,7 +100,7 @@ mod type_checking_tests {
         let (tokens, _) = tokenize(input);
         let (ast, _) = parse(&tokens);
         assert!(ast.is_some());
-        
+
         let (result_type, diagnostics) = type_check(ast.as_ref().unwrap());
         assert!(!diagnostics.has_errors());
         assert_eq!(result_type, Type::Unit);
@@ -116,7 +112,7 @@ mod type_checking_tests {
         let (tokens, _) = tokenize(input);
         let (ast, _) = parse(&tokens);
         assert!(ast.is_some());
-        
+
         let (result_type, diagnostics) = type_check(ast.as_ref().unwrap());
         assert!(!diagnostics.has_errors());
         assert_eq!(result_type, Type::Unit);
@@ -128,7 +124,7 @@ mod type_checking_tests {
         let (tokens, _) = tokenize(input);
         let (ast, _) = parse(&tokens);
         assert!(ast.is_some());
-        
+
         let (_, diagnostics) = type_check(ast.as_ref().unwrap());
         assert!(diagnostics.has_errors());
     }
@@ -139,7 +135,7 @@ mod type_checking_tests {
         let (tokens, _) = tokenize(input);
         let (ast, _) = parse(&tokens);
         assert!(ast.is_some());
-        
+
         let (_, diagnostics) = type_check(ast.as_ref().unwrap());
         assert!(diagnostics.has_errors());
     }
@@ -147,17 +143,17 @@ mod type_checking_tests {
 
 #[cfg(test)]
 mod integration_tests {
-    use super::*;
+    use crate::execute_from_string;
 
     #[test]
     fn test_if_and_match_equivalence() {
         // 测试if和match在某些情况下的等价性
         let if_input = "if true then 1 else 0";
         let match_input = "match true { true -> 1, false -> 0 }";
-        
+
         let if_result = execute_from_string(if_input).unwrap();
         let match_result = execute_from_string(match_input).unwrap();
-        
+
         assert_eq!(if_result, match_result);
         assert_eq!(if_result, 1);
     }
@@ -177,4 +173,4 @@ mod integration_tests {
         let result = execute_from_string(input).unwrap();
         assert_eq!(result, 42);
     }
-} 
+}

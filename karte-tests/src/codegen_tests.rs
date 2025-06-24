@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use karte_diagnostics::Span;
+    use crate::{dummy_span, execute_with_pipeline};
+
     use karte_hir::{BinaryOperator, Expr, Parameter, Statement, UnaryOperator};
-    use crate::{execute_with_pipeline, dummy_span};
 
     #[test]
     fn test_evaluate_number() {
@@ -139,15 +139,19 @@ mod tests {
         // 因为HIR解释器不能直接将函数转换为i64
         let (expr_type, type_diagnostics) = karte_hir::type_check(&expr);
         assert!(!type_diagnostics.has_errors());
-        
+
         // Lambda表达式应该有函数类型
-        if let karte_hir::Type::Function { params, return_type: _ } = expr_type {
+        if let karte_hir::Type::Function {
+            params,
+            return_type: _,
+        } = expr_type
+        {
             assert_eq!(params.len(), 1);
             // 参数类型可能是类型变量，这是正常的
         } else {
             panic!("Expected function type, got {:?}", expr_type);
         }
-        
+
         // 测试lambda可以被调用
         let call_expr = Expr::FunctionCall {
             function: Box::new(expr),
@@ -157,9 +161,9 @@ mod tests {
             }],
             span: dummy_span(),
         };
-        
+
         let result = execute_with_pipeline(&call_expr);
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "{}", result.err().unwrap());
         assert_eq!(result.unwrap(), 42); // 身份函数应该返回输入值
     }
 
@@ -199,7 +203,10 @@ mod tests {
     fn test_multi_param_function_call() {
         // 测试 (|x, y| x * y)(3, 4) 应该返回 12
         let lambda = Expr::Lambda {
-            params: vec![Parameter::simple("x".to_string()), Parameter::simple("y".to_string())],
+            params: vec![
+                Parameter::simple("x".to_string()),
+                Parameter::simple("y".to_string()),
+            ],
             body: Box::new(Expr::BinaryOp {
                 left: Box::new(Expr::Identifier {
                     name: "x".to_string(),
@@ -467,7 +474,7 @@ mod tests {
             }),
             span: dummy_span(),
         };
-        
+
         // 比较操作返回布尔值，我们需要检查结果是否是构造器值
         let result = execute_with_pipeline(&expr);
         assert!(result.is_ok());
@@ -489,7 +496,7 @@ mod tests {
             }),
             span: dummy_span(),
         };
-        
+
         let result = execute_with_pipeline(&expr);
         assert!(result.is_ok());
     }
@@ -508,7 +515,7 @@ mod tests {
             }),
             span: dummy_span(),
         };
-        
+
         let result = execute_with_pipeline(&expr);
         assert!(result.is_ok());
     }
@@ -527,7 +534,7 @@ mod tests {
             }),
             span: dummy_span(),
         };
-        
+
         let result = execute_with_pipeline(&expr);
         assert!(result.is_ok());
     }
@@ -546,7 +553,7 @@ mod tests {
             }),
             span: dummy_span(),
         };
-        
+
         let result = execute_with_pipeline(&expr);
         assert!(result.is_ok());
     }
@@ -565,7 +572,7 @@ mod tests {
             }),
             span: dummy_span(),
         };
-        
+
         let result = execute_with_pipeline(&expr);
         assert!(result.is_ok());
     }
@@ -584,7 +591,7 @@ mod tests {
             }),
             span: dummy_span(),
         };
-        
+
         let result = execute_with_pipeline(&expr);
         assert!(result.is_ok());
     }
@@ -603,7 +610,7 @@ mod tests {
             }),
             span: dummy_span(),
         };
-        
+
         let result = execute_with_pipeline(&expr);
         assert!(result.is_ok());
     }
@@ -630,7 +637,7 @@ mod tests {
             }),
             span: dummy_span(),
         };
-        
+
         let result = execute_with_pipeline(&expr);
         assert!(result.is_ok());
     }

@@ -6,6 +6,9 @@ authors.workspace = true
 description = "Parser for Karte compiler"
 license.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 thiserror.workspace = true
 karte-lexer = { path = "../karte-lexer" }
