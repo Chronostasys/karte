@@ -1,3 +1,4 @@
 target
 *.mdc
 
+.vscode/settings.json

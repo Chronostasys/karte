@@ -6,6 +6,8 @@ use karte_hir::{type_check, Type};
 use karte_lexer::tokenize;
 #[cfg(test)]
 use karte_parser::parse;
+#[cfg(test)]
+use log::info;
 
 #[cfg(test)]
 fn test_evaluate(input: &str) -> Result<i64, String> {
@@ -594,7 +596,7 @@ mod option_constructor_bug_tests {
     #[test]
     fn test_some_reference_vs_value_debug() {
         // 比较Some(42)和Some(&n)的行为差异
-        println!("=== Debug: test_some_reference_vs_value_debug ===");
+        info!("=== Debug: test_some_reference_vs_value_debug ===");
 
         // 测试1: Some(42) - 应该工作
         let program1 = r#"
@@ -604,9 +606,9 @@ mod option_constructor_bug_tests {
             }
         "#;
 
-        println!("Program1 (Some(42)): {}", program1);
+        info!("Program1 (Some(42)): {}", program1);
         let result1 = test_evaluate(program1).unwrap();
-        println!("Result1: {}", result1);
+        info!("Result1: {}", result1);
 
         // 测试2: Some(&n) - 有问题
         let program2 = r#"
@@ -617,9 +619,9 @@ mod option_constructor_bug_tests {
             }
         "#;
 
-        println!("Program2 (Some(&n)): {}", program2);
+        info!("Program2 (Some(&n)): {}", program2);
         let result2 = test_evaluate(program2).unwrap();
-        println!("Result2: {}", result2);
+        info!("Result2: {}", result2);
 
         // 两个结果应该相同
         assert_eq!(result1, 42, "Some(42)应该返回42");
@@ -636,11 +638,11 @@ mod option_constructor_bug_tests {
             }
         "#;
 
-        println!("=== Debug: test_some_without_reference_debug ===");
-        println!("Program: {}", program);
+        info!("=== Debug: test_some_without_reference_debug ===");
+        info!("Program: {}", program);
 
         let result = test_evaluate(program).unwrap();
-        println!("Result: {}", result);
+        info!("Result: {}", result);
 
         assert_eq!(result, 42, "Some(42)应该返回42，但实际返回了{}", result);
     }
@@ -654,11 +656,11 @@ mod option_constructor_bug_tests {
             *ref_n
         "#;
 
-        println!("=== Debug: test_simple_reference_debug ===");
-        println!("Program: {}", program);
+        info!("=== Debug: test_simple_reference_debug ===");
+        info!("Program: {}", program);
 
         let result = test_evaluate(program).unwrap();
-        println!("Result: {}", result);
+        info!("Result: {}", result);
 
         assert_eq!(
             result, 42,
@@ -678,11 +680,11 @@ mod option_constructor_bug_tests {
             }
         "#;
 
-        println!("=== Debug: test_some_with_reference_simple ===");
-        println!("Program: {}", program);
+        info!("=== Debug: test_some_with_reference_simple ===");
+        info!("Program: {}", program);
 
         let result = test_evaluate(program).unwrap();
-        println!("Result: {}", result);
+        info!("Result: {}", result);
 
         assert_eq!(
             result, 42,

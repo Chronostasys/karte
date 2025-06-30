@@ -2,22 +2,33 @@
 //!
 //! 提供高级的代码生成辅助功能，简化机器码的生成
 
+use crate::vm::{VariableInfo, VariableLocation};
+
 use super::compiler_trait::MachineCodeBuffer;
 
 /// 高级代码缓冲区
-/// 
+///
 /// 在基础MachineCodeBuffer之上提供更多便利功能
 #[derive(Debug, Clone)]
 pub struct CodeBuilder {
     /// 底层代码缓冲区
     buffer: MachineCodeBuffer,
-    
+
     /// 标签表 (标签名 -> 代码位置)
     labels: std::collections::HashMap<String, usize>,
-    
+
+    /// 全局标签表引用 (可选，用于跨函数标签解析)
+    global_labels: Option<std::collections::HashMap<String, usize>>,
+
     /// 待修补的跳转 (代码位置, 目标标签名, 跳转类型)
     pending_jumps: Vec<PendingJump>,
-    
+
+    /// 待修补的标签地址 (代码位置, 目标标签名)
+    pending_label_addresses: Vec<PendingLabelAddress>,
+
+    /// 待修补的ADR指令 (代码位置, 目标标签名, 目标寄存器)
+    pending_adrs: Vec<PendingAdr>,
+
     /// 调试信息
     debug_info: Option<DebugInfoBuilder>,
 }
@@ -28,7 +39,10 @@ impl CodeBuilder {
         Self {
             buffer: MachineCodeBuffer::new(),
             labels: std::collections::HashMap::new(),
+            global_labels: None,
             pending_jumps: Vec::new(),
+            pending_label_addresses: Vec::new(),
+            pending_adrs: Vec::new(),
             debug_info: None,
         }
     }
@@ -38,9 +52,17 @@ impl CodeBuilder {
         Self {
             buffer: MachineCodeBuffer::new(),
             labels: std::collections::HashMap::new(),
+            global_labels: None,
             pending_jumps: Vec::new(),
+            pending_label_addresses: Vec::new(),
+            pending_adrs: Vec::new(),
             debug_info: Some(DebugInfoBuilder::new()),
         }
+    }
+
+    /// 设置全局标签表
+    pub fn set_global_labels(&mut self, global_labels: std::collections::HashMap<String, usize>) {
+        self.global_labels = Some(global_labels);
     }
 
     /// 获取当前代码位置
@@ -88,68 +110,123 @@ impl CodeBuilder {
         if self.labels.contains_key(label) {
             return Err(format!("标签 '{}' 已经定义", label));
         }
-        
+
         let position = self.buffer.position();
         self.labels.insert(label.to_string(), position);
-        
+
         if let Some(ref mut debug) = self.debug_info {
             debug.add_label(label, position);
         }
-        
+
         Ok(())
     }
 
     /// 发射跳转指令（稍后修补地址）
     pub fn emit_jump(&mut self, jump_type: JumpType, target_label: &str) {
         let patch_position = self.buffer.position();
-        
-        // 发射跳转指令的操作码和占位符地址
-        match jump_type {
-            JumpType::Unconditional => {
-                // jmp rel32 - E9 <rel32>
-                self.emit_byte(0xE9);
-                self.emit_i32(0); // 占位符，稍后修补
-            }
-            JumpType::ConditionalEqual => {
-                // je rel32 - 0F 84 <rel32>
-                self.emit_bytes(&[0x0F, 0x84]);
-                self.emit_i32(0); // 占位符，稍后修补
-            }
-            JumpType::ConditionalNotEqual => {
-                // jne rel32 - 0F 85 <rel32>
-                self.emit_bytes(&[0x0F, 0x85]);
-                self.emit_i32(0); // 占位符，稍后修补
-            }
-            JumpType::ConditionalLess => {
-                // jl rel32 - 0F 8C <rel32>
-                self.emit_bytes(&[0x0F, 0x8C]);
-                self.emit_i32(0); // 占位符，稍后修补
-            }
-            JumpType::ConditionalGreater => {
-                // jg rel32 - 0F 8F <rel32>
-                self.emit_bytes(&[0x0F, 0x8F]);
-                self.emit_i32(0); // 占位符，稍后修补
-            }
-            JumpType::ConditionalLessEqual => {
-                // jle rel32 - 0F 8E <rel32>
-                self.emit_bytes(&[0x0F, 0x8E]);
-                self.emit_i32(0); // 占位符，稍后修补
-            }
-            JumpType::ConditionalGreaterEqual => {
-                // jge rel32 - 0F 8D <rel32>
-                self.emit_bytes(&[0x0F, 0x8D]);
-                self.emit_i32(0); // 占位符，稍后修补
-            }
-            JumpType::Call => {
-                // call rel32 - E8 <rel32>
-                self.emit_byte(0xE8);
-                self.emit_i32(0); // 占位符，稍后修补
+
+        // 🔧 修复：根据目标架构生成正确的跳转指令
+        // 在macOS AArch64上，需要生成AArch64指令而不是x86指令
+        #[cfg(target_arch = "aarch64")]
+        {
+            match jump_type {
+                JumpType::Unconditional => {
+                    // B <label> - 无条件分支
+                    // 31|30|29 28|27 26|25                     0
+                    // 0 |0 |0  1 |0  1 |imm26 (26位相对偏移)
+                    self.emit_u32(0x14000000); // B指令，偏移=0（稍后修补）
+                }
+                JumpType::ConditionalEqual => {
+                    // B.EQ <label> - 条件分支（相等）
+                    // 31|30 29|28 25|24|23   5|4   0
+                    // 0 |1  0 |1  0  0 |1|imm19|cond
+                    // cond=0000 (EQ)
+                    self.emit_u32(0x54000000); // B.EQ指令，偏移=0（稍后修补）
+                }
+                JumpType::ConditionalNotEqual => {
+                    // B.NE <label> - 条件分支（不相等）
+                    // cond=0001 (NE)
+                    self.emit_u32(0x54000001); // B.NE指令
+                }
+                JumpType::ConditionalLess => {
+                    // B.LT <label> - 条件分支（小于）
+                    // cond=1011 (LT)
+                    self.emit_u32(0x5400000B); // B.LT指令
+                }
+                JumpType::ConditionalGreater => {
+                    // B.GT <label> - 条件分支（大于）
+                    // cond=1100 (GT)
+                    self.emit_u32(0x5400000C); // B.GT指令
+                }
+                JumpType::ConditionalLessEqual => {
+                    // B.LE <label> - 条件分支（小于等于）
+                    // cond=1101 (LE)
+                    self.emit_u32(0x5400000D); // B.LE指令
+                }
+                JumpType::ConditionalGreaterEqual => {
+                    // B.GE <label> - 条件分支（大于等于）
+                    // cond=1010 (GE)
+                    self.emit_u32(0x5400000A); // B.GE指令
+                }
+                JumpType::Call => {
+                    // BL <label> - 分支并链接（函数调用）
+                    // 31|30|29 28|27 26|25                     0
+                    // 1 |0 |0  1 |0  1 |imm26
+                    self.emit_u32(0x94000000); // BL指令
+                }
             }
         }
-        
+
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            // x86/x64跳转指令（原有实现）
+            match jump_type {
+                JumpType::Unconditional => {
+                    // jmp rel32 - E9 <rel32>
+                    self.emit_byte(0xE9);
+                    self.emit_i32(0); // 占位符，稍后修补
+                }
+                JumpType::ConditionalEqual => {
+                    // je rel32 - 0F 84 <rel32>
+                    self.emit_bytes(&[0x0F, 0x84]);
+                    self.emit_i32(0); // 占位符，稍后修补
+                }
+                JumpType::ConditionalNotEqual => {
+                    // jne rel32 - 0F 85 <rel32>
+                    self.emit_bytes(&[0x0F, 0x85]);
+                    self.emit_i32(0); // 占位符，稍后修补
+                }
+                JumpType::ConditionalLess => {
+                    // jl rel32 - 0F 8C <rel32>
+                    self.emit_bytes(&[0x0F, 0x8C]);
+                    self.emit_i32(0); // 占位符，稍后修补
+                }
+                JumpType::ConditionalGreater => {
+                    // jg rel32 - 0F 8F <rel32>
+                    self.emit_bytes(&[0x0F, 0x8F]);
+                    self.emit_i32(0); // 占位符，稍后修补
+                }
+                JumpType::ConditionalLessEqual => {
+                    // jle rel32 - 0F 8E <rel32>
+                    self.emit_bytes(&[0x0F, 0x8E]);
+                    self.emit_i32(0); // 占位符，稍后修补
+                }
+                JumpType::ConditionalGreaterEqual => {
+                    // jge rel32 - 0F 8D <rel32>
+                    self.emit_bytes(&[0x0F, 0x8D]);
+                    self.emit_i32(0); // 占位符，稍后修补
+                }
+                JumpType::Call => {
+                    // call rel32 - E8 <rel32>
+                    self.emit_byte(0xE8);
+                    self.emit_i32(0); // 占位符，稍后修补
+                }
+            }
+        }
+
         // 记录待修补的跳转
         self.pending_jumps.push(PendingJump {
-            patch_position: patch_position + jump_type.instruction_size() - 4, // 地址字段的位置
+            patch_position,
             target_label: target_label.to_string(),
             jump_type,
         });
@@ -158,11 +235,11 @@ impl CodeBuilder {
     /// 发射调用指令
     pub fn emit_call(&mut self, target_label: &str) {
         let patch_position = self.buffer.position();
-        
+
         // call rel32 - E8 <rel32>
         self.emit_byte(0xE8);
         self.emit_i32(0); // 占位符，稍后修补
-        
+
         // 记录待修补的调用
         self.pending_jumps.push(PendingJump {
             patch_position: patch_position + 1, // 地址字段的位置
@@ -171,43 +248,472 @@ impl CodeBuilder {
         });
     }
 
+    /// 发射标签地址（稍后修补）
+    pub fn emit_label_address(&mut self, target_label: &str) {
+        let patch_position = self.buffer.position();
+
+        // 发射8字节占位符（64位地址）
+        self.emit_u64(0); // 占位符，稍后修补
+
+        // 记录待修补的标签地址
+        self.pending_label_addresses.push(PendingLabelAddress {
+            patch_position,
+            target_label: target_label.to_string(),
+        });
+    }
+
+    /// 发射ADR指令（稍后修补）
+    pub fn emit_adr(&mut self, dst_register: u8, target_label: &str) {
+        let patch_position = self.buffer.position();
+
+        // 发射ADR指令占位符（偏移为0）
+        // ADR dst, #0
+        let instruction = 0x10000000u32 | (dst_register as u32);
+        self.emit_u32(instruction);
+
+        // 记录待修补的ADR指令
+        self.pending_adrs.push(PendingAdr {
+            patch_position,
+            target_label: target_label.to_string(),
+            patch_type: AdrPatchType::Adr { dst_register },
+        });
+    }
+
+    /// 发射ADRP指令（稍后修补）
+    pub fn emit_adrp(&mut self, dst_register: u8, target_label: &str) {
+        let patch_position = self.buffer.position();
+
+        // ADRP dst, #0
+        // 31|30|29|28 27|26 25 24|23 5|4 0
+        // 1 |0 |0 |0  0 |1  0  0 |imm19|Rd
+        let instruction = 0x90000000u32 | (dst_register as u32);
+        self.emit_u32(instruction);
+
+        // 记录待修补的ADRP指令
+        self.pending_adrs.push(PendingAdr {
+            patch_position,
+            target_label: target_label.to_string(),
+            patch_type: AdrPatchType::Adrp { dst_register },
+        });
+    }
+
+    /// 发射ADD指令（用于加载标签地址的低12位）
+    pub fn emit_add_reg_label(&mut self, dst_register: u8, target_label: &str) {
+        let patch_position = self.buffer.position();
+
+        // ADD dst, dst, #0
+        // 31|30|29|28 27 26 25 24 23 22|21 10|9 5|4 0
+        // 1 |0 |0 |0  1  0  0  0  1  0 |imm12|Rn |Rd
+        let instruction = 0x91000000u32 | ((dst_register as u32) << 5) | (dst_register as u32);
+        self.emit_u32(instruction);
+
+        // 记录待修补的ADD指令
+        self.pending_adrs.push(PendingAdr {
+            patch_position,
+            target_label: target_label.to_string(),
+            patch_type: AdrPatchType::AddLabel { dst_register },
+        });
+    }
+
+    /// 发射Store指令的标签地址（稍后修补）
+    pub fn emit_store_label_address(&mut self, base_register: u8, offset: i64, target_label: &str) {
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            let patch_position = self.buffer.position();
+            self.emit_u64(0); // 占位符，稍后修补
+            self.pending_label_addresses.push(PendingLabelAddress {
+                patch_position,
+                target_label: target_label.to_string(),
+            });
+        }
+        // AArch64下不做任何事，具体展开在aarch64_compiler.rs
+    }
+
     /// 对齐代码到指定边界
     pub fn align(&mut self, alignment: usize) {
         let current_pos = self.buffer.position();
         let aligned_pos = (current_pos + alignment - 1) & !(alignment - 1);
         let padding = aligned_pos - current_pos;
-        
+
         // 使用NOP指令填充
         for _ in 0..padding {
             self.emit_byte(0x90); // NOP
         }
     }
 
-    /// 完成代码生成（修补所有跳转）
-    pub fn finalize(mut self) -> Result<MachineCodeBuffer, String> {
+    /// 完成代码生成（不修补标签，仅返回机器码）
+    pub fn finalize(self) -> Result<MachineCodeBuffer, String> {
+        // 直接返回机器码，不修补任何标签引用
+        Ok(self.buffer)
+    }
+
+    /// 完成代码生成（修补所有跳转，支持可执行内存基址）
+    pub fn finalize_with_global_addresses_and_exec_base(
+        mut self,
+        global_addresses: Option<&std::collections::HashMap<String, *const u8>>,
+        exec_base: usize,
+    ) -> Result<MachineCodeBuffer, String> {
+        log::debug!("🔧 开始修补跳转，exec_base: 0x{:016X}", exec_base);
+
         // 修补所有待处理的跳转
         for pending in &self.pending_jumps {
-            let target_pos = self.labels.get(&pending.target_label)
-                .ok_or_else(|| format!("未定义的标签: {}", pending.target_label))?;
-            
-            // 计算相对偏移
-            let current_pos = pending.patch_position + 4; // 相对于指令结束位置
-            let relative_offset = (*target_pos as i64) - (current_pos as i64);
-            
-            // 检查偏移是否在32位范围内
-            if relative_offset < i32::MIN as i64 || relative_offset > i32::MAX as i64 {
-                return Err(format!(
-                    "跳转偏移超出32位范围: {} (从 {} 到 {})",
-                    relative_offset, current_pos, target_pos
-                ));
+            let target_addr = self.find_label_address(&pending.target_label, global_addresses)?;
+
+            log::debug!(
+                "🔧 修补跳转 '{}': 目标地址=0x{:016X}, patch_position={}, 跳转类型={:?}",
+                pending.target_label,
+                target_addr,
+                pending.patch_position,
+                pending.jump_type
+            );
+
+            #[cfg(target_arch = "aarch64")]
+            {
+                // AArch64跳转修补
+                let current_pos = exec_base + pending.patch_position; // 转换为可执行内存中的真实地址
+                                                                      // 计算相对偏移（以字为单位，4字节对齐）
+                let relative_offset = ((target_addr as i64) - (current_pos as i64)) >> 2;
+
+                log::debug!("🔧 修补跳转详情: {} -> 目标: 0x{:016X}, 当前位置: 0x{:016X}, 字节偏移: {}, 相对偏移(字): {}", 
+                         pending.target_label, target_addr, current_pos,
+                         (target_addr as i64) - (current_pos as i64), relative_offset);
+
+                // 🔧 关键调试：检查原始指令内容
+                let bytes = self.buffer.as_bytes();
+                let instruction_bytes = &bytes[pending.patch_position..pending.patch_position + 4];
+                let original_instruction = u32::from_le_bytes([
+                    instruction_bytes[0],
+                    instruction_bytes[1],
+                    instruction_bytes[2],
+                    instruction_bytes[3],
+                ]);
+                log::debug!(
+                    "🔧 原始指令: 0x{:08X} (位置: {})",
+                    original_instruction,
+                    pending.patch_position
+                );
+
+                match pending.jump_type {
+                    JumpType::Unconditional | JumpType::Call => {
+                        // B/BL指令：26位偏移（指令为4字节对齐）
+                        if !(-(1 << 25)..(1 << 25)).contains(&relative_offset) {
+                            return Err(format!("跳转距离太远: {} 字节", relative_offset << 2));
+                        }
+
+                        // 获取原始指令并修补偏移
+                        let mut instruction = original_instruction;
+
+                        // 清除旧偏移并设置新偏移（低26位）
+                        instruction &= 0xFC000000; // 清除低26位
+                        instruction |= (relative_offset as u32) & 0x03FFFFFF; // 设置新偏移
+
+                        log::debug!(
+                            "🔧 修补无条件跳转: 原始指令: 0x{:08X}, 修补后: 0x{:08X}, 偏移值: {}",
+                            original_instruction,
+                            instruction,
+                            relative_offset
+                        );
+
+                        // 写回修改后的指令
+                        self.buffer
+                            .write_bytes_at(pending.patch_position, &instruction.to_le_bytes())?;
+                    }
+                    _ => {
+                        // 条件跳转指令：19位偏移
+                        if !(-(1 << 18)..(1 << 18)).contains(&relative_offset) {
+                            return Err(format!("条件跳转距离太远: {} 字节", relative_offset << 2));
+                        }
+
+                        let mut instruction = original_instruction;
+
+                        // 清除旧偏移并设置新偏移（5-23位）
+                        instruction &= 0xFF00001F; // 保留条件码和指令格式
+                        instruction |= ((relative_offset as u32) & 0x7FFFF) << 5; // 设置新偏移
+
+                        log::debug!(
+                            "🔧 修补条件跳转: 原始指令: 0x{:08X}, 修补后: 0x{:08X}, 偏移值: {}",
+                            original_instruction,
+                            instruction,
+                            relative_offset
+                        );
+
+                        // 写回修改后的指令
+                        self.buffer
+                            .write_bytes_at(pending.patch_position, &instruction.to_le_bytes())?;
+                    }
+                }
+
+                // 🔧 验证修补结果
+                let verification_bytes = self.buffer.as_bytes();
+                let verification_bytes =
+                    &verification_bytes[pending.patch_position..pending.patch_position + 4];
+                let verification_instruction = u32::from_le_bytes([
+                    verification_bytes[0],
+                    verification_bytes[1],
+                    verification_bytes[2],
+                    verification_bytes[3],
+                ]);
+                log::debug!(
+                    "🔧 修补验证: 写入后指令: 0x{:08X}",
+                    verification_instruction
+                );
             }
-            
-            // 修补地址
-            let offset_bytes = (relative_offset as i32).to_le_bytes();
-            self.buffer.write_bytes_at(pending.patch_position, &offset_bytes)?;
+
+            #[cfg(not(target_arch = "aarch64"))]
+            {
+                // x86/x64跳转修补（原有逻辑）
+                let patch_pos = pending.patch_position + pending.jump_type.instruction_size() - 4;
+                let current_pos = exec_base + patch_pos + 4; // 相对于偏移字段结束位置
+                let relative_offset = (target_addr as i64) - (current_pos as i64);
+
+                // 检查偏移是否在32位范围内
+                if relative_offset < i32::MIN as i64 || relative_offset > i32::MAX as i64 {
+                    return Err(format!("跳转距离太远: {}", relative_offset));
+                }
+
+                // 将偏移写入代码
+                let offset_bytes = (relative_offset as i32).to_le_bytes();
+                self.buffer.write_bytes_at(patch_pos, &offset_bytes)?;
+            }
         }
-        
+
+        log::debug!("🔧 跳转修补完成，继续修补标签地址");
+
+        // 修补所有待处理的标签地址
+        for pending in &self.pending_label_addresses {
+            let target_addr = self.find_label_address(&pending.target_label, global_addresses)?;
+
+            // 将标签地址写入代码
+            let address_bytes = (target_addr as u64).to_le_bytes();
+            log::debug!(
+                "🔧 修补标签地址: {} -> 位置{} (0x{:016X})",
+                pending.target_label,
+                target_addr,
+                target_addr as u64
+            );
+            self.buffer
+                .write_bytes_at(pending.patch_position, &address_bytes)?;
+        }
+
+        log::debug!("🔧 开始修补ADR指令");
+
+        // 修补所有待处理的ADR指令
+        for pending in &self.pending_adrs {
+            let target_addr = self.find_label_address(&pending.target_label, global_addresses)?;
+
+            log::debug!(
+                "🔧 修补ADR指令: {} -> 目标地址: 0x{:016X}",
+                pending.target_label,
+                target_addr
+            );
+
+            match &pending.patch_type {
+                AdrPatchType::Adrp { dst_register } => {
+                    // ADRP指令修补：计算页地址偏移
+                    let current_pos = exec_base + pending.patch_position;
+                    let current_page = current_pos & !0xFFF; // 当前指令所在页
+                    let target_page = target_addr & !0xFFF; // 目标地址所在页
+                    let page_offset = ((target_page as i64) - (current_page as i64)) >> 12; // 转换为页偏移
+
+                    log::debug!("🔧 ADRP修补: 当前位置: 0x{:016X}, 当前页: 0x{:016X}, 目标页: 0x{:016X}, 页偏移: {}", 
+                             current_pos, current_page, target_page, page_offset);
+
+                    // 检查页偏移是否在21位有符号范围内
+                    if !(-(1 << 20)..(1 << 20)).contains(&page_offset) {
+                        return Err(format!(
+                            "ADRP页偏移超出范围: {} (应在 ±1M 范围内)",
+                            page_offset
+                        ));
+                    }
+
+                    let bytes = self.buffer.as_bytes();
+                    let instruction_bytes =
+                        &bytes[pending.patch_position..pending.patch_position + 4];
+                    let mut instruction = u32::from_le_bytes([
+                        instruction_bytes[0],
+                        instruction_bytes[1],
+                        instruction_bytes[2],
+                        instruction_bytes[3],
+                    ]);
+
+                    // 清除旧偏移并设置新偏移
+                    instruction &= 0x9F00001F; // 保留指令格式和目标寄存器
+
+                    // 正确处理21位有符号立即数
+                    // AArch64 ADRP指令格式：immhi(19位) + immlo(2位)
+                    let imm = if page_offset < 0 {
+                        // 负数：使用补码表示
+                        (0x200000 - (-page_offset as u32)) & 0x1FFFFF
+                    } else {
+                        // 正数：直接使用
+                        page_offset as u32
+                    };
+
+                    // 分离immhi和immlo
+                    let immhi = (imm >> 2) & 0x7FFFF; // 高19位
+                    let immlo = imm & 0x3; // 低2位
+
+                    instruction |= (immhi << 5) | (immlo << 29); // 设置immhi和immlo
+
+                    log::debug!("🔧 ADRP指令修补: 原始: 0x{:08X}, 修补后: 0x{:08X}, 页偏移: {}, imm: 0x{:X}, immhi: 0x{:X}, immlo: 0x{:X}", 
+                             u32::from_le_bytes([instruction_bytes[0], instruction_bytes[1], instruction_bytes[2], instruction_bytes[3]]),
+                             instruction, page_offset, imm, immhi, immlo);
+
+                    // 写回修改后的指令
+                    self.buffer
+                        .write_bytes_at(pending.patch_position, &instruction.to_le_bytes())?;
+                }
+                AdrPatchType::AddLabel { dst_register } => {
+                    // ADD指令修补：设置页内偏移（低12位）
+                    let page_offset = target_addr & 0xFFF;
+
+                    log::debug!(
+                        "🔧 ADD修补: 目标地址: 0x{:016X}, 页内偏移: 0x{:X}",
+                        target_addr,
+                        page_offset
+                    );
+
+                    let bytes = self.buffer.as_bytes();
+                    let instruction_bytes =
+                        &bytes[pending.patch_position..pending.patch_position + 4];
+                    let mut instruction = u32::from_le_bytes([
+                        instruction_bytes[0],
+                        instruction_bytes[1],
+                        instruction_bytes[2],
+                        instruction_bytes[3],
+                    ]);
+
+                    // 清除旧偏移并设置新偏移
+                    instruction &= 0xFFC003FF; // 保留指令格式和寄存器
+                    instruction |= ((page_offset as u32) & 0xFFF) << 10; // 设置页内偏移
+
+                    log::debug!(
+                        "🔧 ADD指令修补: 原始: 0x{:08X}, 修补后: 0x{:08X}",
+                        u32::from_le_bytes([
+                            instruction_bytes[0],
+                            instruction_bytes[1],
+                            instruction_bytes[2],
+                            instruction_bytes[3]
+                        ]),
+                        instruction
+                    );
+
+                    // 写回修改后的指令
+                    self.buffer
+                        .write_bytes_at(pending.patch_position, &instruction.to_le_bytes())?;
+                }
+                AdrPatchType::Store {
+                    base_register,
+                    offset,
+                } => {
+                    // 存储标签地址修补
+                    #[cfg(target_arch = "aarch64")]
+                    {
+                        // 在AArch64上，需要修补ADRP和ADD指令的标签偏移
+                        let current_pos = exec_base + pending.patch_position;
+                        let target_address = target_addr;
+
+                        // 修补ADRP指令（第一条指令）
+                        let page_offset =
+                            (target_address & !0xFFF) as i64 - (current_pos & !0xFFF) as i64;
+                        let page_offset = page_offset >> 12; // 转换为页偏移
+
+                        // 读取ADRP指令
+                        let bytes = self.buffer.as_bytes();
+                        let adrp_instruction_bytes = [
+                            bytes[pending.patch_position],
+                            bytes[pending.patch_position + 1],
+                            bytes[pending.patch_position + 2],
+                            bytes[pending.patch_position + 3],
+                        ];
+                        let mut adrp_instruction = u32::from_le_bytes(adrp_instruction_bytes);
+
+                        // 修补ADRP的页偏移（imm21）
+                        let imm_lo = (page_offset as u32) & 0x3;
+                        let imm_hi = ((page_offset as u32) >> 2) & 0x7FFFF;
+                        adrp_instruction &= 0x9F00001F; // 清除旧偏移
+                        adrp_instruction |= (imm_lo << 29) | (imm_hi << 5);
+
+                        // 读取ADD指令
+                        let add_pos = pending.patch_position + 4;
+                        let add_instruction_bytes = [
+                            bytes[add_pos],
+                            bytes[add_pos + 1],
+                            bytes[add_pos + 2],
+                            bytes[add_pos + 3],
+                        ];
+                        let mut add_instruction = u32::from_le_bytes(add_instruction_bytes);
+
+                        // 修补ADD的立即数（imm12）
+                        let page_internal_offset = target_address & 0xFFF;
+                        add_instruction &= 0xFFC003FF; // 清除旧立即数
+                        add_instruction |= ((page_internal_offset as u32) & 0xFFF) << 10;
+
+                        // 写回修补后的指令
+                        self.buffer.write_bytes_at(
+                            pending.patch_position,
+                            &adrp_instruction.to_le_bytes(),
+                        )?;
+                        self.buffer
+                            .write_bytes_at(add_pos, &add_instruction.to_le_bytes())?;
+                    }
+
+                    #[cfg(not(target_arch = "aarch64"))]
+                    {
+                        // x86/x64版本：直接写入地址
+                        let address = target_addr as u64;
+                        self.buffer
+                            .write_bytes_at(pending.patch_position, &address.to_le_bytes())?;
+                    }
+                }
+                _ => {
+                    return Err(format!("不支持的地址修补类型: {:?}", pending.patch_type));
+                }
+            }
+        }
+
         Ok(self.buffer)
+    }
+
+    /// 完成代码生成（修补所有跳转）
+    pub fn finalize_with_global_addresses(
+        self,
+        global_addresses: Option<&std::collections::HashMap<String, *const u8>>,
+    ) -> Result<MachineCodeBuffer, String> {
+        // 调用新方法，使用0作为可执行内存基址（兼容旧代码）
+        self.finalize_with_global_addresses_and_exec_base(global_addresses, 0)
+    }
+
+    /// 查找标签真实地址（优先查全局地址表）
+    fn find_label_address(
+        &self,
+        label_name: &str,
+        global_addresses: Option<&std::collections::HashMap<String, *const u8>>,
+    ) -> Result<usize, String> {
+        if let Some(global) = global_addresses {
+            if let Some(&addr) = global.get(label_name) {
+                return Ok(addr as usize);
+            }
+        }
+        // 回退到本地偏移
+        self.find_label_position(label_name)
+    }
+
+    /// 查找标签位置（先查找本地标签，再查找全局标签）
+    fn find_label_position(&self, label_name: &str) -> Result<usize, String> {
+        // 首先查找本地标签
+        if let Some(&position) = self.labels.get(label_name) {
+            return Ok(position);
+        }
+
+        // 然后查找全局标签
+        if let Some(ref global_labels) = self.global_labels {
+            if let Some(&position) = global_labels.get(label_name) {
+                return Ok(position);
+            }
+        }
+
+        Err(format!("未定义的标签: {}", label_name))
     }
 
     /// 添加源代码行号信息
@@ -233,6 +739,50 @@ impl CodeBuilder {
     pub fn is_label_defined(&self, label: &str) -> bool {
         self.labels.contains_key(label)
     }
+
+    /// 导出所有label及其偏移
+    pub fn exported_labels(&self) -> &std::collections::HashMap<String, usize> {
+        &self.labels
+    }
+    /// 导出所有待修补的跳转
+    pub fn exported_pending_jumps(&self) -> &Vec<PendingJump> {
+        &self.pending_jumps
+    }
+    /// 导出所有待修补的标签地址
+    pub fn exported_pending_label_addresses(&self) -> &Vec<PendingLabelAddress> {
+        &self.pending_label_addresses
+    }
+    /// 导出所有待修补的ADR指令
+    pub fn exported_pending_adrs(&self) -> &Vec<PendingAdr> {
+        &self.pending_adrs
+    }
+    /// 导出调试信息
+    pub fn exported_debug_info(&self) -> Option<&DebugInfoBuilder> {
+        self.debug_info.as_ref()
+    }
+
+    pub fn set_buffer(&mut self, buffer: MachineCodeBuffer) {
+        self.buffer = buffer;
+    }
+    pub fn set_labels(&mut self, labels: std::collections::HashMap<String, usize>) {
+        self.labels = labels;
+    }
+    pub fn set_pending_jumps(&mut self, jumps: Vec<PendingJump>) {
+        self.pending_jumps = jumps;
+    }
+    pub fn set_pending_label_addresses(&mut self, addrs: Vec<PendingLabelAddress>) {
+        self.pending_label_addresses = addrs;
+    }
+    pub fn set_pending_adrs(&mut self, adrs: Vec<PendingAdr>) {
+        self.pending_adrs = adrs;
+    }
+    pub fn set_debug_info(&mut self, debug: Option<DebugInfoBuilder>) {
+        self.debug_info = debug;
+    }
+
+    pub fn exported_buffer(&self) -> &MachineCodeBuffer {
+        &self.buffer
+    }
 }
 
 impl Default for CodeBuilder {
@@ -243,13 +793,58 @@ impl Default for CodeBuilder {
 
 /// 待修补的跳转信息
 #[derive(Debug, Clone)]
-struct PendingJump {
+pub struct PendingJump {
     /// 需要修补的代码位置
-    patch_position: usize,
+    pub patch_position: usize,
     /// 目标标签名
-    target_label: String,
+    pub target_label: String,
     /// 跳转类型
-    jump_type: JumpType,
+    pub jump_type: JumpType,
+}
+
+/// 待修补的标签地址信息
+#[derive(Debug, Clone)]
+pub struct PendingLabelAddress {
+    /// 需要修补的代码位置
+    pub patch_position: usize,
+    /// 目标标签名
+    pub target_label: String,
+}
+
+/// 待修补的ADR指令信息
+#[derive(Debug, Clone)]
+pub struct PendingAdr {
+    /// 需要修补的代码位置
+    pub patch_position: usize,
+    /// 目标标签名
+    pub target_label: String,
+    /// 修补类型
+    pub patch_type: AdrPatchType,
+}
+
+/// ADR指令修补类型
+#[derive(Debug, Clone)]
+pub enum AdrPatchType {
+    /// ADR指令
+    Adr { dst_register: u8 },
+    /// ADRP指令
+    Adrp { dst_register: u8 },
+    /// ADD指令（用于标签地址的低12位）
+    AddLabel { dst_register: u8 },
+    /// Store指令
+    Store { base_register: u8, offset: i64 },
+}
+
+impl AdrPatchType {
+    /// 获取目标寄存器
+    pub fn get_dst_register(&self) -> u8 {
+        match self {
+            AdrPatchType::Adr { dst_register } => *dst_register,
+            AdrPatchType::Adrp { dst_register } => *dst_register,
+            AdrPatchType::AddLabel { dst_register } => *dst_register,
+            AdrPatchType::Store { base_register, .. } => *base_register,
+        }
+    }
 }
 
 /// 跳转类型
@@ -278,21 +873,21 @@ impl JumpType {
     pub fn instruction_size(&self) -> usize {
         match self {
             JumpType::Unconditional => 5, // E9 + 4字节地址
-            JumpType::Call => 5, // E8 + 4字节地址
-            _ => 6, // 0F XX + 4字节地址
+            JumpType::Call => 5,          // E8 + 4字节地址
+            _ => 6,                       // 0F XX + 4字节地址
         }
     }
 }
 
 /// 调试信息构建器
 #[derive(Debug, Clone)]
-struct DebugInfoBuilder {
+pub struct DebugInfoBuilder {
     /// 源代码行号映射
-    line_map: std::collections::HashMap<usize, usize>,
+    pub line_map: std::collections::HashMap<usize, usize>,
     /// 变量信息
-    variables: Vec<VariableInfo>,
+    pub variables: Vec<VariableInfo>,
     /// 标签位置
-    labels: std::collections::HashMap<String, usize>,
+    pub labels: std::collections::HashMap<String, usize>,
 }
 
 impl DebugInfoBuilder {
@@ -308,7 +903,13 @@ impl DebugInfoBuilder {
         self.line_map.insert(code_offset, line_number);
     }
 
-    fn add_variable(&mut self, name: &str, location: VariableLocation, scope_start: usize, scope_end: usize) {
+    fn add_variable(
+        &mut self,
+        name: &str,
+        location: VariableLocation,
+        scope_start: usize,
+        scope_end: usize,
+    ) {
         self.variables.push(VariableInfo {
             name: name.to_string(),
             location,
@@ -320,23 +921,3 @@ impl DebugInfoBuilder {
         self.labels.insert(label.to_string(), position);
     }
 }
-
-/// 变量位置
-#[derive(Debug, Clone)]
-pub enum VariableLocation {
-    /// 在寄存器中
-    Register(u8),
-    /// 在栈上（相对于帧指针的偏移）
-    Stack(i32),
-}
-
-/// 变量信息
-#[derive(Debug, Clone)]
-pub struct VariableInfo {
-    /// 变量名
-    pub name: String,
-    /// 寄存器或栈偏移
-    pub location: VariableLocation,
-    /// 生命周期（机器码偏移范围）
-    pub scope: (usize, usize),
-} 

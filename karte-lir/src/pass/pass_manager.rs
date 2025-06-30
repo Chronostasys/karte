@@ -1,5 +1,6 @@
 use super::{AnalysisManager, AnalysisPass, FunctionPass, PassResult, PassStats, ProgramPass};
 use crate::{LirFunction, LirProgram};
+use log::{debug, info};
 use std::time::Instant;
 
 /// Pass 管理器（按migration_to_ssa.md第5-6周计划增强）
@@ -88,10 +89,10 @@ impl PassManager {
         self.stats.clear();
 
         if self.debug {
-            println!("=== 专业Pass管理器: 开始执行Pass序列 ===");
-            println!("程序信息: {} 个函数", program.functions.len());
-            println!("严格依赖检查: {}", self.strict_dependency_check);
-            println!("失效验证: {}", self.validate_invalidation);
+            info!("=== 专业Pass管理器: 开始执行Pass序列 ===");
+            info!("程序信息: {} 个函数", program.functions.len());
+            info!("严格依赖检查: {}", self.strict_dependency_check);
+            info!("失效验证: {}", self.validate_invalidation);
         }
 
         // 1. 运行程序级别的 Pass
@@ -100,7 +101,7 @@ impl PassManager {
         // 2. 为每个函数运行分析和函数级别的 Pass
         for (func_name, function) in program.functions.iter_mut() {
             if self.debug {
-                println!("处理函数: {}", func_name);
+                info!("处理函数: {}", func_name);
             }
 
             // 运行分析 Pass
@@ -117,7 +118,7 @@ impl PassManager {
 
         if self.debug {
             self.print_statistics();
-            println!("=== Pass序列执行完成 ===");
+            info!("=== Pass序列执行完成 ===");
         }
 
         Ok(())
@@ -138,7 +139,7 @@ impl PassManager {
             }
 
             if self.debug {
-                println!("  执行程序Pass: {}", self.program_passes[i].name());
+                info!("  执行程序Pass: {}", self.program_passes[i].name());
             }
 
             let result = self.program_passes[i].run_on_program(program, &mut self.analysis_manager);
@@ -146,7 +147,7 @@ impl PassManager {
 
             // 分析失效处理
             if self.validate_invalidation && self.debug && !invalidated.is_empty() {
-                println!("    失效分析: {:?}", invalidated);
+                debug!("    失效分析: {:?}", invalidated);
             }
             self.analysis_manager.invalidate_all(&invalidated);
 
@@ -168,7 +169,7 @@ impl PassManager {
             }
 
             if self.debug {
-                println!(
+                info!(
                     "    程序Pass {} 完成 ({}ms)",
                     self.program_passes[i].name(),
                     execution_time
@@ -187,7 +188,7 @@ impl PassManager {
             let start_time = Instant::now();
 
             if self.debug {
-                println!("    执行分析 Pass: {}", self.analysis_passes[i].name());
+                info!("    执行分析 Pass: {}", self.analysis_passes[i].name());
             }
 
             // 检查依赖（简化版本，避免借用冲突）
@@ -216,7 +217,7 @@ impl PassManager {
             let execution_time = start_time.elapsed().as_millis() as u64;
 
             if self.debug {
-                println!(
+                info!(
                     "    分析 Pass {} 完成 ({}ms)",
                     self.analysis_passes[i].name(),
                     execution_time
@@ -239,7 +240,7 @@ impl PassManager {
             let start_time = Instant::now();
 
             if self.debug {
-                println!("    执行函数 Pass: {}", self.function_passes[i].name());
+                info!("    执行函数 Pass: {}", self.function_passes[i].name());
             }
 
             // 自动补全所需分析
@@ -291,12 +292,12 @@ impl PassManager {
                     ));
                 }
                 _ => {
-                    println!(
+                    info!(
                         "    函数 Pass {} 完成 ({}ms)",
                         self.function_passes[i].name(),
                         execution_time
                     );
-                    println!("    优化后lir: {}", function);
+                    debug!("    优化后lir: {}", function);
                 }
             }
 
@@ -313,13 +314,13 @@ impl PassManager {
         self.analysis_manager.invalidate_all(&function_analyses);
 
         if self.debug {
-            println!("    清理函数级分析结果");
+            info!("    清理函数级分析结果");
         }
     }
 
     /// 打印执行统计
     fn print_statistics(&self) {
-        println!("=== Pass 执行统计 ===");
+        info!("=== Pass 执行统计 ===");
 
         let mut total_time = 0u64;
         let mut changed_count = 0;
@@ -327,7 +328,7 @@ impl PassManager {
         let mut failed_count = 0;
 
         for stat in &self.stats {
-            println!(
+            info!(
                 "  {}: {}ms, {:?}",
                 stat.name, stat.execution_time_ms, stat.result
             );
@@ -340,7 +341,7 @@ impl PassManager {
             }
         }
 
-        println!(
+        info!(
             "总计: {}ms, {} 个 Pass (改变: {}, 未改变: {}, 失败: {})",
             total_time,
             self.stats.len(),

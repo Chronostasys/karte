@@ -17,6 +17,7 @@ karte-mir = { path = "../karte-mir" }
 karte-lir = { path = "../karte-lir" }
 karte-codegen = { path = "../karte-codegen" }
 karte-diagnostics = { path = "../karte-diagnostics" }
+log.workspace = true
 
 # 测试相关依赖
 tokio = { version = "1.0", features = ["full"] }

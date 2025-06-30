@@ -1,6 +1,6 @@
 pub use karte_common::calling_convention::Register;
 use karte_diagnostics::Span;
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::atomic::AtomicUsize};
 
 /// 标签标识符（用于跳转目标）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -370,17 +370,16 @@ impl Instruction {
             Instruction::CallIndirect {
                 function_register,
                 args,
-                arg_operands,
                 ..
             } => {
                 used.push(*function_register);
                 used.extend_from_slice(args);
-                // 添加参数操作数中使用的寄存器
-                for operand in arg_operands {
-                    if let Operand::Register { id } = operand {
-                        used.push(*id);
-                    }
-                }
+                // // 添加参数操作数中使用的寄存器
+                // for operand in arg_operands {
+                //     if let Operand::Register { id } = operand {
+                //         used.push(*id);
+                //     }
+                // }
             }
             Instruction::Return { value, .. } => {
                 if let Some(reg) = value {
@@ -740,7 +739,6 @@ pub struct LirFunction {
     pub name: String,
     pub instructions: Vec<Instruction>,
     pub next_register: usize,
-    pub next_label: usize,
     /// 函数使用的结构体类型
     pub struct_types: HashMap<StructTypeId, StructLayout>,
     /// 栈帧大小（用于局部变量分配）
@@ -757,7 +755,6 @@ impl LirFunction {
             name,
             instructions: Vec::new(),
             next_register: 0,
-            next_label: 1000,
             struct_types: HashMap::new(),
             stack_frame_size: 0,
             parameter_count: 0,
@@ -929,9 +926,7 @@ impl LirFunction {
     }
 
     pub fn new_label(&mut self) -> LabelId {
-        let id = LabelId(self.next_label);
-        self.next_label += 1;
-        id
+        LabelId(NEXT_LABEL.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
     }
 
     pub fn add_instruction(&mut self, instruction: Instruction) {
@@ -977,6 +972,8 @@ impl Default for LirProgram {
         Self::new()
     }
 }
+
+static NEXT_LABEL: AtomicUsize = AtomicUsize::new(100000);
 
 impl LirProgram {
     pub fn new() -> Self {

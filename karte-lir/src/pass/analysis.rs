@@ -1,5 +1,6 @@
 use super::{AnalysisManager, AnalysisPass, AnalysisResult};
 use crate::{Instruction, LabelId, LirFunction, Operand, Register};
+use log::{debug, warn};
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
 
@@ -129,8 +130,8 @@ impl ControlFlowAnalysis {
         // 确定入口和出口块
         let entry_block = 0; // 第一个块是入口
         let exit_blocks = self.find_exit_blocks(&nodes, function);
-        eprintln!("lir: \n{}", function);
-        eprintln!("🔍 控制流图分析结果: {:?}", nodes);
+        debug!("lir: \n{}", function);
+        debug!("🔍 控制流图分析结果: {:?}", nodes);
         Ok(ControlFlowGraph {
             nodes,
             entry_block,
@@ -464,7 +465,8 @@ impl DefUseAnalysis {
             }
             // 未知指令类型的默认处理
             _ => {
-                eprintln!("警告: DefUseAnalysis遇到未知指令类型: {:?}", instruction);
+                warn!("警告: DefUseAnalysis遇到未知指令类型: {:?}", instruction);
+                // 不返回任何定义或使用
             }
         }
 

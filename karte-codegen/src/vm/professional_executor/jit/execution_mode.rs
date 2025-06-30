@@ -3,23 +3,18 @@
 //! 定义了JIT编译器的不同执行策略
 
 /// 执行模式
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExecutionMode {
     /// 纯解释器模式 - 所有代码都通过解释器执行
     Interpreter,
-    
+
     /// 纯JIT模式 - 所有代码都通过JIT编译后执行
     JitOnly,
-    
+
     /// 混合模式 - 根据启发式算法决定使用解释器还是JIT
     /// 这是默认模式，平衡编译开销和执行性能
+    #[default]
     Hybrid,
-}
-
-impl Default for ExecutionMode {
-    fn default() -> Self {
-        ExecutionMode::Hybrid
-    }
 }
 
 impl ExecutionMode {
@@ -37,7 +32,7 @@ impl ExecutionMode {
     pub fn as_str(&self) -> &'static str {
         match self {
             ExecutionMode::Interpreter => "interpreter",
-            ExecutionMode::JitOnly => "jit-only", 
+            ExecutionMode::JitOnly => "jit-only",
             ExecutionMode::Hybrid => "hybrid",
         }
     }
@@ -53,22 +48,17 @@ impl ExecutionMode {
 }
 
 /// JIT编译策略
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CompilationStrategy {
     /// 立即编译 - 函数第一次被调用时立即编译
     Eager,
-    
+
     /// 延迟编译 - 函数被多次调用后才编译
+    #[default]
     Lazy,
-    
+
     /// 基于热点的编译 - 根据函数调用频率决定是否编译
     HotSpot,
-}
-
-impl Default for CompilationStrategy {
-    fn default() -> Self {
-        CompilationStrategy::Lazy
-    }
 }
 
 /// JIT配置
@@ -76,25 +66,25 @@ impl Default for CompilationStrategy {
 pub struct JitConfig {
     /// 执行模式
     pub execution_mode: ExecutionMode,
-    
+
     /// 编译策略
     pub compilation_strategy: CompilationStrategy,
-    
+
     /// 热点阈值 - 函数被调用多少次后认为是热点
     pub hotspot_threshold: u32,
-    
+
     /// 是否启用优化
     pub enable_optimizations: bool,
-    
+
     /// 是否生成调试信息
     pub generate_debug_info: bool,
-    
+
     /// 代码缓存大小限制（字节）
     pub code_cache_size_limit: usize,
-    
+
     /// 是否启用内联
     pub enable_inlining: bool,
-    
+
     /// 内联大小阈值
     pub inline_size_threshold: usize,
 }
@@ -108,8 +98,8 @@ impl Default for JitConfig {
             enable_optimizations: true,
             generate_debug_info: false,
             code_cache_size_limit: 64 * 1024 * 1024, // 64MB
-            enable_inlining: false, // 暂时禁用内联
-            inline_size_threshold: 100, // 100字节以下的函数可以内联
+            enable_inlining: false,                  // 暂时禁用内联
+            inline_size_threshold: 100,              // 100字节以下的函数可以内联
         }
     }
 }
@@ -120,7 +110,7 @@ impl JitConfig {
         Self {
             execution_mode: ExecutionMode::Hybrid,
             compilation_strategy: CompilationStrategy::Eager,
-            hotspot_threshold: 1, // 立即编译
+            hotspot_threshold: 1,        // 立即编译
             enable_optimizations: false, // 禁用优化以便调试
             generate_debug_info: true,
             code_cache_size_limit: 16 * 1024 * 1024, // 16MB
@@ -156,4 +146,4 @@ impl JitConfig {
             inline_size_threshold: 50,
         }
     }
-} 
+}

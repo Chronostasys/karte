@@ -6,7 +6,7 @@ use karte_lir::{LirFunction, LirProgram, Register};
 use std::collections::HashMap;
 
 /// JIT编译器trait
-/// 
+///
 /// 所有目标架构的编译器都必须实现此trait
 pub trait JitCompiler: std::fmt::Debug {
     /// 编译单个函数
@@ -15,6 +15,17 @@ pub trait JitCompiler: std::fmt::Debug {
         function: &LirFunction,
         program: &LirProgram,
     ) -> Result<CompiledFunction, String>;
+
+    /// 编译单个函数（使用全局标签表）
+    fn compile_function_with_global_labels(
+        &mut self,
+        function: &LirFunction,
+        program: &LirProgram,
+        global_labels: &std::collections::HashMap<String, *const u8>,
+    ) -> Result<CompiledFunction, String> {
+        // 默认实现：忽略全局标签表，使用普通编译
+        self.compile_function(function, program)
+    }
 
     /// 获取目标架构名称
     fn target_architecture(&self) -> &'static str;
@@ -36,29 +47,81 @@ pub trait JitCompiler: std::fmt::Debug {
 pub struct CompiledFunction {
     /// 函数名称
     pub name: String,
-    /// 机器码缓冲区
+    /// 机器码缓冲区（仅用于调试/分配前）
     pub code: MachineCodeBuffer,
-    /// 函数入口点（相对于代码开始的偏移）
-    pub entry_point: usize,
+    /// 可执行内存基址
+    pub exec_mem_ptr: *const u8,
+    /// 可执行内存大小
+    pub exec_mem_size: usize,
+    /// 入口点偏移（相对于可执行内存基址）
+    pub entry_offset: usize,
     /// 调试信息（可选）
     pub debug_info: Option<DebugInfo>,
     /// 外部函数引用
     pub external_refs: Vec<ExternalReference>,
+    /// 函数内的所有label及其偏移
+    pub labels: std::collections::HashMap<String, usize>,
+    /// 待修补的跳转
+    pub pending_jumps: Vec<crate::vm::professional_executor::jit::code_buffer::PendingJump>,
+    /// 待修补的标签地址
+    pub pending_label_addresses:
+        Vec<crate::vm::professional_executor::jit::code_buffer::PendingLabelAddress>,
+    /// 待修补的ADR指令
+    pub pending_adrs: Vec<crate::vm::professional_executor::jit::code_buffer::PendingAdr>,
+}
+
+impl std::fmt::Display for CompiledFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            f,
+            "CompiledFunction {{ name: {}, entry_offset: {:X} }}",
+            self.name, self.entry_offset
+        )?;
+        writeln!(f, "pending_jumps: {:?}", self.pending_jumps)?;
+        writeln!(
+            f,
+            "pending_label_addresses: {:?}",
+            self.pending_label_addresses
+        )?;
+        writeln!(f, "pending_adrs: {:?}", self.pending_adrs)?;
+        writeln!(f, "labels: {:?}", self.labels)?;
+
+        writeln!(f, "exec_mem_ptr: {:p}", self.exec_mem_ptr)?;
+        writeln!(f, "exec_mem_size: {}", self.exec_mem_size)?;
+        // 打印机器码
+        writeln!(f, "机器码内容:")?;
+        let code = self.machine_code();
+        for (i, chunk) in code.chunks(16).enumerate() {
+            let hex_part: String = chunk
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let ascii_part: String = chunk
+                .iter()
+                .map(|&b| if b.is_ascii_graphic() { b as char } else { '.' })
+                .collect();
+            writeln!(f, "  {:04x}: {:<48} |{}|", i * 16, hex_part, ascii_part)?;
+        }
+        Ok(())
+    }
 }
 
 impl CompiledFunction {
     /// 创建新的编译函数
-    pub fn new(
-        name: String,
-        code: MachineCodeBuffer,
-        entry_point: usize,
-    ) -> Self {
+    pub fn new(name: String, code: MachineCodeBuffer, entry_point: usize) -> Self {
         Self {
             name,
             code,
-            entry_point,
+            exec_mem_ptr: std::ptr::null(),
+            exec_mem_size: 0,
+            entry_offset: 0,
             debug_info: None,
             external_refs: Vec::new(),
+            labels: HashMap::new(),
+            pending_jumps: Vec::new(),
+            pending_label_addresses: Vec::new(),
+            pending_adrs: Vec::new(),
         }
     }
 
@@ -67,9 +130,18 @@ impl CompiledFunction {
         self.code.len()
     }
 
-    /// 获取机器码引用
+    /// 获取可执行内存中的入口地址
+    pub fn get_entry_address(&self) -> *const u8 {
+        unsafe { self.exec_mem_ptr.add(self.entry_offset) }
+    }
+
+    /// 获取可执行内存slice
     pub fn machine_code(&self) -> &[u8] {
-        self.code.as_bytes()
+        if !self.exec_mem_ptr.is_null() && self.exec_mem_size > 0 {
+            unsafe { std::slice::from_raw_parts(self.exec_mem_ptr, self.exec_mem_size) }
+        } else {
+            self.code.as_bytes()
+        }
     }
 
     /// 添加外部引用
@@ -162,7 +234,11 @@ impl MachineCodeBuffer {
             self.code[position] = byte;
             Ok(())
         } else {
-            Err(format!("写入位置 {} 超出缓冲区范围 {}", position, self.code.len()))
+            Err(format!(
+                "写入位置 {} 超出缓冲区范围 {}",
+                position,
+                self.code.len()
+            ))
         }
     }
 
@@ -254,4 +330,4 @@ pub enum ReferenceType {
     IndirectCall,
     /// 数据引用
     DataReference,
-} 
+}

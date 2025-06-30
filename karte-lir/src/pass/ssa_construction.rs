@@ -8,6 +8,7 @@
 
 use super::{AnalysisManager, AnalysisResult, FunctionPass, PassResult};
 use crate::{Instruction, LirFunction, Register};
+use log::{error, info};
 use std::any::Any;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -544,54 +545,55 @@ impl FunctionPass for SsaConstructionPass {
         function: &mut LirFunction,
         analyses: &mut AnalysisManager,
     ) -> PassResult {
-        // 1. 构建控制流图
+        // 构建控制流图
         if let Err(e) = self.build_control_flow_graph(function) {
-            println!("=== SSA构造失败：控制流图构建错误 ===");
-            println!("{}", e);
-            return PassResult::Unchanged;
+            error!("=== SSA构造失败：控制流图构建错误 ===");
+            error!("{}", e);
+            return PassResult::Failed(e);
         }
 
-        // 2. 计算支配关系
+        // 计算支配关系
         if let Err(e) = self.compute_dominance() {
-            println!("=== SSA构造失败：支配关系计算错误 ===");
-            println!("{}", e);
-            return PassResult::Unchanged;
+            error!("=== SSA构造失败：支配关系计算错误 ===");
+            error!("{}", e);
+            return PassResult::Failed(e);
         }
 
-        // 3. 插入 Phi 节点
+        // 插入 Phi 节点
         let phi_nodes = match self.insert_phi_nodes(function) {
             Ok(nodes) => nodes,
             Err(e) => {
-                println!("=== SSA构造失败：Phi节点插入错误 ===");
-                println!("{}", e);
-                return PassResult::Unchanged;
+                error!("=== SSA构造失败：Phi节点插入错误 ===");
+                error!("{}", e);
+                return PassResult::Failed(e);
             }
         };
 
-        // 4. 变量重命名
+        // 变量重命名
         let value_versions = match self.rename_variables(function, &phi_nodes) {
             Ok(versions) => versions,
             Err(e) => {
-                println!("=== SSA构造失败：变量重命名错误 ===");
-                println!("{}", e);
-                return PassResult::Unchanged;
+                error!("=== SSA构造失败：变量重命名错误 ===");
+                error!("{}", e);
+                return PassResult::Failed(e);
             }
         };
 
-        println!("=== SSA构造完成 ===");
-        println!("函数: {}", function.name);
-        println!("基本块数量: {}", self.control_flow_graph.len());
-        println!("Phi节点数量: {}", phi_nodes.len());
-        println!("值版本数量: {}", value_versions.len());
+        info!("=== SSA构造完成 ===");
+        info!("函数: {}", function.name);
+        info!("基本块数量: {}", self.control_flow_graph.len());
+        info!("Phi节点数量: {}", phi_nodes.len());
+        info!("值版本数量: {}", value_versions.len());
 
-        // 存储分析结果
+        // 创建分析结果
         let result = SsaConstructionResult {
             value_versions,
-            def_use_chains: HashMap::new(), // 简化实现
+            def_use_chains: HashMap::new(), // TODO: 实现定义使用链分析
             phi_nodes,
             dominance_frontiers: self.dominance_info.dominance_frontiers.clone(),
         };
 
+        // 存储分析结果
         analyses.store_result(self.name().to_string(), Box::new(result));
 
         PassResult::Changed

@@ -4,7 +4,12 @@
 
 use super::{HeapAllocator, ProgramManager};
 use crate::vm::{CallingConvention, ComparisonFlags, MemoryManager, StackManager, VirtualMachine};
-use karte_lir::{Operand, Register};
+use karte_lir::{LirProgram, Operand, Register};
+use log::{info, warn};
+use std::collections::HashMap;
+
+// JIT相关imports
+use super::jit::{AArch64Compiler, JitCompiler, JitMemoryManager, X86Compiler};
 
 /// 调用栈帧
 #[derive(Debug, Clone)]
@@ -34,6 +39,8 @@ pub struct ExecutionEngine {
     call_stack: Vec<CallFrame>,
     /// 堆分配器
     heap_allocator: HeapAllocator,
+    /// 虚拟栈（用于JIT执行）
+    virtual_stack: Vec<i64>,
 }
 
 impl ExecutionEngine {
@@ -54,6 +61,7 @@ impl ExecutionEngine {
             debug_mode,
             call_stack: Vec::new(),
             heap_allocator: HeapAllocator::new(heap_start, heap_size),
+            virtual_stack: vec![0; 8192], // 64KB虚拟栈空间 (8192 * 8字节)
         }
     }
 
@@ -158,6 +166,7 @@ impl ExecutionEngine {
                     Err("Memory access out of bounds".to_string())
                 }
             }
+            Operand::Label { id } => Ok(id.0 as i64),
             _ => Err(format!("Unsupported operand type: {:?}", operand)),
         }
     }
@@ -355,6 +364,181 @@ impl ExecutionEngine {
             println!("  总分配字节: {}", heap_stats.total_allocated);
             println!("  峰值使用: {}", heap_stats.peak_usage);
             println!("  堆利用率: {:.1}%", heap_stats.heap_utilization);
+        }
+    }
+
+    /// 编译并执行程序（JIT版本）
+    pub fn compile_and_execute_with_jit(&mut self, program: &LirProgram) -> Result<i64, String> {
+        info!("专业执行器: 开始JIT编译并执行程序 (连续内存架构)");
+        info!("JIT执行器: 开始编译程序 (使用连续内存架构)");
+
+        // 🔧 新架构：使用连续内存分配
+        let mut memory_manager = JitMemoryManager::new(self.debug_mode);
+        memory_manager.initialize()?; // 预分配连续内存段
+
+        let mut compiled_functions = HashMap::new();
+        let mut global_label_map = HashMap::new();
+
+        info!("JIT编译: 第一轮编译所有函数到连续内存空间");
+
+        // 第一轮：编译所有函数到连续内存空间（不修补跳转）
+        for (function_name, function) in &program.functions {
+            info!("编译函数: {}", function_name);
+
+            // 根据当前架构选择编译器
+            let compiled_function = if cfg!(target_arch = "aarch64") {
+                let mut compiler = AArch64Compiler::new(self.debug_mode)?;
+                compiler.compile_function(function, program)?
+            } else if cfg!(target_arch = "x86_64") {
+                let mut compiler = X86Compiler::new(self.debug_mode)?;
+                compiler.compile_function(function, program)?
+            } else {
+                return Err("不支持的目标架构".to_string());
+            };
+
+            // 🔧 新架构：使用连续内存分配
+            let executable_memory = memory_manager
+                .allocate_function_memory(function_name, compiled_function.machine_code())?;
+
+            info!(
+                "函数 '{}' 分配到连续内存: 偏移=0x{:X}, 大小={}",
+                function_name,
+                executable_memory.offset(),
+                executable_memory.size()
+            );
+
+            // 收集全局标签地址（函数地址）
+            global_label_map.insert(
+                format!("func_{}", function_name),
+                executable_memory.address() as *const u8,
+            );
+
+            // 收集函数内部标签地址
+            for (label_name, label_offset) in compiled_function.labels.iter() {
+                let label_address =
+                    (executable_memory.address() as usize + label_offset) as *const u8;
+                global_label_map.insert(label_name.clone(), label_address);
+
+                if self.debug_mode {
+                    log::debug!(
+                        "🔧 收集标签: {} -> 地址: 0x{:016X} (函数基址: 0x{:016X} + 偏移: {})",
+                        label_name,
+                        label_address as usize,
+                        executable_memory.address() as usize,
+                        label_offset
+                    );
+                }
+            }
+
+            compiled_functions.insert(
+                function_name.clone(),
+                (compiled_function, executable_memory),
+            );
+        }
+
+        info!("JIT编译: 第二轮重新编译函数并修补跳转地址");
+
+        // 第二轮：重新编译函数并修补跳转地址
+        for (function_name, function) in &program.functions {
+            info!("重新编译函数并修补跳转: {}", function_name);
+
+            // 获取已分配的内存地址
+            let (old_compiled_function, executable_memory) =
+                compiled_functions.get(function_name).unwrap();
+
+            // 使用全局标签表重新编译
+            let compiled_function_with_patches = if cfg!(target_arch = "aarch64") {
+                let mut compiler = AArch64Compiler::new(self.debug_mode)?;
+                compiler.compile_function_with_global_labels(
+                    function,
+                    program,
+                    &global_label_map,
+                )?
+            } else if cfg!(target_arch = "x86_64") {
+                let mut compiler = X86Compiler::new(self.debug_mode)?;
+                compiler.compile_function_with_global_labels(
+                    function,
+                    program,
+                    &global_label_map,
+                )?
+            } else {
+                return Err("不支持的目标架构".to_string());
+            };
+
+            let src_bytes = compiled_function_with_patches.machine_code();
+
+            // 检查修补后的代码大小是否超出预分配内存
+            if src_bytes.len() > executable_memory.size() {
+                // 如果超出，重新分配更大的内存块
+                warn!(
+                    "函数 '{}' 修补后代码大小({})超出原分配({}), 重新分配内存",
+                    function_name,
+                    src_bytes.len(),
+                    executable_memory.size()
+                );
+
+                let new_executable_memory = memory_manager
+                    .allocate_function_memory(&format!("{}_patched", function_name), src_bytes)?;
+
+                info!(
+                    "函数 '{}' 重新分配内存: 地址=0x{:016X}, 大小={}",
+                    function_name,
+                    new_executable_memory.address() as usize,
+                    new_executable_memory.size()
+                );
+
+                // 更新编译函数映射
+                compiled_functions.insert(
+                    function_name.clone(),
+                    (compiled_function_with_patches, new_executable_memory),
+                );
+            } else {
+                // 将修补后的机器码写入已分配的内存
+                unsafe {
+                    let dest_ptr = executable_memory.address() as *mut u8;
+
+                    // 确保内存可写
+                    memory_manager.temporarily_make_writable(function_name)?;
+
+                    // 复制修补后的机器码
+                    std::ptr::copy_nonoverlapping(src_bytes.as_ptr(), dest_ptr, src_bytes.len());
+
+                    // 恢复为可执行
+                    memory_manager.make_executable_again(function_name)?;
+
+                    info!(
+                        "函数 '{}' 跳转修补完成: 地址=0x{:016X}, 大小={}",
+                        function_name,
+                        executable_memory.address() as usize,
+                        src_bytes.len()
+                    );
+                }
+            }
+        }
+
+        // 🔧 新架构：所有函数现在都在连续地址空间中，已完成跳转修补
+        info!("JIT编译: 函数间跳转修补完成，准备执行");
+
+        // 获取main函数并执行
+        let main_function_name = "main";
+        if let Some((_, executable_memory)) = compiled_functions.get(main_function_name) {
+            info!("执行main函数: 地址={:p}", executable_memory.address());
+
+            // 设置虚拟机参数
+            let stack_top = self.virtual_stack.as_ptr() as usize + self.virtual_stack.len() * 8;
+            let stack_bottom = self.virtual_stack.as_ptr() as usize;
+
+            // 创建函数指针并调用
+            unsafe {
+                let main_fn: extern "C" fn(usize, usize) -> i64 =
+                    executable_memory.as_function_ptr()?;
+                let result = main_fn(stack_top, stack_bottom);
+
+                info!("JIT执行完成，返回值: {}", result);
+                Ok(result)
+            }
+        } else {
+            Err("未找到main函数".to_string())
         }
     }
 }

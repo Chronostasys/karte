@@ -6,25 +6,25 @@ use super::compiler_trait::CompiledFunction;
 use std::collections::HashMap;
 
 /// 代码缓存
-/// 
+///
 /// 管理编译后的函数，提供缓存、查找和清理功能
 #[derive(Debug)]
 pub struct CodeCache {
     /// 缓存的函数 (函数名 -> 编译后的函数)
     functions: HashMap<String, CompiledFunction>,
-    
+
     /// 函数调用计数器 (用于热点检测)
     call_counts: HashMap<String, u32>,
-    
+
     /// 总缓存大小（字节）
     total_size: usize,
-    
+
     /// 最大缓存大小限制
     size_limit: usize,
-    
+
     /// 缓存命中统计
     cache_hits: u64,
-    
+
     /// 缓存未命中统计
     cache_misses: u64,
 }
@@ -58,7 +58,10 @@ impl CodeCache {
     pub fn get(&mut self, function_name: &str) -> Option<CompiledFunction> {
         if let Some(function) = self.functions.get(function_name) {
             // 增加调用计数
-            *self.call_counts.entry(function_name.to_string()).or_insert(0) += 1;
+            *self
+                .call_counts
+                .entry(function_name.to_string())
+                .or_insert(0) += 1;
             self.cache_hits += 1;
             Some(function.clone())
         } else {
@@ -73,9 +76,13 @@ impl CodeCache {
     }
 
     /// 插入编译后的函数
-    pub fn insert(&mut self, function_name: String, compiled_function: CompiledFunction) -> Result<(), String> {
+    pub fn insert(
+        &mut self,
+        function_name: String,
+        compiled_function: CompiledFunction,
+    ) -> Result<(), String> {
         let function_size = compiled_function.code_size();
-        
+
         // 检查是否会超出大小限制
         if self.total_size + function_size > self.size_limit {
             // 尝试清理一些旧的函数
@@ -89,8 +96,9 @@ impl CodeCache {
 
         // 插入新函数
         self.total_size += function_size;
-        self.functions.insert(function_name.clone(), compiled_function);
-        
+        self.functions
+            .insert(function_name.clone(), compiled_function);
+
         // 初始化调用计数
         self.call_counts.insert(function_name, 0);
 
@@ -124,7 +132,10 @@ impl CodeCache {
 
     /// 增加函数调用次数
     pub fn increment_call_count(&mut self, function_name: &str) {
-        *self.call_counts.entry(function_name.to_string()).or_insert(0) += 1;
+        *self
+            .call_counts
+            .entry(function_name.to_string())
+            .or_insert(0) += 1;
     }
 
     /// 获取缓存统计信息
@@ -148,51 +159,55 @@ impl CodeCache {
 
     /// 获取热点函数列表（按调用次数排序）
     pub fn get_hot_functions(&self, limit: usize) -> Vec<(String, u32)> {
-        let mut functions: Vec<_> = self.call_counts.iter()
+        let mut functions: Vec<_> = self
+            .call_counts
+            .iter()
             .map(|(name, count)| (name.clone(), *count))
             .collect();
-        
+
         // 按调用次数降序排序
         functions.sort_by(|a, b| b.1.cmp(&a.1));
-        
+
         functions.into_iter().take(limit).collect()
     }
 
     /// 驱逐最少使用的函数以释放空间
     fn evict_lru_functions(&mut self, needed_space: usize) -> Result<(), String> {
-        let mut functions_by_usage: Vec<_> = self.call_counts.iter()
+        let mut functions_by_usage: Vec<_> = self
+            .call_counts
+            .iter()
             .map(|(name, count)| (name.clone(), *count))
             .collect();
-        
+
         // 按调用次数升序排序（最少使用的在前）
         functions_by_usage.sort_by(|a, b| a.1.cmp(&b.1));
-        
+
         let mut freed_space = 0;
         let mut to_remove = Vec::new();
-        
+
         for (function_name, _) in functions_by_usage {
             if let Some(function) = self.functions.get(&function_name) {
                 freed_space += function.code_size();
                 to_remove.push(function_name);
-                
+
                 if freed_space >= needed_space {
                     break;
                 }
             }
         }
-        
+
         if freed_space < needed_space {
             return Err(format!(
                 "无法释放足够空间：需要 {} 字节，最多只能释放 {} 字节",
                 needed_space, freed_space
             ));
         }
-        
+
         // 移除选中的函数
         for function_name in to_remove {
             self.remove(&function_name);
         }
-        
+
         Ok(())
     }
 
@@ -213,7 +228,7 @@ impl CodeCache {
             let excess = self.total_size - new_limit;
             self.evict_lru_functions(excess)?;
         }
-        
+
         self.size_limit = new_limit;
         Ok(())
     }
@@ -249,12 +264,14 @@ impl CacheStatistics {
     pub fn print(&self) {
         println!("=== 代码缓存统计 ===");
         println!("函数数量: {}", self.total_functions);
-        println!("缓存大小: {:.2} MB / {:.2} MB", 
-                 self.total_size as f64 / (1024.0 * 1024.0),
-                 self.size_limit as f64 / (1024.0 * 1024.0));
+        println!(
+            "缓存大小: {:.2} MB / {:.2} MB",
+            self.total_size as f64 / (1024.0 * 1024.0),
+            self.size_limit as f64 / (1024.0 * 1024.0)
+        );
         println!("使用率: {:.1}%", self.usage_ratio);
         println!("命中次数: {}", self.cache_hits);
         println!("未命中次数: {}", self.cache_misses);
         println!("命中率: {:.1}%", self.hit_rate);
     }
-} 
+}

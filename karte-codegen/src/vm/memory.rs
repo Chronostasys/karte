@@ -3,6 +3,7 @@
 //! 提供内存分配、访问和管理功能
 
 use super::{MEMORY_SIZE, STACK_SIZE};
+use log::info;
 
 /// 内存管理器
 #[derive(Debug, Clone)]
@@ -124,26 +125,26 @@ impl MemoryManager {
 
     /// 打印内存状态（用于调试）
     pub fn print_memory_state(&self) {
-        println!("=== Memory State ===");
-        println!("Heap pointer: {}", self.heap_pointer);
-        println!("Stack pointer: {}", self.stack_pointer);
+        info!("=== Memory State ===");
+        info!("Heap pointer: {}", self.heap_pointer);
+        info!("Stack pointer: {}", self.stack_pointer);
 
         let stats = self.get_memory_stats();
-        println!("Memory statistics: {:?}", stats);
+        info!("Memory statistics: {:?}", stats);
 
         // 打印栈的非零内容
-        println!("Non-zero stack values:");
+        info!("Non-zero stack values:");
         for (i, &value) in self.stack.iter().enumerate() {
             if value != 0 {
-                println!("  stack[{}]: {}", i, value);
+                info!("  stack[{}]: {}", i, value);
             }
         }
 
         // 打印堆的非零内容（仅前100个位置）
-        println!("Non-zero heap values (first 100):");
+        info!("Non-zero heap values (first 100):");
         for (i, &value) in self.memory.iter().enumerate().take(100) {
             if value != 0 {
-                println!("  memory[{}]: {}", i, value);
+                info!("  memory[{}]: {}", i, value);
             }
         }
     }

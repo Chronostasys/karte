@@ -12,6 +12,7 @@ use super::{AnalysisManager, FunctionPass, PassResult};
 use crate::pass::register_allocation::RegisterAllocationResult;
 use crate::pass::register_allocation::RegisterType;
 use crate::{AllocationType, Instruction, LirFunction, Operand, Register};
+use log::{error, info, warn};
 use std::collections::HashMap;
 
 /// 向下对齐到指定边界
@@ -54,7 +55,7 @@ impl StackFrameLayout {
         self.local_var_offsets.insert(var_reg, offset);
         self.next_offset -= size as i64;
         self.total_frame_size = (-self.next_offset) as usize;
-        println!(
+        info!(
             "🔧 分配本地变量: {:?} -> [FP{}] (size: {})",
             var_reg, offset, size
         );
@@ -67,7 +68,7 @@ impl StackFrameLayout {
         self.spill_slot_offsets.insert(slot_id, offset);
         self.next_offset -= 8; // 每个溢出槽 8 字节
         self.total_frame_size = (-self.next_offset) as usize;
-        println!("🔧 分配溢出槽: slot_{} -> [FP{}]", slot_id, offset);
+        info!("🔧 分配溢出槽: slot_{} -> [FP{}]", slot_id, offset);
         offset
     }
 }
@@ -109,7 +110,7 @@ impl StackFrameLowering {
             .register_mapping
             .insert(self.frame_pointer, self.get_frame_pointer_physical());
 
-        println!(
+        info!(
             "🔧 保留特殊寄存器: SP={:?}->r{}, FP={:?}->r{}",
             self.stack_pointer,
             self.get_stack_pointer_physical(),
@@ -145,21 +146,21 @@ impl StackFrameLowering {
                         current_offset =
                             align_down(current_offset - (*size as i64), *alignment as i64);
                         layout.local_var_offsets.insert(*dst, current_offset);
-                        println!(
+                        info!(
                             "🔧 分配本地变量: {:?} -> [FP{}] (size: {}, type: Stack)",
                             dst, current_offset, size
                         );
                     }
                     AllocationType::Heap => {
                         // 堆分配不需要在栈帧中分配空间，将在虚拟机执行时处理
-                        println!(
+                        info!(
                             "🔧 跳过堆分配: {:?} (size: {}, type: Heap) - 将在虚拟机执行时处理",
                             dst, size
                         );
                     }
                     AllocationType::Static => {
                         // 静态分配也不需要在栈帧中分配空间
-                        println!(
+                        info!(
                             "🔧 跳过静态分配: {:?} (size: {}, type: Static) - 将在虚拟机执行时处理",
                             dst, size
                         );
@@ -178,30 +179,30 @@ impl StackFrameLowering {
                     layout
                         .spill_slot_offsets
                         .insert(spill_slot.slot_id, current_offset);
-                    println!(
+                    info!(
                         "🔧 分配溢出槽: slot_{} -> [FP{}]",
                         spill_slot.slot_id, current_offset
                     );
-                    println!(
+                    info!(
                         "🔧 为溢出数据寄存器 {:?} 分配槽位 {}",
                         register_id, spill_slot.slot_id
                     );
                 } else {
                     // 🔧 修复：StackAddress寄存器现在不会被标记为溢出，所以这里不应该有错误
                     // 如果还有非数据寄存器被标记为溢出，说明寄存器分配器有问题
-                    println!("🔧 警告：非数据寄存器 {:?} (类型: {:?}) 被标记为溢出，这可能是寄存器分配器的bug", register_id, register_type);
+                    warn!("🔧 警告：非数据寄存器 {:?} (类型: {:?}) 被标记为溢出，这可能是寄存器分配器的bug", register_id, register_type);
                     // 我们仍然为它分配溢出槽，但这不是最佳实践
                     current_offset = align_down(current_offset - 8, 8);
                     layout
                         .spill_slot_offsets
                         .insert(spill_slot.slot_id, current_offset);
-                    println!(
+                    info!(
                         "🔧 为溢出寄存器 {:?} 分配槽位 {} (非最佳实践)",
                         register_id, spill_slot.slot_id
                     );
                 }
             } else {
-                println!(
+                error!(
                     "🔧 错误：溢出寄存器 {:?} 没有类型信息！这是寄存器分配器的bug",
                     register_id
                 );
@@ -212,7 +213,7 @@ impl StackFrameLowering {
         layout.total_frame_size = (-current_offset) as usize;
         layout.next_offset = current_offset;
 
-        println!(
+        info!(
             "🔧 栈帧布局计算完成: 总大小 {} 字节",
             layout.total_frame_size
         );
@@ -226,7 +227,7 @@ impl StackFrameLowering {
         layout: &StackFrameLayout,
         allocation_result: &RegisterAllocationResult,
     ) -> Result<(), String> {
-        println!(
+        info!(
             "🚀 运行 StackFrameLowering Pass for function: {}",
             function.name
         );
@@ -280,7 +281,7 @@ impl StackFrameLowering {
                             src2: Operand::Immediate { value: offset },
                             span: *span,
                         });
-                        println!("🔧 转换栈分配 alloc: {:?} = FP + {}", dst, offset);
+                        info!("🔧 转换栈分配 alloc: {:?} = FP + {}", dst, offset);
                     } else {
                         // 如果找不到偏移，保持原指令
                         new_instructions.push(instruction.clone());
@@ -300,7 +301,7 @@ impl StackFrameLowering {
                             offset: stack_offset + *current_offset,
                             span: *span,
                         });
-                        println!(
+                        info!(
                             "🔧 直接替换load: {:?} = [FP + {}]",
                             dst,
                             stack_offset + *current_offset
@@ -323,7 +324,7 @@ impl StackFrameLowering {
                             src: src.clone(),
                             span: *span,
                         });
-                        println!(
+                        info!(
                             "🔧 直接替换store: [FP + {}] = {:?}",
                             stack_offset + *current_offset,
                             src
@@ -354,7 +355,7 @@ impl FunctionPass for StackFrameLowering {
         function: &mut LirFunction,
         analyses: &mut AnalysisManager,
     ) -> PassResult {
-        println!(
+        info!(
             "🚀 运行 StackFrameLowering Pass for function: {}",
             function.name
         );
@@ -369,11 +370,11 @@ impl FunctionPass for StackFrameLowering {
                     let old_key = format!("register-allocation-{}", function.name);
                     match analyses.get_result::<RegisterAllocationResult>(&old_key) {
                         Some(result) => {
-                            println!("⚠️ 使用旧的寄存器分配结果，建议使用两阶段分配架构");
+                            info!("⚠️ 使用旧的寄存器分配结果，建议使用两阶段分配架构");
                             result
                         }
                         None => {
-                            println!("⚠️ 未找到寄存器分配结果，跳过栈帧降级");
+                            info!("⚠️ 未找到寄存器分配结果，跳过栈帧降级");
                             return PassResult::Unchanged;
                         }
                     }
@@ -390,12 +391,12 @@ impl FunctionPass for StackFrameLowering {
         // 重写指令
         match self.rewrite_instructions(function, &layout, &allocation_result) {
             Ok(()) => {
-                println!("✅ StackFrameLowering Pass 完成");
+                info!("✅ StackFrameLowering Pass 完成");
                 PassResult::Changed
             }
             Err(e) => {
-                eprintln!("❌ StackFrameLowering Pass 失败: {}", e);
-                PassResult::Unchanged
+                error!("❌ StackFrameLowering Pass 失败: {}", e);
+                PassResult::Failed(e)
             }
         }
     }

@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use karte_codegen::lir_interpreter::execute;
+use karte_codegen::vm::professional_executor::ProfessionalExecutor;
 use karte_diagnostics::DiagnosticBag;
 use karte_lexer::tokenize;
 use karte_lir::lower::lower_mir_to_lir;
@@ -12,7 +13,6 @@ use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
-use karte_codegen::vm::professional_executor::ProfessionalExecutor;
 
 #[derive(Parser)]
 #[command(name = "karte")]
@@ -242,7 +242,9 @@ fn compile_to_lir(
 
 /// 🔧 新增：获取环境变量中的JIT设置
 fn should_use_jit() -> bool {
-    env::var("KARTE_JIT").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(true)
+    env::var("KARTE_JIT")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(true)
 }
 
 /// 🔧 修改：改进的execute_lir函数，支持JIT
@@ -253,7 +255,7 @@ fn execute_lir(lir_program: &LirProgram, verbose: bool) -> Result<(), Box<dyn st
 
     // 🔧 新增：检查是否应该使用JIT
     let use_jit = should_use_jit();
-    
+
     if use_jit && verbose {
         println!("尝试使用JIT执行器...");
     }
@@ -267,9 +269,7 @@ fn execute_lir(lir_program: &LirProgram, verbose: bool) -> Result<(), Box<dyn st
                 }
                 match executor.execute_with_jit(lir_program) {
                     Ok(exit_code) => {
-                        if verbose {
-                            println!("JIT执行完成，退出码: {}", exit_code);
-                        }
+                        println!("JIT执行完成，退出码: {}", exit_code);
                         return Ok(());
                     }
                     Err(err) => {
@@ -411,7 +411,7 @@ fn run_repl(optimization_level: OptimizationLevel, verbose: bool) {
                 }
 
                 if let Err(err) =
-                    process_expression(input, optimization_level, true, false, None)
+                    process_expression(input, optimization_level, verbose, false, None)
                 {
                     error!("Error: {}", err);
                 }
@@ -426,7 +426,6 @@ fn run_repl(optimization_level: OptimizationLevel, verbose: bool) {
 
 fn main() {
     env_logger::init();
-
     let cli = Cli::parse();
 
     let optimization_level = cli.optimization.into();
@@ -436,47 +435,47 @@ fn main() {
             input,
             emit_lir,
             output,
-        }) => {
-            match input {
-                Some(ref input_str) => {
-                    if Path::new(input_str).exists() {
-                        if let Err(err) = process_file(
-                            input_str,
-                            optimization_level,
-                            cli.verbose,
-                            emit_lir,
-                            output.as_deref(),
-                        ) {
-                            error!("Error: {}", err);
-                            std::process::exit(1);
-                        }
-                    } else {
-                        if let Err(err) = process_expression(
-                            input_str,
-                            optimization_level,
-                            cli.verbose,
-                            emit_lir,
-                            output.as_deref(),
-                        ) {
-                            error!("Error: {}", err);
-                            std::process::exit(1);
-                        }
-                    }
-                }
-                None => {
-                    run_repl(optimization_level, cli.verbose);
-                }
-            }
-        }
-        Some(Commands::Compile { input, output }) => {
-            let lir_program =
-                match compile_to_lir(&fs::read_to_string(&input).unwrap(), &input, optimization_level, cli.verbose) {
-                    Ok(program) => program,
-                    Err(err) => {
-                        error!("Compilation failed: {}", err);
+        }) => match input {
+            Some(ref input_str) => {
+                if Path::new(input_str).exists() {
+                    if let Err(err) = process_file(
+                        input_str,
+                        optimization_level,
+                        cli.verbose,
+                        emit_lir,
+                        output.as_deref(),
+                    ) {
+                        error!("Error: {}", err);
                         std::process::exit(1);
                     }
-                };
+                } else if let Err(err) = process_expression(
+                    input_str,
+                    optimization_level,
+                    cli.verbose,
+                    emit_lir,
+                    output.as_deref(),
+                ) {
+                    error!("Error: {}", err);
+                    std::process::exit(1);
+                }
+            }
+            None => {
+                run_repl(optimization_level, cli.verbose);
+            }
+        },
+        Some(Commands::Compile { input, output }) => {
+            let lir_program = match compile_to_lir(
+                &fs::read_to_string(&input).unwrap(),
+                &input,
+                optimization_level,
+                cli.verbose,
+            ) {
+                Ok(program) => program,
+                Err(err) => {
+                    error!("Compilation failed: {}", err);
+                    std::process::exit(1);
+                }
+            };
 
             let output_file = output.unwrap_or_else(|| {
                 Path::new(&input)
@@ -515,17 +514,15 @@ fn main() {
                         error!("Error: {}", err);
                         std::process::exit(1);
                     }
-                } else {
-                    if let Err(err) = process_expression(
-                        input,
-                        optimization_level,
-                        cli.verbose,
-                        cli.emit_lir,
-                        cli.output.as_deref(),
-                    ) {
-                        error!("Error: {}", err);
-                        std::process::exit(1);
-                    }
+                } else if let Err(err) = process_expression(
+                    input,
+                    optimization_level,
+                    cli.verbose,
+                    cli.emit_lir,
+                    cli.output.as_deref(),
+                ) {
+                    error!("Error: {}", err);
+                    std::process::exit(1);
                 }
             } else {
                 run_repl(optimization_level, cli.verbose);

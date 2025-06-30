@@ -4,6 +4,7 @@
 
 use super::{MEMORY_SIZE, NUM_REGISTERS, STACK_SIZE};
 use karte_lir::Register;
+use log::info;
 use std::collections::HashMap;
 
 /// 比较结果标志
@@ -142,43 +143,43 @@ impl VirtualMachine {
 
     /// 打印虚拟机状态（用于调试）
     pub fn print_state(&self) {
-        println!("=== Virtual Machine State ===");
-        println!("PC: {}", self.pc);
-        println!("SP: {}", self.sp);
-        println!("Flags: {:?}", self.flags);
-        println!("Call Stack: {:?}", self.call_stack);
+        info!("=== Virtual Machine State ===");
+        info!("PC: {}", self.pc);
+        info!("SP: {}", self.sp);
+        info!("Flags: {:?}", self.flags);
+        info!("Call Stack: {:?}", self.call_stack);
 
         // 只打印非零寄存器
-        println!("Non-zero Registers:");
+        info!("Non-zero Registers:");
         for (i, &value) in self.registers.iter().enumerate() {
             if value != 0 {
-                println!("  r{}: {}", i, value);
+                info!("  r{}: {}", i, value);
             }
         }
 
         // 打印寄存器映射
         if !self.register_mapping.is_empty() {
-            println!("Register Mapping:");
+            info!("Register Mapping:");
             for (virtual_reg, &physical_reg) in &self.register_mapping {
-                println!("  {:?} -> r{}", virtual_reg, physical_reg);
+                info!("  {:?} -> r{}", virtual_reg, physical_reg);
             }
         }
 
         // 溢出寄存器现在应该通过栈访问，不再单独存储
 
         // 打印虚拟机内存中的非零值（仅前100个位置）
-        println!("Non-zero VM memory values (first 100):");
+        info!("Non-zero VM memory values (first 100):");
         for (i, &value) in self.memory.iter().enumerate().take(100) {
             if value != 0 {
-                println!("  vm_memory[{}]: {}", i, value);
+                info!("  vm_memory[{}]: {}", i, value);
             }
         }
 
         // 打印高地址内存中的非零值（栈区域）
-        println!("Non-zero VM memory values (stack area 1048400-1048576):");
+        info!("Non-zero VM memory values (stack area 1048400-1048576):");
         for (i, &value) in self.memory.iter().enumerate().skip(1048400) {
             if value != 0 {
-                println!("  vm_memory[{}]: {}", i, value);
+                info!("  vm_memory[{}]: {}", i, value);
             }
         }
     }

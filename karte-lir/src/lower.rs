@@ -89,7 +89,7 @@ impl LirLoweringContext {
         // 设置当前函数参数列表
         self.current_function_params = params.to_vec();
 
-        println!(
+        log::debug!(
             "🔧 创建函数 {} 包含 {} 个参数: {:?}",
             name,
             params.len(),
@@ -285,9 +285,11 @@ impl LirLoweringContext {
 
             for field_key in &field_keys {
                 if let Some(&field_stack_addr) = self.stack_allocations.get(field_key) {
-                    println!(
+                    log::debug!(
                         "🔧 lower_to_lvalue: 找到FieldAccess栈槽 {} -> {:?} (来自{})",
-                        value_key, field_stack_addr, field_key
+                        value_key,
+                        field_stack_addr,
+                        field_key
                     );
                     // 将这个栈槽也注册到常规的value_key下，便于后续查找
                     self.stack_allocations.insert(value_key, field_stack_addr);
@@ -300,9 +302,11 @@ impl LirLoweringContext {
             // 如果没有找到FieldAccess栈槽，检查是否有其他field_*键
             for (key, &addr) in self.stack_allocations.iter() {
                 if key.ends_with(&format!(":{}", value_key)) && key.starts_with("field_") {
-                    println!(
+                    log::debug!(
                         "🔧 lower_to_lvalue: 找到其他FieldAccess栈槽 {} -> {:?} (来自{})",
-                        value_key, addr, key
+                        value_key,
+                        addr,
+                        key
                     );
                     // 将这个栈槽也注册到常规的value_key下
                     self.stack_allocations.insert(value_key, addr);
@@ -313,19 +317,21 @@ impl LirLoweringContext {
 
         // 检查是否已经有栈分配
         if let Some(&stack_addr) = self.stack_allocations.get(&value_key) {
-            println!(
+            log::debug!(
                 "🔧 lower_to_lvalue: 找到已分配的栈槽 {} -> {:?}",
-                value_key, stack_addr
+                value_key,
+                stack_addr
             );
             return Operand::Register { id: stack_addr };
         }
 
         // 分配新的栈空间
-        println!("🔧 lower_to_lvalue: 需要分配新栈槽 {}", value_key);
+        log::debug!("🔧 lower_to_lvalue: 需要分配新栈槽 {}", value_key);
         let stack_addr = self.allocate_stack_slot_for_value(value);
-        println!(
+        log::debug!(
             "🔧 lower_to_lvalue: 分配了新栈槽 {} -> {:?}",
-            value_key, stack_addr
+            value_key,
+            stack_addr
         );
         self.stack_allocations.insert(value_key, stack_addr);
 
@@ -360,9 +366,10 @@ impl LirLoweringContext {
                     self.current_function_params.iter().position(|p| p == name)
                 {
                     let param_reg = Register::Virtual(param_index + 1); // 参数寄存器: r1, r2, r3, r4
-                    println!(
+                    log::debug!(
                         "🔧 函数参数 {} 在lower_to_rvalue中直接使用寄存器 {:?}",
-                        name, param_reg
+                        name,
+                        param_reg
                     );
                     return Operand::Register { id: param_reg };
                 }
@@ -380,9 +387,7 @@ impl LirLoweringContext {
             // 函数值
             Value::Function { name } => {
                 if let Some(&label_id) = self.function_labels.get(name) {
-                    Operand::Immediate {
-                        value: label_id.0 as i64,
-                    }
+                    Operand::Label { id: label_id }
                 } else {
                     // 🔧 关键修复：如果函数不在映射中，这是一个错误，不应该分配新标签
                     // 所有函数标签都应该在预处理阶段分配好
@@ -542,7 +547,7 @@ impl LirLoweringContext {
                 value: referenced_value,
             } => {
                 // 🔧 关键修复：引用值需要存储被引用值的地址
-                println!("🔧 初始化引用值: referenced_value={:?}", referenced_value);
+                log::debug!("🔧 初始化引用值: referenced_value={:?}", referenced_value);
 
                 // 获取被引用值的操作数（这应该是被引用值的地址）
                 let referenced_operand = self.lower_to_lvalue(referenced_value);
@@ -556,9 +561,10 @@ impl LirLoweringContext {
                             src: Operand::Register { id: ref_addr_reg },
                             span: karte_diagnostics::Span::dummy(),
                         });
-                        println!(
+                        log::debug!(
                             "🔧 引用值初始化完成: 存储地址{:?}到栈位置{:?}",
-                            ref_addr_reg, stack_addr
+                            ref_addr_reg,
+                            stack_addr
                         );
                     }
                     _ => {
@@ -577,9 +583,10 @@ impl LirLoweringContext {
                             src: Operand::Register { id: temp_reg },
                             span: karte_diagnostics::Span::dummy(),
                         });
-                        println!(
+                        log::debug!(
                             "🔧 引用值初始化完成: 通过临时寄存器{:?}存储到栈位置{:?}",
-                            temp_reg, stack_addr
+                            temp_reg,
+                            stack_addr
                         );
                     }
                 }
@@ -657,9 +664,12 @@ impl LirLoweringContext {
                 // 递归调用lower_to_rvalue处理field_expr，得到表示字段值的Operand
                 let field_value_op = self.lower_to_rvalue(field_value);
 
-                println!(
+                log::debug!(
                     "🔧 结构体字段初始化: {}.{} = {:?} at offset {}",
-                    name, field_layout.name, field_value_op, field_layout.offset
+                    name,
+                    field_layout.name,
+                    field_value_op,
+                    field_layout.offset
                 );
 
                 // 修复：始终用struct_ptr作为基地址
@@ -673,7 +683,7 @@ impl LirLoweringContext {
         }
 
         // 4. 返回地址：整个结构体初始化表达式的结果就是struct_ptr
-        println!("🔧 结构体初始化完成: {} -> {:?}", name, struct_ptr);
+        log::debug!("🔧 结构体初始化完成: {} -> {:?}", name, struct_ptr);
         Ok(struct_ptr)
     }
 
@@ -716,7 +726,7 @@ impl LirLoweringContext {
                     "function_ptr" | "env_ptr" => "Closure".to_string(), // 闭包结构体字段
                     _ => {
                         // 如果无法推断，尝试从所有已知类型中查找包含该字段的类型
-                        for (_, layout) in &self.global_struct_types {
+                        for layout in self.global_struct_types.values() {
                             if layout.fields.iter().any(|f| f.name == field_name) {
                                 return Ok(layout
                                     .fields
@@ -820,21 +830,21 @@ impl LirLoweringContext {
 
     /// 预分配函数中所有临时变量的栈槽
     fn preallocate_temp_slots(&mut self, mir_function: &karte_mir::MirFunction) {
-        println!("🔧 开始预分配临时变量栈槽");
+        log::debug!("🔧 开始预分配临时变量栈槽");
         // 遍历所有基本块，收集所有临时变量
         let mut temp_values = HashSet::new();
 
         for (block_id, block) in &mir_function.basic_blocks {
-            println!("🔧 检查基本块 {:?}", block_id);
+            log::debug!("🔧 检查基本块 {:?}", block_id);
             // 检查语句中的临时变量
             for statement in &block.statements {
-                println!("🔧 检查语句: {:?}", statement);
+                log::debug!("🔧 检查语句: {:?}", statement);
                 match statement {
                     Statement::Assign { target, source, .. } => {
                         // 收集目标临时变量
                         if let Value::Temp { .. } = target {
                             let key = value_to_key(target);
-                            println!("🔧 发现临时变量(assign target): {}", key);
+                            log::debug!("🔧 发现临时变量(assign target): {}", key);
                             temp_values.insert(key);
                         }
                         // 也检查源值中的临时变量
@@ -848,7 +858,7 @@ impl LirLoweringContext {
                     } => {
                         if let Value::Temp { .. } = target {
                             let key = value_to_key(target);
-                            println!("🔧 发现临时变量(binop target): {}", key);
+                            log::debug!("🔧 发现临时变量(binop target): {}", key);
                             temp_values.insert(key);
                         }
                         self.collect_temp_values_from_value(left, &mut temp_values);
@@ -859,7 +869,7 @@ impl LirLoweringContext {
                     } => {
                         if let Value::Temp { .. } = target {
                             let key = value_to_key(target);
-                            println!("🔧 发现临时变量(unop target): {}", key);
+                            log::debug!("🔧 发现临时变量(unop target): {}", key);
                             temp_values.insert(key);
                         }
                         self.collect_temp_values_from_value(operand, &mut temp_values);
@@ -870,7 +880,7 @@ impl LirLoweringContext {
 
             // 检查终结器中的临时变量
             if let Some(terminator) = &block.terminator {
-                println!("🔧 检查终结器: {:?}", terminator);
+                log::debug!("🔧 检查终结器: {:?}", terminator);
                 match terminator {
                     Terminator::Return { value, .. } => {
                         if let Some(v) = value {
@@ -885,7 +895,7 @@ impl LirLoweringContext {
             }
         }
 
-        println!("🔧 收集到的临时变量: {:?}", temp_values);
+        log::debug!("🔧 收集到的临时变量: {:?}", temp_values);
 
         // 🔧 关键修复：确保临时变量处理的确定性顺序
         let mut temp_keys: Vec<_> = temp_values.into_iter().collect();
@@ -893,7 +903,7 @@ impl LirLoweringContext {
 
         let mut temp_values_to_allocate = Vec::new();
         for temp_key in temp_keys {
-            println!("🔧 处理临时变量key: {}", temp_key);
+            log::debug!("🔧 处理临时变量key: {}", temp_key);
             // 从key重建Value（这是一个简化，实际可能需要更复杂的逻辑）
             if temp_key.starts_with("temp:") {
                 // 修复：应该是 "temp:" 而不是 "temp_"
@@ -908,9 +918,9 @@ impl LirLoweringContext {
         for temp_value in temp_values_to_allocate {
             // 分配栈槽并生成alloc指令
             let key = value_to_key(&temp_value);
-            println!("🔧 预分配临时变量: {} -> {:?}", key, temp_value);
+            log::debug!("🔧 预分配临时变量: {} -> {:?}", key, temp_value);
             let allocated_reg = self.allocate_stack_slot_for_value(&temp_value);
-            println!("🔧 预分配结果: {} -> {:?}", key, allocated_reg);
+            log::debug!("🔧 预分配结果: {} -> {:?}", key, allocated_reg);
         }
     }
 
@@ -972,7 +982,7 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
         let label_id = LabelId(context.global_label_counter);
         context.global_label_counter += 1;
         context.function_labels.insert(name.clone(), label_id);
-        println!("分配函数标签: {} -> {:?}", name, label_id);
+        log::debug!("分配函数标签: {} -> {:?}", name, label_id);
     }
 
     // 转换每个函数
@@ -1047,17 +1057,18 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
 
     // 返回未降级的LIR，让优化阶段处理Alloc指令
     if context.errors.is_empty() {
-        println!("=== 返回高级LIR (包含Alloc指令，待优化) ===");
+        log::debug!("=== 返回高级LIR (包含Alloc指令，待优化) ===");
         for (name, function) in &lir_program.functions {
-            println!(
+            log::debug!(
                 "function {} (stack_frame: {}):",
-                name, function.stack_frame_size
+                name,
+                function.stack_frame_size
             );
             for instruction in &function.instructions {
-                println!("  {}", instruction);
+                log::debug!("  {}", instruction);
             }
         }
-        println!("================================================");
+        log::debug!("================================================");
 
         Ok(lir_program)
     } else {
@@ -1078,7 +1089,7 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
 
             // 🔧 关键修复：检查是否是env_ptr相关的赋值，如果是且值为0，则跳过
             // 这是为了避免env_ptr覆盖function_ptr的问题
-            println!("🔧 Assignment: target={:?}, source={:?}", target, source);
+            log::debug!("🔧 Assignment: target={:?}, source={:?}", target, source);
 
             // 检查源值是否是env_ptr字段访问
             let is_env_ptr_assignment = match source {
@@ -1086,7 +1097,7 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
                     // 对于临时变量，我们需要检查其值是否为0
                     let src_rvalue = ctx.lower_to_rvalue(source);
                     if let Operand::Immediate { value: 0 } = src_rvalue {
-                        println!("🔧 检测到值为0的临时变量赋值，可能是env_ptr，跳过以避免覆盖function_ptr");
+                        log::debug!("🔧 检测到值为0的临时变量赋值，可能是env_ptr，跳过以避免覆盖function_ptr");
                         true
                     } else {
                         false
@@ -1096,7 +1107,7 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
             };
 
             if is_env_ptr_assignment {
-                println!("🔧 跳过env_ptr=0的赋值操作，避免覆盖function_ptr");
+                log::debug!("🔧 跳过env_ptr=0的赋值操作，避免覆盖function_ptr");
                 return Ok(());
             }
 
@@ -1368,7 +1379,7 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
                 BinaryOperator::And | BinaryOperator::Or => {
                     // 逻辑操作的结果也使用Stack-First策略
                     ctx.store_value_to_stack(target, Operand::Register { id: temp_register });
-                    println!("🔧 逻辑操作结果使用Stack-First存储: {:?} -> stack", target);
+                    log::debug!("🔧 逻辑操作结果使用Stack-First存储: {:?} -> stack", target);
                 }
                 // 🔧 修复：比较操作的结果也使用Stack-First策略
                 BinaryOperator::Equal
@@ -1378,7 +1389,7 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
                 | BinaryOperator::GreaterThan
                 | BinaryOperator::GreaterEqual => {
                     ctx.store_value_to_stack(target, Operand::Register { id: temp_register });
-                    println!("🔧 比较操作结果使用Stack-First存储: {:?} -> stack", target);
+                    log::debug!("🔧 比较操作结果使用Stack-First存储: {:?} -> stack", target);
                 }
                 _ => {
                     // 其他操作仍使用Stack-First策略
@@ -1475,12 +1486,12 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
                     if let Some(env_ptr) = fields.get("env_ptr") {
                         if let Value::Number { value: 0 } = env_ptr {
                             // env_ptr为0，不添加环境参数，这是一个简单函数
-                            println!("🔧 Closure的env_ptr为0，不添加环境参数，不进行任何env_ptr相关的存储操作");
+                            log::debug!("🔧 Closure的env_ptr为0，不添加环境参数，不进行任何env_ptr相关的存储操作");
                             // 🔧 重要：当env_ptr为0时，完全跳过env_ptr的处理，避免错误的存储操作
                         } else {
                             // env_ptr非0，添加环境参数
                             all_args.push(env_ptr.clone());
-                            println!("🔧 Closure添加环境参数: {:?}", env_ptr);
+                            log::debug!("🔧 Closure添加环境参数: {:?}", env_ptr);
                         }
                     }
 
@@ -1583,7 +1594,7 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
                                     span: *span,
                                 });
 
-                                println!("🔧 变量 {} 作为Closure：从栈地址 {:?} 加载Closure到 {:?}，再从Closure加载function_ptr到 {:?}", 
+                                log::debug!("🔧 变量 {} 作为Closure：从栈地址 {:?} 加载Closure到 {:?}，再从Closure加载function_ptr到 {:?}", 
                                     name, var_stack_addr, closure_addr_reg, func_ptr_reg);
                                 func_ptr_reg
                             }
@@ -1653,7 +1664,7 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
                             .get(&value_to_key(&actual_function_to_call))
                         {
                             // 临时变量已经绑定到寄存器，直接使用
-                            println!(
+                            log::debug!(
                                 "🔧 临时变量作为函数指针：直接使用绑定的寄存器 {:?}",
                                 bound_reg
                             );
@@ -1670,9 +1681,10 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
                                         offset: 0,
                                         span: *span,
                                     });
-                                    println!(
+                                    log::debug!(
                                         "🔧 临时变量作为函数指针：从栈地址 {:?} 加载到寄存器 {:?}",
-                                        stack_addr, func_ptr_reg
+                                        stack_addr,
+                                        func_ptr_reg
                                     );
                                     func_ptr_reg
                                 }
@@ -1770,18 +1782,20 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
             field,
             span,
         } => {
-            println!(
+            log::debug!(
                 "🔧 FieldAccess执行: target={:?}, object={:?}, field={}",
-                target, object, field
+                target,
+                object,
+                field
             );
             // 1. 获取结构体的基地址
             let struct_base_addr = ctx.lower_to_rvalue(object);
-            println!("🔧 结构体基地址: {:?}", struct_base_addr);
+            log::debug!("🔧 结构体基地址: {:?}", struct_base_addr);
             // 2. 计算字段偏移量
             let field_offset = ctx
                 .get_field_offset_from_struct_layout(object, field)
                 .map_err(|e| vec![e])?;
-            println!("🔧 字段 {} 偏移量: {}", field, field_offset);
+            log::debug!("🔧 字段 {} 偏移量: {}", field, field_offset);
             // 3. 分配目标寄存器用于存放结果
             let dst_reg = ctx.current_function_mut().new_register();
             // 4. 从 [struct_base_addr + offset] 加载字段值
@@ -1794,18 +1808,22 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
                     },
                     span: *span,
                 });
-                println!(
+                log::debug!(
                     "🔧 生成add指令: add {:?}, [{:?} + {}]",
-                    dst_reg, base_reg, field_offset
+                    dst_reg,
+                    base_reg,
+                    field_offset
                 );
             } else {
                 return Err(vec!["字段访问的基地址必须是寄存器".to_string()]);
             }
             // 直接将dst_reg与target绑定，不再分配独立栈槽
             let target_key = value_to_key(target);
-            println!(
+            log::debug!(
                 "🔧 FieldAccess完成: 字段{}值直接绑定到寄存器 {:?}, {}",
-                field, dst_reg, target_key
+                field,
+                dst_reg,
+                target_key
             );
             ctx.stack_allocations.insert(target_key, dst_reg);
             Ok(())
@@ -1934,9 +1952,11 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
             // 将堆地址存储到目标值的栈位置（Stack-First策略）
             ctx.store_value_to_stack(target, Operand::Register { id: heap_addr_reg });
 
-            println!(
+            log::debug!(
                 "🔧 HeapAlloc: 分配 {} 字节的 {} 对象到 {:?}",
-                size, object_type, target
+                size,
+                object_type,
+                target
             );
             Ok(())
         }
@@ -1978,7 +1998,7 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
                 span: *span,
             });
 
-            println!("🔧 Store: 将 {:?} 存储到地址 {:?}", value, target);
+            log::debug!("🔧 Store: 将 {:?} 存储到地址 {:?}", value, target);
             Ok(())
         }
 
@@ -2076,9 +2096,10 @@ fn lower_terminator(
             let then_label = ctx.allocate_label_for_block(*then_block);
             let else_label = ctx.allocate_label_for_block(*else_block);
 
-            println!(
+            log::debug!(
                 "🔧 分支条件处理: condition={:?}, operand={:?}",
-                condition, condition_operand
+                condition,
+                condition_operand
             );
 
             // 比较条件与0（false）

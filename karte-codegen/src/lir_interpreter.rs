@@ -10,6 +10,7 @@
 use crate::vm;
 use crate::vm::{ProfessionalExecutor, ProfessionalVMManager, NUM_REGISTERS};
 use karte_lir::LirProgram;
+use log::{info, warn};
 
 /// 执行LIR程序的主要接口
 ///
@@ -58,30 +59,27 @@ pub fn execute_with_debug(program: &LirProgram, debug: bool) -> Result<i64, Stri
 /// # 错误
 /// 如果程序执行过程中发生错误，返回错误信息
 pub fn execute_professional(program: &LirProgram, debug: bool) -> Result<i64, String> {
-    let mut executor = ProfessionalExecutor::new(debug);
+    let mut executor = ProfessionalExecutor::new(debug)?;
 
     if debug {
-        println!("=== 使用专业执行器执行LIR程序 ===");
-        println!("专业虚拟机配置:");
-        println!("  - 通用寄存器数量: {}", NUM_REGISTERS);
-        println!("  - 内存大小: {} bytes", vm::MEMORY_SIZE);
-        println!("  - 栈大小: {} entries", vm::STACK_SIZE);
-        println!("  - 调用约定: System V ABI inspired");
-        println!("  - 寄存器分配: Linear Scan with Spilling");
-        println!();
+        info!("=== 使用专业执行器执行LIR程序 ===");
+        info!("专业虚拟机配置:");
+        info!("  - 通用寄存器数量: {}", NUM_REGISTERS);
+        info!("  - 内存大小: {} bytes", vm::MEMORY_SIZE);
+        info!("  - 栈大小: {} entries", vm::STACK_SIZE);
+        info!("  - 调用约定: System V ABI inspired");
+        info!("  - 寄存器分配: Linear Scan with Spilling");
     }
 
-    let result = executor.execute_program(program)?;
+    let result = executor.execute(program)?;
 
     if debug {
-        println!("=== 专业执行器程序执行完成 ===");
-        println!("返回值: {}", result);
-        println!();
+        info!("=== 专业执行器程序执行完成 ===");
+        info!("返回值: {}", result);
 
         // 打印最终的虚拟机状态
-        executor.get_vm().print_state();
-        executor.get_memory().print_memory_state();
-        executor.get_stack_manager().print_state();
+        let stats = executor.get_execution_stats();
+        info!("执行统计: {:?}", stats);
     }
 
     Ok(result)
@@ -126,19 +124,18 @@ pub struct FunctionRegisterStats {
 impl RegisterUsageAnalysis {
     /// 打印分析结果
     pub fn print_analysis(&self) {
-        println!("=== 寄存器使用分析 ===");
-        println!("总虚拟寄存器数量: {}", self.total_virtual_registers);
-        println!("最大寄存器压力: {}", self.max_register_pressure);
-        println!("可用物理寄存器: {}", self.available_physical_registers);
-        println!(
+        info!("=== 寄存器使用分析 ===");
+        info!("总虚拟寄存器数量: {}", self.total_virtual_registers);
+        info!("最大寄存器压力: {}", self.max_register_pressure);
+        info!("可用物理寄存器: {}", self.available_physical_registers);
+        info!(
             "可以分配所有寄存器: {}",
             if self.can_allocate_all { "是" } else { "否" }
         );
-        println!();
 
-        println!("各函数统计:");
+        info!("各函数统计:");
         for stats in &self.function_stats {
-            println!(
+            info!(
                 "  函数 '{}': {} 虚拟寄存器, 压力 {}, 可分配: {}",
                 stats.function_name,
                 stats.virtual_registers,
@@ -148,9 +145,8 @@ impl RegisterUsageAnalysis {
         }
 
         if !self.can_allocate_all {
-            println!();
-            println!("警告: 某些函数的寄存器压力超过了可用的物理寄存器数量!");
-            println!("可能需要实现寄存器溢出(spilling)功能。");
+            warn!("警告: 某些函数的寄存器压力超过了可用的物理寄存器数量!");
+            warn!("可能需要实现寄存器溢出(spilling)功能。");
         }
     }
 }

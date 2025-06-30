@@ -63,13 +63,13 @@ impl ProfessionalVMManager {
     /// 创建新的专业虚拟机管理器
     pub fn new(debug_mode: bool) -> Result<Self, String> {
         Ok(Self {
-            executor: ProfessionalExecutor::new(debug_mode),
+            executor: ProfessionalExecutor::new(debug_mode)?,
         })
     }
 
     /// 执行 LIR 程序
     pub fn execute_program(&mut self, program: &karte_lir::LirProgram) -> Result<i64, String> {
-        self.executor.execute_program(program)
+        self.executor.execute(program)
     }
 
     /// 获取虚拟机状态

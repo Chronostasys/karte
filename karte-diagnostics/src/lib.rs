@@ -1,3 +1,4 @@
+use log::error;
 use miette::{
     self, Diagnostic as MietteDiagnostic, NamedSource, Result as MietteResult, SourceSpan,
 };
@@ -291,7 +292,7 @@ impl DiagnosticBag {
             let error = diagnostic
                 .clone()
                 .into_compiler_error(source_code, filename);
-            eprintln!("{:?}", miette::Report::new(error));
+            error!("{:?}", miette::Report::new(error));
         }
         Ok(())
     }

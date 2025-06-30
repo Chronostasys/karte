@@ -13,5 +13,6 @@ workspace = true
 thiserror.workspace = true
 serde.workspace = true
 miette.workspace = true
+log.workspace = true
 
 [lib]
