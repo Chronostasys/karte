@@ -461,12 +461,16 @@ dependencies = [
 name = "karte-codegen"
 version = "0.1.0"
 dependencies = [
+ "env_logger",
  "karte-common",
  "karte-diagnostics",
  "karte-hir",
+ "karte-lexer",
  "karte-lir",
  "karte-mir",
+ "karte-parser",
  "libc",
+ "log",
  "tempfile",
  "windows-sys 0.48.0",
 ]
@@ -479,6 +483,7 @@ version = "0.1.0"
 name = "karte-diagnostics"
 version = "0.1.0"
 dependencies = [
+ "log",
  "miette",
  "serde",
  "thiserror",
@@ -510,6 +515,7 @@ dependencies = [
  "karte-diagnostics",
  "karte-hir",
  "karte-mir",
+ "log",
 ]
 
 [[package]]
@@ -547,6 +553,7 @@ dependencies = [
  "karte-lir",
  "karte-mir",
  "karte-parser",
+ "log",
  "tokio",
 ]
 

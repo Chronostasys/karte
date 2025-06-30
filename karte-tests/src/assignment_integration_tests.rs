@@ -5,6 +5,7 @@ mod assignment_integration_tests {
     use karte_lexer::tokenize;
     use karte_mir::lower::lower_expr_to_mir;
     use karte_parser::parse;
+    use log::info;
 
     #[test]
     fn test_simple_assignment_parsing() {
@@ -24,7 +25,7 @@ mod assignment_integration_tests {
         assert!(expr_opt.is_some(), "应该成功解析表达式");
 
         let expr = expr_opt.unwrap();
-        println!("解析成功: {:#?}", expr);
+        info!("解析成功: {:#?}", expr);
     }
 
     #[test]
@@ -37,10 +38,10 @@ mod assignment_integration_tests {
 
         // 类型检查
         let (result_type, type_diagnostics) = type_check(&expr);
-        println!("结果类型: {:?}", result_type);
+        info!("结果类型: {:?}", result_type);
 
         if !type_diagnostics.is_empty() {
-            println!("类型检查诊断: {:?}", type_diagnostics.diagnostics);
+            info!("类型检查诊断: {:?}", type_diagnostics.diagnostics);
         }
     }
 
@@ -57,14 +58,14 @@ mod assignment_integration_tests {
 
         match mir_result {
             Ok(mir_program) => {
-                println!("MIR降级成功");
-                println!("MIR程序: {:#?}", mir_program);
+                info!("MIR降级成功");
+                info!("MIR程序: {:#?}", mir_program);
 
                 // 检查main函数存在
                 assert!(mir_program.functions.contains_key("main"), "应该有main函数");
             }
             Err(errors) => {
-                println!("MIR降级失败: {:?}", errors);
+                info!("MIR降级失败: {:?}", errors);
             }
         }
     }
@@ -82,11 +83,11 @@ mod assignment_integration_tests {
 
         match execution_result {
             Ok(value) => {
-                println!("执行成功，结果: {:?}", value);
+                info!("执行成功，结果: {:?}", value);
                 // 这里可以添加断言来验证预期结果
             }
             Err(error) => {
-                println!("执行失败: {:?}", error);
+                info!("执行失败: {:?}", error);
                 // 可能是预期的，因为赋值功能可能还有bug
             }
         }
@@ -100,10 +101,10 @@ mod assignment_integration_tests {
         let (expr_opt, parse_diagnostics) = parse(&tokens);
 
         if parse_diagnostics.is_empty() && expr_opt.is_some() {
-            println!("连续赋值解析成功");
-            println!("AST: {:#?}", expr_opt.unwrap());
+            info!("连续赋值解析成功");
+            info!("AST: {:#?}", expr_opt.unwrap());
         } else {
-            println!("连续赋值解析失败: {:?}", parse_diagnostics.diagnostics);
+            info!("连续赋值解析失败: {:?}", parse_diagnostics.diagnostics);
         }
     }
 
@@ -115,10 +116,10 @@ mod assignment_integration_tests {
         let (expr_opt, parse_diagnostics) = parse(&tokens);
 
         if parse_diagnostics.is_empty() && expr_opt.is_some() {
-            println!("字段赋值解析成功");
-            println!("AST: {:#?}", expr_opt.unwrap());
+            info!("字段赋值解析成功");
+            info!("AST: {:#?}", expr_opt.unwrap());
         } else {
-            println!("字段赋值解析失败: {:?}", parse_diagnostics.diagnostics);
+            info!("字段赋值解析失败: {:?}", parse_diagnostics.diagnostics);
         }
     }
 
@@ -130,10 +131,10 @@ mod assignment_integration_tests {
         let (expr_opt, parse_diagnostics) = parse(&tokens);
 
         if parse_diagnostics.is_empty() && expr_opt.is_some() {
-            println!("赋值优先级解析成功");
-            println!("AST: {:#?}", expr_opt.unwrap());
+            info!("赋值优先级解析成功");
+            info!("AST: {:#?}", expr_opt.unwrap());
         } else {
-            println!("赋值优先级解析失败: {:?}", parse_diagnostics.diagnostics);
+            info!("赋值优先级解析失败: {:?}", parse_diagnostics.diagnostics);
         }
     }
 }

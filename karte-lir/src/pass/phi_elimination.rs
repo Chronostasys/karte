@@ -7,6 +7,7 @@ use super::analysis::ControlFlowGraph;
 use super::instruction_transformer::IndexInstructionTransformer;
 use super::{AnalysisManager, FunctionPass, PassResult};
 use crate::{Instruction, LirFunction};
+use log::{debug, error, info};
 
 /// φ指令消除Pass
 #[derive(Debug)]
@@ -39,7 +40,7 @@ impl PhiEliminationPass {
                 span,
             } = instruction
             {
-                println!("🔧 处理φ指令 {}: dst={:?}, incoming={:?}", i, dst, incoming);
+                debug!("🔧 处理φ指令 {}: dst={:?}, incoming={:?}", i, dst, incoming);
 
                 // 标记φ指令为需要移除
                 transformer.remove(i);
@@ -57,7 +58,7 @@ impl PhiEliminationPass {
                                 span: *span,
                             };
                             transformer.insert(insert_position, move_instruction);
-                            println!(
+                            debug!(
                                 "🔧 在位置 {} 插入 mov {:?}, {:?}",
                                 insert_position, dst, operand
                             );
@@ -123,22 +124,22 @@ impl FunctionPass for PhiEliminationPass {
         function: &mut LirFunction,
         analyses: &mut AnalysisManager,
     ) -> PassResult {
-        println!("🔧 运行φ指令消除Pass");
+        info!("🔧 运行φ指令消除Pass");
         // 获取CFG分析结果
         let cfg = match analyses.get_result::<ControlFlowGraph>("cfg") {
             Some(cfg) => cfg,
             None => {
-                println!("❌ φ指令消除失败：没有CFG分析结果");
+                error!("❌ φ指令消除失败：没有CFG分析结果");
                 return PassResult::Failed("Missing CFG analysis".to_string());
             }
         };
         match self.eliminate_phi_instructions(function, cfg) {
             Ok(()) => {
-                println!("✅ φ指令消除完成");
+                info!("✅ φ指令消除完成");
                 PassResult::Changed
             }
             Err(e) => {
-                println!("❌ φ指令消除失败: {}", e);
+                error!("❌ φ指令消除失败: {}", e);
                 PassResult::Failed(e)
             }
         }

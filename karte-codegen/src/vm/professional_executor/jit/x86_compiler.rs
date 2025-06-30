@@ -2,8 +2,8 @@
 //!
 //! 将LIR指令编译为x86-64机器码
 
+use super::code_buffer::{CodeBuilder, JumpType};
 use super::compiler_trait::*;
-use super::code_buffer::{CodeBuilder, JumpType, VariableLocation};
 use karte_lir::{Instruction, LirFunction, LirProgram, Operand, Register};
 use std::collections::HashMap;
 
@@ -93,7 +93,7 @@ impl X86Compiler {
             let x86_reg = match i {
                 6 => X86Register::R10 as u8, // Physical(6) -> r10 (虚拟机栈指针)
                 7 => X86Register::R11 as u8, // Physical(7) -> r11 (虚拟机帧指针)
-                _ => i as u8, // 其他物理寄存器直接映射
+                _ => i,                      // 其他物理寄存器直接映射
             };
             self.register_mapping.insert(physical_reg, x86_reg);
         }
@@ -119,24 +119,20 @@ impl X86Compiler {
         }
 
         match instruction {
-            Instruction::Move { dst, src, .. } => {
-                self.compile_move(dst, src, code_builder)
-            }
-            Instruction::Add { dst, src1, src2, .. } => {
-                self.compile_add(dst, src1, src2, code_builder)
-            }
-            Instruction::Sub { dst, src1, src2, .. } => {
-                self.compile_sub(dst, src1, src2, code_builder)
-            }
-            Instruction::Mul { dst, src1, src2, .. } => {
-                self.compile_mul(dst, src1, src2, code_builder)
-            }
+            Instruction::Move { dst, src, .. } => self.compile_move(dst, src, code_builder),
+            Instruction::Add {
+                dst, src1, src2, ..
+            } => self.compile_add(dst, src1, src2, code_builder),
+            Instruction::Sub {
+                dst, src1, src2, ..
+            } => self.compile_sub(dst, src1, src2, code_builder),
+            Instruction::Mul {
+                dst, src1, src2, ..
+            } => self.compile_mul(dst, src1, src2, code_builder),
             Instruction::Compare { src1, src2, .. } => {
                 self.compile_compare(src1, src2, code_builder)
             }
-            Instruction::Jump { target, .. } => {
-                self.compile_jump(target, code_builder)
-            }
+            Instruction::Jump { target, .. } => self.compile_jump(target, code_builder),
             Instruction::JumpEqual { target, .. } => {
                 self.compile_conditional_jump(JumpType::ConditionalEqual, target, code_builder)
             }
@@ -149,31 +145,28 @@ impl X86Compiler {
             Instruction::JumpGreater { target, .. } => {
                 self.compile_conditional_jump(JumpType::ConditionalGreater, target, code_builder)
             }
-            Instruction::Call { target, .. } => {
-                self.compile_call(target, code_builder)
-            }
-            Instruction::Return { value, .. } => {
-                self.compile_return(value.as_ref(), code_builder)
-            }
+            Instruction::Call { target, .. } => self.compile_call(target, code_builder),
+            Instruction::JumpIndirect {
+                function_register, ..
+            } => self.compile_jump_indirect(function_register, code_builder),
+            Instruction::Return { value, .. } => self.compile_return(value.as_ref(), code_builder),
             Instruction::Label { id, .. } => {
                 let label_name = format!("label_{}", id.0);
                 code_builder.define_label(&label_name)?;
                 Ok(())
             }
-            Instruction::Load64 { dst, addr, offset, .. } => {
-                self.compile_load64(dst, addr, *offset, code_builder)
-            }
-            Instruction::Store64 { addr, offset, src, .. } => {
-                self.compile_store64(addr, *offset, src, code_builder)
-            }
+            Instruction::Load64 {
+                dst, addr, offset, ..
+            } => self.compile_load64(dst, addr, *offset, code_builder),
+            Instruction::Store64 {
+                addr, offset, src, ..
+            } => self.compile_store64(addr, *offset, src, code_builder),
             Instruction::Nop { .. } => {
                 // NOP指令
                 code_builder.emit_byte(0x90);
                 Ok(())
             }
-            _ => {
-                Err(format!("不支持的指令类型: {:?}", instruction))
-            }
+            _ => Err(format!("不支持的指令类型: {:?}", instruction)),
         }
     }
 }
@@ -222,7 +215,7 @@ impl X86Compiler {
         code_builder: &mut CodeBuilder,
     ) -> Result<(), String> {
         let dst_reg = self.get_physical_register(dst)?;
-        
+
         match src {
             Operand::Register { id } => {
                 let src_reg = self.get_physical_register(id)?;
@@ -232,6 +225,17 @@ impl X86Compiler {
             Operand::Immediate { value } => {
                 // mov dst, imm64
                 self.emit_mov_reg_imm64(code_builder, dst_reg, *value);
+            }
+            Operand::Label { id } => {
+                // mov dst, label - 加载标签地址到寄存器
+                let label_name = format!("label_{}", id.0);
+
+                // 使用CodeBuilder的标签地址功能
+                code_builder.emit_label_address(&label_name);
+
+                // 然后从内存加载地址到寄存器
+                // 使用简单的内存加载：mov dst, [rip + 0]
+                self.emit_mov_reg_rip_rel(code_builder, dst_reg, 0);
             }
             _ => {
                 return Err(format!("mov指令不支持的操作数类型: {:?}", src));
@@ -249,7 +253,7 @@ impl X86Compiler {
         code_builder: &mut CodeBuilder,
     ) -> Result<(), String> {
         let dst_reg = self.get_physical_register(dst)?;
-        
+
         // 先将src1移动到dst
         match src1 {
             Operand::Register { id } => {
@@ -265,7 +269,7 @@ impl X86Compiler {
                 return Err(format!("add指令不支持的src1类型: {:?}", src1));
             }
         }
-        
+
         // 然后将src2加到dst
         match src2 {
             Operand::Register { id } => {
@@ -291,7 +295,7 @@ impl X86Compiler {
         code_builder: &mut CodeBuilder,
     ) -> Result<(), String> {
         let dst_reg = self.get_physical_register(dst)?;
-        
+
         // 先将src1移动到dst
         match src1 {
             Operand::Register { id } => {
@@ -307,7 +311,7 @@ impl X86Compiler {
                 return Err(format!("sub指令不支持的src1类型: {:?}", src1));
             }
         }
-        
+
         // 然后从dst减去src2
         match src2 {
             Operand::Register { id } => {
@@ -333,7 +337,7 @@ impl X86Compiler {
         code_builder: &mut CodeBuilder,
     ) -> Result<(), String> {
         let dst_reg = self.get_physical_register(dst)?;
-        
+
         // 将src1移动到dst
         match src1 {
             Operand::Register { id } => {
@@ -349,7 +353,7 @@ impl X86Compiler {
                 return Err(format!("mul指令不支持的src1类型: {:?}", src1));
             }
         }
-        
+
         // 使用imul指令乘以src2
         match src2 {
             Operand::Register { id } => {
@@ -384,7 +388,10 @@ impl X86Compiler {
                 self.emit_cmp_reg_imm32(code_builder, reg, *value as i32);
             }
             _ => {
-                return Err(format!("compare指令不支持的操作数组合: {:?}, {:?}", src1, src2));
+                return Err(format!(
+                    "compare指令不支持的操作数组合: {:?}, {:?}",
+                    src1, src2
+                ));
             }
         }
         Ok(())
@@ -424,6 +431,89 @@ impl X86Compiler {
         Ok(())
     }
 
+    /// 编译间接跳转指令（call rax - 间接函数调用）
+    fn compile_jump_indirect(
+        &mut self,
+        function_register: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> Result<(), String> {
+        let function_reg = self.get_physical_register(function_register)?;
+
+        // call rax - FF D0 (间接调用)
+        // 对于x86-64，我们需要根据寄存器生成不同的指令
+        match function_reg {
+            0 => {
+                // call rax - FF D0
+                code_builder.emit_bytes(&[0xFF, 0xD0]);
+            }
+            1 => {
+                // call rcx - FF D1
+                code_builder.emit_bytes(&[0xFF, 0xD1]);
+            }
+            2 => {
+                // call rdx - FF D2
+                code_builder.emit_bytes(&[0xFF, 0xD2]);
+            }
+            3 => {
+                // call rbx - FF D3
+                code_builder.emit_bytes(&[0xFF, 0xD3]);
+            }
+            4 => {
+                // call rsp - FF D4
+                code_builder.emit_bytes(&[0xFF, 0xD4]);
+            }
+            5 => {
+                // call rbp - FF D5
+                code_builder.emit_bytes(&[0xFF, 0xD5]);
+            }
+            6 => {
+                // call rsi - FF D6
+                code_builder.emit_bytes(&[0xFF, 0xD6]);
+            }
+            7 => {
+                // call rdi - FF D7
+                code_builder.emit_bytes(&[0xFF, 0xD7]);
+            }
+            8 => {
+                // call r8 - 41 FF D0
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xD0]);
+            }
+            9 => {
+                // call r9 - 41 FF D1
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xD1]);
+            }
+            10 => {
+                // call r10 - 41 FF D2
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xD2]);
+            }
+            11 => {
+                // call r11 - 41 FF D3
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xD3]);
+            }
+            12 => {
+                // call r12 - 41 FF D4
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xD4]);
+            }
+            13 => {
+                // call r13 - 41 FF D5
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xD5]);
+            }
+            14 => {
+                // call r14 - 41 FF D6
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xD6]);
+            }
+            15 => {
+                // call r15 - 41 FF D7
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xD7]);
+            }
+            _ => {
+                return Err(format!("不支持的寄存器: {}", function_reg));
+            }
+        }
+
+        Ok(())
+    }
+
     /// 编译返回指令
     fn compile_return(
         &mut self,
@@ -439,7 +529,7 @@ impl X86Compiler {
                 self.emit_mov_reg_reg(code_builder, rax, src_reg);
             }
         }
-        
+
         // 🔧 修复：不在这里生成ret指令，让函数尾声处理
         // ret指令会在函数尾声生成
         Ok(())
@@ -468,7 +558,7 @@ impl X86Compiler {
         code_builder: &mut CodeBuilder,
     ) -> Result<(), String> {
         let addr_reg = self.get_physical_register(addr)?;
-        
+
         match src {
             Operand::Register { id } => {
                 let src_reg = self.get_physical_register(id)?;
@@ -476,6 +566,13 @@ impl X86Compiler {
             }
             Operand::Immediate { value } => {
                 self.emit_mov_mem_imm32(code_builder, addr_reg, offset as i32, *value as i32);
+            }
+            Operand::Label { id } => {
+                // store64 [addr + offset], label - 存储标签地址
+                let label_name = format!("label_{}", id.0);
+
+                // 使用CodeBuilder的标签地址功能
+                code_builder.emit_store_label_address(addr_reg, offset, &label_name);
             }
             _ => {
                 return Err(format!("store64指令不支持的src类型: {:?}", src));
@@ -487,11 +584,11 @@ impl X86Compiler {
     // x86-64指令编码实现
     /// 生成REX前缀
     fn emit_rex_prefix(&self, code_builder: &mut CodeBuilder, w: bool, r: u8, x: u8, b: u8) {
-        let rex = 0x40 | 
-                  (if w { 0x08 } else { 0x00 }) |
-                  ((r & 0x08) >> 1) |
-                  ((x & 0x08) >> 2) |
-                  ((b & 0x08) >> 3);
+        let rex = 0x40
+            | (if w { 0x08 } else { 0x00 })
+            | ((r & 0x08) >> 1)
+            | ((x & 0x08) >> 2)
+            | ((b & 0x08) >> 3);
         code_builder.emit_byte(rex);
     }
 
@@ -590,11 +687,12 @@ impl X86Compiler {
         // REX.W + 8B /r: MOV r64, r/m64
         self.emit_rex_prefix(code_builder, true, dst, 0, base);
         code_builder.emit_byte(0x8B);
-        
-        if offset == 0 && (base & 0x07) != 5 { // RBP需要特殊处理
+
+        if offset == 0 && (base & 0x07) != 5 {
+            // RBP需要特殊处理
             // ModR/M: mod=00, reg=dst, r/m=base
             self.emit_modrm(code_builder, 0b00, dst, base);
-        } else if offset >= -128 && offset <= 127 {
+        } else if (-128..=127).contains(&offset) {
             // ModR/M: mod=01, reg=dst, r/m=base + SIB + disp8
             self.emit_modrm(code_builder, 0b01, dst, base);
             code_builder.emit_byte(offset as u8);
@@ -610,10 +708,11 @@ impl X86Compiler {
         // REX.W + 89 /r: MOV r/m64, r64
         self.emit_rex_prefix(code_builder, true, src, 0, base);
         code_builder.emit_byte(0x89);
-        
-        if offset == 0 && (base & 0x07) != 5 { // RBP需要特殊处理
+
+        if offset == 0 && (base & 0x07) != 5 {
+            // RBP需要特殊处理
             self.emit_modrm(code_builder, 0b00, src, base);
-        } else if offset >= -128 && offset <= 127 {
+        } else if (-128..=127).contains(&offset) {
             self.emit_modrm(code_builder, 0b01, src, base);
             code_builder.emit_byte(offset as u8);
         } else {
@@ -627,10 +726,10 @@ impl X86Compiler {
         // REX.W + C7 /0 id: MOV r/m64, imm32
         self.emit_rex_prefix(code_builder, true, 0, 0, base);
         code_builder.emit_byte(0xC7);
-        
+
         if offset == 0 && (base & 0x07) != 5 {
             self.emit_modrm(code_builder, 0b00, 0, base);
-        } else if offset >= -128 && offset <= 127 {
+        } else if (-128..=127).contains(&offset) {
             self.emit_modrm(code_builder, 0b01, 0, base);
             code_builder.emit_byte(offset as u8);
         } else {
@@ -638,6 +737,21 @@ impl X86Compiler {
             code_builder.emit_i32(offset);
         }
         code_builder.emit_i32(imm);
+    }
+
+    /// mov reg, [rip + offset] - RIP相对寻址
+    fn emit_mov_reg_rip_rel(&self, code_builder: &mut CodeBuilder, dst: u8, offset: i32) {
+        // REX.W + 8B /r: MOV r64, r/m64
+        // 对于RIP相对寻址，ModR/M字段是 00 101 000 (mod=00, reg=dst, rm=101)
+        self.emit_rex_prefix(code_builder, true, dst, 0, 0);
+        code_builder.emit_byte(0x8B);
+
+        // ModR/M: mod=00, reg=dst, rm=101 (RIP相对)
+        let modrm = (dst << 3) | 0x05; // 00 101 000
+        code_builder.emit_byte(modrm);
+
+        // 32位偏移
+        code_builder.emit_i32(offset);
     }
 }
 
@@ -664,14 +778,14 @@ impl JitCompiler for X86Compiler {
 
         // 函数序言
         self.emit_function_prologue(&mut code_builder)?;
-        
+
         // 编译函数体
         for (index, instruction) in function.instructions.iter().enumerate() {
             if self.debug_mode {
                 code_builder.add_source_line(index);
                 println!("编译指令 {}: {:?}", index, instruction);
             }
-            
+
             self.compile_instruction(instruction, &mut code_builder, program)?;
         }
 
@@ -679,8 +793,73 @@ impl JitCompiler for X86Compiler {
         self.emit_function_epilogue(&mut code_builder)?;
 
         // 完成代码生成
-        let machine_code = code_builder.finalize()?;
-        
+        let machine_code = code_builder.finalize_with_global_addresses(None)?;
+
+        let compiled_function = CompiledFunction::new(
+            function.name.clone(),
+            machine_code,
+            0, // 入口点在函数开始
+        );
+
+        if self.debug_mode {
+            println!(
+                "函数 '{}' 编译完成，生成机器码 {} 字节",
+                function.name,
+                compiled_function.code_size()
+            );
+        }
+
+        Ok(compiled_function)
+    }
+
+    /// 编译单个函数（使用全局标签表）
+    fn compile_function_with_global_labels(
+        &mut self,
+        function: &LirFunction,
+        program: &LirProgram,
+        global_labels: &std::collections::HashMap<String, *const u8>,
+    ) -> Result<CompiledFunction, String> {
+        if self.debug_mode {
+            println!("开始编译函数: {} (使用全局标签表)", function.name);
+            println!("LIR函数内容:");
+            for (i, instruction) in function.instructions.iter().enumerate() {
+                println!("  {}: {:?}", i, instruction);
+            }
+        }
+
+        let mut code_builder = if self.debug_mode {
+            CodeBuilder::with_debug_info()
+        } else {
+            CodeBuilder::new()
+        };
+
+        let global_labels_usize: std::collections::HashMap<String, usize> = global_labels
+            .iter()
+            .map(|(k, v)| (k.clone(), *v as usize))
+            .collect();
+        code_builder.set_global_labels(global_labels_usize);
+        // 设置全局标签表
+        // code_builder.set_global_labels(global_labels.clone());
+
+        // 函数序言
+        self.emit_function_prologue(&mut code_builder)?;
+
+        // 编译函数体
+        for (index, instruction) in function.instructions.iter().enumerate() {
+            if self.debug_mode {
+                code_builder.add_source_line(index);
+                println!("编译指令 {}: {:?}", index, instruction);
+            }
+
+            self.compile_instruction(instruction, &mut code_builder, program)?;
+        }
+
+        // 🔧 修复：总是生成函数尾声，确保正确的寄存器恢复
+        self.emit_function_epilogue(&mut code_builder)?;
+
+        // 完成代码生成
+        let machine_code = code_builder.finalize_with_global_addresses(None)?;
+
         let compiled_function = CompiledFunction::new(
             function.name.clone(),
             machine_code,
@@ -724,16 +903,16 @@ impl X86Compiler {
         let rdx = X86Register::RDX as u8;
         let vm_sp = X86Register::R10 as u8; // r6
         let vm_fp = X86Register::R11 as u8; // r7
-        
+
         // 🔧 修复：将参数移动到虚拟机寄存器，但不干扰LIR的栈帧管理
         // 将虚拟栈指针参数移动到r10 (r6)
         self.emit_mov_reg_reg(code_builder, vm_sp, rcx);
-        // 将虚拟帧指针参数移动到r11 (r7) 
+        // 将虚拟帧指针参数移动到r11 (r7)
         self.emit_mov_reg_reg(code_builder, vm_fp, rdx);
-        
+
         // 🔧 新增：确保r6和r7的初始值正确，让LIR的栈帧管理指令能正常工作
         // 此时r6和r7已经包含了虚拟栈的地址，LIR的栈帧管理指令会基于这些值工作
-        
+
         Ok(())
     }
 
@@ -743,4 +922,109 @@ impl X86Compiler {
         code_builder.emit_byte(0xC3);
         Ok(())
     }
-} 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use karte_lir::{LirFunction, LirProgram, Register};
+
+    #[test]
+    fn test_jump_indirect_compilation() {
+        // 创建一个简单的测试函数
+        let mut function = LirFunction::new("test_jump_indirect".to_string());
+
+        // 添加一个标签
+        let target_label = function.new_label();
+        function.add_instruction(Instruction::Label {
+            id: target_label,
+            span: karte_diagnostics::Span::dummy(),
+        });
+
+        // 添加一个mov指令将标签地址加载到寄存器
+        function.add_instruction(Instruction::Move {
+            dst: Register::Virtual(1),
+            src: Operand::Label { id: target_label },
+            span: karte_diagnostics::Span::dummy(),
+        });
+
+        // 添加JumpIndirect指令
+        function.add_instruction(Instruction::JumpIndirect {
+            function_register: Register::Virtual(1),
+            span: karte_diagnostics::Span::dummy(),
+        });
+
+        // 创建程序
+        let mut program = LirProgram::new();
+        program.add_function(function);
+
+        // 创建编译器
+        let mut compiler = X86Compiler::new(true).unwrap();
+
+        // 编译函数
+        let result = compiler.compile_function(&program.functions["test_jump_indirect"], &program);
+
+        // 验证编译成功
+        assert!(
+            result.is_ok(),
+            "JumpIndirect指令编译失败: {:?}",
+            result.err()
+        );
+
+        let compiled_function = result.unwrap();
+        println!(
+            "x86 JumpIndirect指令编译成功，机器码大小: {} 字节",
+            compiled_function.code_size()
+        );
+
+        // 验证机器码不为空
+        assert!(compiled_function.code_size() > 0, "编译后的机器码为空");
+    }
+
+    #[test]
+    fn test_store_label_compilation() {
+        // 创建一个简单的测试函数
+        let mut function = LirFunction::new("test_store_label".to_string());
+
+        // 添加一个标签
+        let target_label = function.new_label();
+        function.add_instruction(Instruction::Label {
+            id: target_label,
+            span: karte_diagnostics::Span::dummy(),
+        });
+
+        // 添加store64指令，将标签地址存储到内存
+        function.add_instruction(Instruction::Store64 {
+            addr: Register::Virtual(7), // r7
+            offset: -16,
+            src: Operand::Label { id: target_label },
+            span: karte_diagnostics::Span::dummy(),
+        });
+
+        // 创建程序
+        let mut program = LirProgram::new();
+        program.add_function(function);
+
+        // 创建编译器
+        let mut compiler = X86Compiler::new(true).unwrap();
+
+        // 编译函数
+        let result = compiler.compile_function(&program.functions["test_store_label"], &program);
+
+        // 验证编译成功
+        assert!(
+            result.is_ok(),
+            "x86 Store指令标签参数编译失败: {:?}",
+            result.err()
+        );
+
+        let compiled_function = result.unwrap();
+        println!(
+            "x86 Store指令标签参数编译成功，机器码大小: {} 字节",
+            compiled_function.code_size()
+        );
+
+        // 验证机器码不为空
+        assert!(compiled_function.code_size() > 0, "编译后的机器码为空");
+    }
+}

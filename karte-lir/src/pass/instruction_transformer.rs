@@ -4,6 +4,7 @@
 //! 所有 pass 都应该使用这个系统来进行指令的插入、删除和替换操作。
 
 use crate::{Instruction, LirFunction};
+use log::{debug, info, trace, warn};
 
 /// 基于索引的变换操作
 #[derive(Debug, Clone)]
@@ -60,7 +61,7 @@ impl IndexInstructionTransformer {
             return (false, 0, 0, 0);
         }
 
-        println!(
+        info!(
             "🔧 应用 {} 个 index-based 变换，原lir: \n{}",
             self.transforms.len(),
             function
@@ -97,7 +98,7 @@ impl IndexInstructionTransformer {
                 }
             }
 
-            println!(
+            debug!(
                 "🔧 应用变换: 原始index={:?}, 修正后index={}",
                 match op {
                     IndexTransformOperation::Remove(i) => *i,
@@ -110,7 +111,7 @@ impl IndexInstructionTransformer {
             match op {
                 IndexTransformOperation::Remove(_) => {
                     if idx < function.instructions.len() {
-                        println!("🔧 删除指令 [{}]: {}", idx, function.instructions[idx]);
+                        debug!("🔧 删除指令 [{}]: {}", idx, function.instructions[idx]);
                         function.instructions.remove(idx);
                         modified = true;
                         removed_count += 1;
@@ -118,7 +119,7 @@ impl IndexInstructionTransformer {
                 }
                 IndexTransformOperation::Replace(_, new_instr) => {
                     if idx < function.instructions.len() {
-                        println!(
+                        debug!(
                             "🔧 替换指令 [{}]: {} -> {}",
                             idx, function.instructions[idx], new_instr
                         );
@@ -129,7 +130,7 @@ impl IndexInstructionTransformer {
                 }
                 IndexTransformOperation::Insert(_, new_instr) => {
                     if idx <= function.instructions.len() {
-                        println!("🔧 插入指令 [{}]: {}", idx, new_instr);
+                        debug!("🔧 插入指令 [{}]: {}", idx, new_instr);
                         function.instructions.insert(idx, new_instr.clone());
                         modified = true;
                         inserted_count += 1;
@@ -142,7 +143,7 @@ impl IndexInstructionTransformer {
         }
 
         self.transforms.clear();
-        println!(
+        info!(
             "🔧 index-based 变换完成，修改: {} lir:\n{}",
             modified, function
         );
@@ -262,7 +263,7 @@ impl HistoryBasedTransformer {
             return (false, 0, 0, 0);
         }
 
-        println!(
+        info!(
             "🧠 智能变换系统开始：{} 个操作，{} 条历史记录",
             self.operations.len(),
             self.transform_history.len()
@@ -277,7 +278,7 @@ impl HistoryBasedTransformer {
         for operation in &self.operations.clone() {
             let corrected_index = self.calculate_corrected_index(operation.original_index);
 
-            println!(
+            debug!(
                 "🧠 操作序号修正：原始序号 {} -> 修正序号 {}",
                 operation.original_index, corrected_index
             );
@@ -295,7 +296,7 @@ impl HistoryBasedTransformer {
         }
 
         self.operations.clear(); // 清空已处理的操作
-        println!(
+        info!(
             "✅ 智能变换系统完成，历史记录数量：{}",
             self.transform_history.len()
         );
@@ -306,20 +307,22 @@ impl HistoryBasedTransformer {
     fn calculate_corrected_index(&self, original_index: usize) -> usize {
         let mut corrected_index = original_index;
 
-        println!("🧠 开始序号修正：原始序号 {}", original_index);
+        trace!("🧠 开始序号修正：原始序号 {}", original_index);
 
         // 遍历历史记录，计算对当前序号的影响
         for record in &self.transform_history {
-            println!(
+            trace!(
                 "🧠   检查历史记录：位置 {}, 序号 {}, 变换类型 {:?}",
-                record.target_position, record.sequence_number, record.transform_type
+                record.target_position,
+                record.sequence_number,
+                record.transform_type
             );
 
             if record.target_position < original_index {
                 match record.transform_type {
                     TransformType::Remove => {
                         corrected_index = corrected_index.saturating_sub(1);
-                        println!(
+                        trace!(
                             "🧠     删除影响：序号 {} -> {}",
                             corrected_index + 1,
                             corrected_index
@@ -327,20 +330,20 @@ impl HistoryBasedTransformer {
                     }
                     TransformType::Insert => {
                         corrected_index += 1;
-                        println!(
+                        trace!(
                             "🧠     插入影响：序号 {} -> {}",
                             corrected_index - 1,
                             corrected_index
                         );
                     }
                     TransformType::Replace => {
-                        println!("🧠     替换操作，无序号影响");
+                        trace!("🧠     替换操作，无序号影响");
                     }
                 }
             }
         }
 
-        println!("🧠 序号修正完成：{} -> {}", original_index, corrected_index);
+        trace!("🧠 序号修正完成：{} -> {}", original_index, corrected_index);
         corrected_index
     }
 
@@ -351,13 +354,13 @@ impl HistoryBasedTransformer {
         operation: &HistoryBasedOperation,
         corrected_index: usize,
     ) -> bool {
-        println!(
+        debug!(
             "🧠 应用单个操作：序号 {}, 类型 {:?}",
             corrected_index, operation.operation_type
         );
 
         if corrected_index >= function.instructions.len() {
-            println!("⚠️ 序号超出范围，跳过操作");
+            warn!("⚠️ 序号超出范围，跳过操作");
             return false;
         }
 
@@ -384,7 +387,7 @@ impl HistoryBasedTransformer {
         // 执行实际变换
         match &operation.operation_type {
             HistoryBasedOperationType::Remove => {
-                println!(
+                debug!(
                     "🧠   删除指令 [{}]: {:?}",
                     corrected_index, function.instructions[corrected_index]
                 );
@@ -394,14 +397,14 @@ impl HistoryBasedTransformer {
                 self.adjust_history_positions_after_removal(corrected_index);
             }
             HistoryBasedOperationType::Replace(new_instruction) => {
-                println!(
+                debug!(
                     "🧠   替换指令 [{}]: {:?} -> {:?}",
                     corrected_index, function.instructions[corrected_index], new_instruction
                 );
                 function.instructions[corrected_index] = new_instruction.clone();
             }
             HistoryBasedOperationType::Insert(new_instruction) => {
-                println!("🧠   插入指令 [{}]: {:?}", corrected_index, new_instruction);
+                debug!("🧠   插入指令 [{}]: {:?}", corrected_index, new_instruction);
                 function
                     .instructions
                     .insert(corrected_index, new_instruction.clone());
@@ -658,7 +661,7 @@ mod tests {
 
     #[test]
     fn test_index_based_transformer() {
-        println!("🔧 测试 index-based 变换系统");
+        info!("🔧 测试 index-based 变换系统");
 
         let mut transformer = IndexInstructionTransformer::new();
 
@@ -686,7 +689,7 @@ mod tests {
             span: Span { start: 0, end: 0 },
         });
 
-        println!("🔧 原始函数有 {} 条指令", function.instructions.len());
+        info!("🔧 原始函数有 {} 条指令", function.instructions.len());
 
         // 添加变换操作：删除第1个指令，替换第2个指令
         transformer.remove(1);
@@ -702,11 +705,11 @@ mod tests {
         // 应用变换
         let (changed, ..) = transformer.apply_to_function(&mut function);
 
-        println!(
+        info!(
             "🔧 应用变换后，函数有 {} 条指令",
             function.instructions.len()
         );
-        println!("🔧 变换是否成功: {}", changed);
+        info!("🔧 变换是否成功: {}", changed);
 
         // 验证结果
         assert_eq!(function.instructions.len(), 2); // 删除了1个，保留了2个
@@ -715,7 +718,7 @@ mod tests {
         if let Instruction::Move { dst, src, .. } = &function.instructions[0] {
             assert_eq!(*dst, Register::Virtual(1));
             assert_eq!(*src, Operand::Immediate { value: 42 });
-            println!("✅ 第一个指令正确保留");
+            info!("✅ 第一个指令正确保留");
         } else {
             panic!("第一个指令应该是Move");
         }
@@ -724,17 +727,17 @@ mod tests {
         if let Instruction::Move { dst, src, .. } = &function.instructions[1] {
             assert_eq!(*dst, Register::Virtual(3));
             assert_eq!(*src, Operand::Immediate { value: 200 });
-            println!("✅ 第二个指令正确替换");
+            info!("✅ 第二个指令正确替换");
         } else {
             panic!("第二个指令应该是Move");
         }
 
-        println!("🔧 index-based 变换系统测试完成 ✅");
+        info!("🔧 index-based 变换系统测试完成 ✅");
     }
 
     #[test]
     fn test_history_based_transformer() {
-        println!("🧠 测试基于历史的变换系统");
+        info!("🧠 测试基于历史的变换系统");
 
         let mut transformer = HistoryBasedTransformer::new();
 
@@ -750,7 +753,7 @@ mod tests {
             });
         }
 
-        println!("🧠 原始函数有 {} 条指令", function.instructions.len());
+        info!("🧠 原始函数有 {} 条指令", function.instructions.len());
 
         // 添加变换操作：删除第1个，替换第3个，插入到第2个位置
         transformer.remove_at(1);
@@ -774,11 +777,11 @@ mod tests {
         // 应用变换
         let (changed, _, _, _) = transformer.apply_to_function(&mut function);
 
-        println!(
+        info!(
             "🧠 应用变换后，函数有 {} 条指令",
             function.instructions.len()
         );
-        println!("🧠 变换是否成功: {}", changed);
+        info!("🧠 变换是否成功: {}", changed);
 
         // 验证结果
         assert_eq!(function.instructions.len(), 5); // 删除了1个，插入了1个，总共5个
@@ -809,12 +812,12 @@ mod tests {
             assert_eq!(*src, Operand::Immediate { value: 4 });
         }
 
-        println!("🧠 基于历史的变换系统测试完成 ✅");
+        info!("🧠 基于历史的变换系统测试完成 ✅");
     }
 
     #[test]
     fn test_batch_transformer() {
-        println!("📦 测试批量变换器");
+        info!("📦 测试批量变换器");
 
         let mut transformer = BatchTransformer::new();
 
@@ -830,7 +833,7 @@ mod tests {
             });
         }
 
-        println!("📦 原始函数有 {} 条指令", function.instructions.len());
+        info!("📦 原始函数有 {} 条指令", function.instructions.len());
 
         // 添加多种变换操作
         transformer.remove(1); // index-based
@@ -855,11 +858,11 @@ mod tests {
         // 应用变换
         let result = transformer.apply_to_function(&mut function);
 
-        println!(
+        info!(
             "📦 应用变换后，函数有 {} 条指令",
             function.instructions.len()
         );
-        println!("📦 变换结果: {:?}", result);
+        info!("📦 变换结果: {:?}", result);
 
         // 验证结果
         assert!(result.changed);
@@ -868,6 +871,6 @@ mod tests {
         assert_eq!(result.inserted_count, 1);
         assert_eq!(function.instructions.len(), 5); // 删除了2个，插入了1个，总共5个
 
-        println!("📦 批量变换器测试完成 ✅");
+        info!("📦 批量变换器测试完成 ✅");
     }
 }

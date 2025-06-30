@@ -13,6 +13,7 @@ pub mod type_checker_tests;
 
 use karte_diagnostics::Span;
 use karte_hir::Expr;
+use log::info;
 
 /// 创建一个虚拟的span用于测试
 pub fn dummy_span() -> Span {
@@ -26,8 +27,8 @@ pub fn execute_with_pipeline_debug(expr: &Expr, debug: bool) -> Result<i64, Stri
         .map_err(|e| format!("MIR lowering error: {:?}", e))?;
 
     if debug {
-        println!("=== MIR Program ===");
-        println!("{}", mir_program);
+        info!("=== MIR Program ===");
+        info!("{}", mir_program);
     }
 
     // 2. MIR -> LIR (生成高级LIR，包含Alloc指令)
@@ -35,9 +36,9 @@ pub fn execute_with_pipeline_debug(expr: &Expr, debug: bool) -> Result<i64, Stri
         .map_err(|e| format!("LIR lowering error: {:?}", e))?;
 
     if debug {
-        println!("=== 返回高级LIR (包含Alloc指令，待优化) ===");
-        println!("{}", lir_program);
-        println!("================================================");
+        info!("=== 返回高级LIR (包含Alloc指令，待优化) ===");
+        info!("{}", lir_program);
+        info!("================================================");
     }
 
     // 3. 优化管道（Memory2Reg等优化在这里处理Alloc指令）
@@ -47,11 +48,11 @@ pub fn execute_with_pipeline_debug(expr: &Expr, debug: bool) -> Result<i64, Stri
         .map_err(|e| format!("Optimization error: {:?}", e))?;
 
     if debug {
-        println!("=== 优化统计 ===");
+        info!("=== 优化统计 ===");
         opt_stats.print();
-        println!("=== 优化后的LIR ===");
-        println!("{}", lir_program);
-        println!("================================================");
+        info!("=== 优化后的LIR ===");
+        info!("{}", lir_program);
+        info!("================================================");
     }
 
     // 4. 指令降级：将高级LIR指令降级为基础指令（在优化之后）
@@ -59,9 +60,9 @@ pub fn execute_with_pipeline_debug(expr: &Expr, debug: bool) -> Result<i64, Stri
         .map_err(|e| format!("Instruction lowering error: {:?}", e))?;
 
     if debug {
-        println!("=== 指令降级后的LIR (基础指令) ===");
-        println!("{}", lir_program);
-        println!("================================================");
+        info!("=== 指令降级后的LIR (基础指令) ===");
+        info!("{}", lir_program);
+        info!("================================================");
     }
 
     // 5. 执行（使用简化的寄存器映射，因为寄存器分配已经在编译时完成）

@@ -162,34 +162,32 @@ impl OptimizationPipeline {
         pass_manager.add_function_pass(Box::new(Memory2RegPass::new()));
         // pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::DecisionOnly)));
         // pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::FinalRewrite)));
-
-        pass_manager.add_function_pass(Box::new(SimpleStackRegisterAllocation::new()));
-        // === 第4阶段：φ指令消除 ===
         // 在φ指令消除之前重新运行CFG分析，因为Memory2Reg可能使CFG失效
         if self.config.enable_dce {
             // 重新运行CFG分析，为φ指令消除提供必要信息
             pass_manager.add_analysis_pass(Box::new(ControlFlowAnalysis::new()));
             pass_manager.add_function_pass(Box::new(PhiEliminationPass::new()));
         }
+        pass_manager.add_function_pass(Box::new(SimpleStackRegisterAllocation::new()));
 
-        // === 第5阶段：死代码消除 ===
-        // 在Memory2Reg之后运行，清理不需要的指令
-        if self.config.enable_dce {
-            pass_manager.add_function_pass(Box::new(DeadCodeElimination::new()));
-        }
+        // // === 第5阶段：死代码消除 ===
+        // // 在Memory2Reg之后运行，清理不需要的指令
+        // if self.config.enable_dce {
+        //     pass_manager.add_function_pass(Box::new(DeadCodeElimination::new()));
+        // }
 
-        // === 第6阶段：多轮优化（高级别时） ===
-        if self.config.optimization_level >= 3 {
-            // 再次运行常量折叠，处理新的机会
-            if self.config.enable_const_fold {
-                pass_manager.add_function_pass(Box::new(ConstantFolding::new()));
-            }
+        // // === 第6阶段：多轮优化（高级别时） ===
+        // if self.config.optimization_level >= 3 {
+        //     // 再次运行常量折叠，处理新的机会
+        //     if self.config.enable_const_fold {
+        //         pass_manager.add_function_pass(Box::new(ConstantFolding::new()));
+        //     }
 
-            // 再次运行Memory2Reg，处理新暴露的优化机会
-            if self.config.enable_mem2reg {
-                pass_manager.add_function_pass(Box::new(Memory2RegPass::new()));
-            }
-        }
+        //     // 再次运行Memory2Reg，处理新暴露的优化机会
+        //     if self.config.enable_mem2reg {
+        //         pass_manager.add_function_pass(Box::new(Memory2RegPass::new()));
+        //     }
+        // }
 
         // === 第7阶段：两阶段寄存器分配架构 ===
         // 🔧 新架构：Pre-RA (决策) -> StackFrameLowering -> Final-RA (改写)

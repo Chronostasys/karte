@@ -15,6 +15,9 @@ karte-diagnostics = { path = "../karte-diagnostics" }
 karte-lir = { path = "../karte-lir" }
 karte-mir = { path = "../karte-mir" }
 karte-common = { path = "../karte-common" }
+karte-lexer = { path = "../karte-lexer" }
+karte-parser = { path = "../karte-parser" }
+log.workspace = true
 
 # Windows系统API
 windows-sys = { version = "0.48", features = ["Win32_System_Memory", "Win32_Foundation"] }
@@ -22,3 +25,6 @@ windows-sys = { version = "0.48", features = ["Win32_System_Memory", "Win32_Foun
 # Unix系统支持
 libc = "0.2"
 tempfile = "3.2"
+
+[dev-dependencies]
+env_logger = "0.10"

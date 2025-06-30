@@ -121,8 +121,7 @@ mod reference_tests {
             // 应该有类型错误
             assert!(diagnostics.has_errors());
         } else {
-            // 如果解析失败，也算作预期的错误
-            assert!(true);
+            panic!("解析失败");
         }
     }
 }

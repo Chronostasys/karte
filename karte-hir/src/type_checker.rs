@@ -442,7 +442,7 @@ impl TypeChecker {
                 .collect();
 
             // 检查是否有非法的递归（没有通过引用的递归）
-            if self.has_illegal_recursion(&name, &struct_fields, &mut vec![]) {
+            if Self::has_illegal_recursion(&name, &struct_fields, &mut vec![]) {
                 self.add_error(TypeCheckError::InvalidPattern {
                     message: format!(
                         "Illegal recursion in struct {}: recursive types must use references",
@@ -459,7 +459,6 @@ impl TypeChecker {
 
     /// 检查结构体是否有非法的递归（没有通过引用的递归）
     fn has_illegal_recursion(
-        &self,
         struct_name: &str,
         fields: &[crate::types::StructField],
         visited: &mut Vec<String>,
@@ -480,7 +479,7 @@ impl TypeChecker {
                     name: field_struct_name,
                     fields: field_struct_fields,
                 } => {
-                    if self.has_illegal_recursion(field_struct_name, field_struct_fields, visited) {
+                    if Self::has_illegal_recursion(field_struct_name, field_struct_fields, visited) {
                         visited.pop();
                         return true;
                     }

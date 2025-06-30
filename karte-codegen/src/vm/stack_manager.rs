@@ -8,6 +8,7 @@
 
 use super::calling_convention::{CallingConvention, PhysicalRegister};
 use karte_lir::Register;
+use log::info;
 use std::collections::HashMap;
 
 /// 栈帧布局
@@ -221,19 +222,19 @@ impl StackManager {
         self.frame_stack.len()
     }
 
-    /// 打印栈管理器状态
+    /// 打印栈管理器状态（用于调试）
     pub fn print_state(&self) {
-        println!("=== Stack Manager State ===");
-        println!("Stack Pointer: {}", self.stack_pointer);
-        println!("Frame Pointer: {}", self.frame_pointer);
-        println!("Stack Depth: {}", self.depth());
+        info!("=== Stack Manager State ===");
+        info!("Stack Pointer: {}", self.stack_pointer);
+        info!("Frame Pointer: {}", self.frame_pointer);
+        info!("Stack Depth: {}", self.depth());
+
         if let Some(current_frame) = self.current_frame() {
-            println!("Current Frame:");
-            println!("  Locals Size: {}", current_frame.locals_size);
-            println!("  Saved Registers: {}", current_frame.saved_registers.len());
-            println!("  Outgoing Args Size: {}", current_frame.outgoing_args_size);
+            info!("Current Frame:");
+            info!("  Locals Size: {}", current_frame.locals_size);
+            info!("  Saved Registers: {}", current_frame.saved_registers.len());
+            info!("  Outgoing Args Size: {}", current_frame.outgoing_args_size);
         }
-        println!();
     }
 }
 

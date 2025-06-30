@@ -56,7 +56,7 @@ impl LifetimeAnalyzer {
                     match allocation_type {
                         crate::AllocationType::Stack => {
                             register_types.insert(*dst, RegisterType::StackAddress);
-                            println!("🔍 识别栈地址寄存器: {:?} (来自alloc指令)", dst);
+                            log::info!("🔍 识别栈地址寄存器: {:?} (来自alloc指令)", dst);
                         }
                         crate::AllocationType::Heap | crate::AllocationType::Static => {
                             // 堆分配和静态分配的目标寄存器是数据寄存器
@@ -75,7 +75,7 @@ impl LifetimeAnalyzer {
                             // 检查第二个操作数是否是立即数（偏移量）
                             if let Operand::Immediate { .. } = src2 {
                                 register_types.insert(*dst, RegisterType::StackAddress);
-                                println!("🔍 识别栈地址寄存器: {:?} (来自add指令)", dst);
+                                log::info!("🔍 识别栈地址寄存器: {:?} (来自add指令)", dst);
                             }
                         }
                     }
@@ -86,12 +86,12 @@ impl LifetimeAnalyzer {
             }
         }
 
-        println!(
+        log::info!(
             "🔍 寄存器类型分析完成，共识别 {} 个寄存器类型",
             register_types.len()
         );
         for (reg, reg_type) in &register_types {
-            println!("🔍 寄存器 {:?} -> {:?}", reg, reg_type);
+            log::info!("🔍 寄存器 {:?} -> {:?}", reg, reg_type);
         }
 
         register_types

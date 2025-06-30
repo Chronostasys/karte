@@ -1,6 +1,7 @@
 use super::instruction_transformer::IndexInstructionTransformer;
 use super::{AnalysisManager, FunctionPass, PassResult};
 use crate::{Instruction, LirFunction, Operand, Register};
+use log::{debug, info};
 use std::collections::{HashMap, HashSet};
 
 /// 死代码消除 Pass
@@ -22,7 +23,7 @@ impl DeadCodeElimination {
 
     /// 运行死代码消除
     fn eliminate_dead_code(&self, function: &mut LirFunction) -> bool {
-        println!("🧹 开始死代码消除");
+        info!("🧹 开始死代码消除");
 
         let mut used_registers = HashSet::new();
         let mut defined_registers = HashMap::new();
@@ -31,7 +32,7 @@ impl DeadCodeElimination {
         for (i, instruction) in function.instructions.iter().enumerate() {
             if self.has_side_effects(instruction) {
                 let used = self.get_used_registers(instruction);
-                println!(
+                debug!(
                     "🧹 有副作用的指令 {}: {:?} 使用寄存器: {:?}",
                     i, instruction, used
                 );
@@ -46,7 +47,7 @@ impl DeadCodeElimination {
             }
         }
 
-        println!("🧹 初始使用的寄存器: {:?}", used_registers);
+        info!("🧹 初始使用的寄存器: {:?}", used_registers);
 
         // 第二遍：传播使用关系
         let mut changed = true;
@@ -58,7 +59,7 @@ impl DeadCodeElimination {
                 if let Some(def_reg) = self.get_defined_register(instruction) {
                     if used_registers.contains(&def_reg) {
                         let used = self.get_used_registers(instruction);
-                        println!(
+                        debug!(
                             "🧹 指令 {} 定义了使用中的寄存器 {:?}，传播使用: {:?}",
                             i, def_reg, used
                         );
@@ -73,7 +74,7 @@ impl DeadCodeElimination {
             }
         }
 
-        println!("🧹 传播后使用的寄存器: {:?}", used_registers);
+        info!("🧹 传播后使用的寄存器: {:?}", used_registers);
 
         // 第三遍：移除死代码
         let mut transformer = IndexInstructionTransformer::new();
@@ -83,12 +84,12 @@ impl DeadCodeElimination {
                     if !used_registers.contains(&def_reg) {
                         transformer.remove(i);
                         if matches!(instruction, Instruction::Phi { .. }) {
-                            println!("🧹 移除未使用的φ节点: {:?}", instruction);
+                            debug!("🧹 移除未使用的φ节点: {:?}", instruction);
                         } else {
-                            println!("🧹 移除死代码: {:?}", instruction);
+                            debug!("🧹 移除死代码: {:?}", instruction);
                         }
                     } else {
-                        println!(
+                        debug!(
                             "🧹 保留指令 {} (定义寄存器 {:?} 被使用): {:?}",
                             i, def_reg, instruction
                         );
@@ -98,9 +99,9 @@ impl DeadCodeElimination {
         }
         let (changed, _, _, _) = transformer.apply_to_function(function);
         if changed {
-            println!("🧹 死代码消除完成，有代码被移除");
+            info!("🧹 死代码消除完成，有代码被移除");
         } else {
-            println!("🧹 死代码消除完成，无代码被移除");
+            info!("🧹 死代码消除完成，无代码被移除");
         }
         changed
     }

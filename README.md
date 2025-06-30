@@ -2,6 +2,55 @@
 
 Karte 是一个使用 Rust 实现的函数式编程语言编译器。这个项目是一个多模块的 Rust workspace，包含了完整的编译器前端和后端实现。
 
+## 📈 最新架构优化：连续内存JIT编译
+
+### 🚀 架构升级亮点
+
+我们重新设计了JIT内存管理架构，实现了重大性能和简化改进：
+
+#### **连续内存分配策略**
+- **预分配大块内存**: 启动时预分配128MB连续虚拟地址空间
+- **按需提交物理内存**: 只有在实际使用时才提交物理页面，节省内存
+- **函数紧密排列**: 所有函数在连续地址空间中分配，消除地址分散问题
+
+#### **相对跳转优化**
+- **AArch64 BL指令**: 利用±128MB相对跳转范围，无需复杂的绝对地址计算
+- **简化函数调用**: 函数间调用使用简单的相对偏移，提高性能
+- **缓存友好**: 连续内存布局提高指令缓存命中率
+
+#### **专业内存管理**
+```rust
+// 新架构示例
+let mut memory_manager = JitMemoryManager::new(true);
+memory_manager.initialize()?; // 预分配128MB虚拟空间
+
+// 函数分配到连续空间
+let exec_mem = memory_manager.allocate_function_memory("main", &machine_code)?;
+let relative_offset = memory_manager.calculate_relative_offset("main", "helper")?;
+```
+
+#### **技术特性**
+- ✅ **虚拟内存保留策略**: `mmap(PROT_NONE)` 保留地址空间，不占用物理内存
+- ✅ **按需页面提交**: `mprotect` 动态提交和设置权限
+- ✅ **16字节函数对齐**: 优化AArch64指令访问性能
+- ✅ **智能偏移计算**: 自动计算函数间相对跳转距离
+- ✅ **统计和调试**: 内存使用统计和详细调试日志
+
+#### **性能提升**
+- 🔥 **消除地址修补开销**: 无需复杂的跨函数地址解析
+- 🔥 **减少TLB压力**: 连续内存布局减少页表查找
+- 🔥 **提高缓存效率**: 相邻函数提高I-Cache命中率
+- 🔥 **简化代码生成**: AArch64编译器逻辑大幅简化
+
+### 🧪 验证测试
+
+新架构通过了完整的测试验证：
+- `test_continuous_memory_architecture`: 连续内存分配和相对偏移计算
+- `test_relative_jump_range`: AArch64相对跳转范围验证
+- `test_jit_lambda_multiplication`: 端到端JIT执行测试
+
+---
+
 ## 功能特性
 
 ### 语言特性
