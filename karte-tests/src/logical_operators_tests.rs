@@ -273,6 +273,18 @@ mod logical_operators_tests {
 
     #[test]
     fn test_logical_with_comparison() {
+        // use std::io::Write;
+        // let mut builder = env_logger::Builder::new();
+        // builder.filter_level(log::LevelFilter::Info);
+        // builder.format(|buf: &mut env_logger::fmt::Formatter, record: &log::Record| {
+        //     writeln!(
+        //         buf,
+        //         "[{}] {}",
+        //         record.level(),
+        //         record.args()
+        //     )
+        // });
+        // builder.init();
         let input = "match 5 > 3 && 2 < 4 {
             true -> 1,
             false -> 0,

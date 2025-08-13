@@ -169,6 +169,10 @@ impl OptimizationPipeline {
             pass_manager.add_function_pass(Box::new(PhiEliminationPass::new()));
         }
         pass_manager.add_function_pass(Box::new(SimpleStackRegisterAllocation::new()));
+        // 统一帧布局（复用不重叠栈槽，FP+offset 下沉）
+        pass_manager.add_function_pass(Box::new(
+            crate::pass::stack_frame_layout::StackFrameLayoutPass::new(),
+        ));
 
         // // === 第5阶段：死代码消除 ===
         // // 在Memory2Reg之后运行，清理不需要的指令

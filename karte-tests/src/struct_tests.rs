@@ -538,7 +538,6 @@ mod option_constructor_bug_tests {
 
     #[test]
     fn test_option_constructor_encoding_bug() {
-        // 测试Some构造器编码错误的bug
         let program = r#"
             struct Node {
                 value: number,

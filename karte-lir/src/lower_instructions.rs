@@ -79,6 +79,23 @@ impl InstructionLowerer {
             },
         );
 
+        // 预留当前函数的栈帧空间（基于 StackFrameLayout 计算出的大小）
+        if function.stack_frame_size > 0 {
+            instructions_to_process.insert(
+                4,
+                Instruction::Sub {
+                    dst: self.stack_pointer_reg,
+                    src1: Operand::Register {
+                        id: self.stack_pointer_reg,
+                    },
+                    src2: Operand::Immediate {
+                        value: function.stack_frame_size as i64,
+                    },
+                    span: Span::dummy(),
+                },
+            );
+        }
+
         for instruction in &instructions_to_process {
             match instruction {
                 // 降级 Alloc 指令
@@ -317,6 +334,19 @@ impl InstructionLowerer {
 
                 // 降级 Return 指令
                 Instruction::Return { .. } => {
+                    // 先撤销本函数的栈帧空间
+                    if function.stack_frame_size > 0 {
+                        new_instructions.push(Instruction::Add {
+                            dst: self.stack_pointer_reg,
+                            src1: Operand::Register {
+                                id: self.stack_pointer_reg,
+                            },
+                            src2: Operand::Immediate {
+                                value: function.stack_frame_size as i64,
+                            },
+                            span: Span::dummy(),
+                        });
+                    }
                     // 调用结束，还原sp, fp
                     // mov sp, fp
                     // load64 fp [sp]
