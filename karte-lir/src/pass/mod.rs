@@ -5,7 +5,7 @@ pub mod pass_manager;
 pub mod phi_elimination;
 pub mod register_allocation;
 pub mod ssa_construction;
-pub mod stack_frame_lowering;
+pub mod stack_frame_layout;
 pub mod transformation;
 
 pub use analysis::*;
@@ -13,7 +13,7 @@ pub use instruction_transformer::*;
 pub use memory2reg::*;
 pub use pass_manager::*;
 pub use register_allocation::*;
-pub use stack_frame_lowering::*;
+pub use stack_frame_layout::*;
 pub use transformation::*;
 
 use crate::{LirFunction, LirProgram};

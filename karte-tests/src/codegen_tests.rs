@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod tests {
-
     use crate::{dummy_span, execute_with_pipeline};
     use log::info;
 
@@ -129,6 +128,17 @@ mod tests {
 
     #[test]
     fn test_lambda_creation() {
+        // let mut builder = env_logger::Builder::new();
+        // builder.filter_level(log::LevelFilter::Info);
+        // builder.format(|buf: &mut env_logger::fmt::Formatter, record: &log::Record| {
+        //     writeln!(
+        //         buf,
+        //         "[{}] {}",
+        //         record.level(),
+        //         record.args()
+        //     )
+        // });
+        // builder.init();
         let expr = Expr::Lambda {
             params: vec![Parameter::simple("x".to_string())],
             body: Box::new(Expr::Identifier {
@@ -245,6 +255,18 @@ mod tests {
 
     #[test]
     fn test_nested_function_calls() {
+        // use std::io::Write;
+        // let mut builder = env_logger::Builder::new();
+        // builder.filter_level(log::LevelFilter::Info);
+        // builder.format(|buf: &mut env_logger::fmt::Formatter, record: &log::Record| {
+        //     writeln!(
+        //         buf,
+        //         "[{}] {}",
+        //         record.level(),
+        //         record.args()
+        //     )
+        // });
+        // builder.init();
         // 测试嵌套调用: (|x| x * 2)((|y| y + 1)(5)) 应该返回 12
         let inner_lambda = Expr::Lambda {
             params: vec![Parameter::simple("y".to_string())],

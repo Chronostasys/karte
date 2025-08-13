@@ -45,6 +45,18 @@ mod reference_tests {
 
     #[test]
     fn test_struct_with_reference_field() {
+        //         use std::io::Write;
+        // let mut builder = env_logger::Builder::new();
+        // builder.filter_level(log::LevelFilter::Info);
+        // builder.format(|buf: &mut env_logger::fmt::Formatter, record: &log::Record| {
+        //     writeln!(
+        //         buf,
+        //         "[{}] {}",
+        //         record.level(),
+        //         record.args()
+        //     )
+        // });
+        // builder.init();
         let input = r#"
             struct RefStruct {
                 data: number,

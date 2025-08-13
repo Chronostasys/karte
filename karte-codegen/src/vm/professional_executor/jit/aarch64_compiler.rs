@@ -886,11 +886,9 @@ impl AArch64Compiler {
             AArch64Register::SP as u8,
         );
 
-        // 🔧 关键修复：将参数移动到虚拟机寄存器，让LIR的栈帧管理指令能正常工作
-        // 将虚拟栈顶参数移动到r6映射的寄存器
-        self.emit_mov_reg_reg(code_builder, vm_sp, x0);
-        // 将虚拟栈底参数移动到r7映射的寄存器
-        self.emit_mov_reg_reg(code_builder, vm_fp, x1);
+        // 🔧 关键修复：将当前SP设置到虚拟机的r6/r7（LIR中使用r6/r7作为SP/FP基准）
+        self.emit_mov_reg_reg(code_builder, vm_sp, AArch64Register::SP as u8);
+        self.emit_mov_reg_reg(code_builder, vm_fp, AArch64Register::SP as u8);
 
         // // 🔧 新增：保存参数寄存器到栈，防止被后续指令覆盖
         // // STP X0, X1, [SP, #-16]! (保存参数寄存器)

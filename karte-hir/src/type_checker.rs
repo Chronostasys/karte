@@ -479,7 +479,8 @@ impl TypeChecker {
                     name: field_struct_name,
                     fields: field_struct_fields,
                 } => {
-                    if Self::has_illegal_recursion(field_struct_name, field_struct_fields, visited) {
+                    if Self::has_illegal_recursion(field_struct_name, field_struct_fields, visited)
+                    {
                         visited.pop();
                         return true;
                     }
