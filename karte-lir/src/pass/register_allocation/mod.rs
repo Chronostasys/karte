@@ -509,6 +509,7 @@ impl SimpleStackRegisterAllocation {
                 &mut transformer,
                 i,
                 instruction,
+                function,
                 allocation_map,
                 &liveness_map,
             );
@@ -706,10 +707,11 @@ impl SimpleStackRegisterAllocation {
 
     /// 🔧 新方法：基于活跃度信息智能处理指令
     fn handle_instruction_with_liveness(
-        &self,
+        &mut self,
         transformer: &mut IndexInstructionTransformer,
         instruction_index: usize,
         instruction: &Instruction,
+        function: &LirFunction,
         allocation_map: &HashMap<Register, AllocationTarget>,
         liveness_map: &HashMap<usize, HashSet<Register>>,
     ) {
@@ -736,7 +738,7 @@ impl SimpleStackRegisterAllocation {
 
         // 🔧 关键修复：收集需要加载的溢出寄存器和它们的临时寄存器
         let mut spill_loads = Vec::new();
-        let mut temp_registers_to_save = Vec::new();
+        let mut temp_registers_to_save: Vec<usize> = Vec::new();
 
         // iter used_registers + def_register
         for &used_reg in used_registers.iter() {
@@ -746,11 +748,17 @@ impl SimpleStackRegisterAllocation {
                     spill_loads.push((used_reg, *slot_id, temp_physical_reg));
 
                     // 检查临时寄存器是否已经被分配给其他虚拟寄存器
-                    if self.is_temp_register_conflicting(temp_physical_reg, allocation_map)
-                        && def_physical_reg != Some(temp_physical_reg as u8)
-                    {
+                    let temp_conflicts_now = self.is_temp_register_live_at(
+                        temp_physical_reg,
+                        allocation_map,
+                        liveness_map,
+                        instruction_index,
+                    );
+                    if temp_conflicts_now && def_physical_reg != Some(temp_physical_reg as u8) {
                         // 输出寄存器不能被覆盖
-                        temp_registers_to_save.push(temp_physical_reg);
+                        if !temp_registers_to_save.contains(&temp_physical_reg) {
+                            temp_registers_to_save.push(temp_physical_reg);
+                        }
                     }
                 }
             }
@@ -761,50 +769,49 @@ impl SimpleStackRegisterAllocation {
                     let temp_physical_reg = self.get_temp_register_for_spill(*slot_id);
 
                     // 检查临时寄存器是否已经被分配给其他虚拟寄存器
-                    if self.is_temp_register_conflicting(temp_physical_reg, allocation_map) {
-                        temp_registers_to_save.push(temp_physical_reg);
+                    let temp_conflicts_now = self.is_temp_register_live_at(
+                        temp_physical_reg,
+                        allocation_map,
+                        liveness_map,
+                        instruction_index,
+                    );
+                    if temp_conflicts_now {
+                        if !temp_registers_to_save.contains(&temp_physical_reg) {
+                            temp_registers_to_save.push(temp_physical_reg);
+                        }
                     }
                 }
             }
         }
 
-        // 🔧 第一步：保存会被覆盖的临时寄存器到栈（直接使用SP）
+        // 🔧 第一步：保存会被覆盖的临时寄存器到固定帧的scratch槽
         for &temp_reg in &temp_registers_to_save {
-            info!("  💾 保存临时寄存器 r{} 到栈", temp_reg);
-            // 使用栈指针直接压栈，避免虚拟地址寄存器
-            let push_temp = Instruction::Store64 {
-                addr: Register::Physical(6), // SP (r6)
-                offset: 0,                   // 压栈后写入 [SP]
+            info!("  💾 保存临时寄存器 r{} 到固定帧", temp_reg);
+            let scratch_addr =
+                self.ensure_scratch_slot_addr(transformer, function, instruction_index, temp_reg);
+            let save_temp = Instruction::Store64 {
+                addr: scratch_addr,
+                offset: 0,
                 src: Operand::Register {
                     id: Register::Physical(temp_reg as _),
                 },
                 span: Span::dummy(),
             };
-            // 同时调整栈指针
-            let adjust_sp = Instruction::Sub {
-                dst: Register::Physical(6), // SP
-                src1: Operand::Register {
-                    id: Register::Physical(6),
-                },
-                src2: Operand::Immediate { value: 8 },
-                span: Span::dummy(),
-            };
-            transformer.insert(instruction_index, adjust_sp);
-            transformer.insert(instruction_index, push_temp);
+            transformer.insert(instruction_index, save_temp);
         }
 
-        // 🔧 第二步：加载溢出寄存器到临时寄存器（直接使用SP偏移）
+        // 🔧 第二步：加载溢出寄存器到临时寄存器（使用固定帧的spill槽）
         for (used_reg, slot_id, temp_physical_reg) in &spill_loads {
             info!(
                 "  📥 加载溢出寄存器 {:?} 从槽 {} 到临时寄存器 r{}",
                 used_reg, slot_id, temp_physical_reg
             );
-            // 使用SP相对偏移，每个槽8字节，向下分配
-            let stack_offset = -((*slot_id as i64) * 8 + 8);
+            let spill_addr =
+                self.ensure_spill_slot_addr(transformer, function, instruction_index, *slot_id);
             let load_instruction = Instruction::Load64 {
                 dst: Register::Physical(*temp_physical_reg as _),
-                addr: Register::Physical(6), // SP (r6)
-                offset: stack_offset,
+                addr: spill_addr,
+                offset: 0,
                 span: Span::dummy(),
             };
             transformer.insert(instruction_index, load_instruction);
@@ -826,14 +833,18 @@ impl SimpleStackRegisterAllocation {
         // 🔧 第四步：在指令后插入存储和恢复指令
         let after_offset = 1; // 从指令后一位开始
 
-        // 存储定义寄存器（直接使用SP偏移）
+        // 存储定义寄存器（使用固定帧的spill槽）
         if let Some((def_reg, slot_id, temp_physical_reg)) = def_spill_info {
             info!("  📤 存储溢出寄存器 {:?} 到槽 {}", def_reg, slot_id);
-            // 使用SP相对偏移，每个槽8字节，向下分配
-            let stack_offset = -((slot_id as i64) * 8 + 8);
+            let spill_addr = self.ensure_spill_slot_addr(
+                transformer,
+                function,
+                instruction_index + after_offset,
+                slot_id,
+            );
             let store_instruction = Instruction::Store64 {
-                addr: Register::Physical(6), // SP (r6)
-                offset: stack_offset,
+                addr: spill_addr,
+                offset: 0,
                 src: Operand::Register {
                     id: Register::Physical(temp_physical_reg as _),
                 },
@@ -842,27 +853,22 @@ impl SimpleStackRegisterAllocation {
             transformer.insert(instruction_index + after_offset, store_instruction);
         }
 
-        // 🔧 第五步：恢复之前保存的临时寄存器（LIFO顺序，直接从栈弹出）
+        // 🔧 第五步：恢复之前保存的临时寄存器（LIFO顺序，从固定帧scratch槽恢复）
         for &temp_reg in temp_registers_to_save.iter().rev() {
-            info!("  🔄 恢复临时寄存器 r{} 从栈", temp_reg);
-            // 直接从栈顶弹出，避免虚拟地址寄存器
-            let pop_temp = Instruction::Load64 {
+            info!("  🔄 恢复临时寄存器 r{} 从固定帧", temp_reg);
+            let scratch_addr = self.ensure_scratch_slot_addr(
+                transformer,
+                function,
+                instruction_index + after_offset,
+                temp_reg,
+            );
+            let restore_temp = Instruction::Load64 {
                 dst: Register::Physical(temp_reg as _),
-                addr: Register::Physical(6), // SP (r6)
-                offset: 0,                   // 从栈顶加载
+                addr: scratch_addr,
+                offset: 0,
                 span: Span::dummy(),
             };
-            // 恢复栈指针
-            let restore_sp = Instruction::Add {
-                dst: Register::Physical(6), // SP
-                src1: Operand::Register {
-                    id: Register::Physical(6),
-                },
-                src2: Operand::Immediate { value: 8 },
-                span: Span::dummy(),
-            };
-            transformer.insert(instruction_index + after_offset, pop_temp);
-            transformer.insert(instruction_index + after_offset, restore_sp);
+            transformer.insert(instruction_index + after_offset, restore_temp);
         }
     }
 
@@ -880,6 +886,28 @@ impl SimpleStackRegisterAllocation {
             }
         }
         false
+    }
+
+    /// 🔧 新方法：判断给定临时物理寄存器在当前指令位置是否与活跃虚拟寄存器冲突
+    fn is_temp_register_live_at(
+        &self,
+        temp_reg: usize,
+        allocation_map: &HashMap<Register, AllocationTarget>,
+        liveness_map: &HashMap<usize, HashSet<Register>>,
+        instruction_index: usize,
+    ) -> bool {
+        let live_now = liveness_map
+            .get(&instruction_index)
+            .cloned()
+            .unwrap_or_default();
+
+        // 查找映射到该物理寄存器的所有虚拟寄存器中，是否有当前活跃的
+        allocation_map.iter().any(|(vreg, target)| match target {
+            AllocationTarget::Register(phys) if *phys as usize == temp_reg => {
+                live_now.contains(vreg)
+            }
+            _ => false,
+        })
     }
 
     /// 🔧 新方法：为溢出槽分配确定性的临时寄存器
@@ -909,6 +937,57 @@ impl SimpleStackRegisterAllocation {
             }
         }
         false
+    }
+
+    /// 为某个spill槽确保存在一个固定帧的alloc地址寄存器，并返回该寄存器
+    fn ensure_spill_slot_addr(
+        &mut self,
+        transformer: &mut IndexInstructionTransformer,
+        _function: &LirFunction,
+        _insert_hint_index: usize,
+        slot_id: usize,
+    ) -> Register {
+        if let Some(reg) = self.spill_slot_addr_map.get(&slot_id) {
+            return *reg;
+        }
+        // 新建一个地址寄存器，通过Alloc(Stack)获得
+        let addr_reg = Register::Virtual(1_000_000usize + slot_id); // 生成稳定ID，避免重复
+        let alloc_inst = Instruction::Alloc {
+            dst: addr_reg,
+            size: 8,
+            alignment: 8,
+            allocation_type: crate::AllocationType::Stack,
+            span: Span::dummy(),
+        };
+        // 将alloc插到函数开始处（在当前指令之前也可行，但为了整洁放到起始位置）
+        transformer.insert(0, alloc_inst);
+        // 记录映射，避免重复插入
+        self.spill_slot_addr_map.insert(slot_id, addr_reg);
+        addr_reg
+    }
+
+    /// 为某个临时物理寄存器确保存在一个固定帧的scratch槽地址寄存器，并返回该寄存器
+    fn ensure_scratch_slot_addr(
+        &mut self,
+        transformer: &mut IndexInstructionTransformer,
+        _function: &LirFunction,
+        _insert_hint_index: usize,
+        temp_reg: usize,
+    ) -> Register {
+        if let Some(reg) = self.scratch_slot_addr_map.get(&temp_reg) {
+            return *reg;
+        }
+        let addr_reg = Register::Virtual(2_000_000usize + temp_reg);
+        let alloc_inst = Instruction::Alloc {
+            dst: addr_reg,
+            size: 8,
+            alignment: 8,
+            allocation_type: crate::AllocationType::Stack,
+            span: Span::dummy(),
+        };
+        transformer.insert(0, alloc_inst);
+        self.scratch_slot_addr_map.insert(temp_reg, addr_reg);
+        addr_reg
     }
 }
 

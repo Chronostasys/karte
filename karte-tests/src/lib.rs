@@ -27,8 +27,8 @@ pub fn execute_with_pipeline_debug(expr: &Expr, debug: bool) -> Result<i64, Stri
         .map_err(|e| format!("MIR lowering error: {:?}", e))?;
 
     if debug {
-        info!("=== MIR Program ===");
-        info!("{}", mir_program);
+        println!("=== MIR Program ===");
+        println!("{}", mir_program);
     }
 
     // 2. MIR -> LIR (生成高级LIR，包含Alloc指令)
@@ -36,9 +36,9 @@ pub fn execute_with_pipeline_debug(expr: &Expr, debug: bool) -> Result<i64, Stri
         .map_err(|e| format!("LIR lowering error: {:?}", e))?;
 
     if debug {
-        info!("=== 返回高级LIR (包含Alloc指令，待优化) ===");
-        info!("{}", lir_program);
-        info!("================================================");
+        println!("=== 返回高级LIR (包含Alloc指令，待优化) ===");
+        println!("{}", lir_program);
+        println!("================================================");
     }
 
     // 3. 优化管道（Memory2Reg等优化在这里处理Alloc指令）
@@ -48,11 +48,10 @@ pub fn execute_with_pipeline_debug(expr: &Expr, debug: bool) -> Result<i64, Stri
         .map_err(|e| format!("Optimization error: {:?}", e))?;
 
     if debug {
-        info!("=== 优化统计 ===");
         opt_stats.print();
-        info!("=== 优化后的LIR ===");
-        info!("{}", lir_program);
-        info!("================================================");
+        println!("=== 优化后的LIR ===");
+        println!("{}", lir_program);
+        println!("================================================");
     }
 
     // 4. 指令降级：将高级LIR指令降级为基础指令（在优化之后）

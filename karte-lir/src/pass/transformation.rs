@@ -1,6 +1,7 @@
 use super::instruction_transformer::IndexInstructionTransformer;
 use super::{AnalysisManager, FunctionPass, PassResult};
 use crate::{Instruction, LirFunction, Operand, Register};
+use karte_diagnostics::Span;
 use log::{debug, info};
 use std::collections::{HashMap, HashSet};
 
@@ -433,6 +434,320 @@ impl FunctionPass for ConstantFolding {
             PassResult::Unchanged
         }
     }
+    fn invalidated_analyses(&self) -> Vec<&'static str> {
+        vec!["cfg", "def-use"]
+    }
+}
+
+/// 窥孔优化 Pass
+///
+/// 安全、局部的指令级简化：
+/// - 折叠 push/pop 模式：`sub sp,sp,#8; store [sp], Rx; load Ry, [sp]; add sp,sp,#8` -> `mov Ry, Rx`
+/// - 去重相邻重复 `mov`
+/// - `add dst, src, #0` => `mov dst, src`
+/// - 移除 `mov dst, dst`
+#[derive(Debug)]
+pub struct PeepholeOptimizer;
+
+impl Default for PeepholeOptimizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PeepholeOptimizer {
+    pub fn new() -> Self {
+        Self
+    }
+
+    fn optimize_function(&self, function: &mut LirFunction) -> bool {
+        let mut changed = false;
+        let mut transformer = IndexInstructionTransformer::new();
+
+        let sp = Register::Physical(6); // 约定：r6 为 SP
+
+        // 小工具：判断操作数是否为指定寄存器
+        let is_reg = |op: &Operand, reg: Register| -> bool {
+            match op {
+                Operand::Register { id } => *id == reg,
+                _ => false,
+            }
+        };
+
+        let len = function.instructions.len();
+        let mut i = 0usize;
+        while i < len {
+            // 规则1：push/pop 折叠
+            if i + 3 < function.instructions.len() {
+                if let (
+                    Instruction::Sub {
+                        dst: d1,
+                        src1: s1,
+                        src2: Operand::Immediate { value: off1 },
+                        ..
+                    },
+                    Instruction::Store64 {
+                        addr: a1,
+                        offset: off_st,
+                        src: Operand::Register { id: src_saved },
+                        ..
+                    },
+                    Instruction::Load64 {
+                        dst: dst_restored,
+                        addr: a2,
+                        offset: off_ld,
+                        ..
+                    },
+                    Instruction::Add {
+                        dst: d2,
+                        src1: s2,
+                        src2: Operand::Immediate { value: off2 },
+                        ..
+                    },
+                ) = (
+                    &function.instructions[i],
+                    &function.instructions[i + 1],
+                    &function.instructions[i + 2],
+                    &function.instructions[i + 3],
+                ) {
+                    if *d1 == sp
+                        && is_reg(s1, sp)
+                        && *off1 == 8
+                        && *a1 == sp
+                        && *off_st == 0
+                        && *a2 == sp
+                        && *off_ld == 0
+                        && *d2 == sp
+                        && is_reg(s2, sp)
+                        && *off2 == 8
+                    {
+                        // sub sp; store [sp], src_saved; load dst_restored, [sp]; add sp
+                        // => mov dst_restored, src_saved
+                        transformer.replace(
+                            i,
+                            Instruction::Move {
+                                dst: *dst_restored,
+                                src: Operand::Register { id: *src_saved },
+                                span: Span::dummy(),
+                            },
+                        );
+                        transformer.remove(i + 1);
+                        transformer.remove(i + 2);
+                        transformer.remove(i + 3);
+                        changed = true;
+                        i += 4;
+                        continue;
+                    }
+                }
+            }
+
+            // 规则2：add dst, src, #0 -> mov dst, src
+            if let Instruction::Add {
+                dst,
+                src1,
+                src2: Operand::Immediate { value: val },
+                span,
+            } = &function.instructions[i]
+            {
+                if *val == 0 {
+                    if let Operand::Register { id: reg } = src1 {
+                        transformer.replace(
+                            i,
+                            Instruction::Move {
+                                dst: *dst,
+                                src: Operand::Register { id: *reg },
+                                span: *span,
+                            },
+                        );
+                        changed = true;
+                        i += 1;
+                        continue;
+                    }
+                }
+            }
+
+            // 规则3：移除 mov dst, dst
+            if let Instruction::Move { dst, src, .. } = &function.instructions[i] {
+                if let Operand::Register { id } = src {
+                    if *id == *dst {
+                        transformer.remove(i);
+                        changed = true;
+                        i += 1;
+                        continue;
+                    }
+                }
+            }
+
+            // 规则4：相邻重复 mov 去重（删除后一个）
+            if i + 1 < function.instructions.len() {
+                if let (
+                    Instruction::Move {
+                        dst: d1, src: s1, ..
+                    },
+                    Instruction::Move {
+                        dst: d2, src: s2, ..
+                    },
+                ) = (&function.instructions[i], &function.instructions[i + 1])
+                {
+                    if d1 == d2 && s1 == s2 {
+                        transformer.remove(i + 1);
+                        changed = true;
+                        i += 2;
+                        continue;
+                    }
+                }
+            }
+
+            // 规则5：相邻同地址双重store，保留后者（覆盖前者）
+            if i + 1 < function.instructions.len() {
+                if let (
+                    Instruction::Store64 {
+                        addr: a1,
+                        offset: o1,
+                        ..
+                    },
+                    Instruction::Store64 {
+                        addr: a2,
+                        offset: o2,
+                        ..
+                    },
+                ) = (&function.instructions[i], &function.instructions[i + 1])
+                {
+                    if a1 == a2 && o1 == o2 {
+                        transformer.remove(i); // 删除前一个store
+                        changed = true;
+                        i += 1;
+                        continue;
+                    }
+                }
+            }
+
+            // 规则6：相邻同地址双重load，第二个改为mov（若自赋值则直接删除第二个）
+            if i + 1 < function.instructions.len() {
+                if let (
+                    Instruction::Load64 {
+                        dst: d1,
+                        addr: a1,
+                        offset: o1,
+                        ..
+                    },
+                    Instruction::Load64 {
+                        dst: d2,
+                        addr: a2,
+                        offset: o2,
+                        span,
+                    },
+                ) = (&function.instructions[i], &function.instructions[i + 1])
+                {
+                    if a1 == a2 && o1 == o2 {
+                        if *d1 == *d2 {
+                            // load同一地址两次且写同一寄存器，删除第二个
+                            transformer.remove(i + 1);
+                        } else {
+                            transformer.replace(
+                                i + 1,
+                                Instruction::Move {
+                                    dst: *d2,
+                                    src: Operand::Register { id: *d1 },
+                                    span: *span,
+                                },
+                            );
+                        }
+                        changed = true;
+                        i += 2;
+                        continue;
+                    }
+                }
+            }
+
+            // 规则7：load到寄存器后，立即写回同一地址：移除store（值未变更）
+            if i + 1 < function.instructions.len() {
+                if let (
+                    Instruction::Load64 {
+                        dst: d1,
+                        addr: a1,
+                        offset: o1,
+                        ..
+                    },
+                    Instruction::Store64 {
+                        addr: a2,
+                        offset: o2,
+                        src: Operand::Register { id: sreg },
+                        ..
+                    },
+                ) = (&function.instructions[i], &function.instructions[i + 1])
+                {
+                    if a1 == a2 && o1 == o2 && *d1 == *sreg {
+                        transformer.remove(i + 1);
+                        changed = true;
+                        i += 1;
+                        continue;
+                    }
+                }
+            }
+
+            // 规则8：store后紧跟同地址load，用mov替换load（若自赋值则直接删除load）
+            if i + 1 < function.instructions.len() {
+                if let (
+                    Instruction::Store64 {
+                        addr: a1,
+                        offset: o1,
+                        src: Operand::Register { id: sreg },
+                        ..
+                    },
+                    Instruction::Load64 {
+                        dst: d2,
+                        addr: a2,
+                        offset: o2,
+                        span,
+                    },
+                ) = (&function.instructions[i], &function.instructions[i + 1])
+                {
+                    if a1 == a2 && o1 == o2 {
+                        if *d2 == *sreg {
+                            transformer.remove(i + 1);
+                        } else {
+                            transformer.replace(
+                                i + 1,
+                                Instruction::Move {
+                                    dst: *d2,
+                                    src: Operand::Register { id: *sreg },
+                                    span: *span,
+                                },
+                            );
+                        }
+                        changed = true;
+                        i += 2;
+                        continue;
+                    }
+                }
+            }
+
+            i += 1;
+        }
+
+        let (applied, ..) = transformer.apply_to_function(function);
+        changed || applied
+    }
+}
+
+impl FunctionPass for PeepholeOptimizer {
+    fn name(&self) -> &str {
+        "peephole"
+    }
+
+    fn run_on_function(
+        &mut self,
+        function: &mut LirFunction,
+        _analyses: &mut AnalysisManager,
+    ) -> PassResult {
+        if self.optimize_function(function) {
+            PassResult::Changed
+        } else {
+            PassResult::Unchanged
+        }
+    }
+
     fn invalidated_analyses(&self) -> Vec<&'static str> {
         vec!["cfg", "def-use"]
     }
