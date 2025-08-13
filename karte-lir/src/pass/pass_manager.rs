@@ -237,6 +237,10 @@ impl PassManager {
     ) -> Result<(), String> {
         let mut i = 0;
         while i < self.function_passes.len() {
+            println!(
+                "run_function_passes_on_function, passname: {}",
+                self.function_passes[i].name()
+            );
             let start_time = Instant::now();
 
             if self.debug {
@@ -300,6 +304,8 @@ impl PassManager {
                     debug!("    优化后lir: {}", function);
                 }
             }
+
+            println!("lir after pass:\n{}", function);
 
             i += 1;
         }

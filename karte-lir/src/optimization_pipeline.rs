@@ -173,6 +173,16 @@ impl OptimizationPipeline {
         pass_manager.add_function_pass(Box::new(
             crate::pass::stack_frame_layout::StackFrameLayoutPass::new(),
         ));
+        // 布局之后做局部窥孔优化，清理多余 push/pop 等模式
+        pass_manager.add_function_pass(Box::new(
+            crate::pass::transformation::PeepholeOptimizer::new(),
+        ));
+        // 收尾再来一次 DCE，移除窥孔可能产生的自赋值/死代码
+        pass_manager.add_function_pass(Box::new(DeadCodeElimination::new()));
+        // DCE 之后再跑一轮窥孔，消化 DCE 暴露的新邻接模式（近似固定点）
+        pass_manager.add_function_pass(Box::new(
+            crate::pass::transformation::PeepholeOptimizer::new(),
+        ));
 
         // // === 第5阶段：死代码消除 ===
         // // 在Memory2Reg之后运行，清理不需要的指令
