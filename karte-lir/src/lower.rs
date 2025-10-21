@@ -39,6 +39,8 @@ pub struct LirLoweringContext {
     stack_allocations: HashMap<String, Register>,
     /// 🔧 专业修复：全局结构体类型信息
     global_struct_types: HashMap<String, StructLayout>,
+    /// 代数效应：handler入口块的参数名映射（用于在块标签处把payload写入变量）
+    handler_block_param: HashMap<BasicBlockId, String>,
 }
 
 impl Default for LirLoweringContext {
@@ -62,6 +64,7 @@ impl LirLoweringContext {
             tagged_union_manager: TaggedUnionManager::new(),
             stack_allocations: HashMap::new(),
             global_struct_types: HashMap::new(),
+            handler_block_param: HashMap::new(),
         }
     }
 
@@ -1027,6 +1030,23 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
                     id: label,
                     span: karte_diagnostics::Span::new(0, 0), // 简化span处理
                 });
+                // 如果这是一个handler入口块，绑定payload到变量（通过将r1写入变量的栈槽）
+                if let Some(param_name) = context.handler_block_param.get(&block_id) {
+                    // 把 r1 写入变量 param_name 的栈槽
+                    let var_value = Value::Variable { name: param_name.clone() };
+                    let var_addr = context.lower_to_lvalue(&var_value);
+                    // 确保目标是寄存器地址
+                    let addr_reg = match var_addr {
+                        Operand::Register { id } => id,
+                        _ => context.current_function_mut().new_register(),
+                    };
+                    context.add_instruction(Instruction::Store64 {
+                        addr: addr_reg,
+                        offset: 0,
+                        src: Operand::Register { id: Register::Virtual(1) }, // r1
+                        span: karte_diagnostics::Span::dummy(),
+                    });
+                }
 
                 // 转换基本块中的语句
                 for statement in &block.statements {
@@ -1958,6 +1978,40 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
                 object_type,
                 target
             );
+            Ok(())
+        }
+
+        // ===== 代数效应占位 —— 在 LIR 层发出伪指令，供后续指令降级展开 =====
+        Statement::EffectPerform { tag, payload, target, span } => {
+            let tag_op = ctx.lower_to_rvalue(tag);
+            let payload_op = ctx.lower_to_rvalue(payload);
+            let result_reg = if let Some(t) = target { Some(ctx.current_function_mut().new_register()) } else { None };
+
+            ctx.add_instruction(Instruction::EffectPerform { tag: tag_op, payload: payload_op, result: result_reg, span: *span });
+
+            if let Some(t) = target {
+                ctx.store_value_to_stack(
+                    t,
+                    Operand::Register { id: result_reg.unwrap() },
+                );
+            }
+            Ok(())
+        }
+        Statement::EffectResume { value, span } => {
+            let val_op = ctx.lower_to_rvalue(value);
+            ctx.add_instruction(Instruction::EffectResume { value: val_op, span: *span });
+            Ok(())
+        }
+        // handler push/pop 从 MIR 到 LIR：发出 EffectPushHandler/EffectPopHandler + 在函数内使用label作为入口
+        Statement::EffectHandlerPush { tag, handler_block, param_name, .. } => {
+            let tag_op = ctx.lower_to_rvalue(tag);
+            let handler_label = ctx.allocate_label_for_block(*handler_block);
+            ctx.handler_block_param.insert(*handler_block, param_name.clone());
+            ctx.add_instruction(Instruction::EffectPushHandler { tag: tag_op, handler_label, span: karte_diagnostics::Span::dummy() });
+            Ok(())
+        }
+        Statement::EffectHandlerPop { .. } => {
+            ctx.add_instruction(Instruction::EffectPopHandler { span: karte_diagnostics::Span::dummy() });
             Ok(())
         }
 

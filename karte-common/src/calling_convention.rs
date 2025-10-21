@@ -77,7 +77,7 @@ impl CallingConvention {
     /// - r7: 帧指针 (FP)
     ///
     /// Caller-saved: r0-r4 (返回值和参数寄存器)
-    /// Callee-saved: r5-r7 (返回地址、SP、FP)
+    /// Callee-saved: r5-r7 (返回地址、SP、FP), r12 (effect栈指针)
     pub fn standard() -> Self {
         let mut caller_saved = HashSet::new();
         caller_saved.insert(0); // 返回值
@@ -90,6 +90,7 @@ impl CallingConvention {
         callee_saved.insert(5); // 返回地址
         callee_saved.insert(6); // 栈指针
         callee_saved.insert(7); // 帧指针
+        callee_saved.insert(12); // effect栈指针
 
         Self {
             argument_registers: vec![1, 2, 3, 4],
@@ -150,7 +151,8 @@ impl CallingConvention {
     pub fn is_special_register(&self, reg: Register) -> bool {
         match reg {
             Register::Physical(reg) => {
-                reg == self.stack_pointer || reg == self.frame_pointer || reg == self.return_address
+                // reg == self.stack_pointer || reg == self.frame_pointer || reg == self.return_address
+                true
             }
             Register::Virtual(_) => false,
         }
@@ -158,10 +160,10 @@ impl CallingConvention {
 
     /// 获取可用于寄存器分配的通用寄存器
     pub fn get_allocatable_registers(&self) -> Vec<PhysicalRegister> {
-        // 🔧 修复：增加可分配寄存器数量，只排除SP和FP，允许分配r5
-        // 这样可以支持更多的栈地址寄存器分配
+        // 🔧 修复（效应ABI约束）：保留 r0(返回值), r1(效应payload/参数), r5(返回地址), r6(SP), r7(FP)
+        // 仅分配 r2,r3,r4 作为通用物理寄存器，避免破坏 effect resume/perform 的寄存器约定
         (0..8u8)
-            .filter(|&reg| reg != self.stack_pointer && reg != self.frame_pointer)
+            .filter(|&reg| ![self.return_register, self.return_address, self.stack_pointer, self.frame_pointer].contains(&reg))
             .collect()
     }
 }

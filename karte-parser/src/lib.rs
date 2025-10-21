@@ -1097,7 +1097,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // primary = NUMBER | IDENTIFIER | LAMBDA | '(' expression ')' | function_call
+    // primary = NUMBER | IDENTIFIER | 关键字(perf/resume/handle) | LAMBDA | '(' expression ')' | function_call
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {
         let mut expr = if let Some(token) = self.peek() {
             match &token.token {
@@ -1106,6 +1106,84 @@ impl<'a> Parser<'a> {
                     let span = token.span;
                     self.advance();
                     Ok(Expr::Number { value, span })
+                }
+                Token::KwPerform => {
+                    let span = token.span;
+                    self.advance(); // consume 'perform'
+                    // 解析tag：为避免将后续括号吞为函数调用，这里优先仅接受简单标识符或字面量
+                    let tag_expr = if let Some(tok) = self.peek() {
+                        match &tok.token {
+                            Token::Identifier(name) => {
+                                let name2 = name.clone();
+                                let s = tok.span; self.advance();
+                                Expr::Identifier { name: name2, span: s }
+                            }
+                            Token::Number(n) => {
+                                let s = tok.span; let v = *n; self.advance();
+                                Expr::Number { value: v, span: s }
+                            }
+                            _ => {
+                                // 回退到通用表达式（可能仍会吞括号为调用，但覆盖常见用例）
+                                self.parse_expression()?
+                            }
+                        }
+                    } else { return Err(ParseError::UnexpectedEof{ expected: "tag expression".to_string()}); };
+                    if let Some(tok) = self.peek() {
+                        if matches!(tok.token, Token::LeftParen) {
+                            self.advance();
+                        } else {
+                            return Err(ParseError::UnexpectedToken{ expected: "'('".to_string(), found: tok.token.clone(), span: tok.span});
+                        }
+                    } else {
+                        return Err(ParseError::UnexpectedEof{ expected: "'('".to_string()});
+                    }
+                    let payload_opt = if let Some(tok) = self.peek() {
+                        if matches!(tok.token, Token::RightParen) { None } else { Some(self.parse_expression()?) }
+                    } else { return Err(ParseError::UnexpectedEof{ expected: ")".to_string()}); };
+                    if let Some(tok) = self.peek() {
+                        if matches!(tok.token, Token::RightParen) {
+                            let end_span = tok.span; self.advance();
+                            let full_span = Span::new(span.start, end_span.end);
+                            Ok(Expr::EffectPerform{ tag: Box::new(tag_expr), payload: Box::new(payload_opt.unwrap_or(Expr::Unit{ span: end_span })), span: full_span })
+                        } else {
+                            Err(ParseError::UnexpectedToken{ expected: ")".to_string(), found: tok.token.clone(), span: tok.span })
+                        }
+                    } else { Err(ParseError::UnexpectedEof{ expected: ")".to_string() }) }
+                }
+                Token::KwResume => {
+                    let span = token.span;
+                    self.advance(); // consume 'resume'
+                    if let Some(tok) = self.peek() { if matches!(tok.token, Token::LeftParen) { self.advance(); } else { return Err(ParseError::UnexpectedToken{ expected: "'('".to_string(), found: tok.token.clone(), span: tok.span}); } } else { return Err(ParseError::UnexpectedEof{ expected: "'('".to_string()}); }
+                    let value_expr = self.parse_expression()?;
+                    if let Some(tok) = self.peek() { if matches!(tok.token, Token::RightParen) { let end_span = tok.span; self.advance(); let full_span = Span::new(span.start, end_span.end); Ok(Expr::EffectResume{ value: Box::new(value_expr), span: full_span }) } else { Err(ParseError::UnexpectedToken{ expected: ")".to_string(), found: tok.token.clone(), span: tok.span }) } } else { Err(ParseError::UnexpectedEof{ expected: ")".to_string() }) }
+                }
+                Token::KwHandle => {
+                    let span = token.span;
+                    self.advance(); // consume 'handle'
+                    // 同 perform：优先解析简单标识符/数字作为tag
+                    let tag_expr = if let Some(tok) = self.peek() {
+                        match &tok.token {
+                            Token::Identifier(name) => { let s = tok.span; let name2 = name.clone(); self.advance(); Expr::Identifier{ name: name2, span: s } }
+                            Token::Number(n) => { let s = tok.span; let v = *n; self.advance(); Expr::Number{ value: v, span: s } }
+                            _ => { self.parse_expression()? }
+                        }
+                    } else { return Err(ParseError::UnexpectedEof{ expected: "tag expression".to_string()}); };
+                    if let Some(tok) = self.peek() { if matches!(tok.token, Token::LeftParen) { self.advance(); } else { return Err(ParseError::UnexpectedToken{ expected: "'('".to_string(), found: tok.token.clone(), span: tok.span}); } } else { return Err(ParseError::UnexpectedEof{ expected: "'('".to_string()}); }
+                    let param_name = if let Some(tok) = self.peek() { if let Token::Identifier(s) = &tok.token { let s2 = s.clone(); self.advance(); s2 } else { return Err(ParseError::UnexpectedToken{ expected: "identifier".to_string(), found: tok.token.clone(), span: tok.span }); } } else { return Err(ParseError::UnexpectedEof{ expected: "identifier".to_string()}); };
+                    if let Some(tok) = self.peek() { if matches!(tok.token, Token::RightParen) { self.advance(); } else { return Err(ParseError::UnexpectedToken{ expected: ")".to_string(), found: tok.token.clone(), span: tok.span }); } } else { return Err(ParseError::UnexpectedEof{ expected: ")".to_string()}); }
+                    if let Some(tok) = self.peek() { if matches!(tok.token, Token::LeftBrace) { self.advance(); } else { return Err(ParseError::UnexpectedToken{ expected: "'{'".to_string(), found: tok.token.clone(), span: tok.span }); } } else { return Err(ParseError::UnexpectedEof{ expected: "'{'".to_string()}); }
+                    let handler_expr = self.parse_expression()?;
+                    if let Some(tok) = self.peek() { if matches!(tok.token, Token::RightBrace) { self.advance(); } else { return Err(ParseError::UnexpectedToken{ expected: "'}'".to_string(), found: tok.token.clone(), span: tok.span }); } } else { return Err(ParseError::UnexpectedEof{ expected: "'}'".to_string()}); }
+                    if let Some(tok) = self.peek() {
+                        match &tok.token {
+                            Token::KwIn => { self.advance(); }
+                            Token::Identifier(id) if id == "in" => { self.advance(); }
+                            _ => { return Err(ParseError::UnexpectedToken{ expected: "in".to_string(), found: tok.token.clone(), span: tok.span }); }
+                        }
+                    } else { return Err(ParseError::UnexpectedEof{ expected: "in".to_string()}); }
+                    let body_expr = self.parse_expression()?;
+                    let full_span = Span::new(span.start, body_expr.span().end);
+                    Ok(Expr::EffectHandle{ tag: Box::new(tag_expr), param: param_name, handler: Box::new(handler_expr), body: Box::new(body_expr), span: full_span })
                 }
                 Token::Identifier(name) => {
                     let name = name.clone();
@@ -1129,6 +1207,33 @@ impl<'a> Parser<'a> {
                         // 回退并解析while表达式
                         self.position -= 1;
                         self.parse_while()
+                    } else if name == "perform" {
+                        let tag_expr = self.parse_expression()?;
+                        if let Some(tok) = self.peek() { if matches!(tok.token, Token::LeftParen) { self.advance(); } else { return Err(ParseError::UnexpectedToken{ expected: "'('".to_string(), found: tok.token.clone(), span: tok.span}); } } else { return Err(ParseError::UnexpectedEof{ expected: "'('".to_string()}); }
+                        let payload_opt = if let Some(tok) = self.peek() { if matches!(tok.token, Token::RightParen) { None } else { Some(self.parse_expression()?) } } else { return Err(ParseError::UnexpectedEof{ expected: ")".to_string()}); };
+                        if let Some(tok) = self.peek() { if matches!(tok.token, Token::RightParen) { let end_span = tok.span; self.advance(); let full_span = Span::new(span.start, end_span.end); Ok(Expr::EffectPerform{ tag: Box::new(tag_expr), payload: Box::new(payload_opt.unwrap_or(Expr::Unit{ span: end_span })), span: full_span }) } else { Err(ParseError::UnexpectedToken{ expected: ")".to_string(), found: tok.token.clone(), span: tok.span }) } } else { Err(ParseError::UnexpectedEof{ expected: ")".to_string() }) }
+                    } else if name == "resume" {
+                        if let Some(tok) = self.peek() { if matches!(tok.token, Token::LeftParen) { self.advance(); } else { return Err(ParseError::UnexpectedToken{ expected: "'('".to_string(), found: tok.token.clone(), span: tok.span}); } } else { return Err(ParseError::UnexpectedEof{ expected: "'('".to_string()}); }
+                        let value_expr = self.parse_expression()?;
+                        if let Some(tok) = self.peek() { if matches!(tok.token, Token::RightParen) { let end_span = tok.span; self.advance(); let full_span = Span::new(span.start, end_span.end); Ok(Expr::EffectResume{ value: Box::new(value_expr), span: full_span }) } else { Err(ParseError::UnexpectedToken{ expected: ")".to_string(), found: tok.token.clone(), span: tok.span }) } } else { Err(ParseError::UnexpectedEof{ expected: ")".to_string() }) }
+                    } else if name == "handle" {
+                        let tag_expr = self.parse_expression()?;
+                        if let Some(tok) = self.peek() { if matches!(tok.token, Token::LeftParen) { self.advance(); } else { return Err(ParseError::UnexpectedToken{ expected: "'('".to_string(), found: tok.token.clone(), span: tok.span}); } } else { return Err(ParseError::UnexpectedEof{ expected: "'('".to_string()}); }
+                        let param_name = if let Some(tok) = self.peek() { if let Token::Identifier(s) = &tok.token { let s2 = s.clone(); self.advance(); s2 } else { return Err(ParseError::UnexpectedToken{ expected: "identifier".to_string(), found: tok.token.clone(), span: tok.span }); } } else { return Err(ParseError::UnexpectedEof{ expected: "identifier".to_string()}); };
+                        if let Some(tok) = self.peek() { if matches!(tok.token, Token::RightParen) { self.advance(); } else { return Err(ParseError::UnexpectedToken{ expected: ")".to_string(), found: tok.token.clone(), span: tok.span }); } } else { return Err(ParseError::UnexpectedEof{ expected: ")".to_string()}); }
+                        if let Some(tok) = self.peek() { if matches!(tok.token, Token::LeftBrace) { self.advance(); } else { return Err(ParseError::UnexpectedToken{ expected: "'{'".to_string(), found: tok.token.clone(), span: tok.span }); } } else { return Err(ParseError::UnexpectedEof{ expected: "'{'".to_string()}); }
+                        let handler_expr = self.parse_expression()?;
+                        if let Some(tok) = self.peek() { if matches!(tok.token, Token::RightBrace) { self.advance(); } else { return Err(ParseError::UnexpectedToken{ expected: "'}'".to_string(), found: tok.token.clone(), span: tok.span }); } } else { return Err(ParseError::UnexpectedEof{ expected: "'}'".to_string()}); }
+                        if let Some(tok) = self.peek() {
+                            match &tok.token {
+                                Token::KwIn => { self.advance(); }
+                                Token::Identifier(id) if id == "in" => { self.advance(); }
+                                _ => { return Err(ParseError::UnexpectedToken{ expected: "in".to_string(), found: tok.token.clone(), span: tok.span }); }
+                            }
+                        } else { return Err(ParseError::UnexpectedEof{ expected: "in".to_string()}); }
+                        let body_expr = self.parse_expression()?;
+                        let full_span = Span::new(span.start, body_expr.span().end);
+                        Ok(Expr::EffectHandle{ tag: Box::new(tag_expr), param: param_name, handler: Box::new(handler_expr), body: Box::new(body_expr), span: full_span })
                     } else {
                         // 检查是否为限定构造器 TypeName::Constructor
                         if let Some(next_token) = self.peek() {

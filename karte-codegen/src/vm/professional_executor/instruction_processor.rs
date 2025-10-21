@@ -118,6 +118,13 @@ impl InstructionProcessor {
                 function_register, ..
             } => self.handle_jump_indirect(function_register, engine, program_manager),
 
+            // 寄存器跳转：用于EffectResume等场景
+            Instruction::JumpRegister { target_register, .. } => {
+                self.handle_jump_indirect(target_register, engine, program_manager)
+            }
+
+            // 统一使用 JumpIndirect
+
             // 其他指令暂时返回错误
             _ => Err(format!("Unsupported instruction: {:?}", instruction)),
         }

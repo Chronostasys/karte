@@ -105,6 +105,16 @@ pub enum Token {
     #[token("_")]
     Underscore,
 
+    // 代数效应语法关键字
+    #[token("perform")]
+    KwPerform,
+    #[token("resume")]
+    KwResume,
+    #[token("handle")]
+    KwHandle,
+    #[token("in")]
+    KwIn,
+
     // 跳过空白字符
     #[regex(r"[ \t\n\f]+", logos::skip)]
     // Error token - handled automatically by Logos 0.13+
@@ -142,6 +152,10 @@ impl fmt::Display for Token {
             Token::LogicalNot => write!(f, "!"),
             Token::DoubleColon => write!(f, "::"),
             Token::Underscore => write!(f, "_"),
+            Token::KwPerform => write!(f, "perform"),
+            Token::KwResume => write!(f, "resume"),
+            Token::KwHandle => write!(f, "handle"),
+            Token::KwIn => write!(f, "in"),
             Token::Error => write!(f, "<error>"),
         }
     }

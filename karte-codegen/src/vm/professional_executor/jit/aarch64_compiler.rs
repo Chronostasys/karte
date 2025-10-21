@@ -222,9 +222,12 @@ impl AArch64Compiler {
                 code_builder,
             ),
             Instruction::Call { target, .. } => self.compile_call(target, code_builder),
-            Instruction::JumpIndirect {
-                function_register, ..
-            } => self.compile_jump_indirect(function_register, code_builder),
+            Instruction::JumpIndirect { function_register, .. } => {
+                self.compile_jump_indirect(function_register, code_builder)
+            }
+            Instruction::JumpRegister { target_register, .. } => {
+                self.compile_jump_register(target_register, code_builder)
+            }
             Instruction::Return { value, .. } => {
                 self.compile_return(value.as_ref(), code_builder, is_main_function)
             }
@@ -485,7 +488,7 @@ impl AArch64Compiler {
         Ok(())
     }
 
-    /// 编译间接跳转指令
+    /// 编译间接函数调用指令（带链接）：BLR Xn
     fn compile_jump_indirect(
         &mut self,
         function_register: &Register,
@@ -494,7 +497,7 @@ impl AArch64Compiler {
         let function_reg = self.get_physical_register(function_register)?;
 
         // 🔧 优化：在连续内存架构中，间接跳转可以更简单
-        // 如果函数地址是相对偏移，可以直接使用BR指令
+        // 如果函数地址是相对偏移，可以直接使用BLR指令
 
         // 使用X16作为跳转目标寄存器
         let target_reg = AArch64Register::X16 as u8;
@@ -513,6 +516,19 @@ impl AArch64Compiler {
         Ok(())
     }
 
+    /// 编译寄存器跳转指令（无链接跳转）：BR Xn
+    fn compile_jump_register(
+        &mut self,
+        target_register: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> Result<(), String> {
+        let reg = self.get_physical_register(target_register)? as u32;
+        // BR Xn: 1101 0110 0001 1111 0000 0000 0000 0000 | Rn(5)
+        let instr = 0xD61F0000u32 | (reg << 5);
+        code_builder.emit_u32(instr);
+        Ok(())
+    }
+
     /// 编译return指令
     fn compile_return(
         &mut self,
@@ -528,10 +544,7 @@ impl AArch64Compiler {
             }
         }
 
-        // main 函数需要加特殊尾声
-        if is_main_function {
-            self.emit_function_epilogue(code_builder)?;
-        }
+        self.emit_function_epilogue(code_builder)?;
 
         // 🔧 修复：Return指令只生成简单的RET，不生成尾声
         // 因为尾声已经在函数编译过程中根据函数类型正确生成了
@@ -869,10 +882,14 @@ impl AArch64Compiler {
     fn emit_function_prologue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
         // AArch64 AAPCS64调用约定：X0和X1为前两个参数
         // 参考x86实现，将参数移动到虚拟机寄存器
-        let x0 = AArch64Register::X0 as u8; // 第一个参数：虚拟栈顶
-        let x1 = AArch64Register::X1 as u8; // 第二个参数：虚拟栈底
-        let vm_sp = 6u8; // r6 -> 映射到的AArch64寄存器
-        let vm_fp = 7u8; // r7 -> 映射到的AArch64寄存器
+        let x0 = AArch64Register::X0 as u8; // 第一个参数：虚拟栈顶地址
+        let x1 = AArch64Register::X1 as u8; // 第二个参数：虚拟栈底地址
+        let vm_sp = self
+            .get_physical_register(&karte_lir::Register::Physical(6))
+            .unwrap_or(6);
+        let vm_fp = self
+            .get_physical_register(&karte_lir::Register::Physical(7))
+            .unwrap_or(7);
 
         // 标准函数序言：保存帧指针和链接寄存器
         // STP X29, X30, [SP, #-16]!
@@ -886,9 +903,9 @@ impl AArch64Compiler {
             AArch64Register::SP as u8,
         );
 
-        // 🔧 关键修复：将当前SP设置到虚拟机的r6/r7（LIR中使用r6/r7作为SP/FP基准）
-        self.emit_mov_reg_reg(code_builder, vm_sp, AArch64Register::SP as u8);
-        self.emit_mov_reg_reg(code_builder, vm_fp, AArch64Register::SP as u8);
+        // 🔧 关键修复：将传入的虚拟栈(top/bottom)地址设置到 r6/r7（LIR使用r6/r7作为虚拟SP/FP基准）
+        self.emit_mov_reg_reg(code_builder, vm_sp, x0);
+        self.emit_mov_reg_reg(code_builder, vm_fp, x1);
 
         // // 🔧 新增：保存参数寄存器到栈，防止被后续指令覆盖
         // // STP X0, X1, [SP, #-16]! (保存参数寄存器)
@@ -970,8 +987,10 @@ impl JitCompiler for AArch64Compiler {
         // 生成函数序言
         if is_main_function {
             self.emit_function_prologue(&mut code_builder)?;
+        } else {
+            // 简化序言：用于内部函数调用
+            self.emit_internal_function_prologue(&mut code_builder)?;
         }
-
         // 编译所有指令
         for instruction in function.instructions.iter().skip(1) {
             self.compile_instruction(instruction, &mut code_builder, is_main_function)?;

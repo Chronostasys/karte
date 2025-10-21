@@ -6,6 +6,7 @@ pub mod integration_tests;
 pub mod lexer_tests;
 pub mod logical_operators_tests;
 pub mod parser_tests;
+pub mod effect_tests;
 pub mod reference_tests;
 pub mod struct_tests;
 pub mod sum_types_tests;
@@ -35,13 +36,22 @@ pub fn execute_with_pipeline_debug(expr: &Expr, debug: bool) -> Result<i64, Stri
     let mut lir_program = karte_lir::lower::lower_mir_to_lir(&mir_program)
         .map_err(|e| format!("LIR lowering error: {:?}", e))?;
 
+        if debug {
+            println!("=== 返回高级LIR 1 (包含Alloc指令，待优化) ===");
+            println!("{}", lir_program);
+            println!("================================================");
+        }     
+    karte_lir::lower_effect_instructions(&mut lir_program).map_err(|e| format!("Effect lowering error: {:?}", e))?;
+
     if debug {
-        println!("=== 返回高级LIR (包含Alloc指令，待优化) ===");
+        println!("=== 返回高级LIR 2 (包含Alloc指令，待优化) ===");
         println!("{}", lir_program);
         println!("================================================");
     }
 
-    // 3. 优化管道（Memory2Reg等优化在这里处理Alloc指令）
+
+
+    // 3. 优化管道（Memory2Reg等优化在这里处理）
     let mut pipeline = karte_lir::OptimizationPipeline::new(karte_lir::OptimizationLevel::Balanced);
     let opt_stats = pipeline
         .optimize(&mut lir_program)
@@ -51,17 +61,23 @@ pub fn execute_with_pipeline_debug(expr: &Expr, debug: bool) -> Result<i64, Stri
         opt_stats.print();
         println!("=== 优化后的LIR ===");
         println!("{}", lir_program);
+        // 新增：打印各函数的 stack_frame_size
+        for (name, func) in &lir_program.functions {
+            println!("[调试] 优化后函数 {} stack_frame_size = {}", name, func.stack_frame_size);
+        }
         println!("================================================");
     }
-
-    // 4. 指令降级：将高级LIR指令降级为基础指令（在优化之后）
+    // 4. 降级指令（将高级LIR转换为基础指令集）
     karte_lir::lower_program_instructions(&mut lir_program)
         .map_err(|e| format!("Instruction lowering error: {:?}", e))?;
 
     if debug {
-        info!("=== 指令降级后的LIR (基础指令) ===");
-        info!("{}", lir_program);
-        info!("================================================");
+        println!("=== 指令降级后的LIR (基础指令) ===");
+        println!("{}", lir_program);
+        for (name, func) in &lir_program.functions {
+            println!("[调试] 降级后函数 {} stack_frame_size = {}", name, func.stack_frame_size);
+        }
+        println!("================================================");
     }
 
     // 5. 执行（使用简化的寄存器映射，因为寄存器分配已经在编译时完成）

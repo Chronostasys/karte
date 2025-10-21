@@ -434,12 +434,8 @@ fn lower_expression(
                 });
             }
 
-            // 4. 创建lambda函数，参数包含env（如果有）+ 原始参数
-            let mut all_params = if !captured_var_locations.is_empty() {
-                vec!["__env".to_string()] // 环境参数
-            } else {
-                vec![]
-            };
+            // 4. 创建lambda函数，参数包含统一的__env + 原始参数（即使无捕获也保留__env以匹配统一ABI）
+            let mut all_params = vec!["__env".to_string()];
             all_params.extend(param_names.clone());
 
             // 暂存当前函数上下文
@@ -449,39 +445,6 @@ fn lower_expression(
 
             // 5. 开始新函数
             ctx.start_function(lambda_name.clone(), all_params);
-
-            // 如果有环境参数，需要从环境中恢复捕获变量的共享位置
-            if !captured_var_locations.is_empty() {
-                let env_var = Value::Variable {
-                    name: "__env".to_string(),
-                };
-                for (i, var_name) in free_vars.iter().enumerate() {
-                    let shared_location_temp = ctx.new_temp();
-                    let offset_temp = ctx.new_temp();
-                    ctx.add_statement(Statement::BinaryOp {
-                        target: offset_temp.clone(),
-                        left: env_var.clone(),
-                        op: crate::ir::BinaryOperator::Add,
-                        right: Value::Number {
-                            value: (i * 8) as i64,
-                        },
-                        span,
-                    });
-                    ctx.add_statement(Statement::Dereference {
-                        target: shared_location_temp.clone(),
-                        reference: offset_temp.clone(),
-                        span,
-                    });
-
-                    // 在lambda内部，变量也映射为共享内存的引用
-                    ctx.variables.insert(
-                        var_name.clone(),
-                        Value::Reference {
-                            value: Box::new(shared_location_temp),
-                        },
-                    );
-                }
-            }
 
             let return_val = ctx.new_temp();
             lower_expression(ctx, body, &return_val)?;
@@ -497,150 +460,90 @@ fn lower_expression(
         }
 
         Expr::FunctionCall { function, args, .. } => {
-            // 特殊处理：如果是直接lambda调用且没有捕获，生成优化的调用
-            if let Expr::Lambda { .. } = function.as_ref() {
-                let captured_vars = collect_referenced_variables(function);
-                if captured_vars.is_empty() {
-                    // 无捕获的lambda调用，直接生成函数调用
-                    let func_val = lower_expression_to_temp(ctx, function)?;
-                    let arg_vals: Vec<Value> = args
-                        .iter()
-                        .map(|arg| lower_expression_to_temp(ctx, arg))
-                        .collect::<Result<_, _>>()?;
-
-                    // 提取function_ptr并直接调用
-                    let function_ptr_temp = ctx.new_temp();
-                    ctx.add_statement(Statement::FieldAccess {
-                        target: function_ptr_temp.clone(),
-                        object: func_val.clone(),
-                        field: "function_ptr".to_string(),
-                        span,
-                    });
-
-                    ctx.add_statement(Statement::Call {
-                        target: Some(destination.clone()),
-                        function: function_ptr_temp,
-                        args: arg_vals,
-                        span,
-                    });
-                    return Ok(());
-                }
-            }
-
+            // 统一闭包调用策略：
+            // 1. 先将被调用表达式降级为值 func_val（可能是函数指针或Closure结构）
+            // 2. 如果是直接函数（Value::Function），直接调用（与之前一致）
+            // 3. 否则一律视为 Closure 结构体：提取 function_ptr 与 env_ptr，生成 call，参数序列为 (env_ptr, 原始参数...)
+            //    即使 env_ptr == 0 也不做分支；保持统一 ABI，便于后端优化。
             let func_val = lower_expression_to_temp(ctx, function)?;
+            let arg_vals: Vec<Value> = args.iter().map(|a| lower_expression_to_temp(ctx, a)).collect::<Result<_, _>>()?;
 
-            // 对于所有其他函数调用，生成运行时closure检查
-            // 1. 生成参数列表
-            let arg_vals: Vec<Value> = args
-                .iter()
-                .map(|arg| lower_expression_to_temp(ctx, arg))
-                .collect::<Result<_, _>>()?;
-
-            // 2. 检查函数值是否已知为直接函数
             match &func_val {
-                Value::Function { name: _ } => {
-                    // 直接函数调用，无需额外处理
-                    ctx.add_statement(Statement::Call {
-                        target: Some(destination.clone()),
-                        function: func_val.clone(),
-                        args: arg_vals,
-                        span,
-                    });
+                Value::Function { name } => {
+                    // 直接函数：无需 env
+                    ctx.add_statement(Statement::Call { target: Some(destination.clone()), function: Value::Function { name: name.clone() }, args: arg_vals, span });
                 }
-                Value::Closure {
-                    captured_values,
-                    function_name,
-                } => {
-                    // 旧式闭包调用（兼容性）
+                Value::Closure { captured_values, function_name } => {
+                    // 旧式 Closure 表示：captured_values 作为 env 展开到前面（保持兼容）。
                     let mut all_args = captured_values.clone();
                     all_args.extend(arg_vals);
-                    ctx.add_statement(Statement::Call {
-                        target: Some(destination.clone()),
-                        function: Value::Function {
-                            name: function_name.clone(),
-                        },
-                        args: all_args,
-                        span,
-                    });
+                    ctx.add_statement(Statement::Call { target: Some(destination.clone()), function: Value::Function { name: function_name.clone() }, args: all_args, span });
                 }
                 _ => {
-                    // 其他情况：可能是closure结构体或其他类型
-                    // 生成运行时closure处理逻辑
-
-                    // 1. 尝试提取function_ptr字段
+                    // 视为标准 Closure 结构体：必须含有 function_ptr / env_ptr 字段。
                     let function_ptr_temp = ctx.new_temp();
-                    ctx.add_statement(Statement::FieldAccess {
-                        target: function_ptr_temp.clone(),
-                        object: func_val.clone(),
-                        field: "function_ptr".to_string(),
-                        span,
-                    });
-
-                    // 2. 尝试提取env_ptr字段
+                    ctx.add_statement(Statement::FieldAccess { target: function_ptr_temp.clone(), object: func_val.clone(), field: "function_ptr".to_string(), span });
                     let env_ptr_temp = ctx.new_temp();
-                    ctx.add_statement(Statement::FieldAccess {
-                        target: env_ptr_temp.clone(),
-                        object: func_val.clone(),
-                        field: "env_ptr".to_string(),
-                        span,
-                    });
-
-                    // 3. 检查env_ptr是否为0
-                    let zero_val = Value::Number { value: 0 };
-                    let is_zero_temp = ctx.new_temp();
-                    ctx.add_statement(Statement::BinaryOp {
-                        target: is_zero_temp.clone(),
-                        left: env_ptr_temp.clone(),
-                        op: crate::ir::BinaryOperator::Equal,
-                        right: zero_val,
-                        span,
-                    });
-
-                    // 4. 创建分支：env_ptr == 0 时直接调用，否则传递env_ptr
-                    let then_block = ctx.new_block();
-                    let else_block = ctx.new_block();
-                    let merge_block = ctx.new_block();
-
-                    // 设置条件分支
-                    ctx.set_terminator(Terminator::Branch {
-                        condition: is_zero_temp,
-                        then_block,
-                        else_block,
-                        span,
-                    });
-
-                    // then分支: env_ptr == 0，无环境调用
-                    ctx.set_current_block(then_block);
-                    ctx.add_statement(Statement::Call {
-                        target: Some(destination.clone()),
-                        function: function_ptr_temp.clone(),
-                        args: arg_vals.clone(),
-                        span,
-                    });
-                    ctx.set_terminator(Terminator::Goto {
-                        target: merge_block,
-                        span,
-                    });
-
-                    // else分支: env_ptr != 0，传递环境
-                    ctx.set_current_block(else_block);
-                    let mut env_args = vec![env_ptr_temp];
-                    env_args.extend(arg_vals);
-                    ctx.add_statement(Statement::Call {
-                        target: Some(destination.clone()),
-                        function: function_ptr_temp,
-                        args: env_args,
-                        span,
-                    });
-                    ctx.set_terminator(Terminator::Goto {
-                        target: merge_block,
-                        span,
-                    });
-
-                    // 切换到合并块
-                    ctx.set_current_block(merge_block);
+                    ctx.add_statement(Statement::FieldAccess { target: env_ptr_temp.clone(), object: func_val.clone(), field: "env_ptr".to_string(), span });
+                    // 统一：env 作为第一个参数传入
+                    let mut final_args = vec![env_ptr_temp];
+                    final_args.extend(arg_vals);
+                    ctx.add_statement(Statement::Call { target: Some(destination.clone()), function: function_ptr_temp, args: final_args, span });
                 }
             }
+        }
+
+        // ===== 代数效应 =====
+        Expr::EffectPerform { tag, payload, .. } => {
+            let tag_val = lower_expression_to_temp(ctx, tag)?;
+            let payload_val = lower_expression_to_temp(ctx, payload)?;
+            // 在MIR里生成占位语句，最终在 MIR->LIR 时处理为 LIR 伪指令
+            ctx.add_statement(Statement::EffectPerform {
+                tag: tag_val,
+                payload: payload_val,
+                target: Some(destination.clone()),
+                span,
+            });
+        }
+        Expr::EffectResume { value, .. } => {
+            let v = lower_expression_to_temp(ctx, value)?;
+            ctx.add_statement(Statement::EffectResume { value: v, span });
+            // resume 表达式结果Unknown，这里置Unit占位
+            ctx.add_statement(Statement::Assign { target: destination.clone(), source: Value::Unit, span });
+        }
+        Expr::EffectHandle { tag, param, handler, body, .. } => {
+            // 1) 创建 handler 所在的基本块（与当前函数同体，非独立函数）
+            let handler_block = ctx.new_block();
+
+            // 2) push handler（记录tag与handler入口块）
+            let tag_val = lower_expression_to_temp(ctx, tag)?;
+            ctx.add_statement(Statement::EffectHandlerPush {
+                tag: tag_val,
+                handler_block,
+                param_name: param.clone(),
+                span,
+            });
+
+            // 3) lower body（handler 安装期间生效）
+            lower_expression(ctx, body, destination)?;
+
+            // 4) pop handler
+            ctx.add_statement(Statement::EffectHandlerPop { span });
+
+            // 5) 切换到 handler_block，绑定形参名到变量环境，lower handler 代码
+            let current_block = ctx.current_block;
+            ctx.set_current_block(handler_block);
+            // 🔧 修复：在handler块内声明参数变量，直接映射到 r1 寄存器
+            // 这样在后续的语句中，param 变量会直接使用 r1 寄存器
+            ctx.variables.insert(param.clone(), Value::Variable { name: param.clone() });
+            
+            // 🔧 修复：handler 表达式不需要结果，因为它通常通过 resume 返回
+            // 直接处理 handler 表达式，不保存结果
+            let dummy_temp = Value::Temp { id: crate::TempId(0) };
+            lower_expression(ctx, handler, &dummy_temp)?;
+            
+            // 处理器里通常通过 resume 返回；若未 resume，这里不强制添加跳转
+            ctx.set_current_block(current_block.unwrap());
         }
 
         Expr::Block {
@@ -1525,9 +1428,8 @@ mod closure_struct_tests {
             .expect("应该有lambda函数");
         let lambda_fn = &program.functions[lambda_fn_name];
 
-        // 无捕获的lambda不应该有__env参数
-        assert_eq!(lambda_fn.params.len(), 1, "无捕获lambda应该只有1个参数");
-        assert_eq!(lambda_fn.params[0], "x", "参数应该是x");
+        assert_eq!(lambda_fn.params.len(), 2, "lambda应该有2个参数");
+        assert_eq!(lambda_fn.params[1], "x", "参数应该是x");
     }
 
     #[test]

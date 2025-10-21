@@ -174,6 +174,22 @@ impl fmt::Display for Statement {
                 }
                 write!(f, ")")
             }
+            Statement::EffectPerform { tag, payload, target, .. } => {
+                if let Some(t) = target {
+                    write!(f, "{} = effect.perform({}, {})", t, tag, payload)
+                } else {
+                    write!(f, "effect.perform({}, {})", tag, payload)
+                }
+            }
+            Statement::EffectResume { value, .. } => {
+                write!(f, "effect.resume {}", value)
+            }
+            Statement::EffectHandlerPush { tag, handler_block, param_name, .. } => {
+                write!(f, "effect.push tag={} handler=bb{} param={}", tag, handler_block.0, param_name)
+            }
+            Statement::EffectHandlerPop { .. } => {
+                write!(f, "effect.pop")
+            }
         }
     }
 }
