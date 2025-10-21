@@ -153,9 +153,17 @@ pub enum Instruction {
         span: Span,
     },
 
-    /// 间接跳转指令
+    /// 间接函数调用指令（带链接）
+    /// 通过寄存器地址进行间接函数调用，会保存返回地址到LR
     JumpIndirect {
         function_register: Register,
+        span: Span,
+    },
+
+    /// 寄存器跳转指令（无链接）
+    /// 通过寄存器地址进行无条件跳转（用于continuation/resume）
+    JumpRegister {
+        target_register: Register,
         span: Span,
     },
 
@@ -167,6 +175,30 @@ pub enum Instruction {
 
     /// 空操作
     Nop { span: Span },
+
+    // ====== 代数效应伪指令（在指令降级阶段展开为基础指令） ======
+    /// 入栈一个效应处理器帧
+    EffectPushHandler {
+        /// 效应类型标识（支持立即数或寄存器）
+        tag: Operand,
+        /// 处理器入口label
+        handler_label: LabelId,
+        span: Span,
+    },
+
+    /// 出栈一个效应处理器帧
+    EffectPopHandler { span: Span },
+
+    /// 触发效应：在降级中查找匹配处理器，写入resume点并跳转到handler
+    EffectPerform {
+        tag: Operand, // 支持立即数或寄存器
+        payload: Operand,
+        result: Option<Register>,
+        span: Span,
+    },
+
+    /// 在处理器中恢复到perform点：将value写入r0并跳回保存的resume地址
+    EffectResume { value: Operand, span: Span },
 
     // ====== 新增的结构体操作指令 ======
     /// 分配结构体内存
@@ -282,6 +314,8 @@ impl Instruction {
             | Instruction::MemCopy { dst, .. } => Some(*dst),
             Instruction::Call { result, .. } | Instruction::CallIndirect { result, .. } => *result,
             Instruction::Phi { dst, .. } => Some(*dst),
+            // EffectPerform 的 result 是定义寄存器（如果存在）
+            Instruction::EffectPerform { result, .. } => *result,
             _ => None,
         }
     }
@@ -314,6 +348,14 @@ impl Instruction {
             Instruction::Phi { dst, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
+                }
+            }
+            // EffectPerform 的 result 也需要替换
+            Instruction::EffectPerform { result, .. } => {
+                if let Some(ref mut res) = result {
+                    if *res == old_reg {
+                        *res = new_reg;
+                    }
                 }
             }
             _ => {}
@@ -374,18 +416,27 @@ impl Instruction {
             } => {
                 used.push(*function_register);
                 used.extend_from_slice(args);
-                // // 添加参数操作数中使用的寄存器
-                // for operand in arg_operands {
-                //     if let Operand::Register { id } = operand {
-                //         used.push(*id);
-                //     }
-                // }
             }
             Instruction::Return { value, .. } => {
                 if let Some(reg) = value {
                     used.push(*reg);
                 }
             }
+            // EffectPerform: payload 是使用的寄存器，result 是定义（如有）
+            Instruction::EffectPerform { tag, payload, .. } => {
+                self.add_operand_registers(tag, &mut used);
+                self.add_operand_registers(payload, &mut used);
+            }
+            // EffectPushHandler 的 tag 是使用的寄存器
+            Instruction::EffectPushHandler { tag, .. } => {
+                self.add_operand_registers(tag, &mut used);
+            }
+            // NEW: EffectResume value is a used register
+            Instruction::EffectResume { value, .. } => {
+                // FIX: value is an Operand; delegate to add_operand_registers instead of pushing directly
+                self.add_operand_registers(value, &mut used);
+            }
+            // EffectPopHandler has no explicit register operands
             Instruction::MemCopy { src, .. } => {
                 used.push(*src);
             }
@@ -396,6 +447,18 @@ impl Instruction {
                 for (_, value) in incoming {
                     self.add_operand_registers(value, &mut used);
                 }
+            }
+            Instruction::JumpIndirect { function_register, .. } => {
+                used.push(*function_register);
+            }
+            Instruction::JumpRegister { target_register, .. } => {
+                used.push(*target_register);
+                // push all caller-saved registers
+                used.push(Register::Physical(0));
+                used.push(Register::Physical(1));
+                used.push(Register::Physical(2));
+                used.push(Register::Physical(3));
+                used.push(Register::Physical(4));
             }
             _ => {}
         }
@@ -536,6 +599,18 @@ impl Instruction {
                     }
                 }
             }
+            // EffectPerform: payload 使用的寄存器需要替换，result(若有)为定义寄存器
+            Instruction::EffectPerform { tag, payload, result, .. } => {
+                Self::replace_operand_register(tag, old_reg, new_reg);
+                Self::replace_operand_register(payload, old_reg, new_reg);
+                if let Some(ref mut res) = result { if *res == old_reg { *res = new_reg; } }
+            }
+            Instruction::EffectPushHandler { tag, .. } => {
+                Self::replace_operand_register(tag, old_reg, new_reg);
+            }
+            Instruction::EffectResume { value, .. } => {
+                Self::replace_operand_register(value, old_reg, new_reg);
+            }
             Instruction::MemCopy { dst, src, .. } => {
                 // 🔧 关键修复：替换目标寄存器
                 if *dst == old_reg {
@@ -563,6 +638,16 @@ impl Instruction {
                 }
                 for (_, value) in incoming {
                     Self::replace_operand_register(value, old_reg, new_reg);
+                }
+            }
+            Instruction::JumpIndirect { function_register, .. } => {
+                if *function_register == old_reg {
+                    *function_register = new_reg;
+                }
+            }
+            Instruction::JumpRegister { target_register, .. } => {
+                if *target_register == old_reg {
+                    *target_register = new_reg;
                 }
             }
             _ => {}
@@ -669,6 +754,15 @@ impl Instruction {
                     used.push(*reg);
                 }
             }
+            Instruction::JumpRegister { target_register, span:_ } => {
+                used.push(*target_register);
+                // push all caller-saved registers
+                used.push(Register::Virtual(1));
+                used.push(Register::Virtual(2));
+                used.push(Register::Virtual(3));
+                used.push(Register::Virtual(4));
+            }
+            // JumpRegister 已移除
             Instruction::CallIndirect {
                 function_register,
                 args,
@@ -725,6 +819,21 @@ impl Instruction {
                 for (_, operand) in incoming {
                     self.add_operand_registers(operand, &mut used);
                 }
+            }
+            // EffectPerform: payload 是使用，result（若有）是定义
+            Instruction::EffectPerform { payload, result, tag, .. } => {
+                // FIX: 之前遗漏了 tag 操作数，导致寄存器分配阶段未认为其存活，
+                // 使得 tag 与 payload 被分配到同一个物理寄存器，执行前 payload 覆盖 tag。
+                // 这里加入 tag 的寄存器使用集合，确保分配不同寄存器或保持正确活跃区间。
+                self.add_operand_registers(tag, &mut used);
+                self.add_operand_registers(payload, &mut used);
+                if let Some(result_reg) = result {
+                    defined.push(*result_reg);
+                }
+            }
+            // EffectResume: value 是使用
+            Instruction::EffectResume { value, .. } => {
+                self.add_operand_registers(value, &mut used);
             }
             _ => {} // 其他指令不涉及寄存器
         }

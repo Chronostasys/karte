@@ -1041,6 +1041,42 @@ impl TypeChecker {
                 // 赋值表达式返回单元类型
                 Type::Unit
             }
+            // ===== 代数效应（最小类型规则） =====
+            Expr::EffectPerform { tag, payload, .. } => {
+                // 简化：tag 推断为 number（或不约束），payload 任意，perform 表达式结果设为 Unknown
+                let _ = self.infer_expr(tag, env);
+                let _ = self.infer_expr(payload, env);
+                Type::Unknown
+            }
+            Expr::EffectResume { value, .. } => {
+                let _ = self.infer_expr(value, env);
+                // resume 表达式自身结果设为 Unknown（通常不需要值）
+                Type::Unknown
+            }
+            Expr::EffectHandle { tag, param, handler, body, .. } => {
+                // 语义：在 body 的动态作用域内安装处理器。
+                // 类型规则（简化）：
+                // - 让 tag 推断；
+                // - handler 在一个扩展环境中检查：绑定 param: α，handler 的类型约束为 (α) -> β；
+                // - handle 表达式的结果类型取 body 的类型。
+                let _ = self.infer_expr(tag, env);
+
+                // 为 handler 构造期望函数类型 (param_ty -> ret_ty)
+                let param_ty = Type::Var(self.fresh_type_var());
+                let ret_ty = Type::Var(self.fresh_type_var());
+                let expected_handler_ty = Type::function(vec![param_ty.clone()], ret_ty.clone());
+
+                // 在扩展环境中绑定参数名，以便 handler 内引用到 param 不报未定义
+                let mut handler_env = env.clone();
+                handler_env.insert(param.clone(), param_ty.clone());
+
+                let handler_ty = self.infer_expr(handler, &handler_env);
+                // 约束 handler 的函数类型
+                self.add_constraint(expected_handler_ty, handler_ty, handler.span());
+
+                // body 在原环境中检查，作为整体类型
+                self.infer_expr(body, env)
+            }
         }
     }
 

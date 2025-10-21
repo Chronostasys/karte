@@ -128,6 +128,11 @@ impl DeadCodeElimination {
             Instruction::JumpGreaterEqual { .. } => true,
             Instruction::Compare { .. } => true,
             Instruction::Label { .. } => true,
+            // JumpRegister 已合并为 JumpIndirect
+            Instruction::EffectPushHandler { .. }
+            | Instruction::EffectPopHandler { .. }
+            | Instruction::EffectPerform { .. }
+            | Instruction::EffectResume { .. } => true,
             Instruction::Move { .. } => false,
             Instruction::Add { .. } => false,
             Instruction::Sub { .. } => false,
@@ -139,6 +144,7 @@ impl DeadCodeElimination {
             Instruction::Nop { .. } => false,
             Instruction::Phi { .. } => false,
             Instruction::JumpIndirect { .. } => true,
+            Instruction::JumpRegister { .. } => true,
         }
     }
 
@@ -206,6 +212,25 @@ impl DeadCodeElimination {
                     self.add_operand_registers(operand, &mut used);
                 }
             }
+            // 处理 Effect 指令使用的寄存器
+            Instruction::EffectPushHandler { tag, .. } => {
+                self.add_operand_registers(tag, &mut used);
+            }
+            Instruction::EffectPerform { tag, payload, .. } => {
+                self.add_operand_registers(tag, &mut used);
+                self.add_operand_registers(payload, &mut used);
+            }
+            Instruction::EffectResume { value, .. } => {
+                self.add_operand_registers(value, &mut used);
+            }
+            Instruction::JumpRegister { target_register, .. } => {
+                used.push(*target_register);
+                // push all caller-saved registers
+                used.push(Register::Virtual(1));
+                used.push(Register::Virtual(2));
+                used.push(Register::Virtual(3));
+                used.push(Register::Virtual(4));
+            }
             _ => {}
         }
 
@@ -241,6 +266,9 @@ impl DeadCodeElimination {
                 result: Some(dst), ..
             } => Some(*dst),
             Instruction::Phi { dst, .. } => Some(*dst),
+            Instruction::EffectPerform {
+                result: Some(dst), ..
+            } => Some(*dst),
             _ => None,
         }
     }

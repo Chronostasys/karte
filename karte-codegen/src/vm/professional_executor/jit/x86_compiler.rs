@@ -146,9 +146,12 @@ impl X86Compiler {
                 self.compile_conditional_jump(JumpType::ConditionalGreater, target, code_builder)
             }
             Instruction::Call { target, .. } => self.compile_call(target, code_builder),
-            Instruction::JumpIndirect {
-                function_register, ..
-            } => self.compile_jump_indirect(function_register, code_builder),
+            Instruction::JumpIndirect { function_register, .. } => {
+                self.compile_jump_indirect(function_register, code_builder)
+            }
+            Instruction::JumpRegister { target_register, .. } => {
+                self.compile_jump_register(target_register, code_builder)
+            }
             Instruction::Return { value, .. } => self.compile_return(value.as_ref(), code_builder),
             Instruction::Label { id, .. } => {
                 let label_name = format!("label_{}", id.0);
@@ -431,7 +434,7 @@ impl X86Compiler {
         Ok(())
     }
 
-    /// 编译间接跳转指令（call rax - 间接函数调用）
+    /// 编译间接函数调用指令（call rax - 间接函数调用）
     fn compile_jump_indirect(
         &mut self,
         function_register: &Register,
@@ -510,7 +513,88 @@ impl X86Compiler {
                 return Err(format!("不支持的寄存器: {}", function_reg));
             }
         }
+        Ok(())
+    }
 
+    /// 编译寄存器跳转指令（jmp rax - 无链接跳转）
+    fn compile_jump_register(
+        &mut self,
+        target_register: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> Result<(), String> {
+        let reg = self.get_physical_register(target_register)?;
+
+        // jmp rax - FF E0 (无链接跳转)
+        // 对于x86-64，我们需要根据寄存器生成不同的指令
+        match reg {
+            0 => {
+                // jmp rax - FF E0
+                code_builder.emit_bytes(&[0xFF, 0xE0]);
+            }
+            1 => {
+                // jmp rcx - FF E1
+                code_builder.emit_bytes(&[0xFF, 0xE1]);
+            }
+            2 => {
+                // jmp rdx - FF E2
+                code_builder.emit_bytes(&[0xFF, 0xE2]);
+            }
+            3 => {
+                // jmp rbx - FF E3
+                code_builder.emit_bytes(&[0xFF, 0xE3]);
+            }
+            4 => {
+                // jmp rsp - FF E4
+                code_builder.emit_bytes(&[0xFF, 0xE4]);
+            }
+            5 => {
+                // jmp rbp - FF E5
+                code_builder.emit_bytes(&[0xFF, 0xE5]);
+            }
+            6 => {
+                // jmp rsi - FF E6
+                code_builder.emit_bytes(&[0xFF, 0xE6]);
+            }
+            7 => {
+                // jmp rdi - FF E7
+                code_builder.emit_bytes(&[0xFF, 0xE7]);
+            }
+            8 => {
+                // jmp r8 - 41 FF E0
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE0]);
+            }
+            9 => {
+                // jmp r9 - 41 FF E1
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE1]);
+            }
+            10 => {
+                // jmp r10 - 41 FF E2
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE2]);
+            }
+            11 => {
+                // jmp r11 - 41 FF E3
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE3]);
+            }
+            12 => {
+                // jmp r12 - 41 FF E4
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE4]);
+            }
+            13 => {
+                // jmp r13 - 41 FF E5
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE5]);
+            }
+            14 => {
+                // jmp r14 - 41 FF E6
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE6]);
+            }
+            15 => {
+                // jmp r15 - 41 FF E7
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE7]);
+            }
+            _ => {
+                return Err(format!("不支持的寄存器: {}", reg));
+            }
+        }
         Ok(())
     }
 

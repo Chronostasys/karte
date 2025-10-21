@@ -135,7 +135,7 @@ impl JitMemoryManager {
         }
 
         // 计算对齐后的大小
-        let aligned_size = self.align_size(size, FUNCTION_ALIGNMENT);
+        let aligned_size = self.align_size(size, FUNCTION_ALIGNMENT) * 2;
 
         // 检查是否有足够空间
         if self.current_offset + aligned_size > self.code_section_size {

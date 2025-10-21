@@ -165,6 +165,30 @@ pub enum Expr {
         value: Box<Expr>,
         span: Span,
     },
+
+    // ===== 代数效应 =====
+    /// perform 表达式：触发某个效应，传入载荷
+    EffectPerform {
+        tag: Box<Expr>,
+        payload: Box<Expr>,
+        span: Span,
+    },
+
+    /// resume 表达式：在处理器中恢复到触发点
+    EffectResume {
+        value: Box<Expr>,
+        span: Span,
+    },
+
+    /// handle 表达式：在 `body` 的动态作用域内安装处理器
+    /// 语法建议：handle tag(param) { handler } in body
+    EffectHandle {
+        tag: Box<Expr>,
+        param: String,
+        handler: Box<Expr>,
+        body: Box<Expr>,
+        span: Span,
+    },
 }
 
 /// 语句类型
@@ -496,6 +520,21 @@ impl fmt::Display for Expr {
             Expr::Assignment { target, value, .. } => {
                 write!(f, "{} = {}", target, value)
             }
+            Expr::EffectPerform { tag, payload, .. } => {
+                write!(f, "perform {}({})", tag, payload)
+            }
+            Expr::EffectResume { value, .. } => {
+                write!(f, "resume({})", value)
+            }
+            Expr::EffectHandle {
+                tag,
+                param,
+                handler,
+                body,
+                ..
+            } => {
+                write!(f, "handle {}({}) {{ {} }} in {}", tag, param, handler, body)
+            }
         }
     }
 }
@@ -523,6 +562,9 @@ impl Expr {
             Expr::Reference { span, .. } => *span,
             Expr::Dereference { span, .. } => *span,
             Expr::Assignment { span, .. } => *span,
+            Expr::EffectPerform { span, .. } => *span,
+            Expr::EffectResume { span, .. } => *span,
+            Expr::EffectHandle { span, .. } => *span,
         }
     }
 }

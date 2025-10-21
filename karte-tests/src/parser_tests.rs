@@ -124,6 +124,51 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_effect_perform() {
+        let (tokens, _) = tokenize("perform Eff(42)");
+        let (expr, diagnostics) = parse(&tokens);
+
+        assert!(diagnostics.is_empty());
+        assert!(expr.is_some());
+
+        if let Some(Expr::EffectPerform { .. }) = expr {
+            // ok
+        } else {
+            panic!("Expected EffectPerform expression");
+        }
+    }
+
+    #[test]
+    fn test_parse_effect_resume() {
+        let (tokens, _) = tokenize("resume(7)");
+        let (expr, diagnostics) = parse(&tokens);
+
+        assert!(diagnostics.is_empty());
+        assert!(expr.is_some());
+
+        if let Some(Expr::EffectResume { .. }) = expr {
+            // ok
+        } else {
+            panic!("Expected EffectResume expression");
+        }
+    }
+
+    #[test]
+    fn test_parse_effect_handle() {
+        let (tokens, _) = tokenize("handle Eff(x) { x } in 1");
+        let (expr, diagnostics) = parse(&tokens);
+
+        assert!(diagnostics.is_empty());
+        assert!(expr.is_some());
+
+        if let Some(Expr::EffectHandle { .. }) = expr {
+            // ok
+        } else {
+            panic!("Expected EffectHandle expression");
+        }
+    }
+
+    #[test]
     fn test_parse_function_call() {
         let (tokens, _) = tokenize("add(1, 2)");
         let (expr, diagnostics) = parse(&tokens);

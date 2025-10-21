@@ -235,10 +235,31 @@ impl fmt::Display for Instruction {
                 }
                 write!(f, ")")
             }
-            Instruction::JumpIndirect {
-                function_register, ..
-            } => {
+            Instruction::JumpIndirect { function_register, .. } => {
                 write!(f, "jmpi {}", function_register)
+            }
+            Instruction::JumpRegister { target_register, .. } => {
+                write!(f, "jmp* {}", target_register)
+            }
+            Instruction::EffectPushHandler { tag, handler_label, .. } => {
+                write!(f, "effect.push tag={} handler={} ", tag, handler_label)
+            }
+            Instruction::EffectPopHandler { .. } => {
+                write!(f, "effect.pop")
+            }
+            Instruction::EffectPerform { tag, payload, result, .. } => {
+                if let Some(r) = result {
+                    write!(f, "  {} = effect.perform tag=", (*r))?;
+                } else {
+                    write!(f, "  effect.perform tag=")?;
+                }
+                write!(f, "{}", tag)?;
+                write!(f, " payload=")?;
+                write!(f, "{}", payload)?;
+                writeln!(f)
+            }
+            Instruction::EffectResume { value, .. } => {
+                write!(f, "effect.resume {}", value)
             }
         }
     }

@@ -1,6 +1,6 @@
 use super::{AnalysisManager, AnalysisPass, FunctionPass, PassResult, PassStats, ProgramPass};
 use crate::{LirFunction, LirProgram};
-use log::{debug, info};
+use log::{debug, info, trace};
 use std::time::Instant;
 
 /// Pass 管理器（按migration_to_ssa.md第5-6周计划增强）
@@ -237,7 +237,7 @@ impl PassManager {
     ) -> Result<(), String> {
         let mut i = 0;
         while i < self.function_passes.len() {
-            println!(
+            info!(
                 "run_function_passes_on_function, passname: {}",
                 self.function_passes[i].name()
             );
@@ -305,7 +305,7 @@ impl PassManager {
                 }
             }
 
-            println!("lir after pass:\n{}", function);
+            trace!("lir after pass:\n{}", function);
 
             i += 1;
         }

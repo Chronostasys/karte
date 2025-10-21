@@ -126,6 +126,30 @@ pub enum Statement {
         incoming: Vec<(BasicBlockId, Value)>, // (前驱块ID, 值)
         span: Span,
     },
+    // 代数效应（MIR占位，不进入后端）：
+    EffectPerform {
+        tag: Value,
+        payload: Value,
+        target: Option<Value>,
+        span: Span,
+    },
+    EffectResume {
+        value: Value,
+        span: Span,
+    },
+
+    /// 安装效应处理器：在当前点生效，直到对应的 Pop
+    EffectHandlerPush {
+        tag: Value,
+        /// 处理器所在的基本块（同一函数内的一个块，非独立函数）
+        handler_block: BasicBlockId,
+        /// 处理器参数名（在 handler_block 内可见，绑定到 payload 寄存器约定）
+        param_name: String,
+        span: Span,
+    },
+
+    /// 卸载效应处理器（与最近的 Push 匹配）
+    EffectHandlerPop { span: Span },
 }
 
 /// 终结语句 - 控制基本块的跳转
@@ -149,6 +173,8 @@ pub enum Terminator {
         default: Option<BasicBlockId>,
         span: Span,
     },
+    // /// 代数效应：Resume 终结当前基本块并跳转回 Perform 的继续点
+    // EffectResume { value: Value, span: Span },
 }
 
 /// 匹配臂
