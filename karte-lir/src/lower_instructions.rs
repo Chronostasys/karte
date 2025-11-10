@@ -48,10 +48,10 @@ impl InstructionLowerer {
         for instruction in instructions_to_process {
             // 只lower effect相关
             match instruction {
-                Instruction::EffectPushHandler { .. }|
-                Instruction::EffectPopHandler { .. }|
-                Instruction::EffectPerform { .. }|
-                Instruction::EffectResume { .. } => {
+                Instruction::EffectPushHandler { .. }
+                | Instruction::EffectPopHandler { .. }
+                | Instruction::EffectPerform { .. }
+                | Instruction::EffectResume { .. } => {
                     self.lower_inst(function, &mut new_instructions, &mut false, &instruction)?;
                 }
                 _ => {
@@ -77,7 +77,12 @@ impl InstructionLowerer {
         let mut prologue_emitted = false;
 
         for instruction in &instructions_to_process {
-            self.lower_inst(function, &mut new_instructions, &mut prologue_emitted, instruction)?;
+            self.lower_inst(
+                function,
+                &mut new_instructions,
+                &mut prologue_emitted,
+                instruction,
+            )?;
         }
 
         function.instructions = new_instructions;
@@ -89,38 +94,57 @@ impl InstructionLowerer {
         Register::Virtual(self.next_register)
     }
 
-    fn lower_inst(&mut self, function: &mut LirFunction, new_instructions: &mut Vec<Instruction>, prologue_emitted: &mut bool, instruction: &Instruction) -> Result<(), String> {
+    fn lower_inst(
+        &mut self,
+        function: &mut LirFunction,
+        new_instructions: &mut Vec<Instruction>,
+        prologue_emitted: &mut bool,
+        instruction: &Instruction,
+    ) -> Result<(), String> {
         Ok(match instruction {
             // Label：发射并在首次遇到时生成函数序言与 r12 初始化
             Instruction::Label { id, span } => {
-                new_instructions.push(Instruction::Label { id: *id, span: *span });
+                new_instructions.push(Instruction::Label {
+                    id: *id,
+                    span: *span,
+                });
                 if !*prologue_emitted {
                     *prologue_emitted = true;
                     // 序言：保存旧fp
                     new_instructions.push(Instruction::Sub {
                         dst: self.stack_pointer_reg,
-                        src1: Operand::Register { id: self.stack_pointer_reg },
+                        src1: Operand::Register {
+                            id: self.stack_pointer_reg,
+                        },
                         src2: Operand::Immediate { value: 8 },
                         span: *span,
                     });
                     new_instructions.push(Instruction::Store64 {
                         addr: self.stack_pointer_reg,
                         offset: 0,
-                        src: Operand::Register { id: self.frame_pointer_reg },
+                        src: Operand::Register {
+                            id: self.frame_pointer_reg,
+                        },
                         span: Span::dummy(),
                     });
                     // fp = sp
                     new_instructions.push(Instruction::Move {
                         dst: self.frame_pointer_reg,
-                        src: Operand::Register { id: self.stack_pointer_reg },
+                        src: Operand::Register {
+                            id: self.stack_pointer_reg,
+                        },
                         span: Span::dummy(),
                     });
                     // 预留栈帧
                     if function.stack_frame_size > 0 {
                         new_instructions.push(Instruction::Sub {
                             dst: self.stack_pointer_reg,
-                            src1: Operand::Register { id: self.stack_pointer_reg },
-                            src2: Operand::Immediate { value: function.stack_frame_size as i64 },
+                            src1: Operand::Register {
+                                id: self.stack_pointer_reg,
+                            },
+                            src2: Operand::Immediate {
+                                value: function.stack_frame_size as i64,
+                            },
                             span: Span::dummy(),
                         });
                     }
@@ -152,49 +176,132 @@ impl InstructionLowerer {
                     function,
                 )?;
             }
-    
+
             // ===== 代数效应：指令展开 =====
             // EffectPushHandler: 在常规栈上压入处理器帧，并更新r12为effect栈顶
-            Instruction::EffectPushHandler { tag, handler_label, span } => {
+            Instruction::EffectPushHandler {
+                tag,
+                handler_label,
+                span,
+            } => {
                 let eff = Register::Physical(12);
-                new_instructions.push(Instruction::Sub { dst: self.stack_pointer_reg, src1: Operand::Register { id: self.stack_pointer_reg }, src2: Operand::Immediate { value: 32 }, span: *span });
-                new_instructions.push(Instruction::Store64 { addr: self.stack_pointer_reg, offset: 0, src: Operand::Register { id: eff }, span: *span });
-                new_instructions.push(Instruction::Move { dst: eff, src: Operand::Register { id: self.stack_pointer_reg }, span: *span });
+                new_instructions.push(Instruction::Sub {
+                    dst: self.stack_pointer_reg,
+                    src1: Operand::Register {
+                        id: self.stack_pointer_reg,
+                    },
+                    src2: Operand::Immediate { value: 32 },
+                    span: *span,
+                });
+                new_instructions.push(Instruction::Store64 {
+                    addr: self.stack_pointer_reg,
+                    offset: 0,
+                    src: Operand::Register { id: eff },
+                    span: *span,
+                });
+                new_instructions.push(Instruction::Move {
+                    dst: eff,
+                    src: Operand::Register {
+                        id: self.stack_pointer_reg,
+                    },
+                    span: *span,
+                });
                 // tag store supports immediate or needs move
                 match tag {
-                    Operand::Immediate { .. } => new_instructions.push(Instruction::Store64 { addr: eff, offset: 8, src: tag.clone(), span: *span }),
+                    Operand::Immediate { .. } => new_instructions.push(Instruction::Store64 {
+                        addr: eff,
+                        offset: 8,
+                        src: tag.clone(),
+                        span: *span,
+                    }),
                     _ => {
                         // If tag is register operand already, store directly; else move then store
                         if let Operand::Register { .. } = tag {
-                            new_instructions.push(Instruction::Store64 { addr: eff, offset: 8, src: tag.clone(), span: *span });
+                            new_instructions.push(Instruction::Store64 {
+                                addr: eff,
+                                offset: 8,
+                                src: tag.clone(),
+                                span: *span,
+                            });
                         } else {
                             let tmp = self.new_register();
-                            new_instructions.push(Instruction::Move { dst: tmp, src: tag.clone(), span: *span });
-                            new_instructions.push(Instruction::Store64 { addr: eff, offset: 8, src: Operand::Register { id: tmp }, span: *span });
+                            new_instructions.push(Instruction::Move {
+                                dst: tmp,
+                                src: tag.clone(),
+                                span: *span,
+                            });
+                            new_instructions.push(Instruction::Store64 {
+                                addr: eff,
+                                offset: 8,
+                                src: Operand::Register { id: tmp },
+                                span: *span,
+                            });
                         }
                     }
                 }
-                new_instructions.push(Instruction::Store64 { addr: eff, offset: 16, src: Operand::Label { id: *handler_label }, span: *span });
-                new_instructions.push(Instruction::Store64 { addr: eff, offset: 24, src: Operand::Immediate { value: 0 }, span: *span });
+                new_instructions.push(Instruction::Store64 {
+                    addr: eff,
+                    offset: 16,
+                    src: Operand::Label { id: *handler_label },
+                    span: *span,
+                });
+                new_instructions.push(Instruction::Store64 {
+                    addr: eff,
+                    offset: 24,
+                    src: Operand::Immediate { value: 0 },
+                    span: *span,
+                });
             }
-    
+
             // EffectPopHandler: 恢复上一层effect栈顶并回收帧
             Instruction::EffectPopHandler { span } => {
                 let sp = self.stack_pointer_reg;
                 let eff = Register::Physical(12);
                 let tmp = self.new_register();
-                new_instructions.push(Instruction::Load64 { dst: tmp, addr: eff, offset: 0, span: *span });
-                new_instructions.push(Instruction::Move { dst: eff, src: Operand::Register { id: tmp }, span: *span });
-                new_instructions.push(Instruction::Add { dst: sp, src1: Operand::Register { id: sp }, src2: Operand::Immediate { value: 32 }, span: *span });
+                new_instructions.push(Instruction::Load64 {
+                    dst: tmp,
+                    addr: eff,
+                    offset: 0,
+                    span: *span,
+                });
+                new_instructions.push(Instruction::Move {
+                    dst: eff,
+                    src: Operand::Register { id: tmp },
+                    span: *span,
+                });
+                new_instructions.push(Instruction::Add {
+                    dst: sp,
+                    src1: Operand::Register { id: sp },
+                    src2: Operand::Immediate { value: 32 },
+                    span: *span,
+                });
                 // new_instructions.push(Instruction::Move { dst: Register::Physical(12), src: Operand::Register { id: sp }, span: *span });
             }
-    
-            // EffectPerform: 搜索匹配的处理器帧，设置resume地址并跳转到处理器
-            Instruction::EffectPerform { tag, payload, result, span } => {
 
+            // EffectPerform: 搜索匹配的处理器帧，设置resume地址并跳转到处理器
+            Instruction::EffectPerform {
+                tag,
+                payload,
+                result,
+                span,
+            } => {
                 // 保存 r12 到栈上
-                new_instructions.push(Instruction::Sub { dst: self.stack_pointer_reg, src1: Operand::Register { id: self.stack_pointer_reg }, src2: Operand::Immediate { value: 8 }, span: *span });
-                new_instructions.push(Instruction::Store64 { addr: self.stack_pointer_reg, offset: 0, src: Operand::Register { id: Register::Physical(12) }, span: *span });
+                new_instructions.push(Instruction::Sub {
+                    dst: self.stack_pointer_reg,
+                    src1: Operand::Register {
+                        id: self.stack_pointer_reg,
+                    },
+                    src2: Operand::Immediate { value: 8 },
+                    span: *span,
+                });
+                new_instructions.push(Instruction::Store64 {
+                    addr: self.stack_pointer_reg,
+                    offset: 0,
+                    src: Operand::Register {
+                        id: Register::Physical(12),
+                    },
+                    span: *span,
+                });
 
                 let eff = Register::Physical(12);
                 // 为 tag 分配独立临时寄存器，避免后续覆盖
@@ -202,10 +309,18 @@ impl InstructionLowerer {
                 match tag {
                     Operand::Immediate { .. } => { /* 直接在比较中使用立即数 */ }
                     Operand::Register { id } => {
-                        new_instructions.push(Instruction::Move { dst: tag_reg, src: Operand::Register { id: *id }, span: *span });
+                        new_instructions.push(Instruction::Move {
+                            dst: tag_reg,
+                            src: Operand::Register { id: *id },
+                            span: *span,
+                        });
                     }
                     _ => {
-                        new_instructions.push(Instruction::Move { dst: tag_reg, src: tag.clone(), span: *span });
+                        new_instructions.push(Instruction::Move {
+                            dst: tag_reg,
+                            src: tag.clone(),
+                            span: *span,
+                        });
                     }
                 }
                 let loop_label = function.new_label();
@@ -213,46 +328,172 @@ impl InstructionLowerer {
                 let not_found_label = function.new_label();
                 let resume_label = function.new_label();
                 let cont_label = function.new_label();
-                new_instructions.push(Instruction::Label { id: loop_label, span: *span });
-                new_instructions.push(Instruction::Compare { src1: Operand::Register { id: eff }, src2: Operand::Immediate { value: 0 }, span: *span });
-                new_instructions.push(Instruction::JumpEqual { target: not_found_label, span: *span });
+                new_instructions.push(Instruction::Label {
+                    id: loop_label,
+                    span: *span,
+                });
+                new_instructions.push(Instruction::Compare {
+                    src1: Operand::Register { id: eff },
+                    src2: Operand::Immediate { value: 0 },
+                    span: *span,
+                });
+                new_instructions.push(Instruction::JumpEqual {
+                    target: not_found_label,
+                    span: *span,
+                });
                 let tmp = self.new_register();
-                new_instructions.push(Instruction::Load64 { dst: tmp, addr: eff, offset: 8, span: *span });
+                new_instructions.push(Instruction::Load64 {
+                    dst: tmp,
+                    addr: eff,
+                    offset: 8,
+                    span: *span,
+                });
                 match tag {
                     Operand::Immediate { value } => {
-                        new_instructions.push(Instruction::Compare { src1: Operand::Register { id: tmp }, src2: Operand::Immediate { value: *value }, span: *span });
+                        new_instructions.push(Instruction::Compare {
+                            src1: Operand::Register { id: tmp },
+                            src2: Operand::Immediate { value: *value },
+                            span: *span,
+                        });
                     }
                     _ => {
-                        new_instructions.push(Instruction::Compare { src1: Operand::Register { id: tmp }, src2: Operand::Register { id: tag_reg }, span: *span });
+                        new_instructions.push(Instruction::Compare {
+                            src1: Operand::Register { id: tmp },
+                            src2: Operand::Register { id: tag_reg },
+                            span: *span,
+                        });
                     }
                 }
-                new_instructions.push(Instruction::JumpEqual { target: found_label, span: *span });
-                new_instructions.push(Instruction::Load64 { dst: eff, addr: eff, offset: 0, span: *span });
-                new_instructions.push(Instruction::Jump { target: loop_label, span: *span });
-                new_instructions.push(Instruction::Label { id: found_label, span: *span });
-                new_instructions.push(Instruction::Store64 { addr: eff, offset: 24, src: Operand::Label { id: resume_label }, span: *span });
-                new_instructions.push(Instruction::Move { dst: Register::Physical(1), src: payload.clone(), span: *span });
+                new_instructions.push(Instruction::JumpEqual {
+                    target: found_label,
+                    span: *span,
+                });
+                new_instructions.push(Instruction::Load64 {
+                    dst: eff,
+                    addr: eff,
+                    offset: 0,
+                    span: *span,
+                });
+                new_instructions.push(Instruction::Jump {
+                    target: loop_label,
+                    span: *span,
+                });
+                new_instructions.push(Instruction::Label {
+                    id: found_label,
+                    span: *span,
+                });
+                new_instructions.push(Instruction::Store64 {
+                    addr: eff,
+                    offset: 24,
+                    src: Operand::Label { id: resume_label },
+                    span: *span,
+                });
+                new_instructions.push(Instruction::Move {
+                    dst: Register::Physical(1),
+                    src: payload.clone(),
+                    span: *span,
+                });
                 let tmp2 = self.new_register();
-                new_instructions.push(Instruction::Load64 { dst: tmp2, addr: eff, offset: 16, span: *span });
-                new_instructions.push(Instruction::JumpRegister { target_register: tmp2, span: *span });
-                new_instructions.push(Instruction::Label { id: resume_label, span: *span });
-                if let Some(res_reg) = result { new_instructions.push(Instruction::Move { dst: *res_reg  , src: Operand::Register { id: Register::Physical(1)}, span: *span }); }
-                new_instructions.push(Instruction::Jump { target: cont_label, span: *span });
-                new_instructions.push(Instruction::Label { id: not_found_label, span: *span });
-                new_instructions.push(Instruction::Move { dst: eff, src: Operand::Immediate { value: 0 }, span: *span });
-                new_instructions.push(Instruction::Move { dst: Register::Virtual(0), src: Operand::Immediate { value: -777 }, span: *span });
-                if function.stack_frame_size > 0 { new_instructions.push(Instruction::Add { dst: self.stack_pointer_reg, src1: Operand::Register { id: self.stack_pointer_reg }, src2: Operand::Immediate { value: function.stack_frame_size as i64 }, span: Span::dummy() }); }
-                new_instructions.push(Instruction::Move { dst: self.stack_pointer_reg, src: Operand::Register { id: self.frame_pointer_reg }, span: Span::dummy() });
-                new_instructions.push(Instruction::Load64 { dst: self.frame_pointer_reg, addr: self.stack_pointer_reg, offset: 0, span: Span::dummy() });
-                new_instructions.push(Instruction::Add { dst: self.stack_pointer_reg, src1: Operand::Register { id: self.stack_pointer_reg }, src2: Operand::Immediate { value: 8 }, span: Span::dummy() });
-                new_instructions.push(Instruction::Return { value: Some(Register::Virtual(0)), span: *span });
-                new_instructions.push(Instruction::Label { id: cont_label, span: *span });
+                new_instructions.push(Instruction::Load64 {
+                    dst: tmp2,
+                    addr: eff,
+                    offset: 16,
+                    span: *span,
+                });
+                new_instructions.push(Instruction::JumpRegister {
+                    target_register: tmp2,
+                    span: *span,
+                });
+                new_instructions.push(Instruction::Label {
+                    id: resume_label,
+                    span: *span,
+                });
+                if let Some(res_reg) = result {
+                    new_instructions.push(Instruction::Move {
+                        dst: *res_reg,
+                        src: Operand::Register {
+                            id: Register::Physical(1),
+                        },
+                        span: *span,
+                    });
+                }
+                new_instructions.push(Instruction::Jump {
+                    target: cont_label,
+                    span: *span,
+                });
+                new_instructions.push(Instruction::Label {
+                    id: not_found_label,
+                    span: *span,
+                });
+                new_instructions.push(Instruction::Move {
+                    dst: eff,
+                    src: Operand::Immediate { value: 0 },
+                    span: *span,
+                });
+                new_instructions.push(Instruction::Move {
+                    dst: Register::Virtual(0),
+                    src: Operand::Immediate { value: -777 },
+                    span: *span,
+                });
+                if function.stack_frame_size > 0 {
+                    new_instructions.push(Instruction::Add {
+                        dst: self.stack_pointer_reg,
+                        src1: Operand::Register {
+                            id: self.stack_pointer_reg,
+                        },
+                        src2: Operand::Immediate {
+                            value: function.stack_frame_size as i64,
+                        },
+                        span: Span::dummy(),
+                    });
+                }
+                new_instructions.push(Instruction::Move {
+                    dst: self.stack_pointer_reg,
+                    src: Operand::Register {
+                        id: self.frame_pointer_reg,
+                    },
+                    span: Span::dummy(),
+                });
+                new_instructions.push(Instruction::Load64 {
+                    dst: self.frame_pointer_reg,
+                    addr: self.stack_pointer_reg,
+                    offset: 0,
+                    span: Span::dummy(),
+                });
+                new_instructions.push(Instruction::Add {
+                    dst: self.stack_pointer_reg,
+                    src1: Operand::Register {
+                        id: self.stack_pointer_reg,
+                    },
+                    src2: Operand::Immediate { value: 8 },
+                    span: Span::dummy(),
+                });
+                new_instructions.push(Instruction::Return {
+                    value: Some(Register::Virtual(0)),
+                    span: *span,
+                });
+                new_instructions.push(Instruction::Label {
+                    id: cont_label,
+                    span: *span,
+                });
 
                 // 恢复 r12
-                new_instructions.push(Instruction::Load64 { dst: Register::Physical(12), addr: self.stack_pointer_reg, offset: 0, span: *span });
-                new_instructions.push(Instruction::Add { dst: self.stack_pointer_reg, src1: Operand::Register { id: self.stack_pointer_reg }, src2: Operand::Immediate { value: 8 }, span: *span });
+                new_instructions.push(Instruction::Load64 {
+                    dst: Register::Physical(12),
+                    addr: self.stack_pointer_reg,
+                    offset: 0,
+                    span: *span,
+                });
+                new_instructions.push(Instruction::Add {
+                    dst: self.stack_pointer_reg,
+                    src1: Operand::Register {
+                        id: self.stack_pointer_reg,
+                    },
+                    src2: Operand::Immediate { value: 8 },
+                    span: *span,
+                });
             }
-    
+
             // 降级 Load64 指令
             Instruction::Load64 {
                 dst,
@@ -262,7 +503,7 @@ impl InstructionLowerer {
             } => {
                 self.lower_load64(dst, addr, *offset, span, new_instructions)?;
             }
-    
+
             // 降级 Store64 指令
             Instruction::Store64 {
                 addr,
@@ -272,7 +513,7 @@ impl InstructionLowerer {
             } => {
                 self.lower_store64(addr, *offset, src, span, new_instructions)?;
             }
-    
+
             // 降级 StructAlloc 指令
             Instruction::StructAlloc {
                 dst,
@@ -289,7 +530,7 @@ impl InstructionLowerer {
                     function,
                 )?;
             }
-    
+
             // 降级 StructFieldLoad 指令
             Instruction::StructFieldLoad {
                 dst,
@@ -305,7 +546,7 @@ impl InstructionLowerer {
                     new_instructions,
                 )?;
             }
-    
+
             // 降级 StructFieldStore 指令
             Instruction::StructFieldStore {
                 struct_addr,
@@ -321,7 +562,7 @@ impl InstructionLowerer {
                     new_instructions,
                 )?;
             }
-    
+
             // 降级 Phi 指令
             Instruction::Phi {
                 dst,
@@ -330,7 +571,7 @@ impl InstructionLowerer {
             } => {
                 self.lower_phi(dst, incoming, span, new_instructions)?;
             }
-    
+
             // 降级 Call 指令
             Instruction::Call {
                 target,
@@ -344,16 +585,18 @@ impl InstructionLowerer {
                 // 3. 生成返回标签并压栈
                 // 4. jump 到目标label
                 // 5. 返回标签：恢复caller-saved寄存器，处理返回值
-    
+
                 // 生成唯一的返回标签
                 let return_label = function.new_label();
-    
+
                 // 保存caller-saved寄存器到栈
                 for reg in 0..=4 {
                     // sp = sp - 8
                     new_instructions.push(Instruction::Sub {
                         dst: self.stack_pointer_reg,
-                        src1: Operand::Register { id: self.stack_pointer_reg },
+                        src1: Operand::Register {
+                            id: self.stack_pointer_reg,
+                        },
                         src2: Operand::Immediate { value: 8 },
                         span: *span,
                     });
@@ -361,11 +604,13 @@ impl InstructionLowerer {
                     new_instructions.push(Instruction::Store64 {
                         addr: self.stack_pointer_reg,
                         offset: 0,
-                        src: Operand::Register { id: Register::Virtual(reg) },
+                        src: Operand::Register {
+                            id: Register::Virtual(reg),
+                        },
                         span: *span,
                     });
                 }
-    
+
                 // 参数传递
                 for (i, op) in arg_operands.iter().enumerate() {
                     if i < 4 {
@@ -376,11 +621,13 @@ impl InstructionLowerer {
                         });
                     }
                 }
-    
+
                 // 将返回标签地址压栈
                 new_instructions.push(Instruction::Sub {
                     dst: self.stack_pointer_reg,
-                    src1: Operand::Register { id: self.stack_pointer_reg },
+                    src1: Operand::Register {
+                        id: self.stack_pointer_reg,
+                    },
                     src2: Operand::Immediate { value: 8 },
                     span: *span,
                 });
@@ -390,19 +637,19 @@ impl InstructionLowerer {
                     src: Operand::Label { id: return_label },
                     span: *span,
                 });
-    
+
                 // 跳转到目标函数
                 new_instructions.push(Instruction::Jump {
                     target: *target,
                     span: *span,
                 });
-    
+
                 // 返回标签：恢复caller-saved寄存器
                 new_instructions.push(Instruction::Label {
                     id: return_label,
                     span: *span,
                 });
-    
+
                 // 从栈上弹出返回地址（丢弃）
                 new_instructions.push(Instruction::Load64 {
                     dst: Register::Physical(0), // 临时使用r0
@@ -412,11 +659,13 @@ impl InstructionLowerer {
                 });
                 new_instructions.push(Instruction::Add {
                     dst: self.stack_pointer_reg,
-                    src1: Operand::Register { id: self.stack_pointer_reg },
+                    src1: Operand::Register {
+                        id: self.stack_pointer_reg,
+                    },
                     src2: Operand::Immediate { value: 8 },
                     span: *span,
                 });
-    
+
                 // 恢复caller-saved寄存器
                 for reg in (0..=4).rev() {
                     new_instructions.push(Instruction::Load64 {
@@ -427,17 +676,21 @@ impl InstructionLowerer {
                     });
                     new_instructions.push(Instruction::Add {
                         dst: self.stack_pointer_reg,
-                        src1: Operand::Register { id: self.stack_pointer_reg },
+                        src1: Operand::Register {
+                            id: self.stack_pointer_reg,
+                        },
                         src2: Operand::Immediate { value: 8 },
                         span: *span,
                     });
                 }
-    
+
                 // 返回值处理（r0已经包含返回值）
                 if let Some(result_reg) = result {
                     new_instructions.push(Instruction::Move {
                         dst: *result_reg,
-                        src: Operand::Register { id: Register::Physical(0) },
+                        src: Operand::Register {
+                            id: Register::Physical(0),
+                        },
                         span: *span,
                     });
                 }
@@ -455,26 +708,34 @@ impl InstructionLowerer {
                     span: *span,
                 });
             }
-    
+
             // 降级 Return 指令
             Instruction::Return { .. } => {
                 if self.inserted_early_return {
                     // 已经插入提前返回：跳过重复的尾声与Return，避免重复恢复栈
                     // 用 Nop 占位
-                    new_instructions.push(Instruction::Nop { span: Span::dummy() });
+                    new_instructions.push(Instruction::Nop {
+                        span: Span::dummy(),
+                    });
                 } else {
                     // 原始逻辑
                     if function.stack_frame_size > 0 {
                         new_instructions.push(Instruction::Add {
                             dst: self.stack_pointer_reg,
-                            src1: Operand::Register { id: self.stack_pointer_reg },
-                            src2: Operand::Immediate { value: function.stack_frame_size as i64 },
+                            src1: Operand::Register {
+                                id: self.stack_pointer_reg,
+                            },
+                            src2: Operand::Immediate {
+                                value: function.stack_frame_size as i64,
+                            },
                             span: Span::dummy(),
                         });
                     }
                     new_instructions.push(Instruction::Move {
                         dst: self.stack_pointer_reg,
-                        src: Operand::Register { id: self.frame_pointer_reg },
+                        src: Operand::Register {
+                            id: self.frame_pointer_reg,
+                        },
                         span: Span::dummy(),
                     });
                     new_instructions.push(Instruction::Load64 {
@@ -485,34 +746,48 @@ impl InstructionLowerer {
                     });
                     new_instructions.push(Instruction::Add {
                         dst: self.stack_pointer_reg,
-                        src1: Operand::Register { id: self.stack_pointer_reg },
+                        src1: Operand::Register {
+                            id: self.stack_pointer_reg,
+                        },
                         src2: Operand::Immediate { value: 8 },
                         span: Span::dummy(),
                     });
                     new_instructions.push(instruction.clone());
                 }
             }
-    
+
             // EffectResume: 恢复到上一个处理器帧
             Instruction::EffectResume { value, span } => {
                 // Lower resume: move value to r0, load current effect frame pointer r12, load saved resume label addr [r12+24], jump there
                 let eff = Register::Physical(12);
                 let tmp = Register::Physical(15); // reuse tmp for address
-                // move r0 = value (value may be immediate/register/memory)
-                new_instructions.push(Instruction::Move { dst: Register::Physical(1), src: value.clone(), span: *span });
+                                                  // move r0 = value (value may be immediate/register/memory)
+                new_instructions.push(Instruction::Move {
+                    dst: Register::Physical(1),
+                    src: value.clone(),
+                    span: *span,
+                });
                 // load resume address into tmp
-                new_instructions.push(Instruction::Load64 { dst: tmp, addr: eff, offset: 24, span: *span });
+                new_instructions.push(Instruction::Load64 {
+                    dst: tmp,
+                    addr: eff,
+                    offset: 24,
+                    span: *span,
+                });
                 // jump to saved resume continuation
-                new_instructions.push(Instruction::JumpRegister { target_register: tmp, span: *span });
+                new_instructions.push(Instruction::JumpRegister {
+                    target_register: tmp,
+                    span: *span,
+                });
             }
-    
+
             // 其他指令直接保留
             _ => {
                 new_instructions.push(instruction.clone());
             }
         })
     }
-    
+
     /// 降级 Alloc 指令为栈指针操作
     fn lower_alloc(
         &mut self,
@@ -723,7 +998,6 @@ impl Default for InstructionLowerer {
         Self::new()
     }
 }
-
 
 pub fn lower_effect_instructions(program: &mut LirProgram) -> Result<(), String> {
     let mut lowerer = InstructionLowerer::new();

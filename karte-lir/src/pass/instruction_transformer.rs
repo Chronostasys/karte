@@ -111,7 +111,7 @@ impl IndexInstructionTransformer {
             match op {
                 IndexTransformOperation::Remove(_) => {
                     if idx < function.instructions.len() {
-                        debug!("🔧 删除指令 [{}]: {}", idx, function.instructions[idx]);
+                        debug!("🔧 删除指令 [{}]: {:?}", idx, function.instructions[idx]);
                         function.instructions.remove(idx);
                         modified = true;
                         removed_count += 1;

@@ -14,5 +14,8 @@ thiserror.workspace = true
 serde.workspace = true
 miette.workspace = true
 log.workspace = true
+karte-ir-codec = { path = "../karte-ir-codec" }
+karte-ir-derive = { path = "../karte-ir-derive" }
+nom.workspace = true
 
 [lib]

@@ -1,83 +1,147 @@
 use karte_diagnostics::Span;
+use karte_ir_derive::IrCodec;
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 
 /// 基本块标识符
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BasicBlockId(pub usize);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IrCodec, PartialOrd, Ord)]
+#[ir_codec(token = "bb")]
+pub struct BasicBlockId(#[ir_codec(args)] pub usize);
+
+impl Default for BasicBlockId {
+    fn default() -> Self {
+        BasicBlockId(0)
+    }
+}
 
 /// 临时变量标识符
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TempId(pub usize);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IrCodec, Default)]
+#[ir_codec(token = "%")]
+pub struct TempId(#[ir_codec(args)] pub usize);
 
 /// MIR值 - 可以是变量、常量或临时值
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, IrCodec, Default)]
 pub enum Value {
     /// 变量引用
-    Variable { name: String },
+    #[ir_codec(token = "var")]
+    Variable {
+        #[ir_codec(args)]
+        name: String,
+    },
+
     /// 数字常量
-    Number { value: i64 },
+    #[ir_codec(token = "num")]
+    Number {
+        #[ir_codec(args)]
+        value: i64,
+    },
+
     /// 布尔常量
-    Boolean { value: bool },
+    #[ir_codec(token = "bool")]
+    Boolean {
+        #[ir_codec(args)]
+        value: bool,
+    },
+
     /// 单元值
+    #[ir_codec(token = "()")]
+    #[default]
     Unit,
-    /// 临时变量
-    Temp { id: TempId },
+
+    /// 临时变量 (直接显示为 %)
+    Temp {
+        #[ir_codec(args)]
+        id: TempId,
+    },
+
     /// 构造器值
     Constructor {
         name: String,
         arg: Option<Box<Value>>,
     },
+
     /// 限定构造器值
     QualifiedConstructor {
         type_name: String,
         constructor_name: String,
         arg: Option<Box<Value>>,
     },
+
     /// 结构体值
     Struct {
         name: String,
         fields: std::collections::BTreeMap<String, Value>,
     },
+
     /// 函数值
-    Function { name: String },
+    #[ir_codec(token = "fn")]
+    Function {
+        #[ir_codec(args)]
+        name: String,
+    },
+
     /// 闭包值（包含函数名和捕获的值）
     Closure {
         function_name: String,
         captured_values: Vec<Value>,
     },
+
     /// 引用值
-    Reference { value: Box<Value> },
+    #[ir_codec(token = "&")]
+    Reference {
+        #[ir_codec(args)]
+        value: Box<Value>,
+    },
 }
 
 /// MIR语句 - 低级操作
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, IrCodec)]
 pub enum Statement {
     /// 赋值语句
+    #[ir_codec(token = "=", infix)]
     Assign {
+        #[ir_codec(args, left)]
         target: Value,
+        #[ir_codec(args, right)]
         source: Value,
+        #[ir_codec(skip)]
         span: Span,
     },
-    /// 二元运算
+    /// 二元运算 (显示为: target = left op right)
+    #[ir_codec(binop)]
     BinaryOp {
+        #[ir_codec(args, target)]
         target: Value,
+        #[ir_codec(args, left)]
         left: Value,
+        #[ir_codec(args, op)]
         op: BinaryOperator,
+        #[ir_codec(args, right)]
         right: Value,
+        #[ir_codec(skip)]
         span: Span,
     },
     /// 一元运算
+    #[ir_codec(token = "unop", unop)]
     UnaryOp {
+        #[ir_codec(args, target)]
         target: Value,
+        #[ir_codec(args, op)]
         op: UnaryOperator,
+        #[ir_codec(args, operand)]
         operand: Value,
+        #[ir_codec(skip)]
         span: Span,
     },
     /// 函数调用
+    #[ir_codec(token = "call")]
     Call {
         target: Option<Value>,
+        #[ir_codec(args)]
         function: Value,
+        #[ir_codec(args)]
         args: Vec<Value>,
+        #[ir_codec(skip)]
         span: Span,
     },
     /// 存储语句（用于赋值）
@@ -86,11 +150,16 @@ pub enum Statement {
         value: Value,
         span: Span,
     },
-    /// 字段访问语句
+    /// 字段访问语句 (显示为: target = object.field)
+    #[ir_codec(token = "fieldaccess", fieldaccess)]
     FieldAccess {
+        #[ir_codec(args, target)]
         target: Value,
+        #[ir_codec(args, object)]
         object: Value,
+        #[ir_codec(args, field_name)]
         field: String,
+        #[ir_codec(skip)]
         span: Span,
     },
     /// 解引用语句
@@ -149,28 +218,53 @@ pub enum Statement {
     },
 
     /// 卸载效应处理器（与最近的 Push 匹配）
-    EffectHandlerPop { span: Span },
+    EffectHandlerPop {
+        span: Span,
+    },
 }
 
 /// 终结语句 - 控制基本块的跳转
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, IrCodec)]
 pub enum Terminator {
     /// 无条件跳转
-    Goto { target: BasicBlockId, span: Span },
-    /// 条件跳转
-    Branch {
-        condition: Value,
-        then_block: BasicBlockId,
-        else_block: BasicBlockId,
+    #[ir_codec(token = "goto")]
+    Goto {
+        #[ir_codec(args)]
+        target: BasicBlockId,
+        #[ir_codec(skip)]
         span: Span,
     },
+
+    /// 条件跳转
+    #[ir_codec(token = "if")]
+    Branch {
+        #[ir_codec(args)]
+        condition: Value,
+        #[ir_codec(label = "then")]
+        then_block: BasicBlockId,
+        #[ir_codec(label = "else")]
+        else_block: BasicBlockId,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
     /// 返回
-    Return { value: Option<Value>, span: Span },
+    #[ir_codec(token = "ret")]
+    Return {
+        #[ir_codec(args)]
+        value: Option<Value>,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
     /// 匹配跳转
+    #[ir_codec(token = "match")]
     Match {
+        #[ir_codec(args)]
         value: Value,
         arms: Vec<MatchArm>,
         default: Option<BasicBlockId>,
+        #[ir_codec(skip)]
         span: Span,
     },
     // /// 代数效应：Resume 终结当前基本块并跳转回 Perform 的继续点
@@ -178,14 +272,14 @@ pub enum Terminator {
 }
 
 /// 匹配臂
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, IrCodec)]
 pub struct MatchArm {
     pub pattern: Pattern,
     pub target: BasicBlockId,
 }
 
 /// 模式（简化版）
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, IrCodec)]
 pub enum Pattern {
     /// 通配符
     Wildcard,
@@ -211,9 +305,10 @@ pub struct ValueDefinition {
 }
 
 /// 基本块（原始版本，保持向后兼容性）
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, IrCodec)]
 pub struct BasicBlock {
     pub id: BasicBlockId,
+    #[ir_codec(body, label = "statements")]
     pub statements: Vec<Statement>,
     pub terminator: Option<Terminator>,
 }
@@ -280,20 +375,25 @@ impl SsaBlock {
 }
 
 /// MIR函数
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, IrCodec)]
 pub struct MirFunction {
     pub name: String,
+    #[ir_codec(label = "params")]
     pub params: Vec<String>,
-    pub basic_blocks: HashMap<BasicBlockId, BasicBlock>,
+    #[ir_codec(body, label = "blocks")]
+    pub basic_blocks: BTreeMap<BasicBlockId, BasicBlock>,
+    #[ir_codec(skip)]
     pub entry_block: BasicBlockId,
+    #[ir_codec(skip)]
     pub next_block_id: usize,
+    #[ir_codec(skip)]
     pub next_temp_id: usize,
 }
 
 impl MirFunction {
     pub fn new(name: String, params: Vec<String>) -> Self {
         let entry_block = BasicBlockId(0);
-        let mut basic_blocks = HashMap::new();
+        let mut basic_blocks = BTreeMap::new();
         basic_blocks.insert(entry_block, BasicBlock::new(entry_block));
 
         Self {
@@ -329,27 +429,32 @@ impl MirFunction {
 }
 
 /// 结构体字段定义 (MIR级别)
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, IrCodec)]
 pub struct MirStructField {
     pub name: String,
     pub field_type: String, // 简化的类型名称
 }
 
 /// 结构体类型定义 (MIR级别)
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, IrCodec)]
 pub struct MirStructType {
     pub name: String,
     pub fields: Vec<MirStructField>,
 }
 
 /// MIR程序
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, IrCodec)]
+#[ir_codec(program)]
 pub struct MirProgram {
+    #[ir_codec(body)]
     pub functions: HashMap<String, MirFunction>,
     pub main_function: Option<String>,
+    #[ir_codec(extra)]
     pub main_return_value: Option<Value>,
+    #[ir_codec(extra)]
     pub temp_values: HashMap<TempId, Value>,
     /// 结构体类型定义
+    #[ir_codec(extra)]
     pub struct_types: HashMap<String, MirStructType>,
 }
 
@@ -389,27 +494,42 @@ impl MirProgram {
 }
 
 /// 二元运算符
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, IrCodec)]
 pub enum BinaryOperator {
+    #[ir_codec(token = "+")]
     Add,
+    #[ir_codec(token = "-")]
     Subtract,
+    #[ir_codec(token = "*")]
     Multiply,
+    #[ir_codec(token = "/")]
     Divide,
+    #[ir_codec(token = "==")]
     Equal,
+    #[ir_codec(token = "!=")]
     NotEqual,
+    #[ir_codec(token = "<")]
     LessThan,
+    #[ir_codec(token = "<=")]
     LessEqual,
+    #[ir_codec(token = ">")]
     GreaterThan,
+    #[ir_codec(token = ">=")]
     GreaterEqual,
     // 逻辑运算符
+    #[ir_codec(token = "&&")]
     And,
+    #[ir_codec(token = "||")]
     Or,
 }
 
 /// 一元运算符
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, IrCodec)]
 pub enum UnaryOperator {
+    #[ir_codec(token = "+")]
     Plus,
+    #[ir_codec(token = "-")]
     Minus,
+    #[ir_codec(token = "!")]
     Not,
 }

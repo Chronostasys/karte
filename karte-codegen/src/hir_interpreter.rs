@@ -471,9 +471,9 @@ fn evaluate_with_env(expr: &Expr, env: &Environment) -> Result<Value, String> {
             }
         }
         // 代数效应：解释器路径暂不支持，返回错误
-        Expr::EffectPerform { .. }
-        | Expr::EffectResume { .. }
-        | Expr::EffectHandle { .. } => Err("Algebraic effects are JIT-only in this build".to_string()),
+        Expr::EffectPerform { .. } | Expr::EffectResume { .. } | Expr::EffectHandle { .. } => {
+            Err("Algebraic effects are JIT-only in this build".to_string())
+        }
     }
 }
 

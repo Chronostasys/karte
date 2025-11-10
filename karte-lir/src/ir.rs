@@ -1,21 +1,23 @@
 pub use karte_common::calling_convention::Register;
 use karte_diagnostics::Span;
+use karte_ir_derive::IrCodec;
 use std::{collections::HashMap, sync::atomic::AtomicUsize};
 
 /// 标签标识符（用于跳转目标）
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct LabelId(pub usize);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IrCodec, Default)]
+#[ir_codec(token = "L")]
+pub struct LabelId(#[ir_codec(args)] pub usize);
 
 /// 结构体类型标识符
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IrCodec)]
 pub struct StructTypeId(pub usize);
 
 /// 内存地址标识符
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IrCodec, Default)]
 pub struct MemoryId(pub usize);
 
 /// 结构体字段定义
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, IrCodec)]
 pub struct StructField {
     pub name: String,
     pub offset: usize,
@@ -24,7 +26,7 @@ pub struct StructField {
 }
 
 /// 结构体布局信息
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, IrCodec)]
 pub struct StructLayout {
     pub name: String,
     pub fields: Vec<StructField>,
@@ -33,7 +35,7 @@ pub struct StructLayout {
 }
 
 /// 内存分配类型
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, IrCodec)]
 pub enum AllocationType {
     /// 栈分配
     Stack,
@@ -44,75 +46,133 @@ pub enum AllocationType {
 }
 
 /// LIR操作数
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, IrCodec)]
 pub enum Operand {
-    /// 寄存器
-    Register { id: Register },
+    /// 寄存器 (直接显示寄存器，无需前缀)
+    Register {
+        #[ir_codec(args)]
+        id: Register,
+    },
+
     /// 立即数（整数）
-    Immediate { value: i64 },
+    #[ir_codec(token = "#")]
+    Immediate {
+        #[ir_codec(args)]
+        value: i64,
+    },
+
     /// 标签引用
-    Label { id: LabelId },
+    #[ir_codec(token = "@")]
+    Label {
+        #[ir_codec(args)]
+        id: LabelId,
+    },
+
     /// 内存地址（基址 + 偏移）
-    Memory { base: Register, offset: i64 },
+    #[ir_codec(token = "mem")]
+    Memory {
+        #[ir_codec(args)]
+        base: Register,
+        #[ir_codec(args)]
+        offset: i64,
+    },
+
     /// 结构体字段地址
     StructField {
         struct_addr: Register,
         field_offset: usize,
     },
+
     /// 内存ID引用
     MemoryRef { id: MemoryId },
 }
 
+
+impl Default for Operand {
+    fn default() -> Self {
+        Operand::Immediate { value: 0 }
+    }
+}
+
 /// LIR指令
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, IrCodec)]
 pub enum Instruction {
     /// 移动指令：mov dst, src
+    #[ir_codec(token = "mov")]
     Move {
+        #[ir_codec(args)]
         dst: Register,
+        #[ir_codec(args)]
         src: Operand,
+        #[ir_codec(skip)]
         span: Span,
     },
 
     /// 算术指令：add dst, src1, src2
+    #[ir_codec(token = "add")]
     Add {
+        #[ir_codec(args)]
         dst: Register,
+        #[ir_codec(args)]
         src1: Operand,
+        #[ir_codec(args)]
         src2: Operand,
+        #[ir_codec(skip)]
         span: Span,
     },
 
     /// 减法指令：sub dst, src1, src2
+    #[ir_codec(token = "sub")]
     Sub {
+        #[ir_codec(args)]
         dst: Register,
+        #[ir_codec(args)]
         src1: Operand,
+        #[ir_codec(args)]
         src2: Operand,
+        #[ir_codec(skip)]
         span: Span,
     },
 
     /// 乘法指令：mul dst, src1, src2
+    #[ir_codec(token = "mul")]
     Mul {
+        #[ir_codec(args)]
         dst: Register,
+        #[ir_codec(args)]
         src1: Operand,
+        #[ir_codec(args)]
         src2: Operand,
+        #[ir_codec(skip)]
         span: Span,
     },
 
     /// 除法指令：div dst, src1, src2
+    #[ir_codec(token = "div")]
     Div {
+        #[ir_codec(args)]
         dst: Register,
+        #[ir_codec(args)]
         src1: Operand,
+        #[ir_codec(args)]
         src2: Operand,
+        #[ir_codec(skip)]
         span: Span,
     },
 
     /// 比较指令：cmp src1, src2
+    #[ir_codec(token = "cmp")]
     Compare {
+        #[ir_codec(args)]
         src1: Operand,
+        #[ir_codec(args)]
         src2: Operand,
+        #[ir_codec(skip)]
         span: Span,
     },
 
     /// 无条件跳转：jmp label
+    #[ir_codec(token = "jmp")]
     Jump { target: LabelId, span: Span },
 
     /// 条件跳转：je label (jump if equal)
@@ -448,10 +508,14 @@ impl Instruction {
                     self.add_operand_registers(value, &mut used);
                 }
             }
-            Instruction::JumpIndirect { function_register, .. } => {
+            Instruction::JumpIndirect {
+                function_register, ..
+            } => {
                 used.push(*function_register);
             }
-            Instruction::JumpRegister { target_register, .. } => {
+            Instruction::JumpRegister {
+                target_register, ..
+            } => {
                 used.push(*target_register);
                 // push all caller-saved registers
                 used.push(Register::Physical(0));
@@ -600,10 +664,19 @@ impl Instruction {
                 }
             }
             // EffectPerform: payload 使用的寄存器需要替换，result(若有)为定义寄存器
-            Instruction::EffectPerform { tag, payload, result, .. } => {
+            Instruction::EffectPerform {
+                tag,
+                payload,
+                result,
+                ..
+            } => {
                 Self::replace_operand_register(tag, old_reg, new_reg);
                 Self::replace_operand_register(payload, old_reg, new_reg);
-                if let Some(ref mut res) = result { if *res == old_reg { *res = new_reg; } }
+                if let Some(ref mut res) = result {
+                    if *res == old_reg {
+                        *res = new_reg;
+                    }
+                }
             }
             Instruction::EffectPushHandler { tag, .. } => {
                 Self::replace_operand_register(tag, old_reg, new_reg);
@@ -640,12 +713,16 @@ impl Instruction {
                     Self::replace_operand_register(value, old_reg, new_reg);
                 }
             }
-            Instruction::JumpIndirect { function_register, .. } => {
+            Instruction::JumpIndirect {
+                function_register, ..
+            } => {
                 if *function_register == old_reg {
                     *function_register = new_reg;
                 }
             }
-            Instruction::JumpRegister { target_register, .. } => {
+            Instruction::JumpRegister {
+                target_register, ..
+            } => {
                 if *target_register == old_reg {
                     *target_register = new_reg;
                 }
@@ -754,7 +831,10 @@ impl Instruction {
                     used.push(*reg);
                 }
             }
-            Instruction::JumpRegister { target_register, span:_ } => {
+            Instruction::JumpRegister {
+                target_register,
+                span: _,
+            } => {
                 used.push(*target_register);
                 // push all caller-saved registers
                 used.push(Register::Virtual(1));
@@ -821,7 +901,12 @@ impl Instruction {
                 }
             }
             // EffectPerform: payload 是使用，result（若有）是定义
-            Instruction::EffectPerform { payload, result, tag, .. } => {
+            Instruction::EffectPerform {
+                payload,
+                result,
+                tag,
+                ..
+            } => {
                 // FIX: 之前遗漏了 tag 操作数，导致寄存器分配阶段未认为其存活，
                 // 使得 tag 与 payload 被分配到同一个物理寄存器，执行前 payload 覆盖 tag。
                 // 这里加入 tag 的寄存器使用集合，确保分配不同寄存器或保持正确活跃区间。
@@ -843,18 +928,20 @@ impl Instruction {
 }
 
 /// LIR函数
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, IrCodec)]
 pub struct LirFunction {
     pub name: String,
+    #[ir_codec(body, label = "body")]
     pub instructions: Vec<Instruction>,
+    #[ir_codec(skip)]
     pub next_register: usize,
-    /// 函数使用的结构体类型
+    #[ir_codec(skip)]
     pub struct_types: HashMap<StructTypeId, StructLayout>,
-    /// 栈帧大小（用于局部变量分配）
+    #[ir_codec(skip)]
     pub stack_frame_size: usize,
-    /// 🔧 新增：函数参数数量
+    #[ir_codec(label = "params")]
     pub parameter_count: usize,
-    /// 🔧 新增：函数参数寄存器列表
+    #[ir_codec(skip)]
     pub parameter_registers: Vec<Register>,
 }
 
@@ -1066,7 +1153,7 @@ impl LirFunction {
 }
 
 /// LIR程序
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, IrCodec)]
 pub struct LirProgram {
     pub functions: HashMap<String, LirFunction>,
     pub main_function: Option<String>,

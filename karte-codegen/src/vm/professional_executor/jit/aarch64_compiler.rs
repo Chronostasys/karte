@@ -222,12 +222,12 @@ impl AArch64Compiler {
                 code_builder,
             ),
             Instruction::Call { target, .. } => self.compile_call(target, code_builder),
-            Instruction::JumpIndirect { function_register, .. } => {
-                self.compile_jump_indirect(function_register, code_builder)
-            }
-            Instruction::JumpRegister { target_register, .. } => {
-                self.compile_jump_register(target_register, code_builder)
-            }
+            Instruction::JumpIndirect {
+                function_register, ..
+            } => self.compile_jump_indirect(function_register, code_builder),
+            Instruction::JumpRegister {
+                target_register, ..
+            } => self.compile_jump_register(target_register, code_builder),
             Instruction::Return { value, .. } => {
                 self.compile_return(value.as_ref(), code_builder, is_main_function)
             }

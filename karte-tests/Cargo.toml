@@ -17,6 +17,8 @@ karte-mir = { path = "../karte-mir" }
 karte-lir = { path = "../karte-lir" }
 karte-codegen = { path = "../karte-codegen" }
 karte-diagnostics = { path = "../karte-diagnostics" }
+karte-ir-derive = { path = "../karte-ir-derive" }
+karte-ir-codec = { path = "../karte-ir-codec" }
 log.workspace = true
 env_logger = "0.11"
 
@@ -26,4 +28,4 @@ criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
 name = "parser_benchmarks"
-harness = false 
+harness = false
