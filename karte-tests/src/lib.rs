@@ -2,11 +2,12 @@ pub mod assignment_integration_tests;
 pub mod codegen_tests;
 pub mod control_flow_tests;
 pub mod custom_types_tests;
+pub mod effect_tests;
 pub mod integration_tests;
 pub mod lexer_tests;
 pub mod logical_operators_tests;
+pub mod mir_roundtrip_tests;
 pub mod parser_tests;
-pub mod effect_tests;
 pub mod reference_tests;
 pub mod struct_tests;
 pub mod sum_types_tests;
@@ -36,20 +37,19 @@ pub fn execute_with_pipeline_debug(expr: &Expr, debug: bool) -> Result<i64, Stri
     let mut lir_program = karte_lir::lower::lower_mir_to_lir(&mir_program)
         .map_err(|e| format!("LIR lowering error: {:?}", e))?;
 
-        if debug {
-            println!("=== 返回高级LIR 1 (包含Alloc指令，待优化) ===");
-            println!("{}", lir_program);
-            println!("================================================");
-        }     
-    karte_lir::lower_effect_instructions(&mut lir_program).map_err(|e| format!("Effect lowering error: {:?}", e))?;
+    if debug {
+        println!("=== 返回高级LIR 1 (包含Alloc指令，待优化) ===");
+        println!("{}", lir_program);
+        println!("================================================");
+    }
+    karte_lir::lower_effect_instructions(&mut lir_program)
+        .map_err(|e| format!("Effect lowering error: {:?}", e))?;
 
     if debug {
         println!("=== 返回高级LIR 2 (包含Alloc指令，待优化) ===");
         println!("{}", lir_program);
         println!("================================================");
     }
-
-
 
     // 3. 优化管道（Memory2Reg等优化在这里处理）
     let mut pipeline = karte_lir::OptimizationPipeline::new(karte_lir::OptimizationLevel::Balanced);
@@ -63,7 +63,10 @@ pub fn execute_with_pipeline_debug(expr: &Expr, debug: bool) -> Result<i64, Stri
         println!("{}", lir_program);
         // 新增：打印各函数的 stack_frame_size
         for (name, func) in &lir_program.functions {
-            println!("[调试] 优化后函数 {} stack_frame_size = {}", name, func.stack_frame_size);
+            println!(
+                "[调试] 优化后函数 {} stack_frame_size = {}",
+                name, func.stack_frame_size
+            );
         }
         println!("================================================");
     }
@@ -75,7 +78,10 @@ pub fn execute_with_pipeline_debug(expr: &Expr, debug: bool) -> Result<i64, Stri
         println!("=== 指令降级后的LIR (基础指令) ===");
         println!("{}", lir_program);
         for (name, func) in &lir_program.functions {
-            println!("[调试] 降级后函数 {} stack_frame_size = {}", name, func.stack_frame_size);
+            println!(
+                "[调试] 降级后函数 {} stack_frame_size = {}",
+                name, func.stack_frame_size
+            );
         }
         println!("================================================");
     }

@@ -130,6 +130,16 @@ cargo run -- "while false do 42"
 
 # 交互模式
 cargo run
+
+# 导出和导入 IR
+# 将源文件编译并导出为 LIR（默认）
+cargo run -- export examples/demo.karte --output demo.lir
+
+# 导出 MIR 表示（无需先写入文件，可直接处理表达式）
+cargo run -- export "let x = 2; x * 3" --stage mir
+
+# 从 MIR 文本执行程序（会先降低到 LIR 并执行）
+cargo run -- execute --stage mir demo.mir
 ```
 
 ## 语言语法

@@ -7,7 +7,7 @@ use std::fmt;
 use thiserror::Error;
 
 /// 源码中的位置信息
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, karte_ir_derive::IrCodec)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
@@ -28,6 +28,12 @@ impl Span {
 
     pub fn dummy() -> Self {
         Self { start: 0, end: 0 }
+    }
+}
+
+impl Default for Span {
+    fn default() -> Self {
+        Self::dummy()
     }
 }
 

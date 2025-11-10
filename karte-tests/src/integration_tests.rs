@@ -106,4 +106,26 @@ mod integration_tests {
         assert!(error.is_some());
         assert_eq!(error.unwrap().message, "Type mismatch: expected fn(fn() -> number) -> number, found fn(fn() -> number) -> fn() -> number");
     }
+
+    // #[test]
+    // fn test_ir_display_macro() {
+    //     use karte_ir_derive::IrCodec;
+    //     use karte_ir_codec::IrDisplay;
+
+    //     #[derive(IrCodec)]
+    //     enum TestEnum {
+    //         VariantA { value: i32 },
+    //         VariantB,
+    //     }
+
+    //     let instance_a = TestEnum::VariantA { value: 42 };
+    //     let instance_b = TestEnum::VariantB;
+
+    //     // Use to_ir_string to validate the output
+    //     let output_a = instance_a.to_ir_string();
+    //     assert_eq!(output_a, "VariantA(42)");
+
+    //     let output_b = instance_b.to_ir_string();
+    //     assert_eq!(output_b, "VariantB");
+    // }
 }

@@ -36,5 +36,3 @@ mod effect_source_pipeline_tests {
         assert_eq!(result, 20);
     }
 }
-
-

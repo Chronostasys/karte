@@ -2,17 +2,18 @@ use clap::{Parser, Subcommand, ValueEnum};
 use karte_codegen::lir_interpreter::execute;
 use karte_codegen::vm::professional_executor::ProfessionalExecutor;
 use karte_diagnostics::DiagnosticBag;
+use karte_ir_codec::{IrDisplay, IrParse};
 use karte_lexer::tokenize;
 use karte_lir::lower::lower_mir_to_lir;
 use karte_lir::optimization_pipeline::{OptimizationLevel, OptimizationPipeline};
 use karte_lir::LirProgram;
-use karte_mir::lower::lower_expr_to_mir;
+use karte_mir::{lower::lower_expr_to_mir, MirProgram};
 use karte_parser::parse_with_type_check;
 use log::error;
 use std::env;
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "karte")]
@@ -72,10 +73,27 @@ enum Commands {
     Execute {
         /// LIR文件路径
         input: String,
+        /// IR阶段 (默认 LIR)
+        #[arg(long, value_enum, default_value_t = IrStage::Lir)]
+        stage: IrStage,
     },
 
     /// 交互式模式
     Repl,
+
+    /// 导出IR到文件或标准输出
+    Export {
+        /// 输入文件或表达式
+        input: String,
+
+        /// 导出的IR阶段
+        #[arg(long, value_enum, default_value_t = IrStage::Lir)]
+        stage: IrStage,
+
+        /// 输出文件
+        #[arg(short, long)]
+        output: Option<String>,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -84,6 +102,33 @@ enum OptimizationArg {
     Fast,
     Balanced,
     Performance,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+enum IrStage {
+    Mir,
+    Lir,
+}
+
+impl IrStage {
+    fn label(self) -> &'static str {
+        match self {
+            IrStage::Mir => "MIR",
+            IrStage::Lir => "LIR",
+        }
+    }
+
+    fn default_extension(self) -> &'static str {
+        match self {
+            IrStage::Mir => "mir",
+            IrStage::Lir => "lir",
+        }
+    }
+}
+
+struct CompilationArtifacts {
+    mir_program: MirProgram,
+    lir_program: LirProgram,
 }
 
 impl From<OptimizationArg> for OptimizationLevel {
@@ -101,12 +146,12 @@ fn print_diagnostics(diagnostics: &DiagnosticBag, source_code: &str, filename: &
     diagnostics.print_fancy(source_code, filename).unwrap();
 }
 
-fn compile_to_lir(
+fn compile_source_to_artifacts(
     input: &str,
     filename: &str,
     optimization_level: OptimizationLevel,
     verbose: bool,
-) -> Result<LirProgram, Box<dyn std::error::Error>> {
+) -> Result<CompilationArtifacts, Box<dyn std::error::Error>> {
     if verbose {
         if filename != "input" {
             println!("Processing file: {}", filename);
@@ -165,15 +210,38 @@ fn compile_to_lir(
         }
     };
     if verbose {
-        println!("{}", mir_program);
+        println!("{}", mir_program.to_ir_string());
     }
 
-    // Lowering to LIR
+    let lir_program = lower_mir_to_final_lir(&mir_program, optimization_level, verbose)?;
+
+    Ok(CompilationArtifacts {
+        mir_program,
+        lir_program,
+    })
+}
+
+fn compile_to_lir(
+    input: &str,
+    filename: &str,
+    optimization_level: OptimizationLevel,
+    verbose: bool,
+) -> Result<LirProgram, Box<dyn std::error::Error>> {
+    let artifacts = compile_source_to_artifacts(input, filename, optimization_level, verbose)?;
+    Ok(artifacts.lir_program)
+}
+
+fn lower_mir_to_final_lir(
+    mir_program: &MirProgram,
+    optimization_level: OptimizationLevel,
+    verbose: bool,
+) -> Result<LirProgram, Box<dyn std::error::Error>> {
     if verbose {
         println!("\n--- Lowering to LIR ---");
         println!("=== 返回高级LIR (包含Alloc指令，待优化) ===");
     }
-    let mut lir_program = match lower_mir_to_lir(&mir_program) {
+
+    let mut lir_program = match lower_mir_to_lir(mir_program) {
         Ok(prog) => prog,
         Err(errors) => {
             for err in errors {
@@ -182,12 +250,12 @@ fn compile_to_lir(
             return Err("LIR lowering failed".into());
         }
     };
+
     if verbose {
-        println!("{}", lir_program);
+        println!("{}", lir_program.to_ir_string());
         println!("================================================");
     }
 
-    // LIR 优化
     if verbose {
         println!("\n--- LIR 优化 ---");
     }
@@ -202,12 +270,6 @@ fn compile_to_lir(
                     "  - 指令数变化: {} -> {}",
                     stats.instructions_before, stats.instructions_after
                 );
-                // if stats.instructions_before > 0 {
-                //     let reduction = (stats.instructions_before - stats.instructions_after) as f64
-                //         / stats.instructions_before as f64
-                //         * 100.0;
-                //     println!("  - 指令减少: {:.1}%", reduction);
-                // }
             }
         }
         Err(errors) => {
@@ -220,10 +282,9 @@ fn compile_to_lir(
 
     if verbose {
         println!("\n--- 优化后LIR ---");
-        println!("{}", lir_program);
+        println!("{}", lir_program.to_ir_string());
     }
 
-    // 指令降级
     if verbose {
         println!("\n--- 指令降级 ---");
     }
@@ -234,10 +295,60 @@ fn compile_to_lir(
 
     if verbose {
         println!("\n--- 降级后LIR (可执行) ---");
-        println!("{}", lir_program);
+        println!("{}", lir_program.to_ir_string());
     }
 
     Ok(lir_program)
+}
+
+fn parse_ir_content<T: IrParse>(
+    content: &str,
+    stage_label: &str,
+) -> Result<T, Box<dyn std::error::Error>> {
+    T::parse_ir(content).map_err(|err| format!("解析{} IR失败: {}", stage_label, err).into())
+}
+
+fn load_ir_for_execution(
+    filename: &str,
+    stage: IrStage,
+    optimization_level: OptimizationLevel,
+    verbose: bool,
+) -> Result<LirProgram, Box<dyn std::error::Error>> {
+    if verbose {
+        println!("Loading {} from: {}", stage.label(), filename);
+    }
+
+    let content = fs::read_to_string(filename)?;
+
+    match stage {
+        IrStage::Lir => {
+            if verbose {
+                println!("解析 LIR...");
+            }
+            parse_ir_content::<LirProgram>(&content, "LIR")
+        }
+        IrStage::Mir => {
+            if verbose {
+                println!("解析 MIR...");
+            }
+            let mir_program = parse_ir_content::<MirProgram>(&content, "MIR")?;
+            if verbose {
+                println!("MIR 解析完成");
+                println!("{}", mir_program.to_ir_string());
+            }
+            lower_mir_to_final_lir(&mir_program, optimization_level, verbose)
+        }
+    }
+}
+
+fn load_and_execute_ir(
+    filename: &str,
+    stage: IrStage,
+    optimization_level: OptimizationLevel,
+    verbose: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let lir_program = load_ir_for_execution(filename, stage, optimization_level, verbose)?;
+    execute_lir(&lir_program, verbose)
 }
 
 /// 🔧 新增：获取环境变量中的JIT设置
@@ -313,13 +424,13 @@ fn process_file(
     let lir_program = compile_to_lir(&content, filename, optimization_level, verbose)?;
 
     if let Some(output_path) = output_file {
-        let lir_code = format!("{}", lir_program);
-        fs::write(output_path, lir_code)?;
+        let lir_code = lir_program.to_ir_string();
+        write_content_creating_parent(output_path, &lir_code)?;
         println!("LIR代码已输出到: {}", output_path);
     }
 
     if emit_lir {
-        println!("{}", lir_program);
+        println!("{}", lir_program.to_ir_string());
     } else {
         execute_lir(&lir_program, verbose)?;
     }
@@ -337,13 +448,13 @@ fn process_expression(
     let lir_program = compile_to_lir(input, "input", optimization_level, verbose)?;
 
     if let Some(output_path) = output_file {
-        let lir_code = format!("{}", lir_program);
-        fs::write(output_path, lir_code)?;
+        let lir_code = lir_program.to_ir_string();
+        write_content_creating_parent(output_path, &lir_code)?;
         println!("LIR代码已输出到: {}", output_path);
     }
 
     if emit_lir {
-        println!("{}", lir_program);
+        println!("{}", lir_program.to_ir_string());
     } else {
         execute_lir(&lir_program, verbose)?;
     }
@@ -351,15 +462,52 @@ fn process_expression(
     Ok(())
 }
 
-fn load_and_execute_lir(filename: &str, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
-    if verbose {
-        println!("Loading LIR from: {}", filename);
+fn export_ir(
+    input: &str,
+    stage: IrStage,
+    output: Option<&str>,
+    optimization_level: OptimizationLevel,
+    verbose: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (source_content, filename_owned, from_file) = if Path::new(input).exists() {
+        (fs::read_to_string(input)?, Some(input.to_string()), true)
+    } else {
+        (input.to_string(), None, false)
+    };
+
+    let filename = filename_owned.as_deref().unwrap_or("input");
+
+    let artifacts =
+        compile_source_to_artifacts(&source_content, filename, optimization_level, verbose)?;
+
+    let content = match stage {
+        IrStage::Mir => artifacts.mir_program.to_ir_string(),
+        IrStage::Lir => artifacts.lir_program.to_ir_string(),
+    };
+
+    if let Some(custom_path) = output {
+        write_content_creating_parent(custom_path, &content)?;
+        println!("{} IR已输出到: {}", stage.label(), custom_path);
+    } else if from_file {
+        let mut default_path = PathBuf::from(filename);
+        default_path.set_extension(stage.default_extension());
+        write_content_creating_parent(&default_path, &content)?;
+        println!("{} IR已输出到: {}", stage.label(), default_path.display());
+    } else {
+        println!("{}", content);
     }
 
-    let _content = fs::read_to_string(filename)?;
-    // 这里需要实现LIR的解析功能
-    // 暂时返回错误，因为LIR解析器还没有实现
-    Err("LIR file execution not yet implemented. Please compile from source code instead.".into())
+    Ok(())
+}
+
+fn write_content_creating_parent<P: AsRef<Path>>(path: P, content: &str) -> io::Result<()> {
+    let path_ref = path.as_ref();
+    if let Some(parent) = path_ref.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+    fs::write(path_ref, content)
 }
 
 fn run_repl(optimization_level: OptimizationLevel, verbose: bool) {
@@ -464,12 +612,16 @@ fn main() {
             }
         },
         Some(Commands::Compile { input, output }) => {
-            let lir_program = match compile_to_lir(
-                &fs::read_to_string(&input).unwrap(),
-                &input,
-                optimization_level,
-                cli.verbose,
-            ) {
+            let source = match fs::read_to_string(&input) {
+                Ok(content) => content,
+                Err(err) => {
+                    error!("Failed to read input file '{}': {}", input, err);
+                    std::process::exit(1);
+                }
+            };
+
+            let lir_program = match compile_to_lir(&source, &input, optimization_level, cli.verbose)
+            {
                 Ok(program) => program,
                 Err(err) => {
                     error!("Compilation failed: {}", err);
@@ -484,7 +636,7 @@ fn main() {
                     .to_string()
             });
 
-            let lir_code = format!("{}", lir_program);
+            let lir_code = lir_program.to_ir_string();
             if let Err(err) = fs::write(&output_file, lir_code) {
                 error!("Failed to write output: {}", err);
                 std::process::exit(1);
@@ -492,8 +644,24 @@ fn main() {
 
             println!("Compiled to: {}", output_file);
         }
-        Some(Commands::Execute { input }) => {
-            if let Err(err) = load_and_execute_lir(&input, cli.verbose) {
+        Some(Commands::Execute { input, stage }) => {
+            if let Err(err) = load_and_execute_ir(&input, stage, optimization_level, cli.verbose) {
+                error!("Error: {}", err);
+                std::process::exit(1);
+            }
+        }
+        Some(Commands::Export {
+            input,
+            stage,
+            output,
+        }) => {
+            if let Err(err) = export_ir(
+                &input,
+                stage,
+                output.as_deref(),
+                optimization_level,
+                cli.verbose,
+            ) {
                 error!("Error: {}", err);
                 std::process::exit(1);
             }

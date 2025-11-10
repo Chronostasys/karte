@@ -1053,7 +1053,13 @@ impl TypeChecker {
                 // resume 表达式自身结果设为 Unknown（通常不需要值）
                 Type::Unknown
             }
-            Expr::EffectHandle { tag, param, handler, body, .. } => {
+            Expr::EffectHandle {
+                tag,
+                param,
+                handler,
+                body,
+                ..
+            } => {
                 // 语义：在 body 的动态作用域内安装处理器。
                 // 类型规则（简化）：
                 // - 让 tag 推断；

@@ -31,7 +31,7 @@ mod tests {
     }
 }
 
-pub mod display;
+pub mod codec;
 pub mod ir;
 pub mod lower;
 

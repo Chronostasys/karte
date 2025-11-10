@@ -1,0 +1,15 @@
+[package]
+name = "karte-ir-codec"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Runtime support for IR serialization and deserialization"
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+nom.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+

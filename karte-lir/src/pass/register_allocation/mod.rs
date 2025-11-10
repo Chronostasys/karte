@@ -71,7 +71,6 @@ impl FunctionPass for SimpleStackRegisterAllocation {
         function: &mut LirFunction,
         _analyses: &mut AnalysisManager,
     ) -> PassResult {
-        println!("simple lir before allocation:\n{}", function);
         info!("🎯 开始遵循调用约定的寄存器分配：{}", function.name);
 
         // 重置状态
@@ -144,11 +143,11 @@ impl SimpleStackRegisterAllocation {
     }
 
     /// 🔧 重构：基于生命周期分析的寄存器分配映射
-    /// 
+    ///
     /// 思路非常简单，我们有一个已分配表和一个映射表，映射表记载虚拟寄存器到物理寄存器的映射，
     /// 已分配表记载被用过的所有物理寄存器集合。首先我们会先特殊处理所有函数调用等需要使用固定物理寄存器
     /// 的位置，把这些地方用到的虚拟寄存器映射提前写好，接着对于普通的虚拟寄存器：
-    /// 
+    ///
     /// 1. 检查是否已经映射，若已经映射则跳过
     /// 2. 检查是否有未使用过的物理寄存器，如果有则直接映射并记录映射关系
     /// 3. 如果上面两条都失败，则对每一个物理寄存器，根据生命周期表检查是否寄存器是否已经可以被重用（即之前的分配已经超出了生命周期），若有则进行分配
@@ -258,14 +257,18 @@ impl SimpleStackRegisterAllocation {
                         used_physical_regs.insert(5);
                     }
                 }
-                Instruction::JumpRegister { target_register, .. } => {
+                Instruction::JumpRegister {
+                    target_register, ..
+                } => {
                     used_physical_regs.insert(5);
                     allocation_map.insert(*target_register, AllocationTarget::Register(5));
                     for r in &self.calling_convention.argument_registers {
                         used_physical_regs.insert(*r);
-                        allocation_map.insert(Register::Virtual(*r as _), AllocationTarget::Register(*r as u8));
+                        allocation_map.insert(
+                            Register::Virtual(*r as _),
+                            AllocationTarget::Register(*r as u8),
+                        );
                     }
-
                 }
                 _ => {}
             }
@@ -806,8 +809,7 @@ impl SimpleStackRegisterAllocation {
         // 🔧 第一步：保存会被覆盖的临时寄存器到固定帧的scratch槽
         for &temp_reg in &temp_registers_to_save {
             info!("  💾 保存临时寄存器 r{} 到固定帧", temp_reg);
-            let scratch_addr =
-                self.ensure_scratch_slot_addr(transformer, temp_reg);
+            let scratch_addr = self.ensure_scratch_slot_addr(transformer, temp_reg);
             let save_temp = Instruction::Store64 {
                 addr: scratch_addr,
                 offset: 0,
@@ -825,8 +827,7 @@ impl SimpleStackRegisterAllocation {
                 "  📥 加载溢出寄存器 {:?} 从槽 {} 到临时寄存器 r{}",
                 used_reg, slot_id, temp_physical_reg
             );
-            let spill_addr =
-                self.ensure_spill_slot_addr(transformer, *slot_id);
+            let spill_addr = self.ensure_spill_slot_addr(transformer, *slot_id);
             let load_instruction = Instruction::Load64 {
                 dst: Register::Physical(*temp_physical_reg as _),
                 addr: spill_addr,
@@ -855,10 +856,7 @@ impl SimpleStackRegisterAllocation {
         // 存储定义寄存器（使用固定帧的spill槽）
         if let Some((def_reg, slot_id, temp_physical_reg)) = def_spill_info {
             info!("  📤 存储溢出寄存器 {:?} 到槽 {}", def_reg, slot_id);
-            let spill_addr = self.ensure_spill_slot_addr(
-                transformer,
-                slot_id,
-            );
+            let spill_addr = self.ensure_spill_slot_addr(transformer, slot_id);
             let store_instruction = Instruction::Store64 {
                 addr: spill_addr,
                 offset: 0,
@@ -873,10 +871,7 @@ impl SimpleStackRegisterAllocation {
         // 🔧 第五步：恢复之前保存的临时寄存器（LIFO顺序，从固定帧scratch槽恢复）
         for &temp_reg in temp_registers_to_save.iter().rev() {
             info!("  🔄 恢复临时寄存器 r{} 从固定帧", temp_reg);
-            let scratch_addr = self.ensure_scratch_slot_addr(
-                transformer,
-                temp_reg,
-            );
+            let scratch_addr = self.ensure_scratch_slot_addr(transformer, temp_reg);
             let restore_temp = Instruction::Load64 {
                 dst: Register::Physical(temp_reg as _),
                 addr: scratch_addr,
@@ -886,7 +881,6 @@ impl SimpleStackRegisterAllocation {
             transformer.insert(instruction_index + after_offset, restore_temp);
         }
     }
-
 
     /// 🔧 新方法：判断给定临时物理寄存器在当前指令位置是否与活跃虚拟寄存器冲突
     fn is_temp_register_live_at(

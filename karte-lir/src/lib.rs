@@ -22,7 +22,6 @@
 //! - **内存管理**: 支持栈分配和堆分配
 //! - **对齐优化**: 自动计算字段对齐和填充
 
-pub mod display;
 pub mod ir;
 pub mod lower;
 pub mod lower_instructions;
