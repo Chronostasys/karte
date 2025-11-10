@@ -3,21 +3,15 @@
 //! 定义了函数调用时的寄存器使用规范，遵循现代编译器的最佳实践。
 //! 采用类似 System V ABI 的约定，适合 RISC 架构。
 
-use std::{collections::HashSet, fmt};
+use std::collections::HashSet;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, karte_ir_derive::IrCodec)]
 pub enum Register {
-    Virtual(usize),
-    Physical(u8),
-}
+    #[ir_codec(token = "#v")]
+    Virtual(#[ir_codec(args)] usize),
 
-impl fmt::Display for Register {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Register::Virtual(id) => write!(f, "v{}", id),
-            Register::Physical(id) => write!(f, "r{}", id),
-        }
-    }
+    #[ir_codec(token = "#p")]
+    Physical(#[ir_codec(args)] u8),
 }
 
 impl Register {
@@ -39,6 +33,12 @@ impl Register {
             Register::Virtual(id) => Register::Physical(*id as _),
             Register::Physical(_) => *self,
         }
+    }
+}
+
+impl Default for Register {
+    fn default() -> Self {
+        Register::Virtual(0)
     }
 }
 
@@ -150,7 +150,7 @@ impl CallingConvention {
     /// 检查是否是特殊寄存器（SP、FP、RA）
     pub fn is_special_register(&self, reg: Register) -> bool {
         match reg {
-            Register::Physical(reg) => {
+            Register::Physical(_reg) => {
                 // reg == self.stack_pointer || reg == self.frame_pointer || reg == self.return_address
                 true
             }
@@ -163,7 +163,15 @@ impl CallingConvention {
         // 🔧 修复（效应ABI约束）：保留 r0(返回值), r1(效应payload/参数), r5(返回地址), r6(SP), r7(FP)
         // 仅分配 r2,r3,r4 作为通用物理寄存器，避免破坏 effect resume/perform 的寄存器约定
         (0..8u8)
-            .filter(|&reg| ![self.return_register, self.return_address, self.stack_pointer, self.frame_pointer].contains(&reg))
+            .filter(|&reg| {
+                ![
+                    self.return_register,
+                    self.return_address,
+                    self.stack_pointer,
+                    self.frame_pointer,
+                ]
+                .contains(&reg)
+            })
             .collect()
     }
 }

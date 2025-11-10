@@ -301,7 +301,7 @@ impl PassManager {
                         self.function_passes[i].name(),
                         execution_time
                     );
-                    debug!("    优化后lir: {}", function);
+                    debug!("    优化后lir: {:?}", function);
                 }
             }
 

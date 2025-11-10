@@ -466,29 +466,62 @@ fn lower_expression(
             // 3. 否则一律视为 Closure 结构体：提取 function_ptr 与 env_ptr，生成 call，参数序列为 (env_ptr, 原始参数...)
             //    即使 env_ptr == 0 也不做分支；保持统一 ABI，便于后端优化。
             let func_val = lower_expression_to_temp(ctx, function)?;
-            let arg_vals: Vec<Value> = args.iter().map(|a| lower_expression_to_temp(ctx, a)).collect::<Result<_, _>>()?;
+            let arg_vals: Vec<Value> = args
+                .iter()
+                .map(|a| lower_expression_to_temp(ctx, a))
+                .collect::<Result<_, _>>()?;
 
             match &func_val {
                 Value::Function { name } => {
                     // 直接函数：无需 env
-                    ctx.add_statement(Statement::Call { target: Some(destination.clone()), function: Value::Function { name: name.clone() }, args: arg_vals, span });
+                    ctx.add_statement(Statement::Call {
+                        target: Some(destination.clone()),
+                        function: Value::Function { name: name.clone() },
+                        args: arg_vals,
+                        span,
+                    });
                 }
-                Value::Closure { captured_values, function_name } => {
+                Value::Closure {
+                    captured_values,
+                    function_name,
+                } => {
                     // 旧式 Closure 表示：captured_values 作为 env 展开到前面（保持兼容）。
                     let mut all_args = captured_values.clone();
                     all_args.extend(arg_vals);
-                    ctx.add_statement(Statement::Call { target: Some(destination.clone()), function: Value::Function { name: function_name.clone() }, args: all_args, span });
+                    ctx.add_statement(Statement::Call {
+                        target: Some(destination.clone()),
+                        function: Value::Function {
+                            name: function_name.clone(),
+                        },
+                        args: all_args,
+                        span,
+                    });
                 }
                 _ => {
                     // 视为标准 Closure 结构体：必须含有 function_ptr / env_ptr 字段。
                     let function_ptr_temp = ctx.new_temp();
-                    ctx.add_statement(Statement::FieldAccess { target: function_ptr_temp.clone(), object: func_val.clone(), field: "function_ptr".to_string(), span });
+                    ctx.add_statement(Statement::FieldAccess {
+                        target: function_ptr_temp.clone(),
+                        object: func_val.clone(),
+                        field: "function_ptr".to_string(),
+                        span,
+                    });
                     let env_ptr_temp = ctx.new_temp();
-                    ctx.add_statement(Statement::FieldAccess { target: env_ptr_temp.clone(), object: func_val.clone(), field: "env_ptr".to_string(), span });
+                    ctx.add_statement(Statement::FieldAccess {
+                        target: env_ptr_temp.clone(),
+                        object: func_val.clone(),
+                        field: "env_ptr".to_string(),
+                        span,
+                    });
                     // 统一：env 作为第一个参数传入
                     let mut final_args = vec![env_ptr_temp];
                     final_args.extend(arg_vals);
-                    ctx.add_statement(Statement::Call { target: Some(destination.clone()), function: function_ptr_temp, args: final_args, span });
+                    ctx.add_statement(Statement::Call {
+                        target: Some(destination.clone()),
+                        function: function_ptr_temp,
+                        args: final_args,
+                        span,
+                    });
                 }
             }
         }
@@ -509,9 +542,19 @@ fn lower_expression(
             let v = lower_expression_to_temp(ctx, value)?;
             ctx.add_statement(Statement::EffectResume { value: v, span });
             // resume 表达式结果Unknown，这里置Unit占位
-            ctx.add_statement(Statement::Assign { target: destination.clone(), source: Value::Unit, span });
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: Value::Unit,
+                span,
+            });
         }
-        Expr::EffectHandle { tag, param, handler, body, .. } => {
+        Expr::EffectHandle {
+            tag,
+            param,
+            handler,
+            body,
+            ..
+        } => {
             // 1) 创建 handler 所在的基本块（与当前函数同体，非独立函数）
             let handler_block = ctx.new_block();
 
@@ -535,13 +578,20 @@ fn lower_expression(
             ctx.set_current_block(handler_block);
             // 🔧 修复：在handler块内声明参数变量，直接映射到 r1 寄存器
             // 这样在后续的语句中，param 变量会直接使用 r1 寄存器
-            ctx.variables.insert(param.clone(), Value::Variable { name: param.clone() });
-            
+            ctx.variables.insert(
+                param.clone(),
+                Value::Variable {
+                    name: param.clone(),
+                },
+            );
+
             // 🔧 修复：handler 表达式不需要结果，因为它通常通过 resume 返回
             // 直接处理 handler 表达式，不保存结果
-            let dummy_temp = Value::Temp { id: crate::TempId(0) };
+            let dummy_temp = Value::Temp {
+                id: crate::TempId(0),
+            };
             lower_expression(ctx, handler, &dummy_temp)?;
-            
+
             // 处理器里通常通过 resume 返回；若未 resume，这里不强制添加跳转
             ctx.set_current_block(current_block.unwrap());
         }

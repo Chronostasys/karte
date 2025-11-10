@@ -223,7 +223,9 @@ impl DeadCodeElimination {
             Instruction::EffectResume { value, .. } => {
                 self.add_operand_registers(value, &mut used);
             }
-            Instruction::JumpRegister { target_register, .. } => {
+            Instruction::JumpRegister {
+                target_register, ..
+            } => {
                 used.push(*target_register);
                 // push all caller-saved registers
                 used.push(Register::Virtual(1));

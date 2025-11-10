@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "karte-lexer",
     "karte-cli", "karte-codegen", "karte-diagnostics", "karte-hir", "karte-lir", "karte-mir", "karte-lsp", "karte-parser", "karte-tests", "karte-common",
+    "karte-ir-codec", "karte-ir-derive",
 ]
 
 [workspace.package]
@@ -37,6 +38,11 @@ env_logger = "0.10"
 
 # 类型推断
 ena = "0.14"
+
+# Proc macro 相关
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+quote = "1.0"
+proc-macro2 = "1.0"
 
 [profile.release]
 strip = true

@@ -10,3 +10,6 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+karte-ir-codec = { path = "../karte-ir-codec" }
+karte-ir-derive = { path = "../karte-ir-derive" }
+nom.workspace = true
