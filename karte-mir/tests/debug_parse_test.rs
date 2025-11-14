@@ -4,16 +4,17 @@ use karte_ir_codec::{IrDisplay, IrParse};
 #[test]
 fn test_parse_simple_value() {
     // Test parsing a simple Value
-    let value_str = "num 2";
-    let parsed = Value::parse_ir(value_str);
+    let original = Value::Number { value: 2 };
+    let value_str = original.to_ir_string();
+    let parsed = Value::parse_ir(&value_str);
     println!("Parsing '{}': {:?}", value_str, parsed);
-    assert!(parsed.is_ok());
+    assert_eq!(parsed.unwrap(), original);
 }
 
 #[test]
 fn test_display_and_parse_mir_function() {
     // Create a simple MirFunction
-    let mut func = MirFunction::new("test".to_string(), vec![]);
+    let func = MirFunction::new("test".to_string(), vec![]);
     
     // Display it
     let displayed = func.to_ir_string();
@@ -34,7 +35,7 @@ fn test_display_and_parse_mir_program() {
     let mut program = MirProgram::new();
     program.main_function = Some("main".to_string());
     
-    let mut main_func = MirFunction::new("main".to_string(), vec![]);
+    let main_func = MirFunction::new("main".to_string(), vec![]);
     program.functions.insert("main".to_string(), main_func);
     
     // Display it

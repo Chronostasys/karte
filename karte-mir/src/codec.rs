@@ -125,7 +125,9 @@ mod tests {
         use crate::TempId;
         use karte_ir_codec::IrParse;
 
-        let input = "call %4, %5, %3";
+        // The current codec emits call statements as:
+        // `call function: %4, args: [%5, %3]` when there is no target.
+        let input = "call function: %4, args: [%5, %3]";
         println!("Testing Call parsing for input: {}", input);
 
         match Statement::parse_nom(input) {
@@ -137,7 +139,7 @@ mod tests {
                     args: vec![Value::Temp { id: TempId(5) }, Value::Temp { id: TempId(3) }],
                     span: Default::default(),
                 };
-                assert_eq!(stmt, expected);
+                assert_eq!(stmt, expected, "Parsed Call did not match expected");
             }
             Err(e) => panic!("Call parse failed: {:?}", e),
         }
@@ -274,8 +276,8 @@ mod tests {
         use karte_ir_codec::IrParse;
         
         // 直接测试 Terminator 的解析
-        println!("Testing Terminator::parse_nom with 'ret %0'");
-        match Terminator::parse_nom("ret %0") {
+        println!("Testing Terminator::parse_nom with 'ret value: %0'");
+        match Terminator::parse_nom("ret value: %0") {
             Ok((rest, value)) => {
                 println!("  ✓ Parsed: {:?}, rest: {:?}", value, rest);
             }
@@ -290,7 +292,7 @@ mod tests {
         use karte_ir_codec::parse::keyword;
         
         // Test 1: matching keyword
-        let input = "ret %0";
+    let input = "ret value: %0";
         println!("Test 1: keyword('ret') with input: '{}'", input);
         match keyword("ret")(input) {
             Ok((rest, matched)) => {
@@ -302,7 +304,7 @@ mod tests {
         }
         
         // Test 2: non-matching keyword
-        let input2 = "ret %0";
+    let input2 = "ret value: %0";
         println!("Test 2: keyword('if') with input: '{}'", input2);
         match keyword("if")(input2) {
             Ok((rest, matched)) => {
@@ -327,7 +329,7 @@ mod tests {
         // 直接测试 Option<Terminator> 的解析
         let inputs = vec![
             "none",
-            "ret %0",
+            "ret value: %0",
         ];
         
         for input in inputs {
@@ -351,8 +353,9 @@ mod tests {
         use nom::character::complete::{char as nom_char, multispace0};
         use nom::sequence::delimited as nom_delimited;
         
-        // 测试 separated_pair 是否能解析 "bb0: BasicBlock..."
-        let input = "bb0: BasicBlock\n                                id: bb0\n                                statements: []\n                                terminator: ret %0";
+    // 测试 separated_pair 是否能解析 "bb0: BasicBlock..."
+    // updated format uses "ret value: %0" for terminator and labels like "id: bb0"
+    let input = "bb0: BasicBlock\n                                id: bb0\n                                statements: []\n                                terminator: ret value: %0";
         
         println!("Testing separated_pair with input: {:?}", &input.chars().take(50).collect::<String>());
         
@@ -366,11 +369,9 @@ mod tests {
             Ok((rest, (key, _value))) => {
                 println!("✓ Parsed pair: bb{} -> BasicBlock", key.0);
                 println!("  Remaining: {:?}", &rest.chars().take(50).collect::<String>());
+                assert_eq!(key.0, 0, "expected BasicBlockId 0");
             }
-            Err(e) => {
-                println!("✗ Failed: {:?}", e);
-                panic!("separated_pair parsing failed");
-            }
+            Err(e) => panic!("separated_pair parsing failed: {:?}", e),
         }
     }
 
@@ -380,8 +381,9 @@ mod tests {
         use karte_ir_codec::IrParse;
         use std::collections::BTreeMap;
         
-        // 简化的 BTreeMap 测试，模拟实际格式
-        let input = "{\n                        bb0: BasicBlock\n                                id: bb0\n                                statements: []\n                                terminator: ret %0\n                        }";
+    // 简化的 BTreeMap 测试，模拟实际格式
+    // match current IR style (terminator uses "ret value: %0")
+    let input = "{\n                        bb0: BasicBlock\n                                id: bb0\n                                statements: []\n                                terminator: ret value: %0\n                        }";
         
         println!("Testing BTreeMap parsing with indentation");
         println!("Input: {:?}", input);
@@ -390,11 +392,9 @@ mod tests {
             Ok((rest, map)) => {
                 println!("✓ Parsed BTreeMap with {} entries", map.len());
                 println!("  Remaining input: {:?}", rest);
+                assert!(map.len() >= 1, "expected at least one BasicBlock entry");
             }
-            Err(e) => {
-                println!("✗ Failed to parse BTreeMap: {:?}", e);
-                panic!("BTreeMap parsing failed");
-            }
+            Err(e) => panic!("Failed to parse BTreeMap: {:?}", e),
         }
     }
 
@@ -403,7 +403,7 @@ mod tests {
         use crate::ir::MirFunction;
         use karte_ir_codec::IrParse;
         
-        // 从实际文件中提取的完整格式
+        // Use a representative, current-format MirFunction fixture and assert parse succeeds
         let input = r#"MirFunction
                 name: main
                 params: []
@@ -411,26 +411,22 @@ mod tests {
                         bb0: BasicBlock
                                 id: bb0
                                 statements: [
-                                        %1 = num 2,
+                                        %1 = num value: 2,
                                         %2 = %1,
-                                        %3 = num 3,
+                                        %3 = num value: 3,
                                         %0 = %2 * %3
-                                        ]
-                                terminator: ret %0
+                                    ]
+                                terminator: ret value: %0
                         }"#;
-        
-        println!("Testing MirFunction parsing with real format");
-        
+
         match MirFunction::parse_nom(input) {
-            Ok((rest, func)) => {
+            Ok((_rest, func)) => {
                 println!("✓ Parsed MirFunction: name={}", func.name);
                 println!("  BasicBlocks count: {}", func.basic_blocks.len());
-                println!("  Remaining input (first 100 chars): {:?}", &rest.chars().take(100).collect::<String>());
+                assert_eq!(func.name, "main");
+                assert!(func.basic_blocks.len() >= 1);
             }
-            Err(e) => {
-                println!("✗ Failed to parse MirFunction: {:?}", e);
-                panic!("MirFunction parsing with real format failed");
-            }
+            Err(e) => panic!("MirFunction parsing failed: {:?}", e),
         }
     }
 
@@ -466,7 +462,8 @@ mod tests {
         use karte_ir_codec::IrParse;
         
         println!("\n=== Test: Vec<Statement> ===");
-        let input = "[\n                                        \n                                            %1 = num 2,\n                                        \n                                            %2 = %1,\n                                        \n                                            %3 = num 3,\n                                        \n                                            %0 = %2 * %3\n                                        ]";
+    // numbers are emitted as `num value: N` in the current IR
+    let input = "[\n                                        \n                                            %1 = num value: 2,\n                                        \n                                            %2 = %1,\n                                        \n                                            %3 = num value: 3,\n                                        \n                                            %0 = %2 * %3\n                                        ]";
         
         println!("Input length: {}", input.len());
         println!("Input: {:?}", &input.chars().take(150).collect::<String>());
@@ -475,16 +472,10 @@ mod tests {
             Ok((rest, stmts)) => {
                 println!("✓ Parsed {} statements", stmts.len());
                 println!("  Remaining: {:?}", rest);
+                assert_eq!(stmts.len(), 4, "expected 4 statements in the vector");
+                assert_eq!(rest, "", "expected no remaining input after parsing statements");
             }
-            Err(e) => {
-                println!("✗ Failed: {:?}", e);
-                println!("  Error input: {:?}", match &e {
-                    nom::Err::Error(e) => &e.input[..e.input.len().min(100)],
-                    nom::Err::Failure(e) => &e.input[..e.input.len().min(100)],
-                    _ => "N/A",
-                });
-                panic!("Vec<Statement> parsing failed");
-            }
+            Err(e) => panic!("Vec<Statement> parsing failed: {:?}", e),
         }
     }
 
@@ -494,7 +485,7 @@ mod tests {
         use karte_ir_codec::IrParse;
         
         println!("\n=== Test 1: BasicBlock with empty statements ===");
-        let input1 = "BasicBlock\n                                id: \n                                    bb0\n                                statements: \n                                    []\n                                terminator: \n                                    ret %0";
+    let input1 = "BasicBlock\n                                id: \n                                    bb0\n                                statements: \n                                    []\n                                terminator: \n                                    ret value: %0";
         
         println!("Input: {:?}", &input1.chars().take(100).collect::<String>());
         
@@ -503,14 +494,13 @@ mod tests {
                 println!("✓ Parsed BasicBlock: id=bb{}", block.id.0);
                 println!("  Statements: {}", block.statements.len());
                 println!("  Remaining: {:?}", rest);
+                assert_eq!(block.statements.len(), 0, "expected no statements in input1");
             }
-            Err(e) => {
-                println!("✗ Failed: {:?}", e);
-            }
+            Err(e) => panic!("Parsing BasicBlock failed: {:?}", e),
         }
         
         println!("\n=== Test 2: BasicBlock with statements ===");
-        let input2 = "BasicBlock\n                                id: \n                                    bb0\n                                statements: \n                                    [\n                                        \n                                            %1 = num 2,\n                                        \n                                            %2 = %1,\n                                        \n                                            %3 = num 3,\n                                        \n                                            %0 = %2 * %3\n                                        ]\n                                terminator: \n                                    ret %0";
+    let input2 = "BasicBlock\n                                id: \n                                    bb0\n                                statements: \n                                    [\n                                        \n                                            %1 = num value: 2,\n                                        \n                                            %2 = %1,\n                                        \n                                            %3 = num value: 3,\n                                        \n                                            %0 = %2 * %3\n                                        ]\n                                terminator: \n                                    ret value: %0";
         
         println!("Input length: {}", input2.len());
         
@@ -519,11 +509,9 @@ mod tests {
                 println!("✓ Parsed BasicBlock: id=bb{}", block.id.0);
                 println!("  Statements: {}", block.statements.len());
                 println!("  Remaining: {:?}", rest);
+                assert_eq!(block.statements.len(), 4, "expected 4 statements in input2");
             }
-            Err(e) => {
-                println!("✗ Failed: {:?}", e);
-                panic!("BasicBlock parsing failed");
-            }
+            Err(e) => panic!("Parsing BasicBlock failed: {:?}", e),
         }
     }
 
@@ -550,7 +538,7 @@ mod tests {
         
         // Test 2: With BasicBlock
         println!("\n=== Test 2: MirFunction with BasicBlock ===");
-        let input2 = "MirFunction\n                name: \n                    main\n                params: \n                    []\n                blocks: \n                    {\n                        bb0: \n                            BasicBlock\n                                id: \n                                    bb0\n                                statements: \n                                    [\n                                        \n                                            %1 = num 2,\n                                        \n                                            %2 = %1,\n                                        \n                                            %3 = num 3,\n                                        \n                                            %0 = %2 * %3\n                                        ]\n                                terminator: \n                                    ret %0\n                        }";
+    let input2 = "MirFunction\n                name: \n                    main\n                params: \n                    []\n                blocks: \n                    {\n                        bb0: \n                            BasicBlock\n                                id: \n                                    bb0\n                                statements: \n                                    [\n                                        \n                                            %1 = num value: 2,\n                                        \n                                            %2 = %1,\n                                        \n                                            %3 = num value: 3,\n                                        \n                                            %0 = %2 * %3\n                                        ]\n                                terminator: \n                                    ret value: %0\n                        }";
         
         println!("Input length: {}", input2.len());
         println!("Input (first 100 chars): {:?}", &input2.chars().take(100).collect::<String>());
@@ -560,11 +548,9 @@ mod tests {
                 println!("✓ Parsed MirFunction: name={}", func.name);
                 println!("  BasicBlocks: {}", func.basic_blocks.len());
                 println!("  Remaining: {:?}", &rest.chars().take(50).collect::<String>());
+                assert!(func.basic_blocks.len() >= 1, "expected at least one basic block");
             }
-            Err(e) => {
-                println!("✗ Failed: {:?}", e);
-                panic!("MirFunction parsing with BasicBlock failed");
-            }
+            Err(e) => panic!("MirFunction parsing failed: {:?}", e),
         }
     }
     
@@ -588,7 +574,7 @@ mod tests {
         let input_with_indent = "{\n        main: \n            MirFunction\n                name: \n                    main\n                params: \n                    []\n                blocks: \n                    {}\n        }";
         println!("Input length: {}", input_with_indent.len());
         match <HashMap<String, MirFunction>>::parse_nom(input_with_indent) {
-            Ok((rest, map)) => {
+            Ok((_rest, map)) => {
                 println!("✓ Parsed {} entries", map.len());
                 for (k, v) in &map {
                     println!("  {}: {}", k, v.name);
@@ -599,7 +585,7 @@ mod tests {
         
         // Test with full BasicBlock
         println!("\n=== Test 3: HashMap with BasicBlock ===");
-        let input = "{\n        main: \n            MirFunction\n                name: \n                    main\n                params: \n                    []\n                blocks: \n                    {\n                        bb0: \n                            BasicBlock\n                                id: \n                                    bb0\n                                statements: \n                                    [\n                                        \n                                            %1 = num 2,\n                                        \n                                            %2 = %1,\n                                        \n                                            %3 = num 3,\n                                        \n                                            %0 = %2 * %3\n                                        ]\n                                terminator: \n                                    ret %0\n                        }\n        }";
+    let input = "{\n        main: \n            MirFunction\n                name: \n                    main\n                params: \n                    []\n                blocks: \n                    {\n                        bb0: \n                            BasicBlock\n                                id: \n                                    bb0\n                                statements: \n                                    [\n                                        \n                                            %1 = num value: 2,\n                                        \n                                            %2 = %1,\n                                        \n                                            %3 = num value: 3,\n                                        \n                                            %0 = %2 * %3\n                                        ]\n                                terminator: \n                                    ret value: %0\n                        }\n        }";
         
         println!("Input length: {}", input.len());
         
@@ -611,27 +597,70 @@ mod tests {
                 }
                 println!("  Remaining: {:?}", &rest.chars().take(100).collect::<String>());
             }
-            Err(e) => {
-                println!("✗ Failed: {:?}", e);
-                panic!("HashMap parsing failed");
-            }
+            Err(e) => panic!("HashMap parsing failed: {:?}", e),
         }
     }
 
     #[test]
     fn test_expr_output_mir() {
-        use crate::ir::MirProgram;
-        use karte_ir_codec::IrParse;
-        
-        let mir_content = "functions: \n    {\n        main: \n            MirFunction\n                name: \n                    main\n                params: \n                    []\n                blocks: \n                    {\n                        bb0: \n                            BasicBlock\n                                id: \n                                    bb0\n                                statements: \n                                    [\n                                        \n                                            %1 = num 2,\n                                        \n                                            %2 = %1,\n                                        \n                                            %3 = num 3,\n                                        \n                                            %0 = %2 * %3\n                                        ]\n                                terminator: \n                                    ret %0\n                        }\n        }\nmain_function: \n    main\nmain_return_value: \n    %0\ntemp_values: \n    {}\nstruct_types: \n    {}";
+        use crate::ir::{
+            BasicBlockId, MirFunction, MirProgram, Statement, TempId, Terminator, Value,
+        };
+        use karte_diagnostics::Span;
+        use karte_ir_codec::{IrDisplay, IrParse};
 
-        println!("Parsing MIR content: {}", mir_content);
+        let mut program = MirProgram::new();
+        let mut main_fn = MirFunction::new("main".to_string(), vec![]);
 
-        let parsed = MirProgram::parse_ir(mir_content);
-        if let Err(ref err) = parsed {
-            println!("Parsing failed: {:?}", err);
+        {
+            let entry = BasicBlockId(0);
+            let block = main_fn
+                .basic_blocks
+                .get_mut(&entry)
+                .expect("entry block should exist");
+
+            block.statements.push(Statement::Assign {
+                target: Value::Temp { id: TempId(1) },
+                source: Value::Number { value: 2 },
+                span: Span::default(),
+            });
+            block.statements.push(Statement::Assign {
+                target: Value::Temp { id: TempId(2) },
+                source: Value::Temp { id: TempId(1) },
+                span: Span::default(),
+            });
+            block.statements.push(Statement::Assign {
+                target: Value::Temp { id: TempId(3) },
+                source: Value::Number { value: 3 },
+                span: Span::default(),
+            });
+            block.statements.push(Statement::BinaryOp {
+                target: Value::Temp { id: TempId(0) },
+                left: Value::Temp { id: TempId(2) },
+                op: crate::ir::BinaryOperator::Multiply,
+                right: Value::Temp { id: TempId(3) },
+                span: Span::default(),
+            });
+            block.terminator = Some(Terminator::Return {
+                value: Some(Value::Temp { id: TempId(0) }),
+                span: Span::default(),
+            });
         }
-        assert!(parsed.is_ok(), "Failed to parse expr_output.mir: {:?}", parsed);
+
+        program.add_function(main_fn);
+        program.set_main("main".to_string());
+        program.main_return_value = Some(Value::Temp { id: TempId(0) });
+
+        let text = program.to_ir_string();
+        println!("Rendered MirProgram:\n{}", text);
+
+        let parsed = MirProgram::parse_ir(&text).expect("MirProgram text should parse");
+        assert_eq!(parsed.functions.len(), 1);
+        assert_eq!(parsed.main_function.as_deref(), Some("main"));
+        assert_eq!(parsed.main_return_value, program.main_return_value);
+        assert_eq!(parsed.temp_values.len(), 0);
+        assert_eq!(parsed.struct_types.len(), 0);
+        assert_eq!(parsed.to_ir_string(), text);
     }
     
     #[test]
@@ -643,7 +672,7 @@ mod tests {
         use nom::sequence::{preceded, terminated};
         use nom::character::complete::multispace1;
         
-        let input = "ret %0";
+    let input = "ret value: %0";
         println!("\nDEBUG: Testing Terminator parsing step by step");
         println!("Input: '{}'", input);
         

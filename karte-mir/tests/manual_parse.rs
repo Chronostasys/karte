@@ -1,45 +1,62 @@
-use karte_ir_codec::parse::IrParse;
-use karte_mir::ir::MirFunction;
+use karte_diagnostics::Span;
+use karte_ir_codec::{parse::IrParse, IrDisplay};
+use karte_mir::ir::{
+    BasicBlock, BasicBlockId, BinaryOperator, MirFunction, Statement, TempId, Terminator, Value,
+};
+use std::collections::BTreeMap;
 
 #[test]
 fn parse_sample_mir_function() {
-    let input = r#"MirFunction
-                name: main
-                params: []
-                blocks: {
-                        bb0: BasicBlock
-                                id: bb0
-                                statements: [
-                                        %1 = num 2,
-                                        %2 = %1,
-                                        %3 = num 3,
-                                        %0 = %2 * %3
-                                        ]
-                                terminator: ret %0
-                        }
-        }"#;
+    let func = build_sample_function();
+    let input = func.to_ir_string();
 
-    let parsed = MirFunction::parse_ir(input);
-    assert!(parsed.is_ok(), "Failed to parse: {:?}", parsed);
+    let parsed = MirFunction::parse_ir(&input);
+    assert!(parsed.is_ok(), "Failed to parse MirFunction: {:?}", parsed);
 }
 
 #[test]
 fn parse_sample_basic_block_map() {
-    use karte_mir::ir::{BasicBlock, BasicBlockId};
-    use std::collections::BTreeMap;
+    let func = build_sample_function();
+    let input = func.basic_blocks.to_ir_string();
 
-    let input = r#"{
-                bb0: BasicBlock
-                                id: bb0
-                                statements: [
-                                        %1 = num 2,
-                                        %2 = %1,
-                                        %3 = num 3,
-                                        %0 = %2 * %3
-                                ]
-                                terminator: ret %0
-        }"#;
-
-    let parsed = BTreeMap::<BasicBlockId, BasicBlock>::parse_ir(input);
+    let parsed = BTreeMap::<BasicBlockId, BasicBlock>::parse_ir(&input);
     assert!(parsed.is_ok(), "Failed to parse blocks: {:?}", parsed);
+}
+
+fn build_sample_function() -> MirFunction {
+    let mut func = MirFunction::new("main".to_string(), vec![]);
+    let entry = BasicBlockId(0);
+    let block = func
+        .basic_blocks
+        .get_mut(&entry)
+        .expect("entry block should exist");
+
+    block.statements.push(Statement::Assign {
+        target: Value::Temp { id: TempId(1) },
+        source: Value::Number { value: 2 },
+        span: Span::default(),
+    });
+    block.statements.push(Statement::Assign {
+        target: Value::Temp { id: TempId(2) },
+        source: Value::Temp { id: TempId(1) },
+        span: Span::default(),
+    });
+    block.statements.push(Statement::Assign {
+        target: Value::Temp { id: TempId(3) },
+        source: Value::Number { value: 3 },
+        span: Span::default(),
+    });
+    block.statements.push(Statement::BinaryOp {
+        target: Value::Temp { id: TempId(0) },
+        left: Value::Temp { id: TempId(2) },
+        op: BinaryOperator::Multiply,
+        right: Value::Temp { id: TempId(3) },
+        span: Span::default(),
+    });
+    block.terminator = Some(Terminator::Return {
+        value: Some(Value::Temp { id: TempId(0) }),
+        span: Span::default(),
+    });
+
+    func
 }
