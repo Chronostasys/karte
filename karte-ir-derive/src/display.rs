@@ -562,10 +562,10 @@ fn generate_variant_fields_display(
                             karte_ir_codec::write_multiline_suffix(f, #field_name, 8)?;
                         }
                     }
-                    _ => {
+                    FieldStyle::Inline | FieldStyle::Compact => {
                         quote! {
                             write!(f, "\n    {}: ", #label)?;
-                            karte_ir_codec::write_multiline_suffix(f, #field_name, 8)?;
+                            karte_ir_codec::IrDisplay::ir_fmt(#field_name, f)?;
                         }
                     }
                 }
@@ -660,6 +660,12 @@ fn generate_named_struct_display(
         .any(|f| matches!(f.style(), FieldStyle::Body | FieldStyle::NewlineItems));
 
     if has_body_fields {
+        let (line_prefix, _inline_indent) = if type_spec.attrs.is_program {
+            ("", 4usize)
+        } else {
+            ("    ", 8usize)
+        };
+
         let field_writes: Vec<_> = printable
             .into_iter()
             .map(|field| {
@@ -668,16 +674,27 @@ fn generate_named_struct_display(
                     .label()
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| field_ident.to_string());
+                let style = field.style();
 
-                if type_spec.attrs.is_program {
-                    quote! {
-                        write!(f, "\n{}: ", #label)?;
-                        karte_ir_codec::write_multiline_suffix(f, &self.#field_ident, 4)?;
+                match style {
+                    FieldStyle::Body | FieldStyle::NewlineItems => {
+                        if type_spec.attrs.is_program {
+                            quote! {
+                                write!(f, "\n{}: ", #label)?;
+                                karte_ir_codec::write_multiline_suffix(f, &self.#field_ident, 4)?;
+                            }
+                        } else {
+                            quote! {
+                                write!(f, "\n    {}: ", #label)?;
+                                karte_ir_codec::write_multiline_suffix(f, &self.#field_ident, 8)?;
+                            }
+                        }
                     }
-                } else {
-                    quote! {
-                        write!(f, "\n    {}: ", #label)?;
-                        karte_ir_codec::write_multiline_suffix(f, &self.#field_ident, 8)?;
+                    FieldStyle::Inline | FieldStyle::Compact => {
+                        quote! {
+                            write!(f, "\n{}{}: ", #line_prefix, #label)?;
+                            karte_ir_codec::IrDisplay::ir_fmt(&self.#field_ident, f)?;
+                        }
                     }
                 }
             })

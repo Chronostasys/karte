@@ -7,4 +7,4 @@
 - [ ] 生命周期分析中将argument假设为永久的生命周期，这个需要优化
 - [ ] 更新代数效应文档
 
-
+- [x] 2025-11-14：同步 `karte-mir` 中 IR Codec 相关测试（`codec_integration_test.rs`、`compact_display_test.rs`、`debug_parse_test.rs`、`hashmap_parse_test.rs`、`manual_parse.rs`）到新的自动 Display/Parse 文本格式，确保 roundtrip 行为覆盖 `%` 前缀与 `body` 布局

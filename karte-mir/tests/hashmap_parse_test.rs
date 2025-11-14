@@ -44,34 +44,55 @@ fn test_parse_hashmap_single_function() {
 
 #[test]
 fn test_parse_hashmap_with_real_blocks() {
-    // New format: all values start on a new line after the colon
-    let input = "{
-    main: 
-        MirFunction
-            name: 
-                main
-            params: 
-                []
-            blocks: 
-                {
-                    bb0: 
-                        BasicBlock
-                            id: 
-                                bb0
-                            statements: 
-                                [
-                                    %1 = num 2,
-                                    %2 = %1,
-                                    %3 = num 3,
-                                    %0 = %2 * %3
-                                    ]
-                            terminator: 
-                                ret %0
-                    }
-    }";
-    
-    println!("Parsing HashMap<String, MirFunction> with real blocks from: {}", input);
-    let result = std::collections::HashMap::<String, MirFunction>::parse_ir(input);
+    use karte_diagnostics::Span;
+    use std::collections::HashMap;
+
+    // 构造一个真实的 MirFunction，并通过 to_ir_string 获取最新格式
+    let mut func = MirFunction::new("main".to_string(), vec![]);
+    {
+        let entry = BasicBlockId(0);
+        let block = func
+            .basic_blocks
+            .get_mut(&entry)
+            .expect("entry block should exist");
+
+        block.statements.push(Statement::Assign {
+            target: Value::Temp { id: TempId(1) },
+            source: Value::Number { value: 2 },
+            span: Span::default(),
+        });
+        block.statements.push(Statement::Assign {
+            target: Value::Temp { id: TempId(2) },
+            source: Value::Temp { id: TempId(1) },
+            span: Span::default(),
+        });
+        block.statements.push(Statement::Assign {
+            target: Value::Temp { id: TempId(3) },
+            source: Value::Number { value: 3 },
+            span: Span::default(),
+        });
+        block.statements.push(Statement::BinaryOp {
+            target: Value::Temp { id: TempId(0) },
+            left: Value::Temp { id: TempId(2) },
+            op: BinaryOperator::Multiply,
+            right: Value::Temp { id: TempId(3) },
+            span: Span::default(),
+        });
+        block.terminator = Some(Terminator::Return {
+            value: Some(Value::Temp { id: TempId(0) }),
+            span: Span::default(),
+        });
+    }
+
+    let mut map = HashMap::new();
+    map.insert("main".to_string(), func);
+    let input = IrDisplay::to_ir_string(&map);
+
+    println!(
+        "Parsing HashMap<String, MirFunction> with real blocks from:\n{}",
+        input
+    );
+    let result = HashMap::<String, MirFunction>::parse_ir(&input);
     println!("Result: {:?}", result);
     assert!(result.is_ok(), "Failed to parse: {:?}", result);
 }

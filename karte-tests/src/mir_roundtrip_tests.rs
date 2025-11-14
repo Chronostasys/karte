@@ -121,9 +121,15 @@ mod mir_roundtrip_tests {
     fn test_format_examples() {
         // 测试各种MIR元素的格式
         let test_cases = vec![
-            ("42", vec!["%0 = num 42"]),
-            ("1 + 2", vec!["%1 = num 1", "%2 = num 2", "%0 = %1 + %2"]),
-            ("let x = 5; x", vec!["%1 = num 5", "%0 = %1"]),
+            ("42", vec!["%0 = num value: 42"]),
+            (
+                "1 + 2",
+                vec!["%1 = num value: 1", "%2 = num value: 2", "%0 = %1 + %2"],
+            ),
+            (
+                "let x = 5; x",
+                vec!["%1 = num value: 5", "%0 = %1"],
+            ),
         ];
 
         for (source, expected_parts) in test_cases {
