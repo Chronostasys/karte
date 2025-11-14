@@ -26,14 +26,71 @@ pub fn write_multiline_suffix<T: IrDisplay>(
     indent: usize,
 ) -> fmt::Result {
     let rendered = value.to_ir_string();
-    
-    // 让所有行都从新行开始,使用相同的缩进
-    // 这样解析器就只需要识别换行和关键字,不依赖空格数量
-    for line in rendered.lines() {
+    let normalized = normalize_indentation(&rendered);
+
+    for line in normalized.lines() {
         write!(f, "\n{:indent$}{}", "", line, indent = indent)?;
     }
 
     Ok(())
+}
+
+const INDENT_STEP: usize = 4;
+
+fn normalize_indentation(block: &str) -> String {
+    let mut normalized = String::with_capacity(block.len());
+    let mut level = 0usize;
+
+    for raw_line in block.lines() {
+        let line = raw_line.trim_end();
+
+        if line.trim().is_empty() {
+            normalized.push('\n');
+            continue;
+        }
+
+        let trimmed = line.trim_start();
+        let mut indent_level = level;
+        let mut leading_closing = false;
+
+        if let Some(first_char) = trimmed.chars().next() {
+            if first_char == '}' || first_char == ']' {
+                leading_closing = true;
+                if indent_level > 0 {
+                    indent_level -= 1;
+                }
+            }
+        }
+
+        for _ in 0..(indent_level * INDENT_STEP) {
+            normalized.push(' ');
+        }
+        normalized.push_str(trimmed);
+        normalized.push('\n');
+
+        let mut local_level = indent_level;
+        for (idx, ch) in trimmed.chars().enumerate() {
+            if leading_closing && idx == 0 {
+                continue;
+            }
+            match ch {
+                '{' | '[' => local_level += 1,
+                '}' | ']' => {
+                    if local_level > 0 {
+                        local_level -= 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        level = local_level;
+    }
+
+    while normalized.ends_with('\n') {
+        normalized.pop();
+    }
+
+    normalized
 }
 
 // 为基础类型实现 IrDisplay

@@ -1,8 +1,10 @@
+use karte_diagnostics::Span as DiagSpan;
 use karte_ir_codec::{IrDisplay, IrParse};
 /// IR Codec 集成测试
 ///
 /// 这个测试演示了如何在实际的 IR 类型上使用 IrCodec 系统
 use karte_ir_derive::IrCodec;
+use karte_mir::{Statement as MirStatement, TempId as MirTempId, Value as MirValue};
 
 // 定义一些简单的 IR 类型用于测试
 
@@ -77,11 +79,6 @@ pub enum SimpleStatement {
         target: Value,
         op: UnaryOperator,
         operand: Value,
-    },
-    Call {
-        target: Option<Value>,
-        function: Value,
-        args: Vec<Value>,
     },
 }
 
@@ -300,38 +297,6 @@ fn test_statement_unary_op() {
 }
 
 #[test]
-fn test_statement_call_with_target() {
-    let stmt = SimpleStatement::Call {
-        target: Some(Value::Temp { id: TempId(0) }),
-        function: Value::Function {
-            name: "foo".to_string(),
-        },
-        args: vec![Value::Number { value: 1 }, Value::Number { value: 2 }],
-    };
-    let text = stmt.to_ir_string();
-
-    let parsed = SimpleStatement::parse_ir(&text).unwrap();
-    assert_eq!(parsed, stmt);
-}
-
-#[test]
-fn test_statement_call_without_target() {
-    let stmt = SimpleStatement::Call {
-        target: None,
-        function: Value::Function {
-            name: "print".to_string(),
-        },
-        args: vec![Value::Variable {
-            name: "x".to_string(),
-        }],
-    };
-    let text = stmt.to_ir_string();
-
-    let parsed = SimpleStatement::parse_ir(&text).unwrap();
-    assert_eq!(parsed, stmt);
-}
-
-#[test]
 fn test_complex_nested_value() {
     let value = Value::Constructor {
         name: "Pair".to_string(),
@@ -350,4 +315,42 @@ fn test_complex_nested_value() {
     let text = value.to_ir_string();
     let parsed = Value::parse_ir(&text).unwrap();
     assert_eq!(parsed, value);
+}
+
+#[test]
+fn test_mir_statement_call_roundtrip() {
+    let stmt = MirStatement::Call {
+        target: None,
+        function: MirValue::Temp { id: MirTempId(4) },
+        args: vec![MirValue::Temp { id: MirTempId(5) }, MirValue::Temp { id: MirTempId(3) }],
+        span: DiagSpan::default(),
+    };
+
+    let text = stmt.to_ir_string();
+    assert!(
+        text.trim().starts_with("call "),
+        "call display should start with 'call ': {}",
+        text
+    );
+
+    let parsed = MirStatement::parse_ir(&text).unwrap();
+    assert_eq!(parsed, stmt);
+}
+
+#[test]
+fn test_mir_statement_call_parse_from_text() {
+    let raw = "call function: %4, args: [%5, %3]";
+    let parsed = MirStatement::parse_ir(raw).expect("call text should parse");
+
+    let expected = MirStatement::Call {
+        target: None,
+        function: MirValue::Temp { id: MirTempId(4) },
+        args: vec![
+            MirValue::Temp { id: MirTempId(5) },
+            MirValue::Temp { id: MirTempId(3) },
+        ],
+        span: DiagSpan::default(),
+    };
+
+    assert_eq!(parsed, expected);
 }
