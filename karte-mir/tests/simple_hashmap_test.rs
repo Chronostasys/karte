@@ -8,7 +8,7 @@ fn test_simple_hashmap_with_newline() {
     key1: 
         value1
     }";
-    
+
     println!("Input: {}", input);
     let result = HashMap::<String, String>::parse_ir(input);
     println!("Result: {:?}", result);
@@ -21,7 +21,7 @@ fn test_simple_hashmap_no_newline() {
     let input = "{
     key1: value1
     }";
-    
+
     println!("Input: {}", input);
     let result = HashMap::<String, String>::parse_ir(input);
     println!("Result: {:?}", result);

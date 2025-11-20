@@ -65,9 +65,9 @@ where
                     ws(nom_char(',')),
                     // key: value 其中冒号前后允许任意空白
                     separated_pair(
-                        K::parse_nom, 
-                        nom_delimited(multispace0, nom_char(':'), multispace0),  // 冒号前后允许任意空白
-                        V::parse_nom
+                        K::parse_nom,
+                        nom_delimited(multispace0, nom_char(':'), multispace0), // 冒号前后允许任意空白
+                        V::parse_nom,
                     ),
                 ),
                 ws(nom_char('}')),
@@ -123,20 +123,31 @@ where
         use nom::character::complete::{char as nom_char, multispace0};
         use nom::sequence::delimited as nom_delimited;
 
-        
         // 测试解析 key-value pair 的辅助函数
         fn test_parse_pair<'a, K: IrParse, V: IrParse>(input: &'a str) -> IResult<&'a str, (K, V)> {
-            log::trace!("→ Parsing key-value pair from: {:?}", &input.chars().take(80).collect::<String>());
-            
+            log::trace!(
+                "→ Parsing key-value pair from: {:?}",
+                &input.chars().take(80).collect::<String>()
+            );
+
             let (rest, key) = K::parse_nom(input)?;
-            log::trace!("  ✓ Parsed key, rest: {:?}", &rest.chars().take(60).collect::<String>());
-            
+            log::trace!(
+                "  ✓ Parsed key, rest: {:?}",
+                &rest.chars().take(60).collect::<String>()
+            );
+
             let (rest, _) = nom_delimited(multispace0, nom_char(':'), multispace0)(rest)?;
-            log::trace!("  ✓ Parsed colon, rest: {:?}", &rest.chars().take(60).collect::<String>());
-            
+            log::trace!(
+                "  ✓ Parsed colon, rest: {:?}",
+                &rest.chars().take(60).collect::<String>()
+            );
+
             match V::parse_nom(rest) {
                 Ok((final_rest, value)) => {
-                    log::trace!("  ✓ Parsed value, rest: {:?}", &final_rest.chars().take(60).collect::<String>());
+                    log::trace!(
+                        "  ✓ Parsed value, rest: {:?}",
+                        &final_rest.chars().take(60).collect::<String>()
+                    );
                     Ok((final_rest, (key, value)))
                 }
                 Err(e) => {
@@ -145,19 +156,28 @@ where
                 }
             }
         }
-        
+
         let (input_after_brace, _) = ws(nom_char('{'))(input)?;
-        log::trace!("After opening brace, input: {:?}", &input_after_brace.chars().take(100).collect::<String>());
-        
-        let (input_after_list, pairs) = separated_list0(
-            ws(nom_char(',')),
-            |input| test_parse_pair::<K, V>(input)
-        )(input_after_brace)?;
-        log::trace!("After parsing list, input: {:?}", &input_after_list.chars().take(100).collect::<String>());
-        
+        log::trace!(
+            "After opening brace, input: {:?}",
+            &input_after_brace.chars().take(100).collect::<String>()
+        );
+
+        let (input_after_list, pairs) =
+            separated_list0(ws(nom_char(',')), |input| test_parse_pair::<K, V>(input))(
+                input_after_brace,
+            )?;
+        log::trace!(
+            "After parsing list, input: {:?}",
+            &input_after_list.chars().take(100).collect::<String>()
+        );
+
         let (final_input, _) = ws(nom_char('}'))(input_after_list)?;
-        log::trace!("After closing brace, input: {:?}", &final_input.chars().take(60).collect::<String>());
-        
+        log::trace!(
+            "After closing brace, input: {:?}",
+            &final_input.chars().take(60).collect::<String>()
+        );
+
         Ok((final_input, pairs.into_iter().collect()))
     }
 }

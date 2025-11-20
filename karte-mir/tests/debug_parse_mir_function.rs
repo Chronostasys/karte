@@ -1,5 +1,5 @@
-use karte_mir::MirFunction;
 use karte_ir_codec::IrParse;
+use karte_mir::MirFunction;
 
 #[test]
 fn debug_parse_main_mir_function() {

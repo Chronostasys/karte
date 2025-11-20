@@ -1,0 +1,13 @@
+struct Resource {
+    value: number,
+};
+
+let resource = arc Resource { value: 10 };
+let alias = resource;
+
+let scoped_sum = {
+    let shadow = alias;
+    shadow.value + resource.value
+};
+
+scoped_sum + alias.value

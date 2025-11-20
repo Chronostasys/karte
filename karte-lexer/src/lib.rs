@@ -41,6 +41,12 @@ pub enum Token {
     #[token("<")]
     Less,
 
+    #[token("[")]
+    LeftBracket,
+
+    #[token("]")]
+    RightBracket,
+
     // 括号
     #[token("(")]
     LeftParen,
@@ -139,6 +145,8 @@ impl fmt::Display for Token {
             Token::RightParen => write!(f, ")"),
             Token::LeftBrace => write!(f, "{{"),
             Token::RightBrace => write!(f, "}}"),
+            Token::LeftBracket => write!(f, "["),
+            Token::RightBracket => write!(f, "]"),
             Token::Pipe => write!(f, "|"),
             Token::Arrow => write!(f, "->"),
             Token::Identifier(s) => write!(f, "{}", s),

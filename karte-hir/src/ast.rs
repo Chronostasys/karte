@@ -1,3 +1,4 @@
+use karte_common::memory::OwnershipKind;
 use karte_diagnostics::Span;
 use std::fmt;
 
@@ -146,6 +147,22 @@ pub enum Expr {
         field: String,
         span: Span,
     },
+    /// 数组字面量
+    ArrayLiteral {
+        elements: Vec<Expr>,
+        span: Span,
+    },
+    /// 下标访问
+    Index {
+        array: Box<Expr>,
+        index: Box<Expr>,
+        span: Span,
+    },
+    /// 数组长度
+    ArrayLen {
+        array: Box<Expr>,
+        span: Span,
+    },
 
     /// 引用表达式 - 创建对表达式的不可变引用
     Reference {
@@ -156,6 +173,29 @@ pub enum Expr {
     /// 解引用表达式 - 显式解引用操作
     Dereference {
         expr: Box<Expr>,
+        span: Span,
+    },
+
+    /// 堆分配表达式 - 将值移动到堆上，返回指针
+    HeapAllocate {
+        value: Box<Expr>,
+        ownership: OwnershipKind,
+        span: Span,
+    },
+
+    /// 显式释放表达式 - 对堆指针执行释放操作
+    HeapFree {
+        pointer: Box<Expr>,
+        span: Span,
+    },
+    /// 引用计数保留表达式 - 保留对表达式的引用
+    Retain {
+        pointer: Box<Expr>,
+        span: Span,
+    },
+    /// 引用计数释放表达式 - 释放对表达式的引用
+    Release {
+        pointer: Box<Expr>,
         span: Span,
     },
 
@@ -511,11 +551,37 @@ impl fmt::Display for Expr {
             Expr::FieldAccess { object, field, .. } => {
                 write!(f, "{}.{}", object, field)
             }
+            Expr::ArrayLiteral { elements, .. } => {
+                let elems = elements
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "[{}]", elems)
+            }
+            Expr::Index { array, index, .. } => {
+                write!(f, "{}[{}]", array, index)
+            }
+            Expr::ArrayLen { array, .. } => {
+                write!(f, "len {}", array)
+            }
             Expr::Reference { expr, .. } => {
                 write!(f, "&{}", expr)
             }
             Expr::Dereference { expr, .. } => {
                 write!(f, "*{}", expr)
+            }
+            Expr::HeapAllocate { value, .. } => {
+                write!(f, "box {}", value)
+            }
+            Expr::HeapFree { pointer, .. } => {
+                write!(f, "free {}", pointer)
+            }
+            Expr::Retain { pointer, .. } => {
+                write!(f, "retain {}", pointer)
+            }
+            Expr::Release { pointer, .. } => {
+                write!(f, "release {}", pointer)
             }
             Expr::Assignment { target, value, .. } => {
                 write!(f, "{} = {}", target, value)
@@ -559,8 +625,15 @@ impl Expr {
             Expr::While { span, .. } => *span,
             Expr::StructLiteral { span, .. } => *span,
             Expr::FieldAccess { span, .. } => *span,
+            Expr::ArrayLiteral { span, .. } => *span,
+            Expr::Index { span, .. } => *span,
+            Expr::ArrayLen { span, .. } => *span,
             Expr::Reference { span, .. } => *span,
             Expr::Dereference { span, .. } => *span,
+            Expr::HeapAllocate { span, .. } => *span,
+            Expr::HeapFree { span, .. } => *span,
+            Expr::Retain { span, .. } => *span,
+            Expr::Release { span, .. } => *span,
             Expr::Assignment { span, .. } => *span,
             Expr::EffectPerform { span, .. } => *span,
             Expr::EffectResume { span, .. } => *span,

@@ -1,8 +1,10 @@
 #[cfg(test)]
 mod tests {
-    use crate::{dummy_span, execute_with_pipeline};
+    use crate::{dummy_span, execute_from_string, execute_with_pipeline};
     use log::info;
+    use std::{fs, path::PathBuf};
 
+    use karte_common::memory::OwnershipKind;
     use karte_hir::{BinaryOperator, Expr, Parameter, Statement, UnaryOperator};
 
     #[test]
@@ -178,6 +180,209 @@ mod tests {
         let result = execute_with_pipeline(&call_expr);
         assert!(result.is_ok(), "{}", result.err().unwrap());
         assert_eq!(result.unwrap(), 42); // 身份函数应该返回输入值
+    }
+
+    #[test]
+    fn test_heap_allocate_and_free() {
+        let span = dummy_span();
+
+        let block = Expr::Block {
+            statements: vec![
+                Statement::Let {
+                    name: "ptr".to_string(),
+                    value: Expr::HeapAllocate {
+                        value: Box::new(Expr::Number { value: 7, span }),
+                        ownership: OwnershipKind::Manual,
+                        span,
+                    },
+                    span,
+                },
+                Statement::Let {
+                    name: "val".to_string(),
+                    value: Expr::Dereference {
+                        expr: Box::new(Expr::Identifier {
+                            name: "ptr".to_string(),
+                            span,
+                        }),
+                        span,
+                    },
+                    span,
+                },
+                Statement::Expression {
+                    expr: Expr::HeapFree {
+                        pointer: Box::new(Expr::Identifier {
+                            name: "ptr".to_string(),
+                            span,
+                        }),
+                        span,
+                    },
+                    span,
+                },
+            ],
+            final_expr: Some(Box::new(Expr::Identifier {
+                name: "val".to_string(),
+                span,
+            })),
+            span,
+        };
+
+        assert_eq!(execute_with_pipeline(&block).unwrap(), 7);
+    }
+
+    #[test]
+    fn test_array_literal_and_indexing() {
+        let span = dummy_span();
+        let array_expr = Expr::ArrayLiteral {
+            elements: vec![
+                Expr::Number { value: 10, span },
+                Expr::Number { value: 20, span },
+                Expr::Number { value: 30, span },
+            ],
+            span,
+        };
+
+        let first = Expr::Index {
+            array: Box::new(Expr::Identifier {
+                name: "arr".to_string(),
+                span,
+            }),
+            index: Box::new(Expr::Number { value: 0, span }),
+            span,
+        };
+
+        let third = Expr::Index {
+            array: Box::new(Expr::Identifier {
+                name: "arr".to_string(),
+                span,
+            }),
+            index: Box::new(Expr::Number { value: 2, span }),
+            span,
+        };
+
+        let block = Expr::Block {
+            statements: vec![
+                Statement::Let {
+                    name: "arr".to_string(),
+                    value: array_expr,
+                    span,
+                },
+                Statement::Let {
+                    name: "first".to_string(),
+                    value: first,
+                    span,
+                },
+                Statement::Let {
+                    name: "third".to_string(),
+                    value: third,
+                    span,
+                },
+            ],
+            final_expr: Some(Box::new(Expr::BinaryOp {
+                left: Box::new(Expr::Identifier {
+                    name: "first".to_string(),
+                    span,
+                }),
+                op: BinaryOperator::Add,
+                right: Box::new(Expr::Identifier {
+                    name: "third".to_string(),
+                    span,
+                }),
+                span,
+            })),
+            span,
+        };
+
+        assert_eq!(execute_with_pipeline(&block).unwrap(), 40);
+    }
+
+    #[test]
+    fn test_array_len_expression() {
+        let span = dummy_span();
+        let block = Expr::Block {
+            statements: vec![
+                Statement::Let {
+                    name: "arr".to_string(),
+                    value: Expr::ArrayLiteral {
+                        elements: vec![
+                            Expr::Number { value: 1, span },
+                            Expr::Number { value: 2, span },
+                            Expr::Number { value: 3, span },
+                        ],
+                        span,
+                    },
+                    span,
+                },
+                Statement::Let {
+                    name: "len".to_string(),
+                    value: Expr::ArrayLen {
+                        array: Box::new(Expr::Identifier {
+                            name: "arr".to_string(),
+                            span,
+                        }),
+                        span,
+                    },
+                    span,
+                },
+            ],
+            final_expr: Some(Box::new(Expr::Identifier {
+                name: "len".to_string(),
+                span,
+            })),
+            span,
+        };
+
+        assert_eq!(execute_with_pipeline(&block).unwrap(), 3);
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn test_heap_allocate_and_free_aarch64() {
+        // AArch64 专属端到端用例，确保 box/free 在 JIT 上的语义与解释器一致
+        let span = dummy_span();
+        let block = Expr::Block {
+            statements: vec![
+                Statement::Let {
+                    name: "ptr".to_string(),
+                    value: Expr::HeapAllocate {
+                        value: Box::new(Expr::Number { value: 99, span }),
+                        ownership: OwnershipKind::Manual,
+                        span,
+                    },
+                    span,
+                },
+                Statement::Let {
+                    name: "val".to_string(),
+                    value: Expr::Dereference {
+                        expr: Box::new(Expr::Identifier {
+                            name: "ptr".to_string(),
+                            span,
+                        }),
+                        span,
+                    },
+                    span,
+                },
+                Statement::Expression {
+                    expr: Expr::HeapFree {
+                        pointer: Box::new(Expr::Identifier {
+                            name: "ptr".to_string(),
+                            span,
+                        }),
+                        span,
+                    },
+                    span,
+                },
+            ],
+            final_expr: Some(Box::new(Expr::Identifier {
+                name: "val".to_string(),
+                span,
+            })),
+            span,
+        };
+
+        assert_eq!(
+            execute_with_pipeline(&block).expect("aarch64 heap roundtrip"),
+            99
+        );
     }
 
     #[test]
@@ -666,5 +871,26 @@ mod tests {
 
         let result = execute_with_pipeline(&expr);
         assert!(result.is_ok());
+    }
+
+    fn workspace_path(relative: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root")
+            .join(relative)
+    }
+
+    #[test]
+    fn test_arc_auto_cleanup_example_runs() {
+        let example_path = workspace_path("examples/arc_auto_cleanup.karte");
+        let program = fs::read_to_string(&example_path)
+            .unwrap_or_else(|err| panic!("failed to read {:?}: {}", example_path, err));
+
+        let result = execute_from_string(&program)
+            .unwrap_or_else(|err| panic!("arc example should execute successfully: {}", err));
+        assert_eq!(
+            result, 30,
+            "arc example should evaluate to the documented value"
+        );
     }
 }

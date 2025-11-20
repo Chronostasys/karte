@@ -1,6 +1,7 @@
 use super::*;
 use crate::pass::stack_frame_layout::StackFrameLayoutPass;
 use crate::{AllocationType, Instruction, LirFunction, Operand, Register};
+use karte_common::calling_convention::REG_EFFECT_PAYLOAD;
 use karte_diagnostics::Span;
 
 #[test]
@@ -167,4 +168,120 @@ fn test_ra_spill_and_layout_fp_lowering() {
         _ => false,
     });
     // 该最小用例不一定触发溢出（取决于寄存器压力），因此不强制要求出现 FP 访问
+    let _ = has_fp_mem;
+}
+
+#[test]
+fn simple_stack_allocator_reserves_effect_payload_register() {
+    let mut f = LirFunction::new("reserve_effect_payload".to_string());
+    let regs: Vec<Register> = (0..7).map(|i| Register::Virtual(100 + i)).collect();
+    let acc = Register::Virtual(200);
+
+    f.instructions = vec![
+        Instruction::Move {
+            dst: regs[0],
+            src: Operand::Immediate { value: 1 },
+            span: Span::dummy(),
+        },
+        Instruction::Move {
+            dst: regs[1],
+            src: Operand::Immediate { value: 2 },
+            span: Span::dummy(),
+        },
+        Instruction::Move {
+            dst: regs[2],
+            src: Operand::Immediate { value: 3 },
+            span: Span::dummy(),
+        },
+        Instruction::Move {
+            dst: regs[3],
+            src: Operand::Immediate { value: 4 },
+            span: Span::dummy(),
+        },
+        Instruction::Add {
+            dst: regs[4],
+            src1: Operand::Register { id: regs[0] },
+            src2: Operand::Register { id: regs[1] },
+            span: Span::dummy(),
+        },
+        Instruction::Add {
+            dst: regs[5],
+            src1: Operand::Register { id: regs[2] },
+            src2: Operand::Register { id: regs[3] },
+            span: Span::dummy(),
+        },
+        Instruction::Add {
+            dst: acc,
+            src1: Operand::Register { id: regs[4] },
+            src2: Operand::Register { id: regs[5] },
+            span: Span::dummy(),
+        },
+        Instruction::Return {
+            value: Some(acc),
+            span: Span::dummy(),
+        },
+    ];
+
+    let mut pass = SimpleStackRegisterAllocation::new();
+    let mut analyses = AnalysisManager::new();
+    let _ = pass.run_on_function(&mut f, &mut analyses);
+
+    let uses_reserved_register = f.instructions.iter().any(|inst| {
+        let def_hits = matches!(
+            inst.get_def_register(),
+            Some(Register::Physical(id)) if id == REG_EFFECT_PAYLOAD
+        );
+        let use_hits = inst
+            .get_used_registers()
+            .iter()
+            .any(|reg| matches!(reg, Register::Physical(id) if *id == REG_EFFECT_PAYLOAD));
+        def_hits || use_hits
+    });
+
+    assert!(
+        !uses_reserved_register,
+        "allocator should never materialize the effect payload register"
+    );
+}
+
+#[test]
+fn test_parameter_return_conflict() {
+    // fn identity(x) { return x; }
+    // x is param 0 (r1)
+    // return x (needs r0)
+    // Allocator should NOT force x to r0, keeping it in r1.
+
+    let mut function = LirFunction {
+        name: "identity".to_string(),
+        instructions: vec![
+            Instruction::Return {
+                value: Some(Register::Virtual(100)),
+                span: Span::dummy(),
+            },
+        ],
+        next_register: 102,
+        struct_types: std::collections::HashMap::new(),
+        stack_frame_size: 0,
+        parameter_count: 1,
+        parameter_registers: vec![Register::Virtual(100)],
+    };
+
+    let mut pass = SimpleStackRegisterAllocation::new();
+    let mut analysis_manager = AnalysisManager::new();
+    pass.run_on_function(&mut function, &mut analysis_manager);
+
+    // Check allocation
+    // The Return instruction should have value: Some(Physical(1)) (r1)
+    // NOT Physical(0) (r0)
+
+    if let Instruction::Return { value: Some(reg), .. } = &function.instructions[0] {
+        match reg {
+            Register::Physical(p) => {
+                assert_eq!(*p, 1, "Parameter should remain in r1, not moved to r0 by allocator");
+            }
+            _ => panic!("Expected physical register"),
+        }
+    } else {
+        panic!("Expected Return instruction");
+    }
 }

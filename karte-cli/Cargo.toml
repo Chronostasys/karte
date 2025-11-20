@@ -25,3 +25,8 @@ env_logger.workspace = true
 log.workspace = true
 clap = { version = "4.4", features = ["derive"] }
 karte-ir-codec = { path = "../karte-ir-codec" }
+serde.workspace = true
+toml = "0.8"
+karte-rt = { path = "../karte-rt" }
+rayon = "1.11.0"
+

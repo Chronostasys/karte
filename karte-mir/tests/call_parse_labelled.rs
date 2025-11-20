@@ -1,5 +1,5 @@
-use karte_mir::Statement;
 use karte_ir_codec::IrParse;
+use karte_mir::Statement;
 
 #[test]
 fn test_parse_call_labelled() {

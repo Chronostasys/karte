@@ -1,6 +1,6 @@
 use crate::{
     tagged_union::TaggedUnionManager, AllocationType, Instruction, LabelId, LirFunction,
-    LirProgram, Operand, Register, StructField, StructLayout, StructLayoutManager, StructTypeId,
+    LirProgram, Operand, Register, StructField, StructLayout,
 };
 use karte_mir::{
     BasicBlockId, BinaryOperator, MirProgram, Statement, TempId, Terminator, UnaryOperator, Value,
@@ -29,16 +29,14 @@ pub struct LirLoweringContext {
     pending_instructions: Vec<Instruction>,
     /// 错误信息
     errors: Vec<String>,
-    /// 结构体布局管理器
-    struct_layout_manager: StructLayoutManager,
-    /// 结构体名称到类型ID的映射
-    struct_name_to_type_id: HashMap<String, StructTypeId>,
     /// Tagged Union管理器
     tagged_union_manager: TaggedUnionManager,
     /// 栈分配追踪（统一的值存储策略）
     stack_allocations: HashMap<String, Register>,
     /// 🔧 专业修复：全局结构体类型信息
     global_struct_types: HashMap<String, StructLayout>,
+    /// 跟踪持有特定结构体布局的值（包括临时值与变量）
+    struct_value_layouts: HashMap<String, StructLayout>,
     /// 代数效应：handler入口块的参数名映射（用于在块标签处把payload写入变量）
     handler_block_param: HashMap<BasicBlockId, String>,
 }
@@ -59,12 +57,62 @@ impl LirLoweringContext {
             global_label_counter: 0,
             pending_instructions: vec![],
             errors: vec![],
-            struct_layout_manager: StructLayoutManager::new(),
-            struct_name_to_type_id: HashMap::new(),
             tagged_union_manager: TaggedUnionManager::new(),
             stack_allocations: HashMap::new(),
             global_struct_types: HashMap::new(),
+            struct_value_layouts: HashMap::new(),
             handler_block_param: HashMap::new(),
+        }
+    }
+
+    /// 为一个值记录其结构体布局
+    fn set_struct_layout_for_value(&mut self, value: &Value, layout: StructLayout) {
+        self.struct_value_layouts
+            .insert(value_to_key(value), layout);
+    }
+
+    /// 清理某个值的结构体布局记录
+    fn clear_struct_layout_for_value(&mut self, value: &Value) {
+        self.struct_value_layouts.remove(&value_to_key(value));
+    }
+
+    /// 如果源值携带结构体布局，则将其传播到目标值
+    fn propagate_struct_layout(&mut self, target: &Value, source: &Value) {
+        if let Some(layout) = self.get_struct_layout_for_value(source) {
+            self.set_struct_layout_for_value(target, layout);
+        } else {
+            self.clear_struct_layout_for_value(target);
+        }
+    }
+
+    /// 获取某个值对应的结构体布局（如有）
+    fn get_struct_layout_for_value(&self, value: &Value) -> Option<StructLayout> {
+        match value {
+            Value::Struct { name, .. } => self.global_struct_types.get(name).cloned(),
+            Value::Temp { .. } | Value::Variable { .. } => {
+                self.struct_value_layouts.get(&value_to_key(value)).cloned()
+            }
+            _ => None,
+        }
+    }
+
+    /// 将任意操作数转换为寄存器，必要时插入Move
+    fn ensure_register_from_operand(
+        &mut self,
+        operand: Operand,
+        span: karte_diagnostics::Span,
+    ) -> Register {
+        match operand {
+            Operand::Register { id } => id,
+            other => {
+                let temp_reg = self.current_function_mut().new_register();
+                self.add_instruction(Instruction::Move {
+                    dst: temp_reg,
+                    src: other,
+                    span,
+                });
+                temp_reg
+            }
         }
     }
 
@@ -1046,8 +1094,8 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
                         addr: addr_reg,
                         offset: 0,
                         src: Operand::Register {
-                            id: Register::Virtual(1),
-                        }, // r1
+                            id: Register::Physical(karte_common::calling_convention::REG_EFFECT_PAYLOAD),
+                        }, // r1 (payload)
                         span: karte_diagnostics::Span::dummy(),
                     });
                 }
@@ -1150,6 +1198,8 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
                     span: karte_diagnostics::Span::dummy(),
                 });
             }
+
+            ctx.propagate_struct_layout(target, source);
 
             Ok(())
         }
@@ -1812,44 +1862,68 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
                 object,
                 field
             );
-            // 1. 获取结构体的基地址
-            let struct_base_addr = ctx.lower_to_rvalue(object);
-            log::debug!("🔧 结构体基地址: {:?}", struct_base_addr);
+
+            // 1. 取出结构体的基地址（无论是堆指针还是栈上的值，lower_to_rvalue 都会返回地址）
+            let struct_base_operand = ctx.lower_to_rvalue(object);
+            let base_reg = match struct_base_operand {
+                Operand::Register { id } => id,
+                operand => {
+                    let temp = ctx.current_function_mut().new_register();
+                    ctx.add_instruction(Instruction::Move {
+                        dst: temp,
+                        src: operand,
+                        span: *span,
+                    });
+                    temp
+                }
+            };
+
             // 2. 计算字段偏移量
             let field_offset = ctx
                 .get_field_offset_from_struct_layout(object, field)
                 .map_err(|e| vec![e])?;
             log::debug!("🔧 字段 {} 偏移量: {}", field, field_offset);
-            // 3. 分配目标寄存器用于存放结果
-            let dst_reg = ctx.current_function_mut().new_register();
-            // 4. 从 [struct_base_addr + offset] 加载字段值
-            if let Operand::Register { id: base_reg } = struct_base_addr {
-                ctx.add_instruction(Instruction::Add {
-                    dst: dst_reg,
-                    src1: Operand::Register { id: base_reg },
-                    src2: Operand::Immediate {
-                        value: field_offset as i64,
+
+            // 3. 计算字段地址 = 基地址 + 偏移
+            let field_addr_reg = ctx.current_function_mut().new_register();
+            ctx.add_instruction(Instruction::Add {
+                dst: field_addr_reg,
+                src1: Operand::Register { id: base_reg },
+                src2: Operand::Immediate {
+                    value: field_offset as i64,
+                },
+                span: *span,
+            });
+
+            // 4. 从字段地址加载实际的字段值
+            let field_value_reg = ctx.current_function_mut().new_register();
+            ctx.add_instruction(Instruction::Load64 {
+                dst: field_value_reg,
+                addr: field_addr_reg,
+                offset: 0,
+                span: *span,
+            });
+
+            // 5. 将字段值写入目标的存储位置
+            let target_lvalue = ctx.lower_to_lvalue(target);
+            if let Operand::Register { id: target_addr } = target_lvalue {
+                ctx.add_instruction(Instruction::Store64 {
+                    addr: target_addr,
+                    offset: 0,
+                    src: Operand::Register {
+                        id: field_value_reg,
                     },
                     span: *span,
                 });
                 log::debug!(
-                    "🔧 生成add指令: add {:?}, [{:?} + {}]",
-                    dst_reg,
-                    base_reg,
-                    field_offset
+                    "🔧 FieldAccess完成: 字段{}值已写入 {:?}",
+                    field,
+                    target_addr
                 );
             } else {
-                return Err(vec!["字段访问的基地址必须是寄存器".to_string()]);
+                return Err(vec!["字段访问目标必须可寻址".to_string()]);
             }
-            // 直接将dst_reg与target绑定，不再分配独立栈槽
-            let target_key = value_to_key(target);
-            log::debug!(
-                "🔧 FieldAccess完成: 字段{}值直接绑定到寄存器 {:?}, {}",
-                field,
-                dst_reg,
-                target_key
-            );
-            ctx.stack_allocations.insert(target_key, dst_reg);
+
             Ok(())
         }
 
@@ -1910,6 +1984,13 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
         } => {
             // Tagged Union构造器参数提取：从Tagged Union结构体中提取数据
 
+            if *arg_index != 0 {
+                return Err(vec![format!(
+                    "ConstructorArgExtract only supports arg_index = 0 for single-field unions (got {})",
+                    arg_index
+                )]);
+            }
+
             // 获取构造器寄存器
             let constructor_operand = ctx.lower_to_rvalue(constructor);
             let constructor_reg = match constructor_operand {
@@ -1949,6 +2030,104 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
             ctx.stack_allocations
                 .insert(target_key.clone(), target_stack_addr);
 
+            Ok(())
+        }
+
+        Statement::Allocate {
+            target,
+            layout,
+            span,
+        } => {
+            let addr_reg = ctx.current_function_mut().new_register();
+            let alignment = if layout.align == 0 { 8 } else { layout.align };
+
+            ctx.add_instruction(Instruction::Alloc {
+                dst: addr_reg,
+                size: if layout.size == 0 { 8 } else { layout.size },
+                alignment,
+                allocation_type: AllocationType::Heap,
+                span: *span,
+            });
+
+            ctx.store_value_to_stack(target, Operand::Register { id: addr_reg });
+            Ok(())
+        }
+
+        Statement::Deallocate { pointer, span, .. } => {
+            let ptr_operand = ctx.lower_to_rvalue(pointer);
+            let addr_reg = match ptr_operand {
+                Operand::Register { id } => id,
+                other => {
+                    let temp = ctx.current_function_mut().new_register();
+                    ctx.add_instruction(Instruction::Move {
+                        dst: temp,
+                        src: other,
+                        span: *span,
+                    });
+                    temp
+                }
+            };
+
+            ctx.add_instruction(Instruction::Free {
+                addr: addr_reg,
+                span: *span,
+            });
+            Ok(())
+        }
+
+        Statement::Retain { value, span } => {
+            let operand = ctx.lower_to_rvalue(value);
+            let value_reg = match operand {
+                Operand::Register { id } => id,
+                _ => {
+                    let temp_reg = ctx.current_function_mut().new_register();
+                    ctx.add_instruction(Instruction::Move {
+                        dst: temp_reg,
+                        src: operand,
+                        span: *span,
+                    });
+                    temp_reg
+                }
+            };
+            ctx.add_instruction(Instruction::Retain {
+                value: value_reg,
+                span: *span,
+            });
+            Ok(())
+        }
+        Statement::Release { value, span } => {
+            let operand = ctx.lower_to_rvalue(value);
+            let value_reg = match operand {
+                Operand::Register { id } => id,
+                _ => {
+                    let temp_reg = ctx.current_function_mut().new_register();
+                    ctx.add_instruction(Instruction::Move {
+                        dst: temp_reg,
+                        src: operand,
+                        span: *span,
+                    });
+                    temp_reg
+                }
+            };
+            ctx.add_instruction(Instruction::Release {
+                value: value_reg,
+                span: *span,
+            });
+            Ok(())
+        }
+
+        Statement::MarkGcRoot { .. } => Ok(()),
+
+        Statement::WriteBarrier { .. } => Ok(()),
+
+        Statement::ReadBarrier {
+            target,
+            object,
+            span,
+            ..
+        } => {
+            let operand = ctx.lower_to_rvalue(object);
+            ctx.store_value_to_stack(target, operand);
             Ok(())
         }
 
@@ -1994,11 +2173,9 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
         } => {
             let tag_op = ctx.lower_to_rvalue(tag);
             let payload_op = ctx.lower_to_rvalue(payload);
-            let result_reg = if let Some(t) = target {
-                Some(ctx.current_function_mut().new_register())
-            } else {
-                None
-            };
+            let result_reg = target
+                .as_ref()
+                .map(|_| ctx.current_function_mut().new_register());
 
             ctx.add_instruction(Instruction::EffectPerform {
                 tag: tag_op,
@@ -2007,13 +2184,8 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
                 span: *span,
             });
 
-            if let Some(t) = target {
-                ctx.store_value_to_stack(
-                    t,
-                    Operand::Register {
-                        id: result_reg.unwrap(),
-                    },
-                );
+            if let (Some(target_value), Some(result_reg)) = (target.as_ref(), result_reg) {
+                ctx.store_value_to_stack(target_value, Operand::Register { id: result_reg });
             }
             Ok(())
         }
@@ -2030,7 +2202,7 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
             tag,
             handler_block,
             param_name,
-            ..
+            span,
         } => {
             let tag_op = ctx.lower_to_rvalue(tag);
             let handler_label = ctx.allocate_label_for_block(*handler_block);
@@ -2039,14 +2211,12 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
             ctx.add_instruction(Instruction::EffectPushHandler {
                 tag: tag_op,
                 handler_label,
-                span: karte_diagnostics::Span::dummy(),
+                span: *span,
             });
             Ok(())
         }
-        Statement::EffectHandlerPop { .. } => {
-            ctx.add_instruction(Instruction::EffectPopHandler {
-                span: karte_diagnostics::Span::dummy(),
-            });
+        Statement::EffectHandlerPop { span } => {
+            ctx.add_instruction(Instruction::EffectPopHandler { span: *span });
             Ok(())
         }
 
@@ -2061,25 +2231,38 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
             // 获取目标地址（应该是一个包含内存地址的值）
             let target_addr_operand = ctx.lower_to_rvalue(target);
 
-            // 获取要存储的值
-            let value_operand = ctx.lower_to_rvalue(value);
-
             // 确保目标地址是一个寄存器
-            let target_addr_reg = match target_addr_operand {
-                Operand::Register { id } => id,
-                _ => {
-                    // 如果不是寄存器，先移动到临时寄存器
+            let target_addr_reg = ctx.ensure_register_from_operand(target_addr_operand, *span);
+
+            // 如果存储的是结构体，需要逐字段写入，不能只写指针
+            if let Some(layout) = ctx.get_struct_layout_for_value(value) {
+                let source_ptr_operand = ctx.lower_to_rvalue(value);
+                let source_ptr_reg = ctx.ensure_register_from_operand(source_ptr_operand, *span);
+
+                for field_layout in &layout.fields {
                     let temp_reg = ctx.current_function_mut().new_register();
-                    ctx.add_instruction(Instruction::Move {
+                    ctx.add_instruction(Instruction::Load64 {
                         dst: temp_reg,
-                        src: target_addr_operand,
+                        addr: source_ptr_reg,
+                        offset: field_layout.offset as i64,
                         span: *span,
                     });
-                    temp_reg
+                    ctx.add_instruction(Instruction::Store64 {
+                        addr: target_addr_reg,
+                        offset: field_layout.offset as i64,
+                        src: Operand::Register { id: temp_reg },
+                        span: *span,
+                    });
                 }
-            };
 
-            // 生成存储指令
+                ctx.set_struct_layout_for_value(target, layout);
+
+                log::debug!("🔧 Store: 复制结构体值到 {:?}", target);
+                return Ok(());
+            }
+
+            // 默认：按值存储（包括指针等简单类型）
+            let value_operand = ctx.lower_to_rvalue(value);
             ctx.add_instruction(Instruction::Store64 {
                 addr: target_addr_reg,
                 offset: 0,

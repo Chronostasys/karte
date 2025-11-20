@@ -149,6 +149,7 @@ impl StackFrameLayoutPass {
         &self,
         function: &mut LirFunction,
         slot_offset_map: &HashMap<Register, i64>,
+        alloc_offset_map: &HashMap<usize, i64>,
     ) {
         use crate::pass::instruction_transformer::IndexInstructionTransformer;
         use karte_diagnostics::Span;
@@ -243,7 +244,8 @@ impl StackFrameLayoutPass {
             } = instr
             {
                 if allocation_type.is_stack() {
-                    if let Some(base_off) = slot_offset_map.get(dst) {
+                    // 🔧 关键修复：使用 alloc_index 查找偏移，避免因寄存器重用导致的冲突
+                    if let Some(base_off) = alloc_offset_map.get(&i) {
                         if !address_only_use.get(dst).copied().unwrap_or(false) {
                             transformer.replace(
                                 i,
@@ -272,7 +274,7 @@ impl StackFrameLayoutPass {
             } = instr
             {
                 if allocation_type.is_stack()
-                    && slot_offset_map.contains_key(dst)
+                    && alloc_offset_map.contains_key(&i)
                     && *address_only_use.get(dst).unwrap_or(&false)
                 {
                     alloc_indices.push(i);
@@ -342,6 +344,7 @@ impl FunctionPass for StackFrameLayoutPass {
         used_slots.sort_by_key(|s| s.start.unwrap());
         let mut allocator = LinearScanAllocator::default();
         let mut offset_map: HashMap<Register, i64> = HashMap::new();
+        let mut alloc_offset_map: HashMap<usize, i64> = HashMap::new();
 
         for slot in &used_slots {
             let start = slot.start.unwrap();
@@ -350,21 +353,22 @@ impl FunctionPass for StackFrameLayoutPass {
             let base = allocator.allocate(slot.size, slot.alignment);
             allocator.add_active(slot.addr_reg, end, base, slot.size, slot.alignment);
             offset_map.insert(slot.addr_reg, base);
+            alloc_offset_map.insert(slot.alloc_index, base);
             debug!(
-                "  分配槽 {:?} size={} -> FP{} (live=[{}, {}])",
-                slot.addr_reg, slot.size, base, start, end
+                "  分配槽 {:?} (idx={}) size={} -> FP{} (live=[{}, {}])",
+                slot.addr_reg, slot.alloc_index, slot.size, base, start, end
             );
         }
 
         // 5) 下沉到 FP+offset，并删除 Alloc
-        self.lower_to_fp_offsets(function, &offset_map);
+        self.lower_to_fp_offsets(function, &offset_map, &alloc_offset_map);
 
         // 6) 设置 stack_frame_size（正数）
         function.stack_frame_size = (-allocator.current_neg_offset) as usize;
         info!(
             "✅ StackFrameLayout 完成，frame_size={}，槽数量={}",
             function.stack_frame_size,
-            offset_map.len()
+            alloc_offset_map.len()
         );
         PassResult::Changed
     }

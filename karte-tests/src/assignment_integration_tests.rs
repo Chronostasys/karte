@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod assignment_integration_tests {
-    use karte_codegen::evaluate;
+    // use karte_codegen::evaluate;
     use karte_hir::type_check;
     use karte_lexer::tokenize;
     use karte_mir::lower::lower_expr_to_mir;
@@ -66,29 +66,6 @@ mod assignment_integration_tests {
             }
             Err(errors) => {
                 info!("MIR降级失败: {:?}", errors);
-            }
-        }
-    }
-
-    #[test]
-    fn test_assignment_evaluation() {
-        let program = "let x = 5; x = 10; x";
-
-        let (tokens, _) = tokenize(program);
-        let (expr_opt, _) = parse(&tokens);
-        let expr = expr_opt.unwrap();
-
-        // HIR 解释执行
-        let execution_result = evaluate(&expr);
-
-        match execution_result {
-            Ok(value) => {
-                info!("执行成功，结果: {:?}", value);
-                // 这里可以添加断言来验证预期结果
-            }
-            Err(error) => {
-                info!("执行失败: {:?}", error);
-                // 可能是预期的，因为赋值功能可能还有bug
             }
         }
     }

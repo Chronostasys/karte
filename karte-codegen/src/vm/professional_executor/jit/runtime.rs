@@ -1,0 +1,8 @@
+//! JIT 运行时辅助函数
+//!
+//! 该模块仅保留对 `karte-rt` 运行时 FFI 的再导出，便于历史代码逐步迁移。
+
+pub use karte_rt::ffi::{
+    karte_jit_runtime_alloc, karte_jit_runtime_alloc_aligned, karte_jit_runtime_free,
+    karte_jit_runtime_heap_stats, karte_jit_runtime_release, karte_jit_runtime_retain,
+};

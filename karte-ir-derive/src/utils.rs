@@ -38,13 +38,13 @@ pub enum SpecialFormatStyle {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FieldRole {
     None,
-    Target,      // 目标值（赋值左侧）
-    Left,        // 左操作数
-    Right,       // 右操作数
-    Op,          // 操作符
-    Operand,     // 一元操作数
-    Object,      // 对象
-    FieldName,   // 字段名
+    Target,    // 目标值（赋值左侧）
+    Left,      // 左操作数
+    Right,     // 右操作数
+    Op,        // 操作符
+    Operand,   // 一元操作数
+    Object,    // 对象
+    FieldName, // 字段名
 }
 
 /// 属性配置
