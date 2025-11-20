@@ -28,3 +28,5 @@
 - [ ] 调查 karte-lir/src/lower.rs 中 CallIndirect 降级逻辑中看似多余的 Load64 指令
 - [ ] 2025-11-19：ModuleGraph 并发调度器与分层调度原型（Rayon 预研 / CLI flag）
 - [ ] 2025-11-19：Retain/Release 与 MIR EscapeState 联动，导出引用计数诊断日志
+- [x] 2025-11-21：修复 JIT 编译器中 `compile_call` 覆盖参数寄存器导致的 Segfault
+- [x] 2025-11-21：实现 Language Modes (Phase 1)：支持 Script Mode (隐式入口) 和 Project Mode (显式 main)，解决入口点冲突问题

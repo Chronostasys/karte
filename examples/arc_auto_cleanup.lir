@@ -1,0 +1,182 @@
+LirProgram(functions: {
+    main: 
+        LirFunction
+        name: main
+        body:
+        [
+        
+            Label(L1),
+        
+            sub dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Store64 { addr =
+                #p6, offset =
+                0, src =
+                #p7 },
+        
+            mov dst: #p7, src: #p6,
+        
+            sub dst: #p6, src1: #p6, src2: # value: 16,
+        
+            mov dst: #p12, src: # value: 0,
+        
+            add dst: #p2, src1: #p7, src2: # value: -8,
+        
+            Alloc { dst =
+                #p3, size =
+                8, alignment =
+                8, allocation_type =
+                Heap },
+        
+            Label(L2),
+        
+            mov dst: #p4, src: # value: 10,
+        
+            Store64 { addr =
+                #p2, offset =
+                0, src =
+                #p4 },
+        
+            Store64 { addr =
+                #p7, offset =
+                -16, src =
+                #p2 },
+        
+            mov dst: #p2, src: #p3,
+        
+            Load64 { dst =
+                #p4, addr =
+                #p7, offset =
+                -16 },
+        
+            Load64 { dst =
+                #p0, addr =
+                #p4, offset =
+                0 },
+        
+            Store64 { addr =
+                #p7, offset =
+                -16, src =
+                #p0 },
+        
+            Store64 { addr =
+                #p2, offset =
+                0, src =
+                #p0 },
+        
+            mov dst: #p2, src: #p3,
+        
+            mov dst: #p2, src: #p3,
+        
+            Retain(#p2),
+        
+            mov dst: #p2, src: #p3,
+        
+            Retain(#p2),
+        
+            mov dst: #p2, src: #p3,
+        
+            mov dst: #p4, src: #p2,
+        
+            Load64 { dst =
+                #p2, addr =
+                #p4, offset =
+                0 },
+        
+            mov dst: #p4, src: #p3,
+        
+            mov dst: #p0, src: #p4,
+        
+            Store64 { addr =
+                #p7, offset =
+                -16, src =
+                #p0 },
+        
+            Load64 { dst =
+                #p4, addr =
+                #p0, offset =
+                0 },
+        
+            mov dst: #p0, src: #p2,
+        
+            Store64 { addr =
+                #p7, offset =
+                -16, src =
+                #p0 },
+        
+            mov dst: #p2, src: #p4,
+        
+            Load64 { dst =
+                #p0, addr =
+                #p7, offset =
+                -16 },
+        
+            add dst: #p4, src1: #p0, src2: #p2,
+        
+            mov dst: #p2, src: #p3,
+        
+            Release(#p2),
+        
+            mov dst: #p2, src: #p4,
+        
+            mov dst: #p2, src: #p3,
+        
+            mov dst: #p0, src: #p2,
+        
+            Store64 { addr =
+                #p7, offset =
+                -16, src =
+                #p0 },
+        
+            Load64 { dst =
+                #p2, addr =
+                #p0, offset =
+                0 },
+        
+            mov dst: #p0, src: #p4,
+        
+            Store64 { addr =
+                #p7, offset =
+                -16, src =
+                #p0 },
+        
+            mov dst: #p4, src: #p2,
+        
+            Load64 { dst =
+                #p0, addr =
+                #p7, offset =
+                -16 },
+        
+            add dst: #p2, src1: #p0, src2: #p4,
+        
+            mov dst: #p4, src: #p3,
+        
+            Release(#p4),
+        
+            mov dst: #p4, src: #p3,
+        
+            Release(#p4),
+        
+            mov dst: #p0, src: #p2,
+        
+            add dst: #p6, src1: #p6, src2: # value: 16,
+        
+            mov dst: #p6, src: #p7,
+        
+            Load64 { dst =
+                #p7, addr =
+                #p6, offset =
+                0 },
+        
+            add dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Return(#p0)
+        ]
+        params: 0
+    }, main_function: main, global_struct_types: {
+    Resource: 
+        StructLayout(name: Resource, fields: [
+        
+            StructField(name: value, offset: 0, size: 8, alignment: 8)
+        ], total_size: 8, alignment: 8)
+    }, global_variables: {})

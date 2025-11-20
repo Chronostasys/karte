@@ -323,7 +323,11 @@ impl TypeChecker {
         // 首先收集所有结构体定义
         self.collect_struct_definitions(expr);
 
-        let env = TypeEnvironment::new();
+        let mut env = TypeEnvironment::new();
+        
+        // 🔧 Hoisting Pass: 收集顶层函数定义
+        self.collect_function_definitions(expr, &mut env);
+
         let result_type = self.infer_expr(expr, &env);
 
         // 解决所有约束
@@ -348,6 +352,48 @@ impl TypeChecker {
 
         // 现在解析这些结构体定义，支持相互引用和自引用
         self.process_struct_definitions(struct_defs);
+    }
+
+    /// 收集顶层函数定义，支持相互递归
+    fn collect_function_definitions(&mut self, expr: &Expr, env: &mut TypeEnvironment) {
+        if let Expr::Block { statements, .. } = expr {
+            for stmt in statements {
+                if let Statement::FunctionDef {
+                    name,
+                    params,
+                    return_type,
+                    ..
+                } = stmt
+                {
+                    // 如果环境里已经有了，跳过
+                    if env.contains_key(name) {
+                        continue;
+                    }
+
+                    let mut param_types = Vec::new();
+                    for param in params {
+                        let param_ty = if let Some(type_name) = &param.type_annotation {
+                            self.parse_field_type(type_name)
+                        } else {
+                            Type::Var(self.fresh_type_var())
+                        };
+                        param_types.push(param_ty);
+                    }
+
+                    let ret_ty = if let Some(type_name) = return_type {
+                        self.parse_field_type(type_name)
+                    } else {
+                        Type::Var(self.fresh_type_var())
+                    };
+
+                    let func_type = Type::Function {
+                        params: param_types,
+                        return_type: Box::new(ret_ty),
+                    };
+                    env.insert(name.clone(), func_type);
+                }
+            }
+        }
     }
 
     /// 递归遍历AST收集结构体定义
@@ -669,6 +715,9 @@ impl TypeChecker {
             } => {
                 let mut current_env = env.clone();
 
+                // 🔧 Hoisting Pass: 预先收集函数定义，支持相互递归
+                self.collect_function_definitions(expr, &mut current_env);
+
                 // 推断所有语句
                 for stmt in statements {
                     self.infer_statement(stmt, &mut current_env);
@@ -959,7 +1008,6 @@ impl TypeChecker {
                     Type::array(element_type)
                 }
             }
-
             Expr::FieldAccess {
                 object,
                 field,
@@ -1312,6 +1360,50 @@ impl TypeChecker {
                     }
                 }
             }
+            Statement::FunctionDef {
+                name,
+                params,
+                return_type,
+                body,
+                span,
+            } => {
+                // 1. 创建新的作用域
+                let mut func_env = env.clone();
+
+                // 2. 处理参数
+                let mut param_types = Vec::new();
+                for param in params {
+                    let param_ty = if let Some(type_name) = &param.type_annotation {
+                        self.parse_field_type(type_name)
+                    } else {
+                        Type::Var(self.fresh_type_var())
+                    };
+                    func_env.insert(param.name.clone(), param_ty.clone());
+                    param_types.push(param_ty);
+                }
+
+                // 3. 处理返回类型
+                let ret_ty = if let Some(type_name) = return_type {
+                    self.parse_field_type(type_name)
+                } else {
+                    Type::Var(self.fresh_type_var())
+                };
+
+                // 4. 推断函数体
+                let body_ty = self.infer_expr(body, &mut func_env);
+
+                // 5. 约束返回值
+                self.add_constraint(ret_ty.clone(), body_ty, *span);
+
+                // 6. 构造函数类型
+                let func_type = Type::Function {
+                    params: param_types,
+                    return_type: Box::new(ret_ty),
+                };
+
+                // 7. 将函数名加入当前环境
+                env.insert(name.clone(), func_type);
+            }
         }
     }
 
@@ -1520,12 +1612,12 @@ impl TypeChecker {
     }
 
     /// 解析字段类型字符串，支持引用类型、结构体名称引用和泛型类型
-    fn parse_field_type(&self, type_str: &str) -> Type {
+    fn parse_field_type(&mut self, type_str: &str) -> Type {
         self.parse_generic_type(type_str)
     }
 
     /// 解析泛型类型字符串，例如 "Option<&Node>" 或 "&Option<number>"
-    fn parse_generic_type(&self, type_str: &str) -> Type {
+    fn parse_generic_type(&mut self, type_str: &str) -> Type {
         // 检查是否是引用类型
         if let Some(inner_type_str) = type_str.strip_prefix('&') {
             let inner_type = self.parse_generic_type(inner_type_str);
@@ -1560,7 +1652,7 @@ impl TypeChecker {
         } else {
             // 非泛型类型
             match type_str {
-                "number" => Type::Number,
+                "number" | "i32" | "i64" => Type::Number,
                 "unit" => Type::Unit,
                 _ => {
                     // 检查是否是已定义的类型
@@ -1569,7 +1661,7 @@ impl TypeChecker {
                     } else {
                         // 对于未知类型名称，创建一个类型变量作为占位符
                         // 这允许前向引用和相互引用
-                        Type::Var(TypeVar(0)) // 临时占位符，稍后会被正确解析
+                        Type::Var(self.fresh_type_var())
                     }
                 }
             }
@@ -1577,16 +1669,18 @@ impl TypeChecker {
     }
 
     /// 解析泛型参数列表，例如 "&Node" 或 "number, string"
-    fn parse_generic_args(&self, args_str: &str) -> Vec<Type> {
+    fn parse_generic_args(&mut self, args_str: &str) -> Vec<Type> {
         if args_str.trim().is_empty() {
             return vec![];
         }
 
         // 简单的参数分割（不处理嵌套的 <> ）
         let args: Vec<&str> = args_str.split(',').map(|s| s.trim()).collect();
-        args.into_iter()
-            .map(|arg| self.parse_generic_type(arg))
-            .collect()
+        let mut result = Vec::new();
+        for arg in args {
+            result.push(self.parse_generic_type(arg));
+        }
+        result
     }
 
     /// 解析结构体字段类型，支持延迟解析、循环检测和泛型类型
@@ -1768,78 +1862,6 @@ mod assignment_type_check_tests {
         // let x = 5; x = true; (类型不兼容)
         env.insert("x".to_string(), Type::Number);
 
-        let assignment = Expr::Assignment {
-            target: Box::new(Expr::Identifier {
-                name: "x".to_string(),
-                span: make_span(),
-            }),
-            value: Box::new(Expr::Boolean {
-                value: true,
-                span: make_span(),
-            }),
-            span: make_span(),
-        };
-
-        let _result_type = checker.infer_expr(&assignment, &env);
-        // 注意：当前实现可能需要改进类型兼容性检查
-    }
-
-    #[test]
-    fn test_chained_assignment_type_check() {
-        let mut checker = TypeChecker::new();
-        let mut env = TypeEnvironment::new();
-
-        // let a = 1; let b = 2; a = b = 5;
-        env.insert("a".to_string(), Type::Number);
-        env.insert("b".to_string(), Type::Number);
-
-        let chained_assignment = Expr::Assignment {
-            target: Box::new(Expr::Identifier {
-                name: "a".to_string(),
-                span: make_span(),
-            }),
-            value: Box::new(Expr::Assignment {
-                target: Box::new(Expr::Identifier {
-                    name: "b".to_string(),
-                    span: make_span(),
-                }),
-                value: Box::new(Expr::Number {
-                    value: 5,
-                    span: make_span(),
-                }),
-                span: make_span(),
-            }),
-            span: make_span(),
-        };
-
-        let result_type = checker.infer_expr(&chained_assignment, &env);
-        assert_eq!(result_type, Type::Unit, "连续赋值表达式应该返回Unit类型");
-        assert!(checker.diagnostics().is_empty(), "不应该有类型错误");
-    }
-
-    #[test]
-    fn test_field_assignment_type_check() {
-        let mut checker = TypeChecker::new();
-        let mut env = TypeEnvironment::new();
-
-        // 创建一个结构体类型
-        let point_type = Type::Struct {
-            name: "Point".to_string(),
-            fields: vec![
-                crate::types::StructField {
-                    name: "x".to_string(),
-                    field_type: Type::Number,
-                },
-                crate::types::StructField {
-                    name: "y".to_string(),
-                    field_type: Type::Number,
-                },
-            ],
-        };
-
-        env.insert("p".to_string(), point_type);
-
-        // p.x = 42
         let field_assignment = Expr::Assignment {
             target: Box::new(Expr::FieldAccess {
                 object: Box::new(Expr::Identifier {

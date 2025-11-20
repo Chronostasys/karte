@@ -520,7 +520,7 @@ impl ExecutionEngine {
         info!("JIT编译: 函数间跳转修补完成，准备执行");
 
         // 获取main函数并执行
-        let main_function_name = "main";
+        let main_function_name = program.main_function.as_deref().unwrap_or("main");
         if let Some((_, executable_memory)) = compiled_functions.get(main_function_name) {
             info!("执行main函数: 地址={:p}", executable_memory.address());
 
