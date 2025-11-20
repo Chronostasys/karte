@@ -1207,20 +1207,17 @@ impl JitCompiler for X86Compiler {
 impl X86Compiler {
     /// 生成函数序言
     fn emit_function_prologue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
-        // Windows x64 ABI: rcx/rdx为前两个参数
-        let rcx = X86Register::RCX as u8;
-        let rdx = X86Register::RDX as u8;
+        // System V AMD64 ABI (Linux): rdi/rsi为前两个参数
+        let rdi = X86Register::RDI as u8;
+        let rsi = X86Register::RSI as u8;
         let vm_sp = X86Register::R10 as u8; // r6
         let vm_fp = X86Register::R11 as u8; // r7
 
-        // 🔧 修复：将参数移动到虚拟机寄存器，但不干扰LIR的栈帧管理
+        // 将参数移动到虚拟机寄存器
         // 将虚拟栈指针参数移动到r10 (r6)
-        self.emit_mov_reg_reg(code_builder, vm_sp, rcx);
+        self.emit_mov_reg_reg(code_builder, vm_sp, rdi);
         // 将虚拟帧指针参数移动到r11 (r7)
-        self.emit_mov_reg_reg(code_builder, vm_fp, rdx);
-
-        // 🔧 新增：确保r6和r7的初始值正确，让LIR的栈帧管理指令能正常工作
-        // 此时r6和r7已经包含了虚拟栈的地址，LIR的栈帧管理指令会基于这些值工作
+        self.emit_mov_reg_reg(code_builder, vm_fp, rsi);
 
         Ok(())
     }
