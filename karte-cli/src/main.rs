@@ -7,7 +7,10 @@ use karte_lexer::tokenize;
 use karte_lir::lower::lower_mir_to_lir;
 use karte_lir::optimization_pipeline::{OptimizationLevel, OptimizationPipeline};
 use karte_lir::LirProgram;
-use karte_mir::{lower::lower_expr_to_mir, MirProgram};
+use karte_mir::{
+    lower::{lower_expr_to_mir, SCRIPT_ENTRY_POINT},
+    MirProgram, Statement, Value,
+};
 use karte_parser::parse_with_type_check;
 use karte_rt::{ffi, HeapStats};
 use log::error;
@@ -265,7 +268,7 @@ fn compile_source_to_artifacts<'a>(
     if verbose {
         println!("\n--- Lowering to MIR ---");
     }
-    let mir_program = match lower_expr_to_mir(&result.expr) {
+    let mut mir_program = match lower_expr_to_mir(&result.expr) {
         Ok(prog) => prog,
         Err(errors) => {
             for err in errors {
@@ -274,6 +277,33 @@ fn compile_source_to_artifacts<'a>(
             return Err("MIR lowering failed".into());
         }
     };
+
+    // 检查是否为 Project Mode (脚本入口为空，且存在 main 函数)
+    if let Some(script_entry) = mir_program.functions.get(SCRIPT_ENTRY_POINT) {
+        let is_trivial = if let Some(entry_block) =
+            script_entry.basic_blocks.get(&script_entry.entry_block)
+        {
+            entry_block.statements.iter().all(|stmt| match stmt {
+                Statement::Assign {
+                    source: Value::Unit,
+                    ..
+                } => true,
+                _ => false,
+            })
+        } else {
+            true
+        };
+
+        if is_trivial {
+            if mir_program.functions.contains_key("main") {
+                if verbose {
+                    println!("Project Mode detected: switching entry point to 'main'");
+                }
+                mir_program.set_main("main".to_string());
+            }
+        }
+    }
+
     if verbose {
         println!("{}", mir_program.to_ir_string());
     }

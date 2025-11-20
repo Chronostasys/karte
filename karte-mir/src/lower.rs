@@ -29,6 +29,8 @@ impl ScopeFrame {
     }
 }
 
+pub const SCRIPT_ENTRY_POINT: &str = "__script_entry__";
+
 /// HIR到MIR的lowering上下文
 pub struct LoweringContext<'a> {
     program: &'a mut MirProgram,
@@ -224,7 +226,7 @@ pub fn lower_expr_to_mir(expr: &Expr) -> Result<MirProgram, Vec<String>> {
     let mut context = LoweringContext::new(&mut program);
 
     // 创建主函数
-    context.start_function("main".to_string(), vec![]);
+    context.start_function(SCRIPT_ENTRY_POINT.to_string(), vec![]);
 
     // 为主函数结果创建临时变量
     let result_temp = context.new_temp();
@@ -243,7 +245,7 @@ pub fn lower_expr_to_mir(expr: &Expr) -> Result<MirProgram, Vec<String>> {
     context.finish_function();
 
     if context.errors.is_empty() {
-        program.set_main("main".to_string());
+        program.set_main(SCRIPT_ENTRY_POINT.to_string());
         // 保存主函数的返回值
         program.main_return_value = Some(result_temp);
         Ok(program)
@@ -303,6 +305,13 @@ fn lower_expression(
                         });
                     }
                 }
+            } else if ctx.program.functions.contains_key(name) {
+                // 如果是函数名，返回函数值
+                ctx.add_statement(Statement::Assign {
+                    target: destination.clone(),
+                    source: Value::Function { name: name.clone() },
+                    span,
+                });
             } else {
                 ctx.errors.push(format!("Undefined variable: {}", name));
                 return Err(ctx.errors.clone());
@@ -607,6 +616,46 @@ fn lower_expression(
         }
 
         Expr::FunctionCall { function, args, .. } => {
+            // Special handling for direct calls to global functions
+            if let Expr::Identifier { name, .. } = function.as_ref() {
+                eprintln!("DEBUG: FunctionCall to identifier: {}", name);
+                // If it's a global function and not shadowed by a local variable
+                if ctx.program.functions.contains_key(name) && ctx.lookup_variable(name).is_none() {
+                    eprintln!("DEBUG: Found global function: {}", name);
+                    let arg_vals: Vec<Value> = args
+                        .iter()
+                        .map(|a| lower_expression_to_temp(ctx, a))
+                        .collect::<Result<_, _>>()?;
+
+                    for (arg_expr, arg_val) in args.iter().zip(arg_vals.iter()) {
+                        if matches!(
+                            infer_expr_ownership(ctx, arg_expr),
+                            Some(OwnershipKind::RefCounted)
+                        ) && !expr_creates_new_ref(arg_expr)
+                        {
+                            ctx.add_statement(Statement::Retain {
+                                value: arg_val.clone(),
+                                span: arg_expr.span(),
+                            });
+                        }
+                    }
+
+                    ctx.add_statement(Statement::Call {
+                        target: Some(destination.clone()),
+                        function: Value::Function { name: name.clone() },
+                        args: arg_vals,
+                        span,
+                    });
+                    return Ok(());
+                } else {
+                    eprintln!("DEBUG: Not a global function or shadowed: {} (in functions: {}, in vars: {})", 
+                        name, 
+                        ctx.program.functions.contains_key(name),
+                        ctx.lookup_variable(name).is_some()
+                    );
+                }
+            }
+
             // 统一闭包调用策略：
             // 1. 先将被调用表达式降级为值 func_val（可能是函数指针或Closure结构）
             // 2. 如果是直接函数（Value::Function），直接调用（与之前一致）
@@ -763,6 +812,22 @@ fn lower_expression(
             span,
         } => {
             ctx.enter_scope();
+
+            // 🔧 Hoisting Pass: 预先注册当前块中的函数定义，支持相互递归
+            for stmt in statements {
+                if let karte_hir::Statement::FunctionDef { name, params, .. } = stmt {
+                    // 仅当函数尚未定义时注册
+                    if !ctx.program.functions.contains_key(name) {
+                        eprintln!("DEBUG: Hoisting function: {}", name);
+                        let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+                        let function = MirFunction::new(name.clone(), param_names);
+                        ctx.program.add_function(function);
+                    } else {
+                        eprintln!("DEBUG: Function already defined: {}", name);
+                    }
+                }
+            }
+
             for stmt in statements {
                 lower_statement(ctx, stmt)?;
             }
@@ -1226,6 +1291,56 @@ fn lower_statement(
         } => {
             handle_assignment(ctx, target, value, *span)?;
         }
+        karte_hir::Statement::FunctionDef {
+            name,
+            params,
+            body,
+            return_type: _,
+            span,
+        } => {
+            // 保存当前上下文状态
+            let old_function_name = ctx.current_function_name.clone();
+            let old_block = ctx.current_block;
+            let old_scopes = ctx.clone_scopes();
+
+            // 提取参数名
+            let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+
+            // println!("Lowering function definition: {}", name);
+            ctx.start_function(name.clone(), param_names);
+
+            // Lower 函数体
+            match lower_expression_to_temp(ctx, body) {
+                Ok(return_value) => {
+                    // 添加返回指令
+                    if let Some(block_id) = ctx.current_block {
+                        if let Some(block) = ctx
+                            .current_function_mut()
+                            .basic_blocks
+                            .get_mut(&block_id)
+                        {
+                            if block.terminator.is_none() {
+                                block.terminator = Some(Terminator::Return {
+                                    value: Some(return_value),
+                                    span: *span,
+                                });
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    ctx.errors
+                        .push(format!("Error lowering function body for {}: {}", name, e[0]));
+                }
+            }
+
+            ctx.finish_function();
+
+            // 恢复上下文
+            ctx.current_function_name = old_function_name;
+            ctx.current_block = old_block;
+            ctx.restore_scopes(old_scopes);
+        }
     }
     Ok(())
 }
@@ -1657,9 +1772,9 @@ mod assignment_lowering_tests {
         assert!(result.is_ok(), "MIR lowering 应该成功");
 
         let program = result.unwrap();
-        assert!(program.functions.contains_key("main"), "应该有main函数");
+        assert!(program.functions.contains_key(SCRIPT_ENTRY_POINT), "应该有main函数");
 
-        let main_fn = &program.functions["main"];
+        let main_fn = &program.functions[SCRIPT_ENTRY_POINT];
         assert!(!main_fn.basic_blocks.is_empty(), "main函数应该有基本块");
 
         // 检查是否包含Assign语句（用于赋值）
@@ -1690,7 +1805,7 @@ mod assignment_lowering_tests {
         assert!(result.is_ok(), "赋值表达式的MIR lowering应该成功");
 
         let program = result.unwrap();
-        let main_fn = &program.functions["main"];
+        let main_fn = &program.functions[SCRIPT_ENTRY_POINT];
         let entry_block = &main_fn.basic_blocks[&main_fn.entry_block];
 
         // 检查是否包含Assign语句，值为42
@@ -1732,7 +1847,7 @@ mod assignment_lowering_tests {
         assert!(result.is_ok(), "连续赋值的MIR lowering应该成功");
 
         let program = result.unwrap();
-        let main_fn = &program.functions["main"];
+        let main_fn = &program.functions[SCRIPT_ENTRY_POINT];
         let entry_block = &main_fn.basic_blocks[&main_fn.entry_block];
 
         // 检查是否包含Assign语句（至少一个，因为嵌套赋值可能有不同的实现方式）
@@ -1854,7 +1969,7 @@ mod closure_struct_tests {
         assert!(result.is_ok(), "无捕获lambda的MIR lowering应该成功");
 
         let program = result.unwrap();
-        let main_fn = &program.functions["main"];
+        let main_fn = &program.functions[SCRIPT_ENTRY_POINT];
         let entry_block = &main_fn.basic_blocks[&main_fn.entry_block];
 
         // 检查是否生成了Closure结构体
@@ -1930,7 +2045,7 @@ mod closure_struct_tests {
         assert!(result.is_ok(), "有捕获lambda的MIR lowering应该成功");
 
         let program = result.unwrap();
-        let main_fn = &program.functions["main"];
+        let main_fn = &program.functions[SCRIPT_ENTRY_POINT];
         let entry_block = &main_fn.basic_blocks[&main_fn.entry_block];
 
         // 检查是否生成了堆分配语句
@@ -2007,7 +2122,7 @@ mod closure_struct_tests {
         assert!(result.is_ok(), "闭包结构体调用的MIR lowering应该成功");
 
         let program = result.unwrap();
-        let main_fn = &program.functions["main"];
+        let main_fn = &program.functions[SCRIPT_ENTRY_POINT];
         let entry_block = &main_fn.basic_blocks[&main_fn.entry_block];
 
         // 检查是否生成了Call语句
@@ -2051,7 +2166,7 @@ mod closure_struct_tests {
         assert!(result.is_ok(), "包含堆分配的lambda MIR lowering应该成功");
 
         let program = result.unwrap();
-        let main_fn = &program.functions["main"];
+        let main_fn = &program.functions[SCRIPT_ENTRY_POINT];
         let entry_block = &main_fn.basic_blocks[&main_fn.entry_block];
 
         // 验证各种堆操作语句

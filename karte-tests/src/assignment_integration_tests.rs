@@ -3,7 +3,7 @@ mod assignment_integration_tests {
     // use karte_codegen::evaluate;
     use karte_hir::type_check;
     use karte_lexer::tokenize;
-    use karte_mir::lower::lower_expr_to_mir;
+    use karte_mir::lower::{lower_expr_to_mir, SCRIPT_ENTRY_POINT};
     use karte_parser::parse;
     use log::info;
 
@@ -62,7 +62,7 @@ mod assignment_integration_tests {
                 info!("MIR程序: {:#?}", mir_program);
 
                 // 检查main函数存在
-                assert!(mir_program.functions.contains_key("main"), "应该有main函数");
+                assert!(mir_program.functions.contains_key(SCRIPT_ENTRY_POINT), "应该有main函数");
             }
             Err(errors) => {
                 info!("MIR降级失败: {:?}", errors);

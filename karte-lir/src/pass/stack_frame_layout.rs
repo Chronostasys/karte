@@ -108,6 +108,9 @@ impl StackFrameLayoutPass {
             }
         }
         info!("🔍 StackFrameLayout收集到 {} 个栈槽", slots.len());
+        for slot in &slots {
+            debug!("  - Slot: {:?}", slot);
+        }
         slots
     }
 
@@ -349,18 +352,23 @@ impl FunctionPass for StackFrameLayoutPass {
         for slot in &used_slots {
             let start = slot.start.unwrap();
             let end = slot.end.unwrap();
+            
             allocator.expire_old_intervals(start);
-            let base = allocator.allocate(slot.size, slot.alignment);
-            allocator.add_active(slot.addr_reg, end, base, slot.size, slot.alignment);
-            offset_map.insert(slot.addr_reg, base);
-            alloc_offset_map.insert(slot.alloc_index, base);
-            debug!(
-                "  分配槽 {:?} (idx={}) size={} -> FP{} (live=[{}, {}])",
-                slot.addr_reg, slot.alloc_index, slot.size, base, start, end
-            );
+            let offset = allocator.allocate(slot.size, slot.alignment);
+            allocator.add_active(slot.addr_reg, end, offset, slot.size, slot.alignment);
+            
+            offset_map.insert(slot.addr_reg, offset);
+            alloc_offset_map.insert(slot.alloc_index, offset);
+            debug!("  - 分配槽 {:?} (idx {}): offset {}, range [{}-{}]", 
+                slot.addr_reg, slot.alloc_index, offset, start, end);
         }
+        
+        function.stack_frame_size = (-allocator.current_neg_offset) as usize;
+        // 保持16字节对齐
+        function.stack_frame_size = (function.stack_frame_size + 15) & !15;
+        
+        info!("  - 栈帧大小: {}", function.stack_frame_size);
 
-        // 5) 下沉到 FP+offset，并删除 Alloc
         self.lower_to_fp_offsets(function, &offset_map, &alloc_offset_map);
 
         // 6) 设置 stack_frame_size（正数）
