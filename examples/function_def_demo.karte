@@ -1,0 +1,14 @@
+fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+fn subtract(a: i32, b: i32) -> i32 {
+    a - b
+}
+
+fn main() {
+    let a = 10;
+    let b = 20;
+    let x = add(a, b);
+    let y = subtract(x, 5);
+}

@@ -1085,6 +1085,13 @@ impl AArch64Compiler {
             .get_physical_register(&karte_lir::Register::Physical(7))
             .unwrap_or(7);
 
+        // 🔧 修复：保存 VM_SP (X6) 和 VM_FP (X7) 到栈
+        // 因为它们在 AAPCS64 中是 caller-saved，但 VM 期望它们是 callee-saved
+        // STP X6, X7, [SP, #-16]!
+        // 0xA9BF1FE6
+        let stp_x6_x7 = 0xA9BF1FE6u32;
+        code_builder.emit_bytes(&stp_x6_x7.to_le_bytes());
+
         // 标准函数序言：保存帧指针和链接寄存器
         // STP X29, X30, [SP, #-16]!
         let instruction = 0xA9BF7BFDu32;
@@ -1116,7 +1123,13 @@ impl AArch64Compiler {
         &self,
         code_builder: &mut CodeBuilder,
     ) -> Result<(), String> {
-        // 🔧 修复：内部函数也需要基本的栈帧设置，因为LIR的栈帧管理指令依赖于此
+        // 🔧 修复：内部函数也需要保存和设置 VM_SP/VM_FP
+        // 因为 compile_call 通过 X0/X1 传递它们
+        
+        // STP X6, X7, [SP, #-16]!
+        let stp_x6_x7 = 0xA9BF1FE6u32;
+        code_builder.emit_bytes(&stp_x6_x7.to_le_bytes());
+
         // 标准函数序言：保存帧指针和链接寄存器
         // STP X29, X30, [SP, #-16]!
         let instruction = 0xA9BF7BFDu32;
@@ -1131,6 +1144,10 @@ impl AArch64Compiler {
 
         // 🔧 内部函数不需要参数处理，因为参数已经通过寄存器传递
         // 但需要确保r6和r7寄存器可以正常工作作为虚拟栈指针
+        // X0 -> X6 (VM_SP)
+        // self.emit_mov_reg_reg(code_builder, AArch64Register::X6 as u8, AArch64Register::X0 as u8);
+        // X1 -> X7 (VM_FP)
+        // self.emit_mov_reg_reg(code_builder, AArch64Register::X7 as u8, AArch64Register::X1 as u8);
 
         Ok(())
     }
@@ -1146,6 +1163,12 @@ impl AArch64Compiler {
         // 恢复帧指针和链接寄存器，并增加栈指针16字节
         let instruction = 0xA8C17BFDu32; // ldp x29, x30, [sp], #16
         code_builder.emit_bytes(&instruction.to_le_bytes());
+
+        // 🔧 修复：恢复 VM_SP (X6) 和 VM_FP (X7)
+        // LDP X6, X7, [SP], #16
+        // 0xA8C11FE6
+        let ldp_x6_x7 = 0xA8C11FE6u32;
+        code_builder.emit_bytes(&ldp_x6_x7.to_le_bytes());
 
         Ok(())
     }
@@ -1177,7 +1200,7 @@ impl JitCompiler for AArch64Compiler {
             return Err(format!("函数 '{}' 的第一个指令必须是label", function.name));
         }
 
-        let is_main_function = function.name == "main";
+        let is_main_function = function.name == "main" || function.name == karte_mir::lower::SCRIPT_ENTRY_POINT;
         // 生成函数序言
         if is_main_function {
             self.emit_function_prologue(&mut code_builder)?;
@@ -1262,7 +1285,7 @@ impl JitCompiler for AArch64Compiler {
         code_builder.define_label(&function_label)?;
 
         // 🔧 修复：只有main函数才需要C FFI序言尾声，其他函数使用简化版本
-        let is_main_function = function.name == "main";
+        let is_main_function = function.name == "main" || function.name == karte_mir::lower::SCRIPT_ENTRY_POINT;
         // 检查第一个instruction是label，是则编译，不是则返回错误
         if let Some(Instruction::Label { id, .. }) = function.instructions.first() {
             code_builder.define_label(&format!("label_{}", id.0))?;

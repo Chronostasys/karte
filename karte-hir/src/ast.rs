@@ -265,6 +265,15 @@ pub enum Statement {
         value: Expr,
         span: Span,
     },
+
+    // 函数定义语句
+    FunctionDef {
+        name: String,
+        params: Vec<Parameter>,
+        return_type: Option<String>,
+        body: Expr,
+        span: Span,
+    },
 }
 
 /// 模式匹配的分支
@@ -434,6 +443,31 @@ impl fmt::Display for Statement {
             }
             Statement::Assignment { target, value, .. } => {
                 write!(f, "{} = {};", target, value)
+            }
+            Statement::FunctionDef {
+                name,
+                params,
+                return_type,
+                body,
+                ..
+            } => {
+                let params_str = params
+                    .iter()
+                    .map(|p| {
+                        if let Some(ty) = &p.type_annotation {
+                            format!("{}: {}", p.name, ty)
+                        } else {
+                            p.name.clone()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let ret_str = if let Some(ret) = return_type {
+                    format!(" -> {}", ret)
+                } else {
+                    "".to_string()
+                };
+                write!(f, "fn {}({}){} {}", name, params_str, ret_str, body)
             }
         }
     }
@@ -650,6 +684,7 @@ impl Statement {
             Statement::TypeDef { span, .. } => *span,
             Statement::StructDef { span, .. } => *span,
             Statement::Assignment { span, .. } => *span,
+            Statement::FunctionDef { span, .. } => *span,
         }
     }
 }
