@@ -70,8 +70,7 @@ impl X86Compiler {
 
     /// 初始化寄存器映射
     fn initialize_register_mapping(&mut self) {
-        // 🔧 修复：建立虚拟寄存器到物理寄存器的映射
-        // 确保r0映射到RAX（返回值寄存器），避免与函数序言冲突
+        // 虚拟寄存器到物理寄存器的映射
         for i in 0..8 {
             let virtual_reg = Register::Virtual(i);
             let physical_reg = match i {
@@ -88,13 +87,27 @@ impl X86Compiler {
             self.register_mapping.insert(virtual_reg, physical_reg);
         }
 
-        // 🔧 修复：物理寄存器映射，确保Physical(6)和Physical(7)映射到r10和r11
+        // 物理寄存器映射 - 直接映射到x86寄存器编号，但避免RSP和RBP
         for i in 0..16 {
             let physical_reg = Register::Physical(i);
             let x86_reg = match i {
-                6 => X86Register::R10 as u8, // Physical(6) -> r10 (虚拟机栈指针)
-                7 => X86Register::R11 as u8, // Physical(7) -> r11 (虚拟机帧指针)
-                _ => i,                      // 其他物理寄存器直接映射
+                0 => X86Register::RAX as u8,
+                1 => X86Register::RCX as u8,
+                2 => X86Register::RDX as u8,
+                3 => X86Register::RBX as u8,
+                4 => X86Register::RSI as u8, // 避免使用RSP
+                5 => X86Register::RDI as u8, // 避免使用RBP
+                6 => X86Register::R10 as u8, // 虚拟机栈指针
+                7 => X86Register::R11 as u8, // 虚拟机帧指针
+                8 => X86Register::R8 as u8,
+                9 => X86Register::R9 as u8,
+                10 => X86Register::R10 as u8,
+                11 => X86Register::R11 as u8,
+                12 => X86Register::R12 as u8,
+                13 => X86Register::R13 as u8,
+                14 => X86Register::R14 as u8,
+                15 => X86Register::R15 as u8,
+                _ => i, // 超出范围的直接映射
             };
             self.register_mapping.insert(physical_reg, x86_reg);
         }
@@ -615,7 +628,6 @@ impl X86Compiler {
         value: Option<&Register>,
         code_builder: &mut CodeBuilder,
     ) -> Result<(), String> {
-        // 🔧 修复：只移动返回值到RAX，不生成ret指令
         // 如果有返回值，将其移动到RAX
         if let Some(reg) = value {
             let src_reg = self.get_physical_register(reg)?;
@@ -625,8 +637,9 @@ impl X86Compiler {
             }
         }
 
-        // 🔧 修复：不在这里生成ret指令，让函数尾声处理
-        // ret指令会在函数尾声生成
+        // 生成函数尾声（包括ret指令）
+        self.emit_function_epilogue(code_builder)?;
+        
         Ok(())
     }
 
@@ -1059,10 +1072,8 @@ impl JitCompiler for X86Compiler {
             self.compile_instruction(instruction, &mut code_builder, program)?;
         }
 
-        // 🔧 修复：总是生成函数尾声，确保正确的寄存器恢复
-        self.emit_function_epilogue(&mut code_builder)?;
-
-        // 🔧 修复：第一轮编译需要保存label信息供第二轮使用
+        // 🔧 修复：不在这里生成尾声，Return指令会自己生成尾声
+        // 获取label信息（在finalize之前）
         let labels = code_builder.exported_labels().clone();
         let pending_jumps = code_builder.exported_pending_jumps().clone();
         let pending_label_addresses = code_builder.exported_pending_label_addresses().clone();
@@ -1136,9 +1147,7 @@ impl JitCompiler for X86Compiler {
             self.compile_instruction(instruction, &mut code_builder, program)?;
         }
 
-        // 🔧 修复：总是生成函数尾声，确保正确的寄存器恢复
-        self.emit_function_epilogue(&mut code_builder)?;
-
+        // 🔧 修复：不在这里生成尾声，Return指令会自己生成尾声
         // 获取label信息（在finalize之前）
         let labels = code_builder.exported_labels().clone();
 
