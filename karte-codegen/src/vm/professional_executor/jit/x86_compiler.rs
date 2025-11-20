@@ -1062,14 +1062,26 @@ impl JitCompiler for X86Compiler {
         // 🔧 修复：总是生成函数尾声，确保正确的寄存器恢复
         self.emit_function_epilogue(&mut code_builder)?;
 
-        // 完成代码生成
-        let machine_code = code_builder.finalize_with_global_addresses(None)?;
+        // 🔧 修复：第一轮编译需要保存label信息供第二轮使用
+        let labels = code_builder.exported_labels().clone();
+        let pending_jumps = code_builder.exported_pending_jumps().clone();
+        let pending_label_addresses = code_builder.exported_pending_label_addresses().clone();
+        let pending_adrs = code_builder.exported_pending_adrs().clone();
 
-        let compiled_function = CompiledFunction::new(
+        // 完成代码生成
+        let machine_code = code_builder.finalize()?;
+
+        let mut compiled_function = CompiledFunction::new(
             function.name.clone(),
             machine_code,
             0, // 入口点在函数开始
         );
+
+        // 保存label信息和待修补信息
+        compiled_function.labels = labels;
+        compiled_function.pending_jumps = pending_jumps;
+        compiled_function.pending_label_addresses = pending_label_addresses;
+        compiled_function.pending_adrs = pending_adrs;
 
         if self.debug_mode {
             println!(
@@ -1127,14 +1139,32 @@ impl JitCompiler for X86Compiler {
         // 🔧 修复：总是生成函数尾声，确保正确的寄存器恢复
         self.emit_function_epilogue(&mut code_builder)?;
 
-        // 完成代码生成
-        let machine_code = code_builder.finalize_with_global_addresses(None)?;
+        // 获取label信息（在finalize之前）
+        let labels = code_builder.exported_labels().clone();
 
-        let compiled_function = CompiledFunction::new(
+        // 从全局标签表中获取当前函数的可执行内存基址
+        let func_label = format!("func_{}", function.name);
+        let exec_base = if let Some(&func_addr) = global_labels.get(&func_label) {
+            func_addr as usize
+        } else {
+            if self.debug_mode {
+                println!("警告：未找到函数 '{}' 的地址，使用0作为exec_base", function.name);
+            }
+            0
+        };
+
+        // 完成代码生成，使用全局标签进行修补
+        let machine_code = code_builder
+            .finalize_with_global_addresses_and_exec_base(Some(global_labels), exec_base)?;
+
+        let mut compiled_function = CompiledFunction::new(
             function.name.clone(),
             machine_code,
             0, // 入口点在函数开始
         );
+
+        // 保存label信息
+        compiled_function.labels = labels;
 
         if self.debug_mode {
             println!(

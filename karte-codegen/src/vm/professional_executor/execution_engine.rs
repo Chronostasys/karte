@@ -380,6 +380,7 @@ impl ExecutionEngine {
         let mut global_label_map = HashMap::new();
 
         info!("JIT编译: 第一轮编译所有函数到连续内存空间");
+        info!("程序包含 {} 个函数: {:?}", program.functions.len(), program.functions.keys().collect::<Vec<_>>());
 
         // 第一轮：编译所有函数到连续内存空间（不修补跳转）
         for (function_name, function) in &program.functions {
@@ -388,10 +389,20 @@ impl ExecutionEngine {
             // 根据当前架构选择编译器
             let compiled_function = if cfg!(target_arch = "aarch64") {
                 let mut compiler = AArch64Compiler::new(self.debug_mode)?;
-                compiler.compile_function(function, program)?
+                match compiler.compile_function(function, program) {
+                    Ok(cf) => cf,
+                    Err(e) => {
+                        return Err(format!("第一轮编译函数 '{}' 失败: {}", function_name, e));
+                    }
+                }
             } else if cfg!(target_arch = "x86_64") {
                 let mut compiler = X86Compiler::new(self.debug_mode)?;
-                compiler.compile_function(function, program)?
+                match compiler.compile_function(function, program) {
+                    Ok(cf) => cf,
+                    Err(e) => {
+                        return Err(format!("第一轮编译函数 '{}' 失败: {}", function_name, e));
+                    }
+                }
             } else {
                 return Err("不支持的目标架构".to_string());
             };
@@ -437,6 +448,12 @@ impl ExecutionEngine {
         }
 
         info!("JIT编译: 第二轮重新编译函数并修补跳转地址");
+        info!("全局标签表包含 {} 个标签", global_label_map.len());
+        if self.debug_mode {
+            for (label, addr) in &global_label_map {
+                info!("  全局标签: {} -> 0x{:016X}", label, *addr as usize);
+            }
+        }
 
         // 第二轮：重新编译函数并修补跳转地址
         for (function_name, function) in &program.functions {
