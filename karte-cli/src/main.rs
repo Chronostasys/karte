@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand, ValueEnum};
-// use karte_codegen::lir_interpreter::execute;
+use karte_codegen::lir_interpreter::execute_professional;
 use karte_codegen::vm::professional_executor::ProfessionalExecutor;
 use karte_diagnostics::DiagnosticBag;
 use karte_ir_codec::{IrDisplay, IrParse};
@@ -623,23 +623,39 @@ fn execute_lir(lir_program: &LirProgram, verbose: bool) -> Result<(), Box<dyn st
                         return Ok(());
                     }
                     Err(err) => {
-                        if verbose {
-                            println!("JIT执行失败，回退到解释器: {}", err);
-                        }
+                        // 🔧 修复：始终打印错误信息以帮助调试
+                        eprintln!("JIT执行失败: {}", err);
+                        eprintln!("回退到解释器执行");
                         // 继续到解释器执行
                     }
                 }
             }
             Err(err) => {
-                if verbose {
-                    println!("无法创建JIT执行器，回退到解释器: {}", err);
-                }
+                // 🔧 修复：始终打印错误信息以帮助调试
+                eprintln!("无法创建JIT执行器: {}", err);
+                eprintln!("回退到解释器执行");
                 // 继续到解释器执行
             }
         }
     }
 
-    panic!("Not implemented")
+    // 🔧 修复：实现解释器回退
+    if verbose {
+        println!("使用解释器执行LIR程序");
+    }
+    
+    match execute_professional(lir_program, verbose) {
+        Ok(exit_code) => {
+            if verbose {
+                println!("解释器执行完成，返回值: {}", exit_code);
+            }
+            Ok(())
+        }
+        Err(err) => {
+            eprintln!("解释器执行失败: {}", err);
+            Err(err.into())
+        }
+    }
 }
 
 fn capture_heap_stats() -> HeapStats {
