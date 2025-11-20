@@ -1213,6 +1213,12 @@ impl X86Compiler {
         let vm_sp = X86Register::R10 as u8; // r6
         let vm_fp = X86Register::R11 as u8; // r7
 
+        // 🔧 关键修复：对齐栈到16字节边界
+        // 当函数被调用时，返回地址被push，使栈偏移8字节
+        // 我们需要再减8字节使其对齐到16字节
+        // push rbp (保存8字节，使栈对齐)
+        code_builder.emit_byte(0x55); // push rbp
+        
         // 将参数移动到虚拟机寄存器
         // 将虚拟栈指针参数移动到r10 (r6)
         self.emit_mov_reg_reg(code_builder, vm_sp, rdi);
@@ -1224,8 +1230,9 @@ impl X86Compiler {
 
     /// 生成函数尾声
     fn emit_function_epilogue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
-        // 只生成ret指令
-        code_builder.emit_byte(0xC3);
+        // 恢复rbp并返回
+        code_builder.emit_byte(0x5D); // pop rbp
+        code_builder.emit_byte(0xC3); // ret
         Ok(())
     }
 }
