@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 karte-diagnostics = { path = "../karte-diagnostics" }
+karte-common = { path = "../karte-common" }
 ena.workspace = true
 
 [[example]]

@@ -1,5 +1,5 @@
-use karte_mir::ir::MirFunction;
 use karte_ir_codec::IrParse;
+use karte_mir::ir::MirFunction;
 
 #[test]
 fn test_parse_mir_function() {
@@ -10,11 +10,11 @@ fn test_parse_mir_function() {
                     []
                 blocks: 
                     {}"#;
-    
+
     println!("Parsing MirFunction from:\n{}", input);
-    
+
     let result = MirFunction::parse_ir(input);
     println!("Result: {:?}", result);
-    
+
     assert!(result.is_ok(), "Failed to parse MirFunction: {:?}", result);
 }

@@ -1,0 +1,4 @@
+let ptr = box 10;
+let y = *ptr + 5;
+free ptr;
+y

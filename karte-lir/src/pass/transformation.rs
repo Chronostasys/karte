@@ -116,6 +116,7 @@ impl DeadCodeElimination {
             Instruction::StructFieldStore { .. } => true,
             Instruction::MemCopy { .. } => true,
             Instruction::Free { .. } => true,
+            Instruction::Retain { .. } | Instruction::Release { .. } => true,
             Instruction::Call { .. } => true,
             Instruction::CallIndirect { .. } => true,
             Instruction::Return { .. } => true,
@@ -205,6 +206,9 @@ impl DeadCodeElimination {
             }
             Instruction::Free { addr, .. } => {
                 used.push(*addr);
+            }
+            Instruction::Retain { value, .. } | Instruction::Release { value, .. } => {
+                used.push(*value);
             }
             Instruction::Phi { incoming, .. } => {
                 // φ节点使用来自各个前驱块的值

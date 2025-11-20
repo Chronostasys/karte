@@ -1,5 +1,5 @@
-use karte_mir::MirProgram;
 use karte_ir_codec::IrParse;
+use karte_mir::MirProgram;
 
 #[test]
 fn test_parse_1_mir_cli_output() {

@@ -1,5 +1,5 @@
-use karte_mir::BasicBlock;
 use karte_ir_codec::IrParse;
+use karte_mir::BasicBlock;
 
 #[test]
 fn debug_parse_basic_block() {

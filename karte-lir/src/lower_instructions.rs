@@ -4,6 +4,7 @@
 //! 这样虚拟机只需要支持最基础的指令集
 
 use crate::{AllocationType, Instruction, LirFunction, LirProgram, Operand, Register};
+use karte_common::calling_convention::CallingConvention;
 use karte_diagnostics::Span;
 
 /// 指令降级器
@@ -12,6 +13,8 @@ pub struct InstructionLowerer {
     stack_pointer_reg: Register,
     /// 帧指针寄存器（固定使用寄存器7）
     frame_pointer_reg: Register,
+    /// 调用约定（用于查找特殊寄存器）
+    calling_convention: CallingConvention,
     /// 最近一次 EffectPerform 的结果寄存器（用于在 pop 后生成正确的返回路径）
     last_effect_perform_result: Option<Register>,
     /// 是否已插入提前返回（避免再次生成 Return 序言/尾声）
@@ -22,15 +25,40 @@ pub struct InstructionLowerer {
 impl InstructionLowerer {
     /// 创建新的指令降级器
     pub fn new() -> Self {
+        let calling_convention = CallingConvention::standard();
         Self {
-            // 使用寄存器6作为栈指针（SP），与调用约定匹配
-            stack_pointer_reg: Register::Physical(6),
-            // 使用寄存器7作为帧指针（FP），与调用约定匹配
-            frame_pointer_reg: Register::Physical(7),
+            // 使用调用约定内的寄存器定义，避免硬编码
+            stack_pointer_reg: Register::Physical(calling_convention.stack_pointer),
+            frame_pointer_reg: Register::Physical(calling_convention.frame_pointer),
+            calling_convention,
             last_effect_perform_result: None,
             inserted_early_return: false,
             next_register: 40,
         }
+    }
+
+    fn effect_stack_register(&self) -> Register {
+        // 所有效应状态操作都必须通过调用约定获取同一个物理寄存器，避免随意硬编码 r12
+        Register::Physical(self.calling_convention.effect_stack_pointer)
+    }
+
+    fn effect_payload_register(&self) -> Register {
+        // payload 委托给调用约定指定的寄存器（当前为 r1），禁止在 pass 中硬编码
+        Register::Physical(self.calling_convention.effect_payload_register)
+    }
+
+    fn return_value_register(&self) -> Register {
+        Register::Physical(self.calling_convention.return_register)
+    }
+
+    fn effect_tag_register(&self) -> Register {
+        // effect tag 比较始终复用统一的物理寄存器，方便调试和未来切换 ABI
+        Register::Physical(self.calling_convention.effect_tag_register)
+    }
+
+    fn effect_resume_temp_register(&self) -> Register {
+        // resume 临时寄存器必须固定，防止寄存器分配阶段意外复用
+        Register::Physical(self.calling_convention.effect_resume_temp)
     }
 
     /// 降级整个LIR程序
@@ -151,7 +179,7 @@ impl InstructionLowerer {
                     // 仅在 main 函数初始化 effect 栈顶 r12 = 0，其它函数继承调用者的 effect 栈
                     if function.name == "main" {
                         new_instructions.push(Instruction::Move {
-                            dst: Register::Physical(12),
+                            dst: self.effect_stack_register(),
                             src: Operand::Immediate { value: 0 },
                             span: Span::dummy(),
                         });
@@ -184,7 +212,7 @@ impl InstructionLowerer {
                 handler_label,
                 span,
             } => {
-                let eff = Register::Physical(12);
+                let eff = self.effect_stack_register();
                 new_instructions.push(Instruction::Sub {
                     dst: self.stack_pointer_reg,
                     src1: Operand::Register {
@@ -256,7 +284,7 @@ impl InstructionLowerer {
             // EffectPopHandler: 恢复上一层effect栈顶并回收帧
             Instruction::EffectPopHandler { span } => {
                 let sp = self.stack_pointer_reg;
-                let eff = Register::Physical(12);
+                let eff = self.effect_stack_register();
                 let tmp = self.new_register();
                 new_instructions.push(Instruction::Load64 {
                     dst: tmp,
@@ -275,7 +303,7 @@ impl InstructionLowerer {
                     src2: Operand::Immediate { value: 32 },
                     span: *span,
                 });
-                // new_instructions.push(Instruction::Move { dst: Register::Physical(12), src: Operand::Register { id: sp }, span: *span });
+                // new_instructions.push(Instruction::Move { dst: self.effect_stack_register(), src: Operand::Register { id: sp }, span: *span });
             }
 
             // EffectPerform: 搜索匹配的处理器帧，设置resume地址并跳转到处理器
@@ -298,14 +326,14 @@ impl InstructionLowerer {
                     addr: self.stack_pointer_reg,
                     offset: 0,
                     src: Operand::Register {
-                        id: Register::Physical(12),
+                        id: self.effect_stack_register(),
                     },
                     span: *span,
                 });
 
-                let eff = Register::Physical(12);
+                let eff = self.effect_stack_register();
                 // 为 tag 分配独立临时寄存器，避免后续覆盖
-                let tag_reg = Register::Physical(10); // 保留 r10 存放 tag
+                let tag_reg = self.effect_tag_register();
                 match tag {
                     Operand::Immediate { .. } => { /* 直接在比较中使用立即数 */ }
                     Operand::Register { id } => {
@@ -389,7 +417,7 @@ impl InstructionLowerer {
                     span: *span,
                 });
                 new_instructions.push(Instruction::Move {
-                    dst: Register::Physical(1),
+                    dst: self.effect_payload_register(),
                     src: payload.clone(),
                     span: *span,
                 });
@@ -412,7 +440,7 @@ impl InstructionLowerer {
                     new_instructions.push(Instruction::Move {
                         dst: *res_reg,
                         src: Operand::Register {
-                            id: Register::Physical(1),
+                            id: self.effect_payload_register(),
                         },
                         span: *span,
                     });
@@ -479,7 +507,7 @@ impl InstructionLowerer {
 
                 // 恢复 r12
                 new_instructions.push(Instruction::Load64 {
-                    dst: Register::Physical(12),
+                    dst: self.effect_stack_register(),
                     addr: self.stack_pointer_reg,
                     offset: 0,
                     span: *span,
@@ -589,8 +617,33 @@ impl InstructionLowerer {
                 // 生成唯一的返回标签
                 let return_label = function.new_label();
 
+                // 获取 caller-saved 寄存器并排序以保证确定性
+                // 排除返回值寄存器(r0)，因为它包含返回值，不应被恢复操作覆盖
+                let return_reg = self.calling_convention.return_register;
+                let mut caller_saved: Vec<_> = self.calling_convention.caller_saved.iter()
+                    .filter(|&&r| r != return_reg)
+                    .cloned()
+                    .collect();
+                caller_saved.sort();
+
+                // 计算栈对齐
+                // 我们压入 caller_saved 个寄存器 + 1 个返回地址
+                // AArch64 要求 SP 16字节对齐
+                let total_pushed = caller_saved.len() + 1;
+                let need_padding = total_pushed % 2 != 0;
+
+                // 栈对齐填充
+                if need_padding {
+                    new_instructions.push(Instruction::Sub {
+                        dst: self.stack_pointer_reg,
+                        src1: Operand::Register { id: self.stack_pointer_reg },
+                        src2: Operand::Immediate { value: 8 },
+                        span: *span,
+                    });
+                }
+
                 // 保存caller-saved寄存器到栈
-                for reg in 0..=4 {
+                for reg in &caller_saved {
                     // sp = sp - 8
                     new_instructions.push(Instruction::Sub {
                         dst: self.stack_pointer_reg,
@@ -605,7 +658,7 @@ impl InstructionLowerer {
                         addr: self.stack_pointer_reg,
                         offset: 0,
                         src: Operand::Register {
-                            id: Register::Virtual(reg),
+                            id: Register::Physical(*reg),
                         },
                         span: *span,
                     });
@@ -613,9 +666,9 @@ impl InstructionLowerer {
 
                 // 参数传递
                 for (i, op) in arg_operands.iter().enumerate() {
-                    if i < 4 {
+                    if let Some(phys_reg) = self.calling_convention.argument_registers.get(i) {
                         new_instructions.push(Instruction::Move {
-                            dst: Register::Virtual(i + 1),
+                            dst: Register::Physical(*phys_reg),
                             src: op.clone(),
                             span: *span,
                         });
@@ -651,12 +704,13 @@ impl InstructionLowerer {
                 });
 
                 // 从栈上弹出返回地址（丢弃）
-                new_instructions.push(Instruction::Load64 {
-                    dst: Register::Physical(0), // 临时使用r0
-                    addr: self.stack_pointer_reg,
-                    offset: 0,
-                    span: *span,
-                });
+                // 使用返回值寄存器作为临时寄存器是安全的吗？
+                // 不！r0包含返回值。我们不能用r0。
+                // 我们需要一个临时寄存器。由于我们即将恢复caller-saved寄存器，
+                // 我们可以使用其中一个作为临时寄存器，只要我们先弹出它。
+                // 或者我们可以直接 add sp, 8 丢弃它，不需要 load。
+                // 之前的代码 load 是为了什么？可能是为了调试或者验证？
+                // 如果只是丢弃，直接 add sp, 8 即可。
                 new_instructions.push(Instruction::Add {
                     dst: self.stack_pointer_reg,
                     src1: Operand::Register {
@@ -666,10 +720,10 @@ impl InstructionLowerer {
                     span: *span,
                 });
 
-                // 恢复caller-saved寄存器
-                for reg in (0..=4).rev() {
+                // 恢复caller-saved寄存器 (逆序)
+                for reg in caller_saved.iter().rev() {
                     new_instructions.push(Instruction::Load64 {
-                        dst: Register::Virtual(reg),
+                        dst: Register::Physical(*reg),
                         addr: self.stack_pointer_reg,
                         offset: 0,
                         span: *span,
@@ -684,12 +738,22 @@ impl InstructionLowerer {
                     });
                 }
 
-                // 返回值处理（r0已经包含返回值）
+                // 移除对齐填充
+                if need_padding {
+                    new_instructions.push(Instruction::Add {
+                        dst: self.stack_pointer_reg,
+                        src1: Operand::Register { id: self.stack_pointer_reg },
+                        src2: Operand::Immediate { value: 8 },
+                        span: *span,
+                    });
+                }
+
+                // 返回值处理
                 if let Some(result_reg) = result {
                     new_instructions.push(Instruction::Move {
                         dst: *result_reg,
                         src: Operand::Register {
-                            id: Register::Physical(0),
+                            id: Register::Physical(return_reg),
                         },
                         span: *span,
                     });
@@ -698,15 +762,161 @@ impl InstructionLowerer {
             // 降级 CallIndirect 指令
             Instruction::CallIndirect {
                 function_register,
+                args: _,
+                arg_operands,
+                result,
                 span,
-                ..
             } => {
-                // 间接跳转
-                // 从函数寄存器加载函数地址到临时寄存器
-                new_instructions.push(Instruction::JumpIndirect {
-                    function_register: *function_register,
+                // 1. 保存 caller-saved 寄存器（r1-r4）到栈
+                // 2. 将函数地址移动到 r0 (临时寄存器，非参数寄存器)
+                // 3. 参数依次mov到r1-r4
+                // 4. 生成返回标签并压栈
+                // 5. JumpIndirect r0
+                // 6. 返回标签：恢复caller-saved寄存器，处理返回值
+
+                // 生成唯一的返回标签
+                let return_label = function.new_label();
+
+                // 获取 caller-saved 寄存器并排序
+                // 排除返回值寄存器(r0)
+                let return_reg = self.calling_convention.return_register;
+                let mut caller_saved: Vec<_> = self.calling_convention.caller_saved.iter()
+                    .filter(|&&r| r != return_reg)
+                    .cloned()
+                    .collect();
+                caller_saved.sort();
+
+                // 计算栈对齐
+                let total_pushed = caller_saved.len() + 1;
+                let need_padding = total_pushed % 2 != 0;
+
+                // 栈对齐填充
+                if need_padding {
+                    new_instructions.push(Instruction::Sub {
+                        dst: self.stack_pointer_reg,
+                        src1: Operand::Register { id: self.stack_pointer_reg },
+                        src2: Operand::Immediate { value: 8 },
+                        span: *span,
+                    });
+                }
+
+                // 保存caller-saved寄存器到栈
+                for reg in &caller_saved {
+                    new_instructions.push(Instruction::Sub {
+                        dst: self.stack_pointer_reg,
+                        src1: Operand::Register {
+                            id: self.stack_pointer_reg,
+                        },
+                        src2: Operand::Immediate { value: 8 },
+                        span: *span,
+                    });
+                    new_instructions.push(Instruction::Store64 {
+                        addr: self.stack_pointer_reg,
+                        offset: 0,
+                        src: Operand::Register {
+                            id: Register::Physical(*reg),
+                        },
+                        span: *span,
+                    });
+                }
+
+                // 将函数地址移动到 r15 (effect_resume_temp_register)
+                // r15 是临时寄存器，不会被寄存器分配器分配给普通变量，也不会是参数寄存器
+                // 这样可以避免与 r0 (可能持有参数值) 或 r1-r4 (参数寄存器) 冲突
+                let temp_func_reg = self.effect_resume_temp_register();
+                new_instructions.push(Instruction::Move {
+                    dst: temp_func_reg,
+                    src: Operand::Register { id: *function_register },
                     span: *span,
                 });
+
+                // 参数传递
+                for (i, op) in arg_operands.iter().enumerate() {
+                    if let Some(phys_reg) = self.calling_convention.argument_registers.get(i) {
+                        new_instructions.push(Instruction::Move {
+                            dst: Register::Physical(*phys_reg),
+                            src: op.clone(),
+                            span: *span,
+                        });
+                    }
+                }
+
+                // 将返回标签地址压栈
+                new_instructions.push(Instruction::Sub {
+                    dst: self.stack_pointer_reg,
+                    src1: Operand::Register {
+                        id: self.stack_pointer_reg,
+                    },
+                    src2: Operand::Immediate { value: 8 },
+                    span: *span,
+                });
+                new_instructions.push(Instruction::Store64 {
+                    addr: self.stack_pointer_reg,
+                    offset: 0,
+                    src: Operand::Label { id: return_label },
+                    span: *span,
+                });
+
+                // 间接跳转到 r15
+                new_instructions.push(Instruction::JumpIndirect {
+                    function_register: temp_func_reg,
+                    span: *span,
+                });
+
+                // 返回标签：恢复caller-saved寄存器
+                new_instructions.push(Instruction::Label {
+                    id: return_label,
+                    span: *span,
+                });
+
+                // 从栈上弹出返回地址（丢弃）
+                new_instructions.push(Instruction::Add {
+                    dst: self.stack_pointer_reg,
+                    src1: Operand::Register {
+                        id: self.stack_pointer_reg,
+                    },
+                    src2: Operand::Immediate { value: 8 },
+                    span: *span,
+                });
+
+                // 恢复caller-saved寄存器 (逆序)
+                for reg in caller_saved.iter().rev() {
+                    new_instructions.push(Instruction::Load64 {
+                        dst: Register::Physical(*reg),
+                        addr: self.stack_pointer_reg,
+                        offset: 0,
+                        span: *span,
+                    });
+                    new_instructions.push(Instruction::Add {
+                        dst: self.stack_pointer_reg,
+                        src1: Operand::Register {
+                            id: self.stack_pointer_reg,
+                        },
+                        src2: Operand::Immediate { value: 8 },
+                        span: *span,
+                    });
+                }
+
+                // 移除对齐填充
+                if need_padding {
+                    new_instructions.push(Instruction::Add {
+                        dst: self.stack_pointer_reg,
+                        src1: Operand::Register { id: self.stack_pointer_reg },
+                        src2: Operand::Immediate { value: 8 },
+                        span: *span,
+                    });
+                }
+
+                // 返回值处理
+                if let Some(result_reg) = result {
+                    new_instructions.push(Instruction::Move {
+                        dst: *result_reg,
+                        src: Operand::Register {
+                            id: Register::Physical(return_reg),
+                        },
+                        span: *span,
+                    });
+                }
             }
 
             // 降级 Return 指令
@@ -759,11 +969,11 @@ impl InstructionLowerer {
             // EffectResume: 恢复到上一个处理器帧
             Instruction::EffectResume { value, span } => {
                 // Lower resume: move value to r0, load current effect frame pointer r12, load saved resume label addr [r12+24], jump there
-                let eff = Register::Physical(12);
-                let tmp = Register::Physical(15); // reuse tmp for address
-                                                  // move r0 = value (value may be immediate/register/memory)
+                let eff = self.effect_stack_register();
+                let tmp = self.effect_resume_temp_register();
+                // move r0 = value (value may be immediate/register/memory)
                 new_instructions.push(Instruction::Move {
-                    dst: Register::Physical(1),
+                    dst: self.effect_payload_register(),
                     src: value.clone(),
                     span: *span,
                 });

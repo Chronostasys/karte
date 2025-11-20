@@ -1,5 +1,5 @@
-use karte_mir::*;
 use karte_ir_codec::{IrDisplay, IrParse};
+use karte_mir::*;
 
 #[test]
 fn test_parse_mir_function_standalone() {
@@ -7,7 +7,7 @@ fn test_parse_mir_function_standalone() {
     name: test
     params: []
     blocks: {}";
-    
+
     println!("Parsing MirFunction from: {}", input);
     let result = MirFunction::parse_ir(input);
     println!("Result: {:?}", result);
@@ -20,7 +20,7 @@ fn test_parse_mir_function_with_leading_space() {
     name: test
     params: []
     blocks: {}";
-    
+
     println!("Parsing MirFunction with leading space from: {}", input);
     let result = MirFunction::parse_ir(input);
     println!("Result: {:?}", result);
@@ -35,7 +35,7 @@ fn test_parse_hashmap_single_function() {
         params: []
         blocks: {}
     }";
-    
+
     println!("Parsing HashMap<String, MirFunction> from: {}", input);
     let result = std::collections::HashMap::<String, MirFunction>::parse_ir(input);
     println!("Result: {:?}", result);

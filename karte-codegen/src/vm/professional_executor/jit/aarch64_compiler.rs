@@ -4,6 +4,7 @@
 
 use super::code_buffer::{CodeBuilder, JumpType};
 use super::compiler_trait::*;
+use super::ffi::{RuntimeArg, RuntimeCall};
 use karte_lir::{Instruction, LirFunction, LirProgram, Operand, Register};
 use std::collections::HashMap;
 
@@ -242,6 +243,16 @@ impl AArch64Compiler {
             Instruction::Store64 {
                 addr, offset, src, ..
             } => self.compile_store64(addr, *offset, src, code_builder),
+            Instruction::Alloc {
+                dst,
+                size,
+                alignment,
+                allocation_type,
+                ..
+            } => self.compile_alloc(dst, *size, *alignment, allocation_type, code_builder),
+            Instruction::Free { addr, .. } => self.compile_free(addr, code_builder),
+            Instruction::Retain { value, .. } => self.compile_retain(value, code_builder),
+            Instruction::Release { value, .. } => self.compile_release(value, code_builder),
             Instruction::Nop { .. } => {
                 // AArch64 NOP指令 (0xD503201F)
                 self.emit_nop(code_builder);
@@ -610,6 +621,113 @@ impl AArch64Compiler {
         Ok(())
     }
 
+    fn compile_alloc(
+        &mut self,
+        dst: &Register,
+        size: usize,
+        alignment: usize,
+        allocation_type: &karte_lir::AllocationType,
+        code_builder: &mut CodeBuilder,
+    ) -> Result<(), String> {
+        match allocation_type {
+            karte_lir::AllocationType::Heap => {
+                let call = RuntimeCall::alloc(size, alignment);
+                self.emit_runtime_call(code_builder, call, Some(dst))
+            }
+            _ => Err(format!(
+                "Alloc instruction with unsupported allocation type: {:?}",
+                allocation_type
+            )),
+        }
+    }
+
+    fn compile_free(
+        &mut self,
+        addr: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> Result<(), String> {
+        let call = RuntimeCall::free(*addr);
+        self.emit_runtime_call(code_builder, call, None)
+    }
+
+    fn compile_retain(
+        &mut self,
+        value: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> Result<(), String> {
+        let call = RuntimeCall::retain(*value);
+        self.emit_runtime_call(code_builder, call, None)
+    }
+
+    fn compile_release(
+        &mut self,
+        value: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> Result<(), String> {
+        let call = RuntimeCall::release(*value);
+        self.emit_runtime_call(code_builder, call, None)
+    }
+
+    fn emit_runtime_call(
+        &mut self,
+        code_builder: &mut CodeBuilder,
+        call: RuntimeCall,
+        result: Option<&Register>,
+    ) -> Result<(), String> {
+        let return_reg = AArch64Register::X0 as u8;
+        let exclude: Vec<u8> = if result.is_some() && call.expects_result() {
+            vec![return_reg]
+        } else {
+            Vec::new()
+        };
+        let (saved_regs, stack_space) = self.save_call_clobbered_registers(code_builder, &exclude);
+
+        let arg_regs = [
+            AArch64Register::X0 as u8,
+            AArch64Register::X1 as u8,
+            AArch64Register::X2 as u8,
+            AArch64Register::X3 as u8,
+            AArch64Register::X4 as u8,
+            AArch64Register::X5 as u8,
+            AArch64Register::X6 as u8,
+            AArch64Register::X7 as u8,
+        ];
+
+        for (idx, arg) in call.args.iter().enumerate() {
+            if idx >= arg_regs.len() {
+                return Err(format!(
+                    "runtime call {} 超出支持的参数数量(最多 {})",
+                    call.intrinsic.name(),
+                    arg_regs.len()
+                ));
+            }
+            let target_reg = arg_regs[idx];
+            match arg {
+                RuntimeArg::Immediate(value) => {
+                    self.emit_mov_reg_imm64(code_builder, target_reg, *value);
+                }
+                RuntimeArg::Register(reg) => {
+                    let src_reg = self.get_physical_register(reg)?;
+                    if src_reg != target_reg {
+                        self.emit_mov_reg_reg(code_builder, target_reg, src_reg);
+                    }
+                }
+            }
+        }
+
+        self.emit_runtime_dispatch(code_builder, call.intrinsic.symbol_ptr() as u64);
+        self.restore_call_clobbered_registers(code_builder, &saved_regs, stack_space);
+
+        if let (Some(dst), true) = (result, call.expects_result()) {
+            let dst_reg = self.get_physical_register(dst)?;
+            if dst_reg != return_reg {
+                self.emit_mov_reg_reg(code_builder, dst_reg, return_reg);
+            }
+        }
+
+        Ok(())
+    }
+
     // ============= AArch64机器码生成方法 =============
 
     /// 生成NOP指令
@@ -622,6 +740,18 @@ impl AArch64Compiler {
     fn emit_ret(&self, code_builder: &mut CodeBuilder) {
         // RET = 0xD65F03C0
         code_builder.emit_bytes(&[0xC0, 0x03, 0x5F, 0xD6]);
+    }
+
+    fn emit_runtime_dispatch(&self, code_builder: &mut CodeBuilder, func: u64) {
+        let tmp = AArch64Register::X16 as u8;
+        self.emit_mov_reg_imm64(code_builder, tmp, func as i64);
+        self.emit_blr(code_builder, tmp);
+    }
+
+    fn emit_blr(&self, code_builder: &mut CodeBuilder, reg: u8) {
+        // BLR Xt = 1101 0110 0011 1111 0000 0000 000r rrrr
+        let instruction = 0xD63F0000u32 | ((reg as u32) << 5);
+        code_builder.emit_u32(instruction);
     }
 
     /// 生成MOV寄存器到寄存器指令
@@ -690,6 +820,70 @@ impl AArch64Compiler {
             let instruction = 0xD2800000u32 | (dst as u32);
             code_builder.emit_bytes(&instruction.to_le_bytes());
         }
+    }
+
+    fn save_call_clobbered_registers(
+        &self,
+        code_builder: &mut CodeBuilder,
+        exclude: &[u8],
+    ) -> (Vec<u8>, usize) {
+        let regs: Vec<u8> = self
+            .calling_convention
+            .caller_saved
+            .iter()
+            .copied()
+            .filter(|reg| !exclude.contains(reg))
+            .collect();
+
+        if regs.is_empty() {
+            return (regs, 0);
+        }
+
+        let stack_space = align_to(regs.len() * 8, 16);
+        self.emit_sub_reg_reg_imm(
+            code_builder,
+            AArch64Register::SP as u8,
+            AArch64Register::SP as u8,
+            stack_space as i32,
+        );
+
+        for (idx, reg) in regs.iter().enumerate() {
+            self.emit_str_reg_mem(
+                code_builder,
+                *reg,
+                AArch64Register::SP as u8,
+                (idx * 8) as i32,
+            );
+        }
+
+        (regs, stack_space)
+    }
+
+    fn restore_call_clobbered_registers(
+        &self,
+        code_builder: &mut CodeBuilder,
+        regs: &[u8],
+        stack_space: usize,
+    ) {
+        if regs.is_empty() {
+            return;
+        }
+
+        for (idx, reg) in regs.iter().enumerate() {
+            self.emit_ldr_reg_mem(
+                code_builder,
+                *reg,
+                AArch64Register::SP as u8,
+                (idx * 8) as i32,
+            );
+        }
+
+        self.emit_add_reg_reg_imm(
+            code_builder,
+            AArch64Register::SP as u8,
+            AArch64Register::SP as u8,
+            stack_space as i32,
+        );
     }
 
     /// 生成ADD三寄存器指令
@@ -1169,6 +1363,10 @@ impl JitCompiler for AArch64Compiler {
     fn get_calling_convention(&self) -> CallingConventionInfo {
         self.calling_convention.clone()
     }
+}
+
+fn align_to(value: usize, alignment: usize) -> usize {
+    ((value + alignment - 1) / alignment) * alignment
 }
 
 #[cfg(test)]

@@ -45,6 +45,19 @@ impl Default for Register {
 /// 物理寄存器编号
 pub type PhysicalRegister = u8;
 
+pub const REG_RETURN: PhysicalRegister = 0;
+pub const REG_ARG0: PhysicalRegister = 1;
+pub const REG_ARG1: PhysicalRegister = 2;
+pub const REG_ARG2: PhysicalRegister = 3;
+pub const REG_ARG3: PhysicalRegister = 4;
+pub const REG_RETURN_ADDRESS: PhysicalRegister = 5;
+pub const REG_STACK_POINTER: PhysicalRegister = 6;
+pub const REG_FRAME_POINTER: PhysicalRegister = 7;
+pub const REG_EFFECT_STACK_POINTER: PhysicalRegister = 12;
+pub const REG_EFFECT_PAYLOAD: PhysicalRegister = REG_ARG0;
+pub const REG_EFFECT_TAG: PhysicalRegister = 10;
+pub const REG_EFFECT_RESUME_TMP: PhysicalRegister = 15;
+
 /// 调用约定配置
 #[derive(Debug, Clone)]
 pub struct CallingConvention {
@@ -62,6 +75,14 @@ pub struct CallingConvention {
     pub frame_pointer: PhysicalRegister,
     /// 返回地址寄存器 (用于存储返回地址)
     pub return_address: PhysicalRegister,
+    /// 代数效应栈指针寄存器
+    pub effect_stack_pointer: PhysicalRegister,
+    /// 代数效应 payload 寄存器（用于 resume/perform 传递值）
+    pub effect_payload_register: PhysicalRegister,
+    /// 代数效应 handler 匹配时保存 tag 的寄存器
+    pub effect_tag_register: PhysicalRegister,
+    /// 代数效应 resume 时保存跳转目标的寄存器
+    pub effect_resume_temp: PhysicalRegister,
     /// 临时寄存器 (可以自由使用)
     pub temp_registers: Vec<PhysicalRegister>,
 }
@@ -80,27 +101,31 @@ impl CallingConvention {
     /// Callee-saved: r5-r7 (返回地址、SP、FP), r12 (effect栈指针)
     pub fn standard() -> Self {
         let mut caller_saved = HashSet::new();
-        caller_saved.insert(0); // 返回值
-        caller_saved.insert(1); // 参数1
-        caller_saved.insert(2); // 参数2
-        caller_saved.insert(3); // 参数3
-        caller_saved.insert(4); // 参数4
+        caller_saved.insert(REG_RETURN); // 返回值
+        caller_saved.insert(REG_ARG0); // 参数1
+        caller_saved.insert(REG_ARG1); // 参数2
+        caller_saved.insert(REG_ARG2); // 参数3
+        caller_saved.insert(REG_ARG3); // 参数4
 
         let mut callee_saved = HashSet::new();
-        callee_saved.insert(5); // 返回地址
-        callee_saved.insert(6); // 栈指针
-        callee_saved.insert(7); // 帧指针
-        callee_saved.insert(12); // effect栈指针
+        callee_saved.insert(REG_RETURN_ADDRESS); // 返回地址
+        callee_saved.insert(REG_STACK_POINTER); // 栈指针
+        callee_saved.insert(REG_FRAME_POINTER); // 帧指针
+        callee_saved.insert(REG_EFFECT_STACK_POINTER); // effect栈指针
 
         Self {
-            argument_registers: vec![1, 2, 3, 4],
-            return_register: 0,
+            argument_registers: vec![REG_ARG0, REG_ARG1, REG_ARG2, REG_ARG3],
+            return_register: REG_RETURN,
             caller_saved,
             callee_saved,
-            stack_pointer: 6,
-            frame_pointer: 7,
-            return_address: 5,
-            temp_registers: vec![0, 1, 2, 3, 4], // 临时寄存器可重用参数和返回值寄存器
+            stack_pointer: REG_STACK_POINTER,
+            frame_pointer: REG_FRAME_POINTER,
+            return_address: REG_RETURN_ADDRESS,
+            effect_stack_pointer: REG_EFFECT_STACK_POINTER,
+            effect_payload_register: REG_EFFECT_PAYLOAD,
+            effect_tag_register: REG_EFFECT_TAG,
+            effect_resume_temp: REG_EFFECT_RESUME_TMP,
+            temp_registers: vec![REG_RETURN, REG_ARG1, REG_ARG2, REG_ARG3], // 临时寄存器可重用参数和返回值寄存器
         }
     }
 
@@ -149,19 +174,13 @@ impl CallingConvention {
 
     /// 检查是否是特殊寄存器（SP、FP、RA）
     pub fn is_special_register(&self, reg: Register) -> bool {
-        match reg {
-            Register::Physical(_reg) => {
-                // reg == self.stack_pointer || reg == self.frame_pointer || reg == self.return_address
-                true
-            }
-            Register::Virtual(_) => false,
-        }
+        matches!(reg, Register::Physical(_))
     }
 
     /// 获取可用于寄存器分配的通用寄存器
     pub fn get_allocatable_registers(&self) -> Vec<PhysicalRegister> {
-        // 🔧 修复（效应ABI约束）：保留 r0(返回值), r1(效应payload/参数), r5(返回地址), r6(SP), r7(FP)
-        // 仅分配 r2,r3,r4 作为通用物理寄存器，避免破坏 effect resume/perform 的寄存器约定
+        // 现在溢出重写已经完善，可以安全地把 r1 留给 effect payload/resume。
+        // 这样做可以确保 effect ABI 中的 payload 寄存器不会被普通分配污染。
         (0..8u8)
             .filter(|&reg| {
                 ![
@@ -169,6 +188,8 @@ impl CallingConvention {
                     self.return_address,
                     self.stack_pointer,
                     self.frame_pointer,
+                    self.effect_stack_pointer,
+                    self.effect_payload_register,
                 ]
                 .contains(&reg)
             })
@@ -240,8 +261,12 @@ mod tests {
 
         // 测试可分配寄存器
         let allocatable = cc.get_allocatable_registers();
-        assert!(!allocatable.contains(&6)); // SP不应该被分配
-        assert!(!allocatable.contains(&7)); // FP不应该被分配
+        assert_eq!(allocatable, vec![REG_ARG1, REG_ARG2, REG_ARG3]);
+        assert!(!allocatable.contains(&REG_STACK_POINTER)); // SP不应该被分配
+        assert!(!allocatable.contains(&REG_FRAME_POINTER)); // FP不应该被分配
+        assert!(!allocatable.contains(&REG_RETURN_ADDRESS)); // 返回地址保留
+        assert!(!allocatable.contains(&REG_EFFECT_STACK_POINTER)); // effect 栈顶不可分配
+        assert!(!allocatable.contains(&REG_EFFECT_PAYLOAD)); // effect payload 保留
     }
 
     #[test]

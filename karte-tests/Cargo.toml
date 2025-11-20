@@ -19,6 +19,7 @@ karte-codegen = { path = "../karte-codegen" }
 karte-diagnostics = { path = "../karte-diagnostics" }
 karte-ir-derive = { path = "../karte-ir-derive" }
 karte-ir-codec = { path = "../karte-ir-codec" }
+karte-common = { path = "../karte-common" }
 log.workspace = true
 env_logger = "0.11"
 

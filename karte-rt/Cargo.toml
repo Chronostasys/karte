@@ -1,0 +1,13 @@
+[package]
+name = "karte-rt"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Runtime support (allocator, FFI helpers) for the Karte compiler"
+
+[dependencies]
+log = { workspace = true }
+
+[dev-dependencies]
+serial_test = "3.2.0"
+
