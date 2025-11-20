@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use karte_ir_codec::{IrParse, IrDisplay};
+use karte_ir_codec::{IrDisplay, IrParse};
 use karte_ir_derive::IrCodec;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, IrCodec)]
 pub struct MyStruct {
@@ -18,12 +18,12 @@ fn test_hashmap_with_struct() {
                 value: 
                     42
         }"#;
-    
+
     println!("Input: {}", input);
-    
+
     let result = HashMap::<String, MyStruct>::parse_ir(input);
     println!("Result: {:?}", result);
-    
+
     assert!(result.is_ok());
     let map = result.unwrap();
     assert_eq!(map.len(), 1);

@@ -1,9 +1,33 @@
 use crate::{
-    BasicBlockId, BinaryOperator as MirBinaryOp, MatchArm, MirFunction, MirProgram, Pattern,
-    Statement, Terminator, UnaryOperator as MirUnaryOp, Value,
+    BasicBlockId, BinaryOperator as MirBinaryOp, EscapeState, HeapLayout, MatchArm, MirFunction,
+    MirProgram, Pattern, Statement, Terminator, UnaryOperator as MirUnaryOp, Value,
 };
+use karte_common::memory::OwnershipKind;
+use karte_diagnostics::Span;
 use karte_hir::{BinaryOperator as HirBinaryOp, Expr, UnaryOperator as HirUnaryOp};
 use std::collections::HashMap;
+
+#[derive(Clone)]
+struct VariableBinding {
+    value: Value,
+    ownership: Option<OwnershipKind>,
+    moved: bool,
+}
+
+#[derive(Clone)]
+struct ScopeFrame {
+    bindings: HashMap<String, VariableBinding>,
+    order: Vec<String>,
+}
+
+impl ScopeFrame {
+    fn new() -> Self {
+        Self {
+            bindings: HashMap::new(),
+            order: Vec::new(),
+        }
+    }
+}
 
 /// HIR到MIR的lowering上下文
 pub struct LoweringContext<'a> {
@@ -12,8 +36,8 @@ pub struct LoweringContext<'a> {
     current_function_name: Option<String>,
     /// 当前基本块
     current_block: Option<BasicBlockId>,
-    /// 变量作用域
-    variables: HashMap<String, Value>,
+    /// 变量作用域栈
+    scopes: Vec<ScopeFrame>,
     /// 错误信息
     errors: Vec<String>,
     /// 匿名函数计数器
@@ -22,14 +46,16 @@ pub struct LoweringContext<'a> {
 
 impl<'a> LoweringContext<'a> {
     pub fn new(program: &'a mut MirProgram) -> Self {
-        Self {
+        let mut ctx = Self {
             program,
             current_function_name: None,
             current_block: None,
-            variables: HashMap::new(),
+            scopes: Vec::new(),
             errors: Vec::new(),
             lambda_counter: 0,
-        }
+        };
+        ctx.enter_scope();
+        ctx
     }
 
     /// 开始新函数
@@ -37,10 +63,18 @@ impl<'a> LoweringContext<'a> {
         let function = MirFunction::new(name.clone(), params.clone());
         let entry_block = function.entry_block;
 
+        self.scopes.clear();
+        self.enter_scope();
+
         // 将参数添加到变量作用域
         for param in params {
-            self.variables
-                .insert(param.clone(), Value::Variable { name: param });
+            self.bind_variable(
+                param.clone(),
+                Value::Variable {
+                    name: param.clone(),
+                },
+                None,
+            );
         }
 
         self.program.add_function(function);
@@ -87,6 +121,86 @@ impl<'a> LoweringContext<'a> {
         Value::Temp { id }
     }
 
+    fn enter_scope(&mut self) {
+        self.scopes.push(ScopeFrame::new());
+    }
+
+    fn exit_scope(&mut self, span: Span) {
+        if let Some(frame) = self.scopes.pop() {
+            for name in frame.order.iter().rev() {
+                if let Some(binding) = frame.bindings.get(name) {
+                    self.release_binding(binding, span);
+                }
+            }
+        }
+    }
+
+    fn current_scope_mut(&mut self) -> &mut ScopeFrame {
+        self.scopes
+            .last_mut()
+            .expect("at least one scope must exist")
+    }
+
+    fn bind_variable(&mut self, name: String, value: Value, ownership: Option<OwnershipKind>) {
+        let frame = self.current_scope_mut();
+        frame.order.push(name.clone());
+        frame.bindings.insert(
+            name,
+            VariableBinding {
+                value,
+                ownership,
+                moved: false,
+            },
+        );
+    }
+
+    fn update_variable(
+        &mut self,
+        name: &str,
+        value: Value,
+        ownership: Option<OwnershipKind>,
+    ) -> Option<VariableBinding> {
+        for frame in self.scopes.iter_mut().rev() {
+            if let Some(binding) = frame.bindings.get_mut(name) {
+                let old = binding.clone();
+                binding.value = value;
+                binding.ownership = ownership;
+                binding.moved = false;
+                return Some(old);
+            }
+        }
+        None
+    }
+
+    fn lookup_variable(&self, name: &str) -> Option<&VariableBinding> {
+        for frame in self.scopes.iter().rev() {
+            if let Some(binding) = frame.bindings.get(name) {
+                return Some(binding);
+            }
+        }
+        None
+    }
+
+    fn release_binding(&mut self, binding: &VariableBinding, span: Span) {
+        if binding.moved {
+            return;
+        }
+        if matches!(binding.ownership, Some(OwnershipKind::RefCounted)) {
+            self.add_statement(Statement::Release {
+                value: binding.value.clone(),
+                span,
+            });
+        }
+    }
+
+    fn clone_scopes(&self) -> Vec<ScopeFrame> {
+        self.scopes.clone()
+    }
+
+    fn restore_scopes(&mut self, scopes: Vec<ScopeFrame>) {
+        self.scopes = scopes;
+    }
+
     /// 添加语句到当前基本块
     fn add_statement(&mut self, stmt: Statement) {
         let block_id = self.current_block();
@@ -117,6 +231,8 @@ pub fn lower_expr_to_mir(expr: &Expr) -> Result<MirProgram, Vec<String>> {
 
     // 降级表达式
     lower_expression(&mut context, expr, &result_temp)?;
+    maybe_retain_for_escape(&mut context, expr, &result_temp);
+    context.exit_scope(expr.span());
 
     // 添加返回语句
     context.set_terminator(Terminator::Return {
@@ -170,10 +286,9 @@ fn lower_expression(
         }
 
         Expr::Identifier { name, .. } => {
-            if let Some(value) = ctx.variables.get(name) {
-                match value {
+            if let Some(binding) = ctx.lookup_variable(name) {
+                match &binding.value {
                     Value::Reference { value: ref_target } => {
-                        // 引用变量读取：生成解引用指令
                         ctx.add_statement(Statement::Dereference {
                             target: destination.clone(),
                             reference: *ref_target.clone(),
@@ -181,10 +296,9 @@ fn lower_expression(
                         });
                     }
                     _ => {
-                        // 普通变量读取
                         ctx.add_statement(Statement::Assign {
                             target: destination.clone(),
-                            source: value.clone(),
+                            source: binding.value.clone(),
                             span,
                         });
                     }
@@ -329,31 +443,29 @@ fn lower_expression(
             // 找出不是参数的变量（即需要捕获的自由变量）
             for var_name in referenced_vars {
                 if !param_names.contains(&var_name) {
-                    if let Some(value) = ctx.variables.get(&var_name).cloned() {
+                    if let Some(binding) = ctx.lookup_variable(&var_name).cloned() {
                         free_vars.push(var_name.clone());
 
-                        // 为每个捕获的变量在堆上分配共享内存位置
                         let shared_location = ctx.new_temp();
                         ctx.add_statement(Statement::HeapAlloc {
                             target: shared_location.clone(),
-                            size: 8, // 一个变量8字节
+                            size: 8,
                             object_type: "shared_var".to_string(),
                             span,
                         });
 
-                        // 将当前变量值存储到共享位置
                         ctx.add_statement(Statement::Store {
                             target: shared_location.clone(),
-                            value: value.clone(),
+                            value: binding.value.clone(),
                             span,
                         });
 
-                        // 更新外部变量映射为共享内存的引用
-                        ctx.variables.insert(
-                            var_name.clone(),
+                        ctx.update_variable(
+                            &var_name,
                             Value::Reference {
                                 value: Box::new(shared_location.clone()),
                             },
+                            None,
                         );
 
                         captured_var_locations.push(shared_location);
@@ -441,13 +553,48 @@ fn lower_expression(
             // 暂存当前函数上下文
             let original_function_name = ctx.current_function_name.clone();
             let original_block = ctx.current_block;
-            let original_vars = ctx.variables.clone();
+            let original_scopes = ctx.clone_scopes();
 
             // 5. 开始新函数
             ctx.start_function(lambda_name.clone(), all_params);
 
+            if !free_vars.is_empty() {
+                if let Some(env_binding) = ctx.lookup_variable("__env").cloned() {
+                    let env_value = env_binding.value.clone();
+                    for (index, captured_name) in free_vars.iter().enumerate() {
+                        let slot_ptr = ctx.new_temp();
+                        ctx.add_statement(Statement::BinaryOp {
+                            target: slot_ptr.clone(),
+                            left: env_value.clone(),
+                            op: MirBinaryOp::Add,
+                            right: Value::Number {
+                                value: (index * 8) as i64,
+                            },
+                            span,
+                        });
+
+                        let shared_location = ctx.new_temp();
+                        ctx.add_statement(Statement::Dereference {
+                            target: shared_location.clone(),
+                            reference: slot_ptr,
+                            span,
+                        });
+
+                        ctx.bind_variable(
+                            captured_name.clone(),
+                            Value::Reference {
+                                value: Box::new(shared_location),
+                            },
+                            None,
+                        );
+                    }
+                }
+            }
+
             let return_val = ctx.new_temp();
             lower_expression(ctx, body, &return_val)?;
+            maybe_retain_for_escape(ctx, body, &return_val);
+            ctx.exit_scope(body.span());
             ctx.set_terminator(Terminator::Return {
                 value: Some(return_val),
                 span: body.span(),
@@ -456,7 +603,7 @@ fn lower_expression(
             // 恢复原始函数上下文
             ctx.current_function_name = original_function_name;
             ctx.current_block = original_block;
-            ctx.variables = original_vars;
+            ctx.restore_scopes(original_scopes);
         }
 
         Expr::FunctionCall { function, args, .. } => {
@@ -470,6 +617,19 @@ fn lower_expression(
                 .iter()
                 .map(|a| lower_expression_to_temp(ctx, a))
                 .collect::<Result<_, _>>()?;
+
+            for (arg_expr, arg_val) in args.iter().zip(arg_vals.iter()) {
+                if matches!(
+                    infer_expr_ownership(ctx, arg_expr),
+                    Some(OwnershipKind::RefCounted)
+                ) && !expr_creates_new_ref(arg_expr)
+                {
+                    ctx.add_statement(Statement::Retain {
+                        value: arg_val.clone(),
+                        span: arg_expr.span(),
+                    });
+                }
+            }
 
             match &func_val {
                 Value::Function { name } => {
@@ -578,11 +738,12 @@ fn lower_expression(
             ctx.set_current_block(handler_block);
             // 🔧 修复：在handler块内声明参数变量，直接映射到 r1 寄存器
             // 这样在后续的语句中，param 变量会直接使用 r1 寄存器
-            ctx.variables.insert(
+            ctx.bind_variable(
                 param.clone(),
                 Value::Variable {
                     name: param.clone(),
                 },
+                None,
             );
 
             // 🔧 修复：handler 表达式不需要结果，因为它通常通过 resume 返回
@@ -601,11 +762,13 @@ fn lower_expression(
             final_expr,
             span,
         } => {
+            ctx.enter_scope();
             for stmt in statements {
                 lower_statement(ctx, stmt)?;
             }
             if let Some(final_expr) = final_expr {
                 lower_expression(ctx, final_expr, destination)?;
+                maybe_retain_for_escape(ctx, final_expr, destination);
             } else {
                 ctx.add_statement(Statement::Assign {
                     target: destination.clone(),
@@ -613,6 +776,7 @@ fn lower_expression(
                     span: *span,
                 });
             }
+            ctx.exit_scope(*span);
         }
 
         Expr::Statement { stmt, .. } => {
@@ -711,10 +875,12 @@ fn lower_expression(
                 ctx.set_current_block(arm_block);
 
                 // 处理模式绑定（如果有的话）
+                ctx.enter_scope();
                 handle_pattern_bindings(ctx, &arm.pattern, &match_value)?;
 
                 // 生成分支体的代码
                 lower_expression(ctx, &arm.body, destination)?;
+                ctx.exit_scope(arm.span);
 
                 // 跳转到合并块
                 ctx.set_terminator(Terminator::Goto {
@@ -765,6 +931,106 @@ fn lower_expression(
             });
         }
 
+        Expr::ArrayLiteral { elements, span } => {
+            let slot_count = elements.len() + 1; // length slot + elements
+            let layout = HeapLayout {
+                type_id: format!("array:{}", elements.len()),
+                size: slot_count.max(1) * 8,
+                align: 8,
+                mutable: true,
+                escape: EscapeState::Global,
+                ownership: OwnershipKind::Manual,
+            };
+
+            let array_ptr = ctx.new_temp();
+            ctx.add_statement(Statement::Allocate {
+                target: array_ptr.clone(),
+                layout,
+                span: *span,
+            });
+
+            // 写入长度信息
+            ctx.add_statement(Statement::Store {
+                target: array_ptr.clone(),
+                value: Value::Number {
+                    value: elements.len() as i64,
+                },
+                span: *span,
+            });
+
+            for (idx, element) in elements.iter().enumerate() {
+                let element_value = lower_expression_to_temp(ctx, element)?;
+                let element_ptr = ctx.new_temp();
+                ctx.add_statement(Statement::BinaryOp {
+                    target: element_ptr.clone(),
+                    left: array_ptr.clone(),
+                    op: MirBinaryOp::Add,
+                    right: Value::Number {
+                        value: ((idx + 1) * 8) as i64,
+                    },
+                    span: *span,
+                });
+                ctx.add_statement(Statement::Store {
+                    target: element_ptr,
+                    value: element_value,
+                    span: *span,
+                });
+            }
+
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: array_ptr,
+                span: *span,
+            });
+        }
+
+        Expr::Index { array, index, span } => {
+            let array_value = lower_expression_to_temp(ctx, array)?;
+            let index_value = lower_expression_to_temp(ctx, index)?;
+
+            let scaled_index = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                target: scaled_index.clone(),
+                left: index_value,
+                op: MirBinaryOp::Multiply,
+                right: Value::Number { value: 8 },
+                span: *span,
+            });
+
+            let data_base = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                target: data_base.clone(),
+                left: array_value.clone(),
+                op: MirBinaryOp::Add,
+                right: Value::Number { value: 8 },
+                span: *span,
+            });
+
+            let element_ptr = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                target: element_ptr.clone(),
+                left: data_base,
+                op: MirBinaryOp::Add,
+                right: scaled_index,
+                span: *span,
+            });
+
+            ctx.add_statement(Statement::Dereference {
+                target: destination.clone(),
+                reference: element_ptr,
+                span: *span,
+            });
+        }
+
+        Expr::ArrayLen { array, span } => {
+            let array_value = lower_expression_to_temp(ctx, array)?;
+            ctx.add_statement(Statement::Dereference {
+                target: destination.clone(),
+                reference: array_value,
+                span: *span,
+            });
+        }
+
         Expr::Reference { expr, span } => {
             // 1. 计算被引用表达式的值
             let referenced_value = lower_expression_to_temp(ctx, expr)?;
@@ -793,69 +1059,82 @@ fn lower_expression(
             });
         }
 
+        Expr::HeapAllocate {
+            value,
+            ownership,
+            span,
+        } => {
+            let mut layout = infer_heap_layout_from_expr(value);
+            layout.ownership = *ownership;
+            let heap_ptr = ctx.new_temp();
+
+            ctx.add_statement(Statement::Allocate {
+                target: heap_ptr.clone(),
+                layout: layout.clone(),
+                span: *span,
+            });
+
+            let stored_value = lower_expression_to_temp(ctx, value)?;
+            ctx.add_statement(Statement::Store {
+                target: heap_ptr.clone(),
+                value: stored_value,
+                span: *span,
+            });
+
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: heap_ptr,
+                span: *span,
+            });
+        }
+
+        Expr::HeapFree { pointer, span } => {
+            let pointer_value = lower_expression_to_temp(ctx, pointer)?;
+            ctx.add_statement(Statement::Deallocate {
+                pointer: pointer_value,
+                layout: unknown_heap_layout(),
+                span: *span,
+            });
+
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: Value::Unit,
+                span: *span,
+            });
+        }
+
+        Expr::Retain { pointer, span } => {
+            let pointer_value = lower_expression_to_temp(ctx, pointer)?;
+            ctx.add_statement(Statement::Retain {
+                value: pointer_value,
+                span: *span,
+            });
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: Value::Unit,
+                span: *span,
+            });
+        }
+
+        Expr::Release { pointer, span } => {
+            let pointer_value = lower_expression_to_temp(ctx, pointer)?;
+            ctx.add_statement(Statement::Release {
+                value: pointer_value,
+                span: *span,
+            });
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: Value::Unit,
+                span: *span,
+            });
+        }
+
         Expr::Assignment {
             target,
             value,
             span,
         } => {
-            // 赋值表达式：执行赋值操作，然后将Unit赋值给目标
-            // 注意：赋值表达式的值是Unit，但需要先执行赋值操作
-
-            // 1. 计算右值
-            let value_temp = lower_expression_to_temp(ctx, value)?;
-
-            match target.as_ref() {
-                Expr::Identifier { name, .. } => {
-                    // 变量赋值：检查变量是否为引用类型
-                    if let Some(var_value) = ctx.variables.get(name).cloned() {
-                        match var_value {
-                            Value::Reference { value: ref_target } => {
-                                // 引用变量赋值：生成存储指令写入引用指向的位置
-                                ctx.add_statement(Statement::Store {
-                                    target: *ref_target,
-                                    value: value_temp,
-                                    span: *span,
-                                });
-                            }
-                            _ => {
-                                // 普通变量赋值：更新变量映射
-                                ctx.variables.insert(name.clone(), value_temp);
-                            }
-                        }
-                    } else {
-                        // 新变量赋值
-                        ctx.variables.insert(name.clone(), value_temp);
-                    }
-                }
-                Expr::FieldAccess { object, field, .. } => {
-                    // 字段赋值：生成字段赋值指令
-                    if let Expr::Identifier { name, .. } = object.as_ref() {
-                        if let Some(object_var) = ctx.variables.get(name).cloned() {
-                            // 生成字段赋值语句
-                            ctx.add_statement(Statement::FieldAssign {
-                                object: object_var,
-                                field: field.clone(),
-                                value: value_temp,
-                                span: *span,
-                            });
-                        } else {
-                            return Err(vec![format!(
-                                "Undefined variable in field assignment: {}",
-                                name
-                            )]);
-                        }
-                    } else {
-                        return Err(vec![
-                            "Complex field assignment not yet supported in MIR".to_string()
-                        ]);
-                    }
-                }
-                _ => {
-                    return Err(vec!["Invalid assignment target in MIR lowering".to_string()]);
-                }
-            }
-
-            // 3. 赋值表达式的结果是Unit
+            handle_assignment(ctx, target, value, *span)?;
             ctx.add_statement(Statement::Assign {
                 target: destination.clone(),
                 source: Value::Unit,
@@ -866,6 +1145,42 @@ fn lower_expression(
     Ok(())
 }
 
+fn infer_heap_layout_from_expr(expr: &Expr) -> HeapLayout {
+    let (type_id, slots) = match expr {
+        Expr::StructLiteral { name, fields, .. } => {
+            (format!("struct:{}", name), fields.len().max(1))
+        }
+        Expr::Lambda { .. } => ("closure_env".to_string(), 2),
+        Expr::Number { .. } => ("number".to_string(), 1),
+        Expr::Boolean { .. } => ("bool".to_string(), 1),
+        Expr::ArrayLiteral { elements, .. } => (
+            format!("array:{}", elements.len()),
+            elements.len().max(1) + 1,
+        ),
+        _ => ("opaque".to_string(), 1),
+    };
+
+    HeapLayout {
+        type_id,
+        size: slots * 8,
+        align: 8,
+        mutable: true,
+        escape: EscapeState::Global,
+        ownership: OwnershipKind::Manual,
+    }
+}
+
+fn unknown_heap_layout() -> HeapLayout {
+    HeapLayout {
+        type_id: "unknown".to_string(),
+        size: 0,
+        align: 8,
+        mutable: true,
+        escape: EscapeState::Global,
+        ownership: OwnershipKind::Manual,
+    }
+}
+
 fn lower_statement(
     ctx: &mut LoweringContext,
     stmt: &karte_hir::Statement,
@@ -873,7 +1188,11 @@ fn lower_statement(
     match stmt {
         karte_hir::Statement::Let { name, value, .. } => {
             let var_value = lower_expression_to_temp(ctx, value)?;
-            ctx.variables.insert(name.clone(), var_value);
+            let ownership = infer_expr_ownership(ctx, value);
+            if matches!(ownership, Some(OwnershipKind::RefCounted)) {
+                maybe_retain_for_expr(ctx, value, &var_value);
+            }
+            ctx.bind_variable(name.clone(), var_value, ownership);
         }
         karte_hir::Statement::Expression { expr, .. } => {
             // 结果被丢弃
@@ -900,62 +1219,75 @@ fn lower_statement(
 
             ctx.program.add_struct_type(mir_struct_type);
         }
-        karte_hir::Statement::Assignment { target, value, .. } => {
-            // 赋值语句：将值计算到临时变量，然后赋值给目标
-            let value_temp = lower_expression_to_temp(ctx, value)?;
-
-            match target {
-                Expr::Identifier { name, .. } => {
-                    // 变量赋值：检查变量是否为引用类型
-                    if let Some(var_value) = ctx.variables.get(name).cloned() {
-                        match var_value {
-                            Value::Reference { value: ref_target } => {
-                                // 引用变量赋值：生成存储指令写入引用指向的位置
-                                ctx.add_statement(Statement::Store {
-                                    target: *ref_target,
-                                    value: value_temp,
-                                    span: karte_diagnostics::Span::new(0, 0),
-                                });
-                            }
-                            _ => {
-                                // 普通变量赋值：更新变量映射
-                                ctx.variables.insert(name.clone(), value_temp);
-                            }
-                        }
-                    } else {
-                        // 新变量赋值
-                        ctx.variables.insert(name.clone(), value_temp);
-                    }
-                }
-                Expr::FieldAccess { object, field, .. } => {
-                    // 字段赋值：生成字段赋值指令
-                    if let Expr::Identifier { name, .. } = object.as_ref() {
-                        if let Some(object_var) = ctx.variables.get(name).cloned() {
-                            // 生成字段赋值语句
-                            ctx.add_statement(Statement::FieldAssign {
-                                object: object_var,
-                                field: field.clone(),
-                                value: value_temp,
-                                span: karte_diagnostics::Span::new(0, 0),
-                            });
-                        } else {
-                            return Err(vec![format!(
-                                "Undefined variable in field assignment: {}",
-                                name
-                            )]);
-                        }
-                    } else {
-                        return Err(vec![
-                            "Complex field assignment not yet supported in MIR".to_string()
-                        ]);
-                    }
-                }
-                _ => {
-                    return Err(vec!["Invalid assignment target in MIR lowering".to_string()]);
-                }
-            }
+        karte_hir::Statement::Assignment {
+            target,
+            value,
+            span,
+        } => {
+            handle_assignment(ctx, target, value, *span)?;
         }
     }
+    Ok(())
+}
+
+fn handle_assignment(
+    ctx: &mut LoweringContext,
+    target: &Expr,
+    value: &Expr,
+    span: Span,
+) -> Result<(), Vec<String>> {
+    let value_temp = lower_expression_to_temp(ctx, value)?;
+    let ownership = infer_expr_ownership(ctx, value);
+    if matches!(ownership, Some(OwnershipKind::RefCounted)) {
+        maybe_retain_for_expr(ctx, value, &value_temp);
+    }
+
+    match target {
+        Expr::Identifier { name, .. } => {
+            if let Some(binding) = ctx.lookup_variable(name).cloned() {
+                if let Value::Reference { value: ref_target } = binding.value {
+                    ctx.add_statement(Statement::Store {
+                        target: *ref_target,
+                        value: value_temp,
+                        span,
+                    });
+                } else {
+                    if let Some(old_binding) =
+                        ctx.update_variable(name, value_temp.clone(), ownership)
+                    {
+                        ctx.release_binding(&old_binding, span);
+                    }
+                }
+            } else {
+                ctx.bind_variable(name.clone(), value_temp, ownership);
+            }
+        }
+        Expr::FieldAccess { object, field, .. } => {
+            if let Expr::Identifier { name, .. } = object.as_ref() {
+                if let Some(binding) = ctx.lookup_variable(name).cloned() {
+                    ctx.add_statement(Statement::FieldAssign {
+                        object: binding.value,
+                        field: field.clone(),
+                        value: value_temp,
+                        span,
+                    });
+                } else {
+                    return Err(vec![format!(
+                        "Undefined variable in field assignment: {}",
+                        name
+                    )]);
+                }
+            } else {
+                return Err(vec![
+                    "Complex field assignment not yet supported in MIR".to_string()
+                ]);
+            }
+        }
+        _ => {
+            return Err(vec!["Invalid assignment target in MIR lowering".to_string()]);
+        }
+    }
+
     Ok(())
 }
 
@@ -1051,6 +1383,18 @@ fn collect_vars_recursive(expr: &Expr, vars: &mut Vec<String>) {
                 collect_vars_recursive(arg, vars);
             }
         }
+        Expr::ArrayLiteral { elements, .. } => {
+            for element in elements {
+                collect_vars_recursive(element, vars);
+            }
+        }
+        Expr::Index { array, index, .. } => {
+            collect_vars_recursive(array, vars);
+            collect_vars_recursive(index, vars);
+        }
+        Expr::ArrayLen { array, .. } => {
+            collect_vars_recursive(array, vars);
+        }
         Expr::Block {
             statements,
             final_expr,
@@ -1089,6 +1433,69 @@ fn collect_vars_in_statement(stmt: &karte_hir::Statement, vars: &mut Vec<String>
             collect_vars_recursive(value, vars);
         }
         _ => {}
+    }
+}
+
+fn infer_expr_ownership(ctx: &LoweringContext, expr: &Expr) -> Option<OwnershipKind> {
+    match expr {
+        Expr::HeapAllocate { ownership, .. } => Some(*ownership),
+        Expr::Identifier { name, .. } => ctx.lookup_variable(name).and_then(|b| b.ownership),
+        Expr::Block { final_expr, .. } => final_expr
+            .as_ref()
+            .and_then(|inner| infer_expr_ownership(ctx, inner)),
+        Expr::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            if let Some(else_branch) = else_branch {
+                let then_kind = infer_expr_ownership(ctx, then_branch);
+                let else_kind = infer_expr_ownership(ctx, else_branch);
+                if then_kind.is_some() && then_kind == else_kind {
+                    then_kind
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn expr_creates_new_ref(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::HeapAllocate {
+            ownership: OwnershipKind::RefCounted,
+            ..
+        }
+    )
+}
+
+fn maybe_retain_for_expr(ctx: &mut LoweringContext, expr: &Expr, value: &Value) {
+    if matches!(
+        infer_expr_ownership(ctx, expr),
+        Some(OwnershipKind::RefCounted)
+    ) && !expr_creates_new_ref(expr)
+    {
+        ctx.add_statement(Statement::Retain {
+            value: value.clone(),
+            span: expr.span(),
+        });
+    }
+}
+
+fn maybe_retain_for_escape(ctx: &mut LoweringContext, expr: &Expr, value: &Value) {
+    if matches!(
+        infer_expr_ownership(ctx, expr),
+        Some(OwnershipKind::RefCounted)
+    ) {
+        ctx.add_statement(Statement::Retain {
+            value: value.clone(),
+            span: expr.span(),
+        });
     }
 }
 
@@ -1155,7 +1562,7 @@ fn handle_pattern_bindings(
     match pattern {
         karte_hir::Pattern::Variable { name, .. } => {
             // 变量模式：将整个匹配值绑定到变量
-            ctx.variables.insert(name.clone(), match_value.clone());
+            ctx.bind_variable(name.clone(), match_value.clone(), None);
         }
         karte_hir::Pattern::Constructor {
             arg: Some(arg_pattern),
@@ -1175,7 +1582,7 @@ fn handle_pattern_bindings(
                     span: karte_diagnostics::Span::new(0, 0),
                 });
 
-                ctx.variables.insert(name.clone(), arg_temp);
+                ctx.bind_variable(name.clone(), arg_temp, None);
             }
         }
         karte_hir::Pattern::QualifiedConstructor {
@@ -1194,7 +1601,7 @@ fn handle_pattern_bindings(
                     span: karte_diagnostics::Span::new(0, 0),
                 });
 
-                ctx.variables.insert(name.clone(), arg_temp);
+                ctx.bind_variable(name.clone(), arg_temp, None);
             }
         }
         _ => {

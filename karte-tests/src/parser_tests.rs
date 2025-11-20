@@ -187,6 +187,64 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_array_literal_and_index() {
+        let (tokens, _) = tokenize("let arr = [1, 2]; arr[0]");
+        let (expr, diagnostics) = parse(&tokens);
+
+        assert!(diagnostics.is_empty());
+        assert!(expr.is_some());
+
+        if let Some(Expr::Block {
+            statements,
+            final_expr,
+            ..
+        }) = expr
+        {
+            assert_eq!(statements.len(), 1);
+            if let Some(Statement::Let { value, .. }) = statements.first() {
+                assert!(
+                    matches!(value, Expr::ArrayLiteral { elements, .. } if elements.len() == 2)
+                );
+            } else {
+                panic!("Expected let binding");
+            }
+
+            if let Some(expr) = final_expr {
+                assert!(matches!(expr.as_ref(), Expr::Index { .. }));
+            } else {
+                panic!("Expected final expression");
+            }
+        } else {
+            panic!("Expected block expression");
+        }
+    }
+
+    #[test]
+    fn test_parse_array_len() {
+        let (tokens, _) = tokenize("let arr = [1]; len arr");
+        let (expr, diagnostics) = parse(&tokens);
+
+        assert!(diagnostics.is_empty());
+        assert!(expr.is_some());
+
+        if let Some(Expr::Block {
+            statements,
+            final_expr,
+            ..
+        }) = expr
+        {
+            assert_eq!(statements.len(), 1);
+            if let Some(expr) = final_expr {
+                assert!(matches!(expr.as_ref(), Expr::ArrayLen { .. }));
+            } else {
+                panic!("Expected final expression");
+            }
+        } else {
+            panic!("Expected block expression");
+        }
+    }
+
+    #[test]
     fn test_parse_lambda_simple() {
         let (tokens, _) = tokenize("|x| x + 1");
         let (expr, diagnostics) = parse(&tokens);
@@ -240,28 +298,6 @@ mod tests {
             assert!(matches!(body.as_ref(), Expr::Number { value: 42, .. }));
         } else {
             panic!("Expected lambda expression with no parameters");
-        }
-    }
-
-    #[test]
-    fn test_parse_and_evaluate_integration() {
-        // 集成测试：从source code到执行结果
-        use karte_codegen::evaluate;
-
-        // 测试简单lambda调用
-        let (tokens, _) = tokenize("(|x| x + 1)(5)");
-        let (expr, diagnostics) = parse(&tokens);
-
-        assert!(diagnostics.is_empty());
-        assert!(expr.is_some());
-
-        if let Some(expr) = expr {
-            let result = evaluate(&expr).unwrap();
-            if let karte_codegen::Value::Number(n) = result {
-                assert_eq!(n, 6);
-            } else {
-                panic!("Expected number result");
-            }
         }
     }
 

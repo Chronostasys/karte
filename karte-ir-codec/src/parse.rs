@@ -111,7 +111,10 @@ where
 }
 
 /// 解析 body 风格的字段 (label: value)
-pub fn body_field<'a, F, O>(label: &'static str, mut inner: F) -> impl FnMut(&'a str) -> IResult<&'a str, O>
+pub fn body_field<'a, F, O>(
+    label: &'static str,
+    mut inner: F,
+) -> impl FnMut(&'a str) -> IResult<&'a str, O>
 where
     F: FnMut(&'a str) -> IResult<&'a str, O>,
 {

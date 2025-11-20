@@ -1,0 +1,29 @@
+# Karte example workspace manifest
+#
+# Demonstrates how the CLI compiles multiple modules using the new
+# dependency-aware pipeline. The `main` module depends on the runtime
+# helpers defined in `box_free_example.karte`.
+
+[[modules]]
+id = "runtime"
+path = "box_free_example.karte"
+
+[[modules]]
+id = "main"
+path = "array_len_example.karte"
+deps = ["runtime"]
+
+[[modules]]
+id = "rc_demo"
+path = "rc_demo.karte"
+deps = ["runtime"]
+
+[[modules]]
+id = "arc_auto_cleanup"
+path = "arc_auto_cleanup.karte"
+deps = ["runtime"]
+
+[[modules]]
+id = "arc_no_manual_release"
+path = "arc_no_manual_release.karte"
+deps = ["runtime"]

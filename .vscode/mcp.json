@@ -1,0 +1,10 @@
+{
+	"servers": {
+		"lldb-mcp": {
+			"type": "stdio",
+			"command": "/usr/bin/nc",
+			"args": ["localhost", "59999"]
+		}
+	},
+	"inputs": []
+}

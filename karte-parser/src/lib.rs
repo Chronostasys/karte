@@ -1,3 +1,4 @@
+use karte_common::memory::OwnershipKind;
 use karte_diagnostics::{DiagnosticBag, Span};
 use karte_lexer::{Token, TokenWithSpan};
 use std::fmt;
@@ -1031,9 +1032,69 @@ impl<'a> Parser<'a> {
         Ok(left)
     }
 
-    // factor = ('+' | '-' | '&' | '*' | '!')? primary
+    // factor = ('+' | '-' | '&' | '*' | '!' | 'box' | 'free')? primary
     fn parse_factor(&mut self) -> Result<Expr, ParseError> {
         if let Some(token) = self.peek() {
+            if let Token::Identifier(name) = &token.token {
+                if name == "box" {
+                    let start_span = token.span;
+                    self.advance(); // consume 'box'
+                    let value = self.parse_primary()?;
+                    let span = Span::new(start_span.start, value.span().end);
+                    return Ok(Expr::HeapAllocate {
+                        value: Box::new(value),
+                        ownership: OwnershipKind::Manual,
+                        span,
+                    });
+                } else if name == "arc" {
+                    let start_span = token.span;
+                    self.advance(); // consume 'arc'
+                    let value = self.parse_primary()?;
+                    let span = Span::new(start_span.start, value.span().end);
+                    return Ok(Expr::HeapAllocate {
+                        value: Box::new(value),
+                        ownership: OwnershipKind::RefCounted,
+                        span,
+                    });
+                } else if name == "free" {
+                    let start_span = token.span;
+                    self.advance(); // consume 'free'
+                    let pointer = self.parse_primary()?;
+                    let span = Span::new(start_span.start, pointer.span().end);
+                    return Ok(Expr::HeapFree {
+                        pointer: Box::new(pointer),
+                        span,
+                    });
+                } else if name == "retain" {
+                    let start_span = token.span;
+                    self.advance();
+                    let pointer = self.parse_primary()?;
+                    let span = Span::new(start_span.start, pointer.span().end);
+                    return Ok(Expr::Retain {
+                        pointer: Box::new(pointer),
+                        span,
+                    });
+                } else if name == "release" {
+                    let start_span = token.span;
+                    self.advance();
+                    let pointer = self.parse_primary()?;
+                    let span = Span::new(start_span.start, pointer.span().end);
+                    return Ok(Expr::Release {
+                        pointer: Box::new(pointer),
+                        span,
+                    });
+                } else if name == "len" {
+                    let start_span = token.span;
+                    self.advance(); // consume 'len'
+                    let array = self.parse_primary()?;
+                    let span = Span::new(start_span.start, array.span().end);
+                    return Ok(Expr::ArrayLen {
+                        array: Box::new(array),
+                        span,
+                    });
+                }
+            }
+
             match token.token {
                 Token::Plus => {
                     let op_span = token.span;
@@ -1965,6 +2026,58 @@ impl<'a> Parser<'a> {
                     // 处理连续的否定操作符，如 !!true, !!!false
                     self.parse_factor()
                 }
+                Token::LeftBracket => {
+                    let start_span = token.span;
+                    self.advance(); // consume '['
+                    let mut elements = Vec::new();
+
+                    loop {
+                        if let Some(next) = self.peek() {
+                            if matches!(next.token, Token::RightBracket) {
+                                break;
+                            }
+                        } else {
+                            return Err(ParseError::UnexpectedEof {
+                                expected: "']'".to_string(),
+                            });
+                        }
+
+                        elements.push(self.parse_expression()?);
+
+                        if let Some(next) = self.peek() {
+                            if matches!(next.token, Token::Comma) {
+                                self.advance();
+                            } else if matches!(next.token, Token::RightBracket) {
+                                break;
+                            } else {
+                                return Err(ParseError::UnexpectedToken {
+                                    expected: "',' or ']'".to_string(),
+                                    found: next.token.clone(),
+                                    span: next.span,
+                                });
+                            }
+                        }
+                    }
+
+                    if let Some(end_token) = self.peek() {
+                        if matches!(end_token.token, Token::RightBracket) {
+                            let end_span = end_token.span;
+                            self.advance(); // consume ']'
+                            let span = Span::new(start_span.start, end_span.end);
+                            Ok(Expr::ArrayLiteral { elements, span })
+                        } else {
+                            Err(ParseError::UnexpectedToken {
+                                expected: "']'".to_string(),
+                                found: end_token.token.clone(),
+                                span: end_token.span,
+                            })
+                        }
+                    } else {
+                        Err(ParseError::UnexpectedEof {
+                            expected: "']'".to_string(),
+                        })
+                    }
+                }
                 _ => Err(ParseError::UnexpectedToken {
                     expected: "number, identifier, lambda, '{', or '('".to_string(),
                     found: token.token.clone(),
@@ -1977,88 +2090,112 @@ impl<'a> Parser<'a> {
             })
         }?;
 
-        // 处理函数调用，可能有连续的调用
-        while let Some(token) = self.peek() {
-            if matches!(token.token, Token::LeftParen) {
-                self.advance(); // consume '('
-                let mut args = Vec::new();
+        // 处理调用 / 下标 / 字段访问的后缀操作
+        loop {
+            let mut progressed = false;
+            if let Some(token) = self.peek() {
+                match token.token {
+                    Token::LeftParen => {
+                        progressed = true;
+                        self.advance(); // consume '('
+                        let mut args = Vec::new();
 
-                // 如果不是立即遇到')'，解析参数列表
-                if let Some(token) = self.peek() {
-                    if !matches!(token.token, Token::RightParen) {
-                        args.push(self.parse_expression()?);
-
-                        // 解析剩余参数
-                        while let Some(token) = self.peek() {
-                            if matches!(token.token, Token::Comma) {
-                                self.advance(); // consume ','
+                        if let Some(next) = self.peek() {
+                            if !matches!(next.token, Token::RightParen) {
                                 args.push(self.parse_expression()?);
-                            } else {
-                                break;
+                                while let Some(next) = self.peek() {
+                                    if matches!(next.token, Token::Comma) {
+                                        self.advance();
+                                        args.push(self.parse_expression()?);
+                                    } else {
+                                        break;
+                                    }
+                                }
                             }
                         }
-                    }
-                }
 
-                // 期望')'
-                if let Some(token) = self.peek() {
-                    if matches!(token.token, Token::RightParen) {
-                        let end_span = token.span;
-                        self.advance(); // consume ')'
-                        let span = Span::new(expr.span().start, end_span.end);
-                        expr = Expr::FunctionCall {
-                            function: Box::new(expr),
-                            args,
-                            span,
-                        };
-                    } else {
-                        return Err(ParseError::UnexpectedToken {
-                            expected: "')'".to_string(),
-                            found: token.token.clone(),
-                            span: token.span,
-                        });
+                        if let Some(next) = self.peek() {
+                            if matches!(next.token, Token::RightParen) {
+                                let end_span = next.span;
+                                self.advance();
+                                let span = Span::new(expr.span().start, end_span.end);
+                                expr = Expr::FunctionCall {
+                                    function: Box::new(expr),
+                                    args,
+                                    span,
+                                };
+                            } else {
+                                return Err(ParseError::UnexpectedToken {
+                                    expected: "')'".to_string(),
+                                    found: next.token.clone(),
+                                    span: next.span,
+                                });
+                            }
+                        } else {
+                            return Err(ParseError::UnexpectedEof {
+                                expected: "')'".to_string(),
+                            });
+                        }
                     }
-                } else {
-                    return Err(ParseError::UnexpectedEof {
-                        expected: "')'".to_string(),
-                    });
+                    Token::LeftBracket => {
+                        progressed = true;
+                        self.advance(); // consume '['
+                        let index_expr = self.parse_expression()?;
+                        if let Some(close) = self.peek() {
+                            if matches!(close.token, Token::RightBracket) {
+                                let end_span = close.span;
+                                self.advance();
+                                let span = Span::new(expr.span().start, end_span.end);
+                                expr = Expr::Index {
+                                    array: Box::new(expr),
+                                    index: Box::new(index_expr),
+                                    span,
+                                };
+                            } else {
+                                return Err(ParseError::UnexpectedToken {
+                                    expected: "']'".to_string(),
+                                    found: close.token.clone(),
+                                    span: close.span,
+                                });
+                            }
+                        } else {
+                            return Err(ParseError::UnexpectedEof {
+                                expected: "']'".to_string(),
+                            });
+                        }
+                    }
+                    Token::Dot => {
+                        progressed = true;
+                        self.advance(); // consume '.'
+                        if let Some(field_token) = self.peek() {
+                            if let Token::Identifier(field_name) = &field_token.token {
+                                let field_name = field_name.clone();
+                                let end_span = field_token.span;
+                                self.advance();
+                                let span = Span::new(expr.span().start, end_span.end);
+                                expr = Expr::FieldAccess {
+                                    object: Box::new(expr),
+                                    field: field_name,
+                                    span,
+                                };
+                            } else {
+                                return Err(ParseError::UnexpectedToken {
+                                    expected: "field name".to_string(),
+                                    found: field_token.token.clone(),
+                                    span: field_token.span,
+                                });
+                            }
+                        } else {
+                            return Err(ParseError::UnexpectedEof {
+                                expected: "field name".to_string(),
+                            });
+                        }
+                    }
+                    _ => {}
                 }
-            } else {
-                break;
             }
-        }
 
-        // 处理字段访问，可能有连续的访问
-        while let Some(token) = self.peek() {
-            if matches!(token.token, Token::Dot) {
-                self.advance(); // consume '.'
-
-                // 期望字段名
-                if let Some(field_token) = self.peek() {
-                    if let Token::Identifier(field_name) = &field_token.token {
-                        let field_name = field_name.clone();
-                        let end_span = field_token.span;
-                        self.advance();
-
-                        let span = Span::new(expr.span().start, end_span.end);
-                        expr = Expr::FieldAccess {
-                            object: Box::new(expr),
-                            field: field_name,
-                            span,
-                        };
-                    } else {
-                        return Err(ParseError::UnexpectedToken {
-                            expected: "field name".to_string(),
-                            found: field_token.token.clone(),
-                            span: field_token.span,
-                        });
-                    }
-                } else {
-                    return Err(ParseError::UnexpectedEof {
-                        expected: "field name".to_string(),
-                    });
-                }
-            } else {
+            if !progressed {
                 break;
             }
         }

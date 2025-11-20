@@ -946,6 +946,19 @@ impl TypeChecker {
                     Type::Unknown
                 }
             }
+            Expr::ArrayLiteral { elements, span } => {
+                if elements.is_empty() {
+                    self.add_error(TypeCheckError::CannotInferType { span: *span });
+                    Type::array(Type::Unknown)
+                } else {
+                    let element_type = self.infer_expr(&elements[0], env);
+                    for element in &elements[1..] {
+                        let current_type = self.infer_expr(element, env);
+                        self.add_constraint(element_type.clone(), current_type, element.span());
+                    }
+                    Type::array(element_type)
+                }
+            }
 
             Expr::FieldAccess {
                 object,
@@ -988,6 +1001,77 @@ impl TypeChecker {
                     }
                 }
             }
+            Expr::ArrayLen { array, span } => {
+                let array_type = self.infer_expr(array, env);
+                match array_type {
+                    Type::Array { .. } => Type::Number,
+                    Type::Reference { inner } => match *inner {
+                        Type::Array { .. } => Type::Number,
+                        other => {
+                            self.add_error(TypeCheckError::TypeMismatch {
+                                expected: Type::array(Type::Unknown),
+                                found: Type::Reference {
+                                    inner: Box::new(other),
+                                },
+                                span: *span,
+                            });
+                            Type::Unknown
+                        }
+                    },
+                    Type::Var(_) => {
+                        let element_var = Type::Var(self.fresh_type_var());
+                        let expected = Type::array(element_var);
+                        self.add_constraint(array_type, expected, array.span());
+                        Type::Number
+                    }
+                    Type::Unknown => Type::Unknown,
+                    other => {
+                        self.add_error(TypeCheckError::TypeMismatch {
+                            expected: Type::array(Type::Unknown),
+                            found: other,
+                            span: *span,
+                        });
+                        Type::Unknown
+                    }
+                }
+            }
+            Expr::Index { array, index, span } => {
+                let array_type = self.infer_expr(array, env);
+                let index_type = self.infer_expr(index, env);
+                self.add_constraint(index_type, Type::Number, index.span());
+
+                match array_type {
+                    Type::Array { element } => *element,
+                    Type::Reference { inner } => match *inner {
+                        Type::Array { element } => *element,
+                        other => {
+                            self.add_error(TypeCheckError::TypeMismatch {
+                                expected: Type::array(Type::Unknown),
+                                found: Type::Reference {
+                                    inner: Box::new(other),
+                                },
+                                span: *span,
+                            });
+                            Type::Unknown
+                        }
+                    },
+                    Type::Var(_) => {
+                        let element_var = Type::Var(self.fresh_type_var());
+                        let expected = Type::array(element_var.clone());
+                        self.add_constraint(array_type, expected, array.span());
+                        element_var
+                    }
+                    Type::Unknown => Type::Unknown,
+                    other => {
+                        self.add_error(TypeCheckError::TypeMismatch {
+                            expected: Type::array(Type::Unknown),
+                            found: other,
+                            span: *span,
+                        });
+                        Type::Unknown
+                    }
+                }
+            }
 
             Expr::Reference { expr, .. } => {
                 // 引用表达式的类型是对内部表达式类型的引用
@@ -1009,6 +1093,43 @@ impl TypeChecker {
                             span: *span,
                         });
                         Type::Unknown
+                    }
+                }
+            }
+
+            Expr::HeapAllocate { value, .. } => {
+                let inner_type = self.infer_expr(value, env);
+                Type::reference(inner_type)
+            }
+
+            Expr::HeapFree { pointer, span } => {
+                let pointer_type = self.infer_expr(pointer, env);
+                match pointer_type {
+                    Type::Reference { .. } => Type::Unit,
+                    _ => {
+                        let expected = Type::reference(Type::Unknown);
+                        self.add_error(TypeCheckError::TypeMismatch {
+                            expected,
+                            found: pointer_type,
+                            span: *span,
+                        });
+                        Type::Unit
+                    }
+                }
+            }
+
+            Expr::Retain { pointer, span } | Expr::Release { pointer, span } => {
+                let pointer_type = self.infer_expr(pointer, env);
+                match pointer_type {
+                    Type::Reference { .. } => Type::Unit,
+                    _ => {
+                        let expected = Type::reference(Type::Unknown);
+                        self.add_error(TypeCheckError::TypeMismatch {
+                            expected,
+                            found: pointer_type,
+                            span: *span,
+                        });
+                        Type::Unit
                     }
                 }
             }

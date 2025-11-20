@@ -1,0 +1,8 @@
+struct Resource {
+    value: number,
+};
+
+let handle = arc Resource { value: 7 };
+let shadow = handle;
+
+shadow.value + handle.value

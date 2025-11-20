@@ -15,8 +15,8 @@
 //! - **`hir_interpreter`**: 一个可以直接执行 HIR 的树遍历解释器，用于在早期阶段快速验证语义。
 //! - **`lir_interpreter`**: 一个可以执行线性 LIR 指令的解释器，用于验证 MIR 和 LIR 转换的正确性。
 
-pub mod hir_interpreter;
+// pub mod hir_interpreter;
 pub mod lir_interpreter;
 pub mod vm;
-pub use hir_interpreter::*;
+// pub use hir_interpreter::*;
 pub use lir_interpreter::*;

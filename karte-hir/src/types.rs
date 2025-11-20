@@ -64,6 +64,10 @@ pub enum Type {
         name: String,
         fields: Vec<StructField>,
     },
+    /// 数组类型
+    Array {
+        element: Box<Type>,
+    },
     /// 不可变引用类型
     Reference {
         inner: Box<Type>,
@@ -173,6 +177,7 @@ impl Type {
                             && field1.field_type.structural_eq(&field2.field_type)
                     })
             }
+            (Type::Array { element: e1 }, Type::Array { element: e2 }) => e1.structural_eq(e2),
             (Type::Reference { inner: i1 }, Type::Reference { inner: i2 }) => i1.structural_eq(i2),
             (Type::Var(v1), Type::Var(v2)) => v1 == v2,
             (Type::Unknown, Type::Unknown) => true,
@@ -223,6 +228,9 @@ impl fmt::Display for Type {
                     .join(", ");
                 write!(f, "{} = {{ {} }}", name, fields_str)
             }
+            Type::Array { element } => {
+                write!(f, "[{}]", element)
+            }
             Type::Reference { inner } => {
                 write!(f, "&{}", inner)
             }
@@ -258,6 +266,13 @@ impl Type {
     /// 创建结构体类型
     pub fn struct_type(name: String, fields: Vec<StructField>) -> Self {
         Type::Struct { name, fields }
+    }
+
+    /// 创建数组类型
+    pub fn array(inner: Type) -> Self {
+        Type::Array {
+            element: Box::new(inner),
+        }
     }
 
     /// 创建引用类型
@@ -333,6 +348,9 @@ impl Type {
                     })
                     .collect(),
             },
+            Type::Array { element } => Type::Array {
+                element: Box::new(element.substitute(subst)),
+            },
             Type::Reference { inner } => Type::Reference {
                 inner: Box::new(inner.substitute(subst)),
             },
@@ -379,6 +397,7 @@ impl Type {
                 }
                 vars
             }
+            Type::Array { element } => element.free_vars(),
             Type::Reference { inner } => inner.free_vars(),
             Type::Var(var) => vec![*var],
         }

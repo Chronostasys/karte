@@ -74,6 +74,18 @@ mod mir_roundtrip_tests {
     }
 
     #[test]
+    fn test_array_literal_roundtrip() {
+        let source = "let arr = [1, 2, 3]; arr[1]";
+        test_mir_roundtrip(source).unwrap();
+    }
+
+    #[test]
+    fn test_array_len_roundtrip() {
+        let source = "let arr = [1, 2]; len arr";
+        test_mir_roundtrip(source).unwrap();
+    }
+
+    #[test]
     fn test_boolean_values() {
         let source = "true";
         test_mir_roundtrip(source).unwrap();
@@ -126,10 +138,7 @@ mod mir_roundtrip_tests {
                 "1 + 2",
                 vec!["%1 = num value: 1", "%2 = num value: 2", "%0 = %1 + %2"],
             ),
-            (
-                "let x = 5; x",
-                vec!["%1 = num value: 5", "%0 = %1"],
-            ),
+            ("let x = 5; x", vec!["%1 = num value: 5", "%0 = %1"]),
         ];
 
         for (source, expected_parts) in test_cases {
@@ -202,6 +211,12 @@ mod mir_roundtrip_tests {
             mir_string.contains("Call") || mir_string.contains("call"),
             "应该包含函数调用"
         );
+    }
+
+    #[test]
+    fn test_box_and_free_flow() {
+        let source = "let ptr = box 42; free ptr; 0";
+        test_mir_roundtrip(source).unwrap();
     }
 
     #[test]

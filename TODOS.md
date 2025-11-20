@@ -1,10 +1,30 @@
 # 目前的问题
 
-- [ ] 目前的caller saved register好像处理有问题，虽然暂时测试还没错
+- [x] 目前的caller saved register好像处理有问题，虽然暂时测试还没错
 - [x] register allocator暂时处理不了effect相关的caller saved register
-- [ ] 现在的effect实现写死了相关的register（r0-r4），要重构。涉及文件：transform.rs和ir.rs中的获取inst的reg相关api
+- [x] 现在的effect实现写死了相关的register（r0-r4），要重构。涉及文件：transform.rs和ir.rs中的获取inst的reg相关api
 - [x] 多层perform测试失败
+- [ ] 闭包分配在stack上导致一些内存安全问题，应该结合rc
 - [ ] 生命周期分析中将argument假设为永久的生命周期，这个需要优化
 - [ ] 更新代数效应文档
 
 - [x] 2025-11-14：同步 `karte-mir` 中 IR Codec 相关测试（`codec_integration_test.rs`、`compact_display_test.rs`、`debug_parse_test.rs`、`hashmap_parse_test.rs`、`manual_parse.rs`）到新的自动 Display/Parse 文本格式，确保 roundtrip 行为覆盖 `%` 前缀与 `body` 布局
+- [x] 2025-11-14：撰写 `docs/DYNAMIC_MEMORY_PLAN.md` 规划文档
+- [x] 2025-11-14：落地动态内存方案 P0（语义、IR 扩展、roundtrip 测试）
+- [x] 2025-11-14：落地动态内存方案 P1（运行时 allocator + 标准库迁移）
+- [x] 2025-11-18：新增 AArch64 box/free 端到端测试与运行指令示例更新
+- [x] 2025-11-18：补充 CLI 动态内存示例文档
+- [x] 2025-11-18：统一 FFI RuntimeCall 封装
+- [x] 2025-11-18：新增 `docs/DEVELOPMENT_HUB.md` 中心文档并登记基础功能缺口
+- [x] 2025-11-18：实现数组字面量/索引/len 表达式与端到端测试
+- [x] 2025-11-18：实现 CLI MIR/LIR 缓存式增量编译与示例
+- [x] 2025-11-18：接入 LIR/JIT retain/release FFI 钩子
+- [x] 2025-11-18：module manifest / 依赖图 / 增量编译调度方案设计
+- [x] 2025-11-20：修复 StackFrameLayout 在递归结构体测试中的 panic 问题（使用指令索引而非寄存器 ID 映射栈偏移）
+- [x] 2025-11-20：重构 Instruction::Call 降级逻辑，使用物理寄存器并修复栈对齐与返回值覆盖问题（解决 SIGBUS）
+- [x] 2025-11-20：修复 karte-rt 测试中的并发竞争问题（引入 serial_test 并使用相对断言）
+- [x] 2025-11-20：SimpleStackRegisterAllocation 存在 bug，当参数寄存器直接作为返回值时会产生冲突（需插入 Move）
+- [x] 2025-11-20：修复 effect handler payload 寄存器分配错误（使用物理寄存器 r1 而非虚拟寄存器 v1）
+- [ ] 调查 karte-lir/src/lower.rs 中 CallIndirect 降级逻辑中看似多余的 Load64 指令
+- [ ] 2025-11-19：ModuleGraph 并发调度器与分层调度原型（Rayon 预研 / CLI flag）
+- [ ] 2025-11-19：Retain/Release 与 MIR EscapeState 联动，导出引用计数诊断日志

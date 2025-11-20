@@ -322,7 +322,10 @@ fn test_mir_statement_call_roundtrip() {
     let stmt = MirStatement::Call {
         target: None,
         function: MirValue::Temp { id: MirTempId(4) },
-        args: vec![MirValue::Temp { id: MirTempId(5) }, MirValue::Temp { id: MirTempId(3) }],
+        args: vec![
+            MirValue::Temp { id: MirTempId(5) },
+            MirValue::Temp { id: MirTempId(3) },
+        ],
         span: DiagSpan::default(),
     };
 

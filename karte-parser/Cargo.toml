@@ -14,6 +14,7 @@ thiserror.workspace = true
 karte-lexer = { path = "../karte-lexer" }
 karte-diagnostics = { path = "../karte-diagnostics" }
 karte-hir = { path = "../karte-hir" }
+karte-common = { path = "../karte-common" }
 
 [dev-dependencies]
 karte-codegen = { path = "../karte-codegen" }

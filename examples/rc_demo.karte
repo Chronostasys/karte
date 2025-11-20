@@ -1,0 +1,14 @@
+let counter = box 41;
+
+retain counter;
+retain counter;
+retain counter;
+
+let observed = *counter + 1;
+
+release counter;
+release counter;
+release counter;
+release counter;
+
+observed

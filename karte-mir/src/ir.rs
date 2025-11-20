@@ -1,7 +1,12 @@
+use karte_common::memory::OwnershipKind;
 use karte_diagnostics::Span;
+use karte_ir_codec::parse::{body_field, keyword};
+use karte_ir_codec::{IrDisplay, IrParse, ParseError, ParseResult};
 use karte_ir_derive::IrCodec;
+use nom::IResult;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::fmt;
 
 /// 基本块标识符
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IrCodec, PartialOrd, Ord)]
@@ -94,6 +99,87 @@ pub enum Value {
     },
 }
 
+/// 堆对象逃逸级别
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IrCodec)]
+pub enum EscapeState {
+    /// 对象仅在当前基本块/作用域内可见，可在优化时提升到栈
+    Local,
+    /// 对象通过返回值或参数逃逸到调用方
+    Return,
+    /// 对象存入闭包/全局/堆结构，需要长期存在
+    Global,
+}
+
+/// MIR 中对堆布局和安全属性的抽象
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeapLayout {
+    pub type_id: String,
+    pub size: usize,
+    pub align: usize,
+    pub mutable: bool,
+    pub escape: EscapeState,
+    pub ownership: OwnershipKind,
+}
+
+impl IrDisplay for HeapLayout {
+    fn ir_fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "HeapLayout")?;
+        write!(f, "\n    type_id: ")?;
+        self.type_id.ir_fmt(f)?;
+        write!(f, "\n    size: ")?;
+        self.size.ir_fmt(f)?;
+        write!(f, "\n    align: ")?;
+        self.align.ir_fmt(f)?;
+        write!(f, "\n    mutable: ")?;
+        self.mutable.ir_fmt(f)?;
+        write!(f, "\n    escape: ")?;
+        self.escape.ir_fmt(f)?;
+        write!(f, "\n    ownership: ")?;
+        self.ownership.ir_fmt(f)?;
+        Ok(())
+    }
+}
+
+impl IrParse for HeapLayout {
+    fn parse_ir(input: &str) -> ParseResult<Self> {
+        let (_, layout) = Self::parse_nom(input).map_err(ParseError::from)?;
+        Ok(layout)
+    }
+
+    fn parse_nom(input: &str) -> IResult<&str, Self> {
+        let (input, _) = keyword("HeapLayout")(input)?;
+        let (input, type_id) = body_field("type_id", String::parse_nom)(input)?;
+        let (input, size) = body_field("size", usize::parse_nom)(input)?;
+        let (input, align) = body_field("align", usize::parse_nom)(input)?;
+        let (input, mutable) = body_field("mutable", bool::parse_nom)(input)?;
+        let (input, escape) = body_field("escape", EscapeState::parse_nom)(input)?;
+        let (input, ownership) = body_field("ownership", OwnershipKind::parse_nom)(input)?;
+
+        Ok((
+            input,
+            HeapLayout {
+                type_id,
+                size,
+                align,
+                mutable,
+                escape,
+                ownership,
+            },
+        ))
+    }
+}
+
+/// GC 根的分类信息
+#[derive(Debug, Clone, PartialEq, Eq, IrCodec)]
+pub enum GcRootKind {
+    /// 栈上的根：编译器通过 stack map 管理
+    StackSlot { slot: usize },
+    /// 静态/全局对象
+    Global { symbol: String },
+    /// 运行时自定义根（例如 native 代码注册）
+    Custom { label: String },
+}
+
 /// MIR语句 - 低级操作
 #[derive(Debug, Clone, PartialEq, IrCodec)]
 pub enum Statement {
@@ -180,6 +266,78 @@ pub enum Statement {
         object: Value,
         field: String,
         value: Value,
+        span: Span,
+    },
+    /// 通用堆分配语句
+    #[ir_codec(token = "alloc")]
+    Allocate {
+        #[ir_codec(args, target)]
+        target: Value,
+        #[ir_codec(args)]
+        layout: HeapLayout,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+    /// 通用堆释放语句
+    #[ir_codec(token = "dealloc")]
+    Deallocate {
+        #[ir_codec(args)]
+        pointer: Value,
+        #[ir_codec(args)]
+        layout: HeapLayout,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+    /// 引用计数/资源持有增加
+    #[ir_codec(token = "retain")]
+    Retain {
+        #[ir_codec(args)]
+        value: Value,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+    /// 引用计数/资源释放
+    #[ir_codec(token = "release")]
+    Release {
+        #[ir_codec(args)]
+        value: Value,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+    /// 标记一个值为 GC 根
+    #[ir_codec(token = "mark_gc_root")]
+    MarkGcRoot {
+        #[ir_codec(args)]
+        value: Value,
+        #[ir_codec(args)]
+        root: GcRootKind,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+    /// 写屏障（便于未来并发/增量 GC）
+    #[ir_codec(token = "write_barrier")]
+    WriteBarrier {
+        #[ir_codec(args)]
+        object: Value,
+        /// 用于调试的字段标签，可选
+        #[ir_codec(args)]
+        slot: Option<String>,
+        #[ir_codec(args)]
+        value: Value,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+    /// 读屏障
+    #[ir_codec(token = "read_barrier")]
+    ReadBarrier {
+        #[ir_codec(args, target)]
+        target: Value,
+        #[ir_codec(args)]
+        object: Value,
+        /// 用于调试的字段标签，可选
+        #[ir_codec(args)]
+        slot: Option<String>,
+        #[ir_codec(skip)]
         span: Span,
     },
     /// 堆分配语句

@@ -14,11 +14,7 @@ fn test_compact_value_display() {
         "数字输出应当以 num 开头: {}",
         output
     );
-    assert!(
-        output.contains("42"),
-        "数字输出应包含具体数值: {}",
-        output
-    );
+    assert!(output.contains("42"), "数字输出应包含具体数值: {}", output);
 
     // Variable(x) -> var x
     let val = Value::Variable {
@@ -31,11 +27,7 @@ fn test_compact_value_display() {
         "变量输出应当以 var 开头: {}",
         output
     );
-    assert!(
-        output.contains("x"),
-        "变量输出应包含变量名: {}",
-        output
-    );
+    assert!(output.contains("x"), "变量输出应包含变量名: {}", output);
 
     // Boolean(true) -> bool true
     let val = Value::Boolean { value: true };
@@ -46,11 +38,7 @@ fn test_compact_value_display() {
         "布尔输出应当以 bool 开头: {}",
         output
     );
-    assert!(
-        output.contains("true"),
-        "布尔输出应包含 true: {}",
-        output
-    );
+    assert!(output.contains("true"), "布尔输出应包含 true: {}", output);
 
     // Unit -> () (但当前实现显示为 Unit，因为它没有字段)
     let val = Value::Unit;
@@ -79,11 +67,7 @@ fn test_compact_value_display() {
         "函数输出应当以 fn 开头: {}",
         output
     );
-    assert!(
-        output.contains("add"),
-        "函数输出应包含名称: {}",
-        output
-    );
+    assert!(output.contains("add"), "函数输出应包含名称: {}", output);
 
     // Reference(&x) -> & var x
     let val = Value::Reference {
@@ -93,16 +77,8 @@ fn test_compact_value_display() {
     };
     let output = val.to_ir_string();
     println!("引用: {}", output);
-    assert!(
-        output.starts_with("&"),
-        "引用输出应以 & 开头: {}",
-        output
-    );
-    assert!(
-        output.contains("x"),
-        "引用输出应包含被引用值: {}",
-        output
-    );
+    assert!(output.starts_with("&"), "引用输出应以 & 开头: {}", output);
+    assert!(output.contains("x"), "引用输出应包含被引用值: {}", output);
 }
 
 #[test]

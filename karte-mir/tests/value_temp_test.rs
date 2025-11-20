@@ -1,5 +1,5 @@
-use karte_mir::ir::{Value, TempId};
 use karte_ir_codec::{IrDisplay, IrParse};
+use karte_mir::ir::{TempId, Value};
 
 #[test]
 fn test_temp_id_display() {
@@ -17,12 +17,8 @@ fn test_value_temp_display() {
 
 #[test]
 fn test_parse_value_temp() {
-    let inputs = vec![
-        "%0",
-        "Temp { id: %0 }",
-        "temp %0",
-    ];
-    
+    let inputs = vec!["%0", "Temp { id: %0 }", "temp %0"];
+
     for input in inputs {
         println!("Trying to parse '{}' as Value", input);
         let result = Value::parse_ir(input);

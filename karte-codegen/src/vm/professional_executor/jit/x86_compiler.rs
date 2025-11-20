@@ -4,6 +4,7 @@
 
 use super::code_buffer::{CodeBuilder, JumpType};
 use super::compiler_trait::*;
+use super::ffi::{RuntimeArg, RuntimeCall};
 use karte_lir::{Instruction, LirFunction, LirProgram, Operand, Register};
 use std::collections::HashMap;
 
@@ -164,6 +165,16 @@ impl X86Compiler {
             Instruction::Store64 {
                 addr, offset, src, ..
             } => self.compile_store64(addr, *offset, src, code_builder),
+            Instruction::Alloc {
+                dst,
+                size,
+                alignment,
+                allocation_type,
+                ..
+            } => self.compile_alloc(dst, *size, *alignment, allocation_type, code_builder),
+            Instruction::Free { addr, .. } => self.compile_free(addr, code_builder),
+            Instruction::Retain { value, .. } => self.compile_retain(value, code_builder),
+            Instruction::Release { value, .. } => self.compile_release(value, code_builder),
             Instruction::Nop { .. } => {
                 // NOP指令
                 code_builder.emit_byte(0x90);
@@ -665,6 +676,114 @@ impl X86Compiler {
         Ok(())
     }
 
+    fn compile_alloc(
+        &mut self,
+        dst: &Register,
+        size: usize,
+        alignment: usize,
+        allocation_type: &karte_lir::AllocationType,
+        code_builder: &mut CodeBuilder,
+    ) -> Result<(), String> {
+        match allocation_type {
+            karte_lir::AllocationType::Heap => {
+                let call = RuntimeCall::alloc(size, alignment);
+                self.emit_runtime_call(code_builder, call, Some(dst))
+            }
+            _ => {
+                // 目前的JIT仅支持堆分配，其它类型暂未使用
+                Err(format!(
+                    "Alloc instruction with unsupported allocation type: {:?}",
+                    allocation_type
+                ))
+            }
+        }
+    }
+
+    fn compile_free(
+        &mut self,
+        addr: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> Result<(), String> {
+        let call = RuntimeCall::free(*addr);
+        self.emit_runtime_call(code_builder, call, None)
+    }
+
+    fn compile_retain(
+        &mut self,
+        value: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> Result<(), String> {
+        let call = RuntimeCall::retain(*value);
+        self.emit_runtime_call(code_builder, call, None)
+    }
+
+    fn compile_release(
+        &mut self,
+        value: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> Result<(), String> {
+        let call = RuntimeCall::release(*value);
+        self.emit_runtime_call(code_builder, call, None)
+    }
+
+    fn emit_runtime_call(
+        &mut self,
+        code_builder: &mut CodeBuilder,
+        call: RuntimeCall,
+        result: Option<&Register>,
+    ) -> Result<(), String> {
+        let return_reg = X86Register::RAX as u8;
+        let exclude: Vec<u8> = if result.is_some() && call.expects_result() {
+            vec![return_reg]
+        } else {
+            Vec::new()
+        };
+        let (saved_regs, stack_space) = self.save_call_clobbered_registers(code_builder, &exclude);
+
+        let arg_regs = [
+            X86Register::RDI as u8,
+            X86Register::RSI as u8,
+            X86Register::RDX as u8,
+            X86Register::RCX as u8,
+            X86Register::R8 as u8,
+            X86Register::R9 as u8,
+        ];
+
+        for (idx, arg) in call.args.iter().enumerate() {
+            if idx >= arg_regs.len() {
+                return Err(format!(
+                    "runtime call {} 超过支持的参数数量(最多 {})",
+                    call.intrinsic.name(),
+                    arg_regs.len()
+                ));
+            }
+            let target_reg = arg_regs[idx];
+            match arg {
+                RuntimeArg::Immediate(value) => {
+                    self.emit_mov_reg_imm64(code_builder, target_reg, *value);
+                }
+                RuntimeArg::Register(reg) => {
+                    let src_reg = self.get_physical_register(reg)?;
+                    if src_reg != target_reg {
+                        self.emit_mov_reg_reg(code_builder, target_reg, src_reg);
+                    }
+                }
+            }
+        }
+
+        self.emit_call_absolute(code_builder, call.intrinsic.symbol_ptr() as u64);
+        self.restore_call_clobbered_registers(code_builder, &saved_regs, stack_space);
+
+        if let (Some(dst), true) = (result, call.expects_result()) {
+            let dst_reg = self.get_physical_register(dst)?;
+            if dst_reg != return_reg {
+                self.emit_mov_reg_reg(code_builder, dst_reg, return_reg);
+            }
+        }
+
+        Ok(())
+    }
+
     // x86-64指令编码实现
     /// 生成REX前缀
     fn emit_rex_prefix(&self, code_builder: &mut CodeBuilder, w: bool, r: u8, x: u8, b: u8) {
@@ -690,12 +809,70 @@ impl X86Compiler {
         self.emit_modrm(code_builder, 0b11, src, dst);
     }
 
+    fn emit_sub_rsp_imm(&self, code_builder: &mut CodeBuilder, imm: i32) {
+        self.emit_rex_prefix(code_builder, true, 0, 0, X86Register::RSP as u8);
+        code_builder.emit_byte(0x81);
+        self.emit_modrm(code_builder, 0b11, 0b101, X86Register::RSP as u8);
+        code_builder.emit_i32(imm);
+    }
+
+    fn emit_add_rsp_imm(&self, code_builder: &mut CodeBuilder, imm: i32) {
+        self.emit_rex_prefix(code_builder, true, 0, 0, X86Register::RSP as u8);
+        code_builder.emit_byte(0x81);
+        self.emit_modrm(code_builder, 0b11, 0b000, X86Register::RSP as u8);
+        code_builder.emit_i32(imm);
+    }
+
     /// mov reg, imm64
     fn emit_mov_reg_imm64(&self, code_builder: &mut CodeBuilder, dst: u8, imm: i64) {
         // REX.W + B8+ rd: MOV r64, imm64
         self.emit_rex_prefix(code_builder, true, 0, 0, dst);
         code_builder.emit_byte(0xB8 + (dst & 0x07));
         code_builder.emit_i64(imm);
+    }
+
+    fn save_call_clobbered_registers(
+        &mut self,
+        code_builder: &mut CodeBuilder,
+        exclude: &[u8],
+    ) -> (Vec<u8>, usize) {
+        let regs: Vec<u8> = self
+            .calling_convention
+            .caller_saved
+            .iter()
+            .copied()
+            .filter(|reg| !exclude.contains(reg))
+            .collect();
+
+        if regs.is_empty() {
+            return (regs, 0);
+        }
+
+        let stack_space = align_to(regs.len() * 8, 16);
+        self.emit_sub_rsp_imm(code_builder, stack_space as i32);
+
+        for (idx, reg) in regs.iter().enumerate() {
+            self.emit_mov_mem_reg(code_builder, X86Register::RSP as u8, (idx * 8) as i32, *reg);
+        }
+
+        (regs, stack_space)
+    }
+
+    fn restore_call_clobbered_registers(
+        &mut self,
+        code_builder: &mut CodeBuilder,
+        regs: &[u8],
+        stack_space: usize,
+    ) {
+        if regs.is_empty() {
+            return;
+        }
+
+        for (idx, reg) in regs.iter().enumerate() {
+            self.emit_mov_reg_mem(code_builder, *reg, X86Register::RSP as u8, (idx * 8) as i32);
+        }
+
+        self.emit_add_rsp_imm(code_builder, stack_space as i32);
     }
 
     /// add reg, reg (64位)
@@ -836,6 +1013,15 @@ impl X86Compiler {
 
         // 32位偏移
         code_builder.emit_i32(offset);
+    }
+
+    /// 生成 call abs64 指令
+    fn emit_call_absolute(&self, code_builder: &mut CodeBuilder, func: u64) {
+        let tmp = X86Register::RAX as u8;
+        self.emit_mov_reg_imm64(code_builder, tmp, func as i64);
+        // CALL r/m64: FF /2
+        code_builder.emit_byte(0xFF);
+        self.emit_modrm(code_builder, 0b11, 0b010, tmp);
     }
 }
 
@@ -1006,6 +1192,10 @@ impl X86Compiler {
         code_builder.emit_byte(0xC3);
         Ok(())
     }
+}
+
+fn align_to(value: usize, alignment: usize) -> usize {
+    ((value + alignment - 1) / alignment) * alignment
 }
 
 #[cfg(test)]

@@ -151,7 +151,7 @@ fn generate_enum_display(_enum_name: &Ident, data: &DataEnum) -> TokenStream {
 
                 if special_format == SpecialFormatStyle::UnOp {
                     use crate::utils::FieldRole;
-                    
+
                     // 根据字段角色查找对应字段
                     let mut target_field = None;
                     let mut op_field = None;
@@ -199,7 +199,7 @@ fn generate_enum_display(_enum_name: &Ident, data: &DataEnum) -> TokenStream {
 
                 if special_format == SpecialFormatStyle::FieldAccess {
                     use crate::utils::FieldRole;
-                    
+
                     // 根据字段角色查找对应字段
                     let mut target_field = None;
                     let mut object_field = None;
@@ -249,7 +249,7 @@ fn generate_enum_display(_enum_name: &Ident, data: &DataEnum) -> TokenStream {
 
                 if special_format == SpecialFormatStyle::Infix {
                     use crate::utils::FieldRole;
-                    
+
                     // 根据字段角色查找对应字段
                     let mut left_field = None;
                     let mut right_field = None;
@@ -291,8 +291,6 @@ fn generate_enum_display(_enum_name: &Ident, data: &DataEnum) -> TokenStream {
                     continue;
                 }
 
-                
-
                 // No special-case handling for Call: use the generic token+args printing below.
 
                 // 如果存在 token 且所有需要展示的字段中有标记为 args 的字段，使用前缀样式并用逗号分隔参数：`token arg1, arg2`
@@ -305,13 +303,25 @@ fn generate_enum_display(_enum_name: &Ident, data: &DataEnum) -> TokenStream {
                             .enumerate()
                             .map(|(i, arg_ident)| {
                                 // 找到对应的 field 以获取标签和类型
-                                let field = fields.named.iter().find(|f| f.ident.as_ref().map(|id| id == *arg_ident).unwrap_or(false)).expect("arg field must exist");
-                                let label = crate::utils::get_field_label(field).unwrap_or_else(|| arg_ident.to_string());
+                                let field = fields
+                                    .named
+                                    .iter()
+                                    .find(|f| {
+                                        f.ident.as_ref().map(|id| id == *arg_ident).unwrap_or(false)
+                                    })
+                                    .expect("arg field must exist");
+                                let label = crate::utils::get_field_label(field)
+                                    .unwrap_or_else(|| arg_ident.to_string());
                                 let field_ty = &field.ty;
 
                                 // 判断是否为 Vec<T>
                                 let is_vec = match field_ty {
-                                    syn::Type::Path(tp) => tp.path.segments.last().map(|seg| seg.ident == "Vec").unwrap_or(false),
+                                    syn::Type::Path(tp) => tp
+                                        .path
+                                        .segments
+                                        .last()
+                                        .map(|seg| seg.ident == "Vec")
+                                        .unwrap_or(false),
                                     _ => false,
                                 };
 

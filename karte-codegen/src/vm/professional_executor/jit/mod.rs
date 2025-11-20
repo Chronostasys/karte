@@ -12,7 +12,9 @@ pub mod code_buffer;
 pub mod code_cache;
 pub mod compiler_trait;
 pub mod execution_mode;
+pub mod ffi;
 pub mod memory_manager;
+pub mod runtime;
 pub mod x86_compiler;
 
 pub use aarch64_compiler::*;
@@ -20,7 +22,9 @@ pub use code_buffer::*;
 pub use code_cache::*;
 pub use compiler_trait::*;
 pub use execution_mode::*;
+pub use ffi::*;
 pub use memory_manager::*;
+pub use runtime::*;
 pub use x86_compiler::*;
 
 use karte_lir::{LirFunction, LirProgram};

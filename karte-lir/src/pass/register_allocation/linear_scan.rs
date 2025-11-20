@@ -88,6 +88,16 @@ impl LinearScanAllocator {
                     }
                 }
             }
+            // 🔧 修复：预分配物理寄存器
+            if let Register::Physical(p) = lifetime.register {
+                register_mapping.insert(lifetime.register, p);
+                println!(
+                    "🔧 预分配物理寄存器: {:?} -> r{}",
+                    lifetime.register, p
+                );
+                available_registers.retain(|&reg| reg != p);
+                active_intervals.push(lifetime.clone());
+            }
         }
 
         // 🔧 修复：StackAddress寄存器也需要分配物理寄存器
@@ -96,6 +106,9 @@ impl LinearScanAllocator {
 
         for current_lifetime in &lifetimes {
             if current_lifetime.is_function_parameter {
+                continue;
+            }
+            if current_lifetime.register.is_physical() {
                 continue;
             }
             // 🔧 修复：为Data和StackAddress类型都分配物理寄存器
@@ -185,7 +198,7 @@ impl LinearScanAllocator {
 
         // === 🔥 新增：保证每个restore点有可用物理寄存器 ===
         // 对于每个spilled寄存器的每个uses（reload点），模拟活跃区间，保证有空闲物理寄存器
-        for (spilled_reg, spill_slot) in &spilled_registers {
+        for (spilled_reg, _spill_slot) in &spilled_registers {
             if let Some(lifetime) = lifetimes.iter().find(|lt| lt.register == *spilled_reg) {
                 for &use_pos in &lifetime.uses {
                     // 模拟到use_pos时的活跃区间和可用寄存器
@@ -267,6 +280,7 @@ impl LinearScanAllocator {
     }
 
     /// 处理寄存器溢出
+    #[allow(dead_code)]
     fn spill_at_interval(
         &self,
         active_intervals: &mut Vec<RegisterLifetime>,
@@ -324,6 +338,7 @@ impl LinearScanAllocator {
     }
 
     /// 寻找最佳的溢出候选者
+    #[allow(dead_code)]
     fn find_spill_candidate<'a>(
         &self,
         active_intervals: &'a [RegisterLifetime],
@@ -346,6 +361,7 @@ impl LinearScanAllocator {
     }
 
     /// 查找寄存器的下一次使用位置
+    #[allow(dead_code)]
     fn find_next_use(&self, lifetime: &RegisterLifetime, from_position: usize) -> usize {
         lifetime
             .uses

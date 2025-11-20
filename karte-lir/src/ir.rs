@@ -87,7 +87,6 @@ pub enum Operand {
     MemoryRef { id: MemoryId },
 }
 
-
 impl Default for Operand {
     fn default() -> Self {
         Operand::Immediate { value: 0 }
@@ -313,6 +312,12 @@ pub enum Instruction {
     /// 内存释放指令
     Free { addr: Register, span: Span },
 
+    /// ARC/GC retain 调用占位
+    Retain { value: Register, span: Span },
+
+    /// ARC/GC release 调用占位
+    Release { value: Register, span: Span },
+
     /// 加载内存值（8字节）
     Load64 {
         dst: Register,
@@ -472,10 +477,15 @@ impl Instruction {
             Instruction::CallIndirect {
                 function_register,
                 args,
+                arg_operands,
                 ..
             } => {
                 used.push(*function_register);
                 used.extend_from_slice(args);
+                // 🔧 修复：添加参数操作数中使用的寄存器
+                for operand in arg_operands {
+                    self.add_operand_registers(operand, &mut used);
+                }
             }
             Instruction::Return { value, .. } => {
                 if let Some(reg) = value {
@@ -502,6 +512,9 @@ impl Instruction {
             }
             Instruction::Free { addr, .. } => {
                 used.push(*addr);
+            }
+            Instruction::Retain { value, .. } | Instruction::Release { value, .. } => {
+                used.push(*value);
             }
             Instruction::Phi { incoming, .. } => {
                 for (_, value) in incoming {
@@ -696,6 +709,11 @@ impl Instruction {
             Instruction::Free { addr, .. } => {
                 if *addr == old_reg {
                     *addr = new_reg;
+                }
+            }
+            Instruction::Retain { value, .. } | Instruction::Release { value, .. } => {
+                if *value == old_reg {
+                    *value = new_reg;
                 }
             }
             Instruction::Alloc { dst, .. } | Instruction::StructAlloc { dst, .. } => {
