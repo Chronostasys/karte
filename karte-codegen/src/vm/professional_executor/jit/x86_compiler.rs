@@ -962,16 +962,37 @@ impl X86Compiler {
         self.emit_rex_prefix(code_builder, true, dst, 0, base);
         code_builder.emit_byte(0x8B);
 
-        if offset == 0 && (base & 0x07) != 5 {
-            // RBP需要特殊处理
-            // ModR/M: mod=00, reg=dst, r/m=base
+        // RSP和R12需要SIB字节，RBP需要位移
+        let needs_sib = (base & 0x07) == 4; // RSP or R12
+        let needs_disp = (base & 0x07) == 5 || offset != 0; // RBP or non-zero offset
+
+        if !needs_disp && !needs_sib {
+            // ModR/M: mod=00, reg=dst, r/m=base (no displacement, no SIB)
             self.emit_modrm(code_builder, 0b00, dst, base);
-        } else if (-128..=127).contains(&offset) {
-            // ModR/M: mod=01, reg=dst, r/m=base + SIB + disp8
+        } else if needs_disp && !needs_sib && (-128..=127).contains(&offset) {
+            // ModR/M: mod=01, reg=dst, r/m=base + disp8
             self.emit_modrm(code_builder, 0b01, dst, base);
             code_builder.emit_byte(offset as u8);
+        } else if needs_disp && !needs_sib {
+            // ModR/M: mod=10, reg=dst, r/m=base + disp32
+            self.emit_modrm(code_builder, 0b10, dst, base);
+            code_builder.emit_i32(offset);
+        } else if needs_sib && offset == 0 && (base & 0x07) != 5 {
+            // ModR/M + SIB: mod=00, reg=dst, r/m=100 (SIB), SIB=base
+            self.emit_modrm(code_builder, 0b00, dst, 0b100);
+            code_builder.emit_byte((base & 0x07) | 0b00100000); // SIB: scale=00, index=100 (none), base=base
+        } else if needs_sib && (-128..=127).contains(&offset) {
+            // ModR/M + SIB: mod=01, reg=dst, r/m=100 (SIB), SIB=base + disp8
+            self.emit_modrm(code_builder, 0b01, dst, 0b100);
+            code_builder.emit_byte((base & 0x07) | 0b00100000); // SIB
+            code_builder.emit_byte(offset as u8);
+        } else if needs_sib {
+            // ModR/M + SIB: mod=10, reg=dst, r/m=100 (SIB), SIB=base + disp32
+            self.emit_modrm(code_builder, 0b10, dst, 0b100);
+            code_builder.emit_byte((base & 0x07) | 0b00100000); // SIB
+            code_builder.emit_i32(offset);
         } else {
-            // ModR/M: mod=10, reg=dst, r/m=base + SIB + disp32
+            // Fallback
             self.emit_modrm(code_builder, 0b10, dst, base);
             code_builder.emit_i32(offset);
         }
@@ -983,13 +1004,37 @@ impl X86Compiler {
         self.emit_rex_prefix(code_builder, true, src, 0, base);
         code_builder.emit_byte(0x89);
 
-        if offset == 0 && (base & 0x07) != 5 {
-            // RBP需要特殊处理
+        // RSP和R12需要SIB字节，RBP需要位移
+        let needs_sib = (base & 0x07) == 4; // RSP or R12
+        let needs_disp = (base & 0x07) == 5 || offset != 0; // RBP or non-zero offset
+
+        if !needs_disp && !needs_sib {
+            // ModR/M: mod=00, reg=src, r/m=base (no displacement, no SIB)
             self.emit_modrm(code_builder, 0b00, src, base);
-        } else if (-128..=127).contains(&offset) {
+        } else if needs_disp && !needs_sib && (-128..=127).contains(&offset) {
+            // ModR/M: mod=01, reg=src, r/m=base + disp8
             self.emit_modrm(code_builder, 0b01, src, base);
             code_builder.emit_byte(offset as u8);
+        } else if needs_disp && !needs_sib {
+            // ModR/M: mod=10, reg=src, r/m=base + disp32
+            self.emit_modrm(code_builder, 0b10, src, base);
+            code_builder.emit_i32(offset);
+        } else if needs_sib && offset == 0 && (base & 0x07) != 5 {
+            // ModR/M + SIB: mod=00, reg=src, r/m=100 (SIB), SIB=base
+            self.emit_modrm(code_builder, 0b00, src, 0b100);
+            code_builder.emit_byte((base & 0x07) | 0b00100000); // SIB: scale=00, index=100 (none), base=base
+        } else if needs_sib && (-128..=127).contains(&offset) {
+            // ModR/M + SIB: mod=01, reg=src, r/m=100 (SIB), SIB=base + disp8
+            self.emit_modrm(code_builder, 0b01, src, 0b100);
+            code_builder.emit_byte((base & 0x07) | 0b00100000); // SIB
+            code_builder.emit_byte(offset as u8);
+        } else if needs_sib {
+            // ModR/M + SIB: mod=10, reg=src, r/m=100 (SIB), SIB=base + disp32
+            self.emit_modrm(code_builder, 0b10, src, 0b100);
+            code_builder.emit_byte((base & 0x07) | 0b00100000); // SIB
+            code_builder.emit_i32(offset);
         } else {
+            // Fallback
             self.emit_modrm(code_builder, 0b10, src, base);
             code_builder.emit_i32(offset);
         }
@@ -1001,11 +1046,29 @@ impl X86Compiler {
         self.emit_rex_prefix(code_builder, true, 0, 0, base);
         code_builder.emit_byte(0xC7);
 
-        if offset == 0 && (base & 0x07) != 5 {
+        // RSP和R12需要SIB字节，RBP需要位移
+        let needs_sib = (base & 0x07) == 4; // RSP or R12
+        let needs_disp = (base & 0x07) == 5 || offset != 0; // RBP or non-zero offset
+
+        if !needs_disp && !needs_sib {
             self.emit_modrm(code_builder, 0b00, 0, base);
-        } else if (-128..=127).contains(&offset) {
+        } else if needs_disp && !needs_sib && (-128..=127).contains(&offset) {
             self.emit_modrm(code_builder, 0b01, 0, base);
             code_builder.emit_byte(offset as u8);
+        } else if needs_disp && !needs_sib {
+            self.emit_modrm(code_builder, 0b10, 0, base);
+            code_builder.emit_i32(offset);
+        } else if needs_sib && offset == 0 && (base & 0x07) != 5 {
+            self.emit_modrm(code_builder, 0b00, 0, 0b100);
+            code_builder.emit_byte((base & 0x07) | 0b00100000); // SIB
+        } else if needs_sib && (-128..=127).contains(&offset) {
+            self.emit_modrm(code_builder, 0b01, 0, 0b100);
+            code_builder.emit_byte((base & 0x07) | 0b00100000); // SIB
+            code_builder.emit_byte(offset as u8);
+        } else if needs_sib {
+            self.emit_modrm(code_builder, 0b10, 0, 0b100);
+            code_builder.emit_byte((base & 0x07) | 0b00100000); // SIB
+            code_builder.emit_i32(offset);
         } else {
             self.emit_modrm(code_builder, 0b10, 0, base);
             code_builder.emit_i32(offset);
