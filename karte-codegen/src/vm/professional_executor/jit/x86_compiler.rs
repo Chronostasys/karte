@@ -746,8 +746,13 @@ impl X86Compiler {
         result: Option<&Register>,
     ) -> Result<(), String> {
         let return_reg = X86Register::RAX as u8;
-        
-        // 🔧 关键修复：不要保存参数寄存器，因为我们即将使用它们
+        let exclude: Vec<u8> = if result.is_some() && call.expects_result() {
+            vec![return_reg]
+        } else {
+            Vec::new()
+        };
+        let (saved_regs, stack_space) = self.save_call_clobbered_registers(code_builder, &exclude);
+
         let arg_regs = [
             X86Register::RDI as u8,
             X86Register::RSI as u8,
@@ -756,13 +761,6 @@ impl X86Compiler {
             X86Register::R8 as u8,
             X86Register::R9 as u8,
         ];
-        
-        let mut exclude = arg_regs[..call.args.len().min(arg_regs.len())].to_vec();
-        if result.is_some() && call.expects_result() {
-            exclude.push(return_reg);
-        }
-        
-        let (saved_regs, stack_space) = self.save_call_clobbered_registers(code_builder, &exclude);
 
         for (idx, arg) in call.args.iter().enumerate() {
             if idx >= arg_regs.len() {
@@ -1228,6 +1226,10 @@ impl X86Compiler {
         // push r11
         code_builder.emit_bytes(&[0x41, 0x53]); // push r11
         
+        // 🔧 为red zone和调用约定预留空间
+        // System V ABI要求在调用其他函数前确保栈对齐且不使用red zone
+        self.emit_sub_rsp_imm(code_builder, 128);
+        
         // 🔧 将传入的虚拟栈(top/bottom)地址设置到 r10/r11（LIR使用r6/r7作为虚拟SP/FP基准）
         self.emit_mov_reg_reg(code_builder, vm_sp, rdi);
         self.emit_mov_reg_reg(code_builder, vm_fp, rsi);
@@ -1237,6 +1239,9 @@ impl X86Compiler {
 
     /// 生成函数尾声
     fn emit_function_epilogue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+        // 🔧 恢复栈空间
+        self.emit_add_rsp_imm(code_builder, 128);
+        
         // 🔧 恢复寄存器 (reverse order of prologue)
         // pop r11
         code_builder.emit_bytes(&[0x41, 0x5B]); // pop r11
