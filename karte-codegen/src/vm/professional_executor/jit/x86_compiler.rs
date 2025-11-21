@@ -1213,16 +1213,21 @@ impl X86Compiler {
         let vm_sp = X86Register::R10 as u8; // r6
         let vm_fp = X86Register::R11 as u8; // r7
 
-        // 🔧 关键修复：对齐栈到16字节边界
-        // 当函数被调用时，返回地址被push，使栈偏移8字节
-        // 我们需要再减8字节使其对齐到16字节
-        // push rbp (保存8字节，使栈对齐)
-        code_builder.emit_byte(0x55); // push rbp
+        // 🔧 保存 callee-saved 寄存器 (RBX) - System V ABI requires preserving RBX
+        code_builder.emit_byte(0x53); // push rbx
         
-        // 将参数移动到虚拟机寄存器
-        // 将虚拟栈指针参数移动到r10 (r6)
+        // 🔧 Push R12 for 16-byte stack alignment (3 pushes above + this = 32 bytes)
+        code_builder.emit_bytes(&[0x41, 0x54]); // push r12
+        
+        // 🔧 关键修复：保存VM_SP (R10) 和 VM_FP (R11) 到栈
+        // 因为它们在 System V ABI 中是 caller-saved，但 VM 期望它们是 callee-saved
+        // push r10
+        code_builder.emit_bytes(&[0x41, 0x52]); // push r10
+        // push r11
+        code_builder.emit_bytes(&[0x41, 0x53]); // push r11
+        
+        // 🔧 将传入的虚拟栈(top/bottom)地址设置到 r10/r11（LIR使用r6/r7作为虚拟SP/FP基准）
         self.emit_mov_reg_reg(code_builder, vm_sp, rdi);
-        // 将虚拟帧指针参数移动到r11 (r7)
         self.emit_mov_reg_reg(code_builder, vm_fp, rsi);
 
         Ok(())
@@ -1230,8 +1235,16 @@ impl X86Compiler {
 
     /// 生成函数尾声
     fn emit_function_epilogue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
-        // 恢复rbp并返回
-        code_builder.emit_byte(0x5D); // pop rbp
+        // 🔧 恢复寄存器 (reverse order of prologue)
+        // pop r11
+        code_builder.emit_bytes(&[0x41, 0x5B]); // pop r11
+        // pop r10
+        code_builder.emit_bytes(&[0x41, 0x5A]); // pop r10
+        // pop r12
+        code_builder.emit_bytes(&[0x41, 0x5C]); // pop r12
+        // pop rbx
+        code_builder.emit_byte(0x5B); // pop rbx
+        // ret
         code_builder.emit_byte(0xC3); // ret
         Ok(())
     }
