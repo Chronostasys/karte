@@ -746,13 +746,8 @@ impl X86Compiler {
         result: Option<&Register>,
     ) -> Result<(), String> {
         let return_reg = X86Register::RAX as u8;
-        let exclude: Vec<u8> = if result.is_some() && call.expects_result() {
-            vec![return_reg]
-        } else {
-            Vec::new()
-        };
-        let (saved_regs, stack_space) = self.save_call_clobbered_registers(code_builder, &exclude);
-
+        
+        // 🔧 关键修复：不要保存参数寄存器，因为我们即将使用它们
         let arg_regs = [
             X86Register::RDI as u8,
             X86Register::RSI as u8,
@@ -761,6 +756,13 @@ impl X86Compiler {
             X86Register::R8 as u8,
             X86Register::R9 as u8,
         ];
+        
+        let mut exclude = arg_regs[..call.args.len().min(arg_regs.len())].to_vec();
+        if result.is_some() && call.expects_result() {
+            exclude.push(return_reg);
+        }
+        
+        let (saved_regs, stack_space) = self.save_call_clobbered_registers(code_builder, &exclude);
 
         for (idx, arg) in call.args.iter().enumerate() {
             if idx >= arg_regs.len() {
