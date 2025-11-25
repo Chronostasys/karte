@@ -11,7 +11,7 @@ use karte_mir::{
     lower::{lower_expr_to_mir, SCRIPT_ENTRY_POINT},
     MirProgram, Statement, Value,
 };
-use karte_parser::parse_with_type_check;
+use karte_parser::{parse_with_type_check, ParserMode};
 use karte_rt::{ffi, HeapStats};
 use log::error;
 use std::collections::hash_map::DefaultHasher;
@@ -43,6 +43,10 @@ struct Cli {
     #[arg(short, long)]
     verbose: bool,
 
+    /// 解析模式 (script/project)
+    #[arg(long, value_enum)]
+    mode: Option<ModeArg>,
+
     /// 只输出LIR代码，不执行
     #[arg(long)]
     emit_lir: bool,
@@ -66,6 +70,10 @@ enum Commands {
         /// 输入文件或表达式
         input: Option<String>,
 
+        /// 解析模式 (script/project)
+        #[arg(long, value_enum)]
+        mode: Option<ModeArg>,
+
         /// 只输出LIR代码，不执行
         #[arg(long)]
         emit_lir: bool,
@@ -83,6 +91,10 @@ enum Commands {
     Compile {
         /// 输入文件
         input: String,
+
+        /// 解析模式 (script/project)
+        #[arg(long, value_enum)]
+        mode: Option<ModeArg>,
 
         /// 输出文件
         #[arg(short, long)]
@@ -128,6 +140,21 @@ enum Commands {
         #[arg(short = 'j', long)]
         jobs: Option<usize>,
     },
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+enum ModeArg {
+    Script,
+    Project,
+}
+
+impl From<ModeArg> for ParserMode {
+    fn from(arg: ModeArg) -> Self {
+        match arg {
+            ModeArg::Script => ParserMode::Script,
+            ModeArg::Project => ParserMode::Project,
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -185,41 +212,14 @@ fn print_diagnostics(diagnostics: &DiagnosticBag, source_code: &str, filename: &
     diagnostics.print_fancy(source_code, filename).unwrap();
 }
 
-fn compile_source_to_artifacts<'a>(
+fn compile_source_to_artifacts(
     input: &str,
     filename: &str,
     optimization_level: OptimizationLevel,
     verbose: bool,
-    cache_ctx: Option<CacheContext<'a>>,
+    cache_key: Option<CacheContext>,
+    mode: ParserMode,
 ) -> Result<CompilationArtifacts, Box<dyn std::error::Error>> {
-    let cache = CompilationCache::new();
-    let mut cache_key = None;
-    if cache.is_enabled() && cache.eligible_filename(filename) {
-        let content_fingerprint = fingerprint_content(input);
-        let module_id = cache_ctx.as_ref().map(|ctx| ctx.module_id);
-        let interface_hash = cache_ctx
-            .as_ref()
-            .map(|ctx| ctx.interface_hash)
-            .unwrap_or(content_fingerprint);
-        let key = cache.make_key(
-            filename,
-            content_fingerprint,
-            interface_hash,
-            module_id,
-            optimization_level,
-        );
-        if let Some((mir_program, lir_program)) = cache.load(&key) {
-            if verbose {
-                println!("使用增量缓存: {}", filename);
-            }
-            return Ok(CompilationArtifacts {
-                mir_program,
-                lir_program,
-            });
-        }
-        cache_key = Some(key);
-    }
-
     if verbose {
         if filename != "input" {
             println!("Processing file: {}", filename);
@@ -246,7 +246,7 @@ fn compile_source_to_artifacts<'a>(
     }
 
     // 语法分析和类型检查
-    let (result, parse_diagnostics) = parse_with_type_check(&tokens);
+    let (result, parse_diagnostics) = parse_with_type_check(&tokens, mode);
 
     if !parse_diagnostics.is_empty() {
         print_diagnostics(&parse_diagnostics, input, filename);
@@ -307,11 +307,12 @@ fn compile_source_to_artifacts<'a>(
     if verbose {
         println!("{}", mir_program.to_ir_string());
     }
-
     let lir_program = lower_mir_to_final_lir(&mir_program, optimization_level, verbose)?;
 
-    if let Some(key) = cache_key {
-        cache.store(&key, &mir_program, &lir_program);
+    if let Some(ctx) = cache_key {
+        let cache = CompilationCache::new();
+        let key_str = format!("{}-{:x}", ctx.module_id, ctx.interface_hash);
+        cache.store(&key_str, &mir_program, &lir_program);
     }
 
     Ok(CompilationArtifacts {
@@ -325,9 +326,10 @@ fn compile_to_lir(
     filename: &str,
     optimization_level: OptimizationLevel,
     verbose: bool,
+    mode: ParserMode,
 ) -> Result<LirProgram, Box<dyn std::error::Error>> {
     let artifacts =
-        compile_source_to_artifacts(input, filename, optimization_level, verbose, None)?;
+        compile_source_to_artifacts(input, filename, optimization_level, verbose, None, mode)?;
     Ok(artifacts.lir_program)
 }
 
@@ -335,6 +337,7 @@ fn compile_entry_file(
     filename: &str,
     optimization_level: OptimizationLevel,
     verbose: bool,
+    mode: ParserMode,
 ) -> Result<CompilationArtifacts, Box<dyn std::error::Error>> {
     let entry_path = Path::new(filename);
     let module_graph = ModuleGraph::load_for_entry(entry_path).map_err(|err| format!("{}", err))?;
@@ -376,6 +379,7 @@ fn compile_entry_file(
                 optimization_level,
                 verbose,
                 Some(cache_ctx),
+                mode,
             )?;
             interface_acc.observe(&artifacts.mir_program);
             if module_id == plan.entry && *source_path == canonical_entry {
@@ -691,8 +695,9 @@ fn process_file(
     emit_lir: bool,
     output_file: Option<&str>,
     heap_stats: bool,
+    mode: ParserMode,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let artifacts = compile_entry_file(filename, optimization_level, verbose)?;
+    let artifacts = compile_entry_file(filename, optimization_level, verbose, mode)?;
     let lir_program = artifacts.lir_program;
     let before_stats = heap_stats.then_some(capture_heap_stats());
 
@@ -723,8 +728,9 @@ fn process_expression(
     emit_lir: bool,
     output_file: Option<&str>,
     heap_stats: bool,
+    mode: ParserMode,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let lir_program = compile_to_lir(input, "input", optimization_level, verbose)?;
+    let lir_program = compile_to_lir(input, "input", optimization_level, verbose, mode)?;
     let before_stats = heap_stats.then_some(capture_heap_stats());
 
     if let Some(output_path) = output_file {
@@ -753,6 +759,7 @@ fn export_ir(
     output: Option<&str>,
     optimization_level: OptimizationLevel,
     verbose: bool,
+    mode: ParserMode,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (source_content, filename_owned, from_file) = if Path::new(input).exists() {
         (fs::read_to_string(input)?, Some(input.to_string()), true)
@@ -763,9 +770,9 @@ fn export_ir(
     let filename = filename_owned.as_deref().unwrap_or("input");
 
     let artifacts = if from_file {
-        compile_entry_file(filename, optimization_level, verbose)?
+        compile_entry_file(filename, optimization_level, verbose, mode)?
     } else {
-        compile_source_to_artifacts(&source_content, filename, optimization_level, verbose, None)?
+        compile_source_to_artifacts(&source_content, filename, optimization_level, verbose, None, mode)?
     };
 
     let content = match stage {
@@ -839,7 +846,7 @@ fn run_repl(optimization_level: OptimizationLevel, verbose: bool) {
                 if input.starts_with("load ") {
                     let filename = input.strip_prefix("load ").unwrap().trim();
                     if let Err(err) =
-                        process_file(filename, optimization_level, verbose, false, None, false)
+                        process_file(filename, optimization_level, verbose, false, None, false, ParserMode::Script)
                     {
                         error!("Error reading file '{}': {}", filename, err);
                     }
@@ -847,7 +854,7 @@ fn run_repl(optimization_level: OptimizationLevel, verbose: bool) {
                 }
 
                 if let Err(err) =
-                    process_expression(input, optimization_level, verbose, false, None, false)
+                    process_expression(input, optimization_level, verbose, false, None, false, ParserMode::Script)
                 {
                     error!("Error: {}", err);
                 }
@@ -942,7 +949,7 @@ fn build_project(
                 // 这里暂时只做源码层面的编译，不解决跨模块符号解析（假设是独立的或者通过运行时链接）
                 
                 let (tokens, _) = tokenize(&combined_source);
-                let (ast_result, diagnostics) = parse_with_type_check(&tokens);
+                let (ast_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project);
                 
                 if diagnostics.has_errors() {
                     return Err(format!("Parse failed for {}: {:?}", module_id, diagnostics));
@@ -1020,14 +1027,18 @@ fn main() {
 
     let optimization_level = cli.optimization.into();
 
+    let default_mode = cli.mode.map(|m| m.into()).unwrap_or(ParserMode::Script);
+
     match cli.command {
         Some(Commands::Run {
             input,
             emit_lir,
             output,
             heap_stats,
+            mode,
         }) => match input {
             Some(ref input_str) => {
+                let mode = mode.map(|m| m.into()).unwrap_or(default_mode);
                 if Path::new(input_str).exists() {
                     if let Err(err) = process_file(
                         input_str,
@@ -1036,6 +1047,7 @@ fn main() {
                         emit_lir,
                         output.as_deref(),
                         heap_stats,
+                        mode,
                     ) {
                         error!("Error: {}", err);
                         std::process::exit(1);
@@ -1047,6 +1059,7 @@ fn main() {
                     emit_lir,
                     output.as_deref(),
                     heap_stats,
+                    mode,
                 ) {
                     error!("Error: {}", err);
                     std::process::exit(1);
@@ -1056,8 +1069,9 @@ fn main() {
                 run_repl(optimization_level, cli.verbose);
             }
         },
-        Some(Commands::Compile { input, output }) => {
-            let lir_program = match compile_entry_file(&input, optimization_level, cli.verbose) {
+        Some(Commands::Compile { input, output, mode }) => {
+            let mode = mode.map(|m| m.into()).unwrap_or(default_mode);
+            let lir_program = match compile_entry_file(&input, optimization_level, cli.verbose, mode) {
                 Ok(artifacts) => artifacts.lir_program,
                 Err(err) => {
                     error!("Compilation failed: {}", err);
@@ -1097,6 +1111,7 @@ fn main() {
                 output.as_deref(),
                 optimization_level,
                 cli.verbose,
+                default_mode,
             ) {
                 error!("Error: {}", err);
                 std::process::exit(1);
@@ -1132,6 +1147,7 @@ fn main() {
                         cli.emit_lir,
                         cli.output.as_deref(),
                         cli.heap_stats,
+                        default_mode,
                     ) {
                         error!("Error: {}", err);
                         std::process::exit(1);
@@ -1143,6 +1159,7 @@ fn main() {
                     cli.emit_lir,
                     cli.output.as_deref(),
                     cli.heap_stats,
+                    default_mode,
                 ) {
                     error!("Error: {}", err);
                     std::process::exit(1);

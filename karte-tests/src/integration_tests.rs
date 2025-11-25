@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod integration_tests {
     use karte_lexer::tokenize;
-    use karte_parser::parse_with_type_check;
+    use karte_parser::{parse_with_type_check, ParserMode};
 
     use crate::execute_from_string;
 
@@ -14,7 +14,7 @@ mod integration_tests {
         assert!(lex_diagnostics.is_empty());
 
         // 语法分析和类型检查
-        let (result, parse_diagnostics) = parse_with_type_check(&tokens);
+        let (result, parse_diagnostics) = parse_with_type_check(&tokens, ParserMode::Script);
         assert!(parse_diagnostics.is_empty());
         assert!(result.is_some());
 
@@ -35,7 +35,7 @@ mod integration_tests {
         assert!(lex_diagnostics.is_empty());
 
         // 语法分析和类型检查
-        let (result, parse_diagnostics) = parse_with_type_check(&tokens);
+        let (result, parse_diagnostics) = parse_with_type_check(&tokens, ParserMode::Script);
         assert!(parse_diagnostics.is_empty());
         assert!(result.is_some());
 
@@ -56,7 +56,7 @@ mod integration_tests {
         assert!(lex_diagnostics.is_empty());
 
         // 语法分析和类型检查
-        let (result, parse_diagnostics) = parse_with_type_check(&tokens);
+        let (result, parse_diagnostics) = parse_with_type_check(&tokens, ParserMode::Script);
         assert!(parse_diagnostics.is_empty());
         assert!(result.is_some());
 
@@ -77,7 +77,7 @@ mod integration_tests {
         assert!(lex_diagnostics.is_empty());
 
         // 语法分析和类型检查
-        let (result, parse_diagnostics) = parse_with_type_check(&tokens);
+        let (result, parse_diagnostics) = parse_with_type_check(&tokens, ParserMode::Script);
         assert!(parse_diagnostics.is_empty());
         assert!(result.is_some());
 
@@ -95,7 +95,7 @@ mod integration_tests {
         let (tokens, lex_diagnostics) = tokenize(input);
         assert!(lex_diagnostics.is_empty());
 
-        let (result, parse_diagnostics) = parse_with_type_check(&tokens);
+        let (result, parse_diagnostics) = parse_with_type_check(&tokens, ParserMode::Script);
         assert!(parse_diagnostics.has_errors());
         assert!(result.is_some());
 

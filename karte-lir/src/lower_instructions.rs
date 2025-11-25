@@ -704,21 +704,16 @@ impl InstructionLowerer {
                 });
 
                 // 从栈上弹出返回地址（丢弃）
-                // 使用返回值寄存器作为临时寄存器是安全的吗？
-                // 不！r0包含返回值。我们不能用r0。
-                // 我们需要一个临时寄存器。由于我们即将恢复caller-saved寄存器，
-                // 我们可以使用其中一个作为临时寄存器，只要我们先弹出它。
-                // 或者我们可以直接 add sp, 8 丢弃它，不需要 load。
-                // 之前的代码 load 是为了什么？可能是为了调试或者验证？
-                // 如果只是丢弃，直接 add sp, 8 即可。
-                new_instructions.push(Instruction::Add {
-                    dst: self.stack_pointer_reg,
-                    src1: Operand::Register {
-                        id: self.stack_pointer_reg,
-                    },
-                    src2: Operand::Immediate { value: 8 },
-                    span: *span,
-                });
+                // 🔧 修复：compile_return 已经负责弹出返回地址，这里不需要再次弹出
+                // 否则会导致栈不平衡，进而导致 caller-saved 寄存器恢复错误
+                // new_instructions.push(Instruction::Add {
+                //     dst: self.stack_pointer_reg,
+                //     src1: Operand::Register {
+                //         id: self.stack_pointer_reg,
+                //     },
+                //     src2: Operand::Immediate { value: 8 },
+                //     span: *span,
+                // });
 
                 // 恢复caller-saved寄存器 (逆序)
                 for reg in caller_saved.iter().rev() {

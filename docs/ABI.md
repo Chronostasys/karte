@@ -68,3 +68,16 @@ When an effect is performed:
 3. Control is transferred to the handler.
 
 The `REG_EFFECT_PAYLOAD` register (`x1`) is strictly reserved from general allocation to facilitate this mechanism without complex shuffling.
+
+### Return Convention Details
+
+* **Internal Calls (JIT to JIT)**:
+    * The return value is passed directly in `x0` (`REG_RETURN`).
+    * The return address is passed in `x5` (`REG_RETURN_ADDRESS`).
+    * The caller is responsible for retrieving the value from `x0` immediately after the call returns.
+
+* **Host Calls (JIT to Host / Host to JIT)**:
+    * When the JIT code returns to the Host (Rust Runtime), it checks if `REG_RETURN_ADDRESS` (`x5`) is 0.
+    * If `x5 == 0`, it treats the return as a "Return to Host".
+    * In this case, the return value in `x0` is written to the **Host Return Slot** (a pointer managed by the VM entry trampoline).
+    * This distinction ensures that internal recursive calls don't accidentally overwrite the host's return buffer.

@@ -6,6 +6,15 @@ use std::fmt;
 // 重新导出HIR中的类型，保持向后兼容性
 pub use karte_hir::{type_check, BinaryOperator, Expr, Statement, Type, UnaryOperator};
 
+/// 解析模式
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParserMode {
+    /// 脚本模式：允许顶层语句和表达式，隐式包装在 main 中
+    Script,
+    /// 项目模式：顶层只允许声明（fn, struct, enum, let），必须显式定义 main
+    Project,
+}
+
 /// 解析器错误
 #[derive(Debug, Clone)]
 pub enum ParseError {
@@ -88,6 +97,7 @@ pub struct Parser<'a> {
     tokens: &'a [TokenWithSpan],
     position: usize,
     diagnostics: DiagnosticBag,
+    mode: ParserMode,
 }
 
 impl<'a> Parser<'a> {
@@ -96,7 +106,14 @@ impl<'a> Parser<'a> {
             tokens,
             position: 0,
             diagnostics: DiagnosticBag::new(),
+            mode: ParserMode::Script, // 默认为脚本模式
         }
+    }
+
+    /// 设置解析模式
+    pub fn with_mode(mut self, mode: ParserMode) -> Self {
+        self.mode = mode;
+        self
     }
 
     /// 解析程序 - 可以是单个表达式或包含语句的块
@@ -190,6 +207,34 @@ impl<'a> Parser<'a> {
             // 没有分号，这是最终表达式
             final_expr = Some(Box::new(expr));
             break;
+        }
+
+        // 验证项目模式约束
+        if self.mode == ParserMode::Project {
+            if let Some(expr) = &final_expr {
+                return Err(ParseError::InvalidExpression {
+                    message: "Top-level expressions are not allowed in Project mode".to_string(),
+                    span: expr.span(),
+                });
+            }
+
+            for stmt in &statements {
+                match stmt {
+                    Statement::FunctionDef { .. }
+                    | Statement::StructDef { .. }
+                    | Statement::TypeDef { .. }
+                    | Statement::Let { .. } => {
+                        // 允许的声明
+                    }
+                    Statement::Expression { span, .. }
+                    | Statement::Assignment { span, .. } => {
+                        return Err(ParseError::InvalidExpression {
+                            message: "Top-level statements must be declarations in Project mode".to_string(),
+                            span: *span,
+                        });
+                    }
+                }
+            }
         }
 
         let end_span = if let Some(expr) = &final_expr {
@@ -2999,8 +3044,11 @@ pub fn parse(tokens: &[TokenWithSpan]) -> (Option<Expr>, DiagnosticBag) {
 }
 
 /// 带类型检查的解析函数
-pub fn parse_with_type_check(tokens: &[TokenWithSpan]) -> (Option<ParseResult>, DiagnosticBag) {
-    let mut parser = Parser::new(tokens);
+pub fn parse_with_type_check(
+    tokens: &[TokenWithSpan],
+    mode: ParserMode,
+) -> (Option<ParseResult>, DiagnosticBag) {
+    let mut parser = Parser::new(tokens).with_mode(mode);
     let expr = parser.parse();
     let mut diagnostics = parser.into_diagnostics();
 
@@ -3207,3 +3255,57 @@ mod assignment_tests {
         }
     }
 }
+
+    #[cfg(test)]
+    mod parser_mode_tests {
+        use super::*;
+        use karte_lexer::tokenize;
+
+        #[test]
+        fn test_script_mode_allows_top_level_statements() {
+            let input = "let x = 1; x + 1;";
+            let (tokens, _) = tokenize(input);
+            let mut parser = Parser::new(&tokens).with_mode(ParserMode::Script);
+            let result = parser.parse_program();
+            assert!(result.is_ok());
+        }
+
+        #[test]
+        fn test_project_mode_disallows_top_level_statements() {
+            let input = "1 + 1;";
+            let (tokens, _) = tokenize(input);
+            let mut parser = Parser::new(&tokens).with_mode(ParserMode::Project);
+            let result = parser.parse_program();
+            assert!(result.is_err());
+            match result.unwrap_err() {
+                ParseError::InvalidExpression { message, .. } => {
+                    assert!(message.contains("Top-level statements must be declarations"));
+                }
+                _ => panic!("Expected InvalidExpression error"),
+            }
+        }
+
+        #[test]
+        fn test_project_mode_disallows_top_level_expressions() {
+            let input = "1 + 2";
+            let (tokens, _) = tokenize(input);
+            let mut parser = Parser::new(&tokens).with_mode(ParserMode::Project);
+            let result = parser.parse_program();
+            assert!(result.is_err());
+            match result.unwrap_err() {
+                ParseError::InvalidExpression { message, .. } => {
+                    assert!(message.contains("Top-level expressions are not allowed"));
+                }
+                _ => panic!("Expected InvalidExpression error"),
+            }
+        }
+
+        #[test]
+        fn test_project_mode_allows_declarations() {
+            let input = "fn main() {} struct Point { x: i32 } let CONST = 1;";
+            let (tokens, _) = tokenize(input);
+            let mut parser = Parser::new(&tokens).with_mode(ParserMode::Project);
+            let result = parser.parse_program();
+            assert!(result.is_ok());
+        }
+    }

@@ -30,3 +30,6 @@
 - [ ] 2025-11-19：Retain/Release 与 MIR EscapeState 联动，导出引用计数诊断日志
 - [x] 2025-11-21：修复 JIT 编译器中 `compile_call` 覆盖参数寄存器导致的 Segfault
 - [x] 2025-11-21：实现 Language Modes (Phase 1)：支持 Script Mode (隐式入口) 和 Project Mode (显式 main)，解决入口点冲突问题
+- [x] 2025-11-22：修复 AArch64 JIT 返回值处理逻辑（区分 Host/JIT 返回）与 LIR Lowering 中的栈平衡问题（移除冗余 pop），解决 `ldr x0, [x0]` 崩溃
+- [x] 2025-11-22：修复 LIR Lowering 中 `Instruction::Call` 返回值寄存器分配错误（避免使用栈地址寄存器接收返回值）
+- [x] 2025-11-23: 完成 Language Modes 的 CLI 集成 (`--mode` flag) 并修复相关编译错误

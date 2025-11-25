@@ -37,6 +37,12 @@
 
 ### 阶段一：语法层支持 (Current Focus)
 
+> **Status (2025-11-23)**: 
+> * Parser 已支持顶层 `fn` 定义与隐式 `main` 包装。
+> * JIT 编译器已修复针对隐式 `main` 的返回值处理问题（解决 `EXC_BAD_ACCESS`）。
+> * `karte run` 现可正确执行包含顶层语句和函数定义的脚本。
+> * CLI 已集成 `--mode` 参数，支持显式指定 `script` 或 `project` 模式。
+
 目标：让 Parser 能够解析顶层的 `fn` 定义。
 
 1.  **AST 扩展**：在 HIR 中引入 `FunctionDef` 节点。

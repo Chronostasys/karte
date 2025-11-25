@@ -175,16 +175,27 @@ impl DeadCodeElimination {
                 used.push(*addr);
                 self.add_operand_registers(src, &mut used);
             }
-            Instruction::Call { args, .. } => {
+            Instruction::Call {
+                args,
+                arg_operands,
+                ..
+            } => {
                 used.extend_from_slice(args);
+                for operand in arg_operands {
+                    self.add_operand_registers(operand, &mut used);
+                }
             }
             Instruction::CallIndirect {
                 function_register,
                 args,
+                arg_operands,
                 ..
             } => {
                 used.push(*function_register);
                 used.extend_from_slice(args);
+                for operand in arg_operands {
+                    self.add_operand_registers(operand, &mut used);
+                }
             }
             Instruction::Return { value, .. } => {
                 if let Some(reg) = value {
@@ -248,6 +259,7 @@ impl DeadCodeElimination {
         match operand {
             Operand::Register { id } => registers.push(*id),
             Operand::Memory { base, .. } => registers.push(*base),
+            Operand::StructField { struct_addr, .. } => registers.push(*struct_addr),
             _ => {}
         }
     }
