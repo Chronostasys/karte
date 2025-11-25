@@ -1602,7 +1602,12 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
                 if let Value::Variable { .. } = &actual_function_to_call {
                     let function_register =
                         ctx.allocate_register_for_value(&actual_function_to_call);
-                    let result_reg = target.as_ref().map(|t| ctx.allocate_register_for_value(t));
+                    // 🔧 修复：使用临时寄存器接收返回值
+                    let result_temp_reg = if target.is_some() {
+                        Some(ctx.current_function_mut().new_register())
+                    } else {
+                        None
+                    };
 
                     // 🔧 简化：不再手动设置参数，让指令降级器处理
                     // 🔧 关键修复：在调用前移动参数到正确的寄存器
@@ -1634,9 +1639,19 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
                         function_register,
                         args: actual_arg_regs, // 参数将在指令降级阶段进一步处理
                         arg_operands: arg_operands.clone(), // 传递参数操作数
-                        result: result_reg,
+                        result: result_temp_reg,
                         span: *span,
                     });
+
+                    // 🔧 关键修复：Stack-First策略：如果有返回值，在调用后存储到栈
+                    if let (Some(target_value), Some(temp_reg)) = (target, result_temp_reg) {
+                        ctx.store_value_to_stack(
+                            target_value,
+                            Operand::Register {
+                                id: temp_reg,
+                            },
+                        );
+                    }
                 }
             } else {
                 // 尝试从值中提取函数名，支持更多类型的可调用值
@@ -1835,16 +1850,31 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
                     .cloned()
                     .ok_or_else(|| vec![format!("Unknown function: {}", function_name)])?;
 
-                let result_reg = target.as_ref().map(|t| ctx.allocate_register_for_value(t));
+                // 🔧 修复：使用临时寄存器接收返回值，避免覆盖栈地址寄存器
+                let result_temp_reg = if target.is_some() {
+                    Some(ctx.current_function_mut().new_register())
+                } else {
+                    None
+                };
 
                 // 🔧 简化：不再手动设置参数，让指令降级器处理
                 ctx.add_instruction(Instruction::Call {
                     target: target_label,
                     args: vec![],                       // 参数将在指令降级阶段处理
                     arg_operands: arg_operands.clone(), // 传递参数操作数
-                    result: result_reg,
+                    result: result_temp_reg,
                     span: *span,
                 });
+
+                // 🔧 关键修复：Stack-First策略：如果有返回值，在调用后存储到栈
+                if let (Some(target_value), Some(temp_reg)) = (target, result_temp_reg) {
+                    ctx.store_value_to_stack(
+                        target_value,
+                        Operand::Register {
+                            id: temp_reg,
+                        },
+                    );
+                }
             }
 
             Ok(())

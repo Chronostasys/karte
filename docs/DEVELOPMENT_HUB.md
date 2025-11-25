@@ -113,15 +113,9 @@
    3. ✅ 2025-11-19：缓存 key 由 `(module_id, fingerprint, deps_interface_hash, optimization)` 组成，依赖接口 hash 变化会触发级联失效。
    4. ⏳ 下一步：预留并发编译调度器（依赖树分层队列），当前实现仍按拓扑序串行执行并输出 `[module]` fingerprint + 接口摘要日志。
 
-## 7. 下一阶段工作流（可丢上下文自恢复）
+## 8. 最近关键修复 (Recent Critical Fixes)
 
-1. 读取本文件 → 确认最新的核心目标/缺口。
-2. 查看 `TODOS.md` → 找到对应日期/主题的具体任务。
-3. 若任务涉及 IR/运行时，先查阅 `docs/DYNAMIC_MEMORY_PLAN.md` 或其他专题文档。
-4. 改动前写明计划（遵守“小步提交，200 行以内”），完成后：
-   - 更新 `TODOS.md`、必要文档。
-   - `cargo fmt && cargo test ...`。
-   - 对新增功能添加示例 (`examples/` 或 `karte-tests` 中的 case)。
-
-> 约定：任何“准备工作”完成时，需要在此文档的相关表格内标记，确保团队成员日后即便失去上下文也能恢复全局视角。
+| 日期 | 模块 | 问题描述 | 修复方案 | 影响 |
+| --- | --- | --- | --- | --- |
+| 2025-11-22 | JIT / LIR | `cargo run` 脚本模式下出现 `EXC_BAD_ACCESS` (SIGSEGV)，原因是 `main` 返回值被错误地作为指针解引用。 | 1. **LIR Lowering**: 修复 `Instruction::Call` 降级逻辑，使用临时寄存器接收返回值，避免覆盖栈地址寄存器。<br>2. **Stack Balance**: 移除 LIR Lowering 中冗余的栈弹出指令（JIT epilogue 已处理）。<br>3. **JIT**: `compile_return` 仅在返回 Host 时写入 Return Slot。 | 彻底修复了 CLI 执行脚本时的崩溃问题，验证了 Script Mode 的稳定性。 |
 

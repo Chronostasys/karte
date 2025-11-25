@@ -12,6 +12,7 @@ pub mod reference_tests;
 pub mod struct_tests;
 pub mod sum_types_tests;
 pub mod type_checker_tests;
+pub mod cli_integration_tests;
 
 use karte_diagnostics::Span;
 use karte_hir::Expr;

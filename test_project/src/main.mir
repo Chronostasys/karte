@@ -1,0 +1,75 @@
+
+functions: 
+    {
+        __script_entry__:
+        MirFunction
+        name: __script_entry__
+        params: []
+        blocks:
+        {
+            bb0:
+            BasicBlock
+            id: bb0
+            statements:
+            [
+    
+                %0 = ()
+            ]
+            terminator: ret value: %0
+        },
+    
+        add:
+        MirFunction
+        name: add
+        params: [
+    
+            a,
+    
+            b
+        ]
+        blocks:
+        {
+            bb0:
+            BasicBlock
+            id: bb0
+            statements:
+            [
+    
+                %1 = var name: a,
+    
+                %2 = var name: b,
+    
+                %0 = %1 + %2
+            ]
+            terminator: ret value: %0
+        },
+    
+        main:
+        MirFunction
+        name: main
+        params: []
+        blocks:
+        {
+            bb0:
+            BasicBlock
+            id: bb0
+            statements:
+            [
+    
+                %1 = num value: 10,
+    
+                %2 = num value: 20,
+    
+                %3 = %1,
+    
+                %4 = %2,
+    
+                call function: fn name: add, args: [%3, %4]
+            ]
+            terminator: ret value: %0
+        }
+    }
+main_function: main
+main_return_value: %0
+temp_values: {}
+struct_types: {}

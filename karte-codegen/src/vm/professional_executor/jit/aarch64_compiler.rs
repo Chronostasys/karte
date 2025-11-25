@@ -5,6 +5,7 @@
 use super::code_buffer::{CodeBuilder, JumpType};
 use super::compiler_trait::*;
 use super::ffi::{RuntimeArg, RuntimeCall};
+use karte_common::calling_convention::{REG_RETURN, REG_RETURN_ADDRESS, REG_STACK_POINTER};
 use karte_lir::{Instruction, LirFunction, LirProgram, Operand, Register};
 use std::collections::HashMap;
 
@@ -17,6 +18,8 @@ pub struct AArch64Compiler {
     calling_convention: CallingConventionInfo,
     /// 调试模式
     debug_mode: bool,
+    /// 唯一label计数器（用于在编译时生成跳转目标）
+    unique_label_counter: usize,
 }
 
 /// AArch64寄存器枚举
@@ -66,6 +69,7 @@ impl AArch64Compiler {
             register_mapping: HashMap::new(),
             calling_convention: Self::create_calling_convention(),
             debug_mode: true, // 强制启用调试模式以便观察编译过程
+            unique_label_counter: 0,
         };
 
         // 初始化寄存器映射
@@ -553,16 +557,53 @@ impl AArch64Compiler {
             if src_reg != (AArch64Register::X0 as u8) {
                 self.emit_mov_reg_reg(code_builder, AArch64Register::X0 as u8, src_reg);
             }
+        } else {
+            // 无返回值的函数默认返回0
+            self.emit_mov_reg_imm64(code_builder, AArch64Register::X0 as u8, 0);
         }
 
-        self.emit_function_epilogue(code_builder)?;
+        // 只有主函数会与宿主环境交换返回槽指针
+        if is_main_function {
+            let slot_reg = AArch64Register::X16 as u8;
+            self.load_and_pop_return_slot_pointer(code_builder, slot_reg);
+        }
 
-        // 🔧 修复：Return指令只生成简单的RET，不生成尾声
-        // 因为尾声已经在函数编译过程中根据函数类型正确生成了
-        // LIR的Return指令对应的是虚拟机栈帧恢复，而不是C FFI尾声
+        // VM调用约定：返回时需要弹出虚拟返回地址并跳转
+        let vm_sp_reg = self.get_physical_register(&Register::Physical(REG_STACK_POINTER))?;
+        let return_addr_reg = self.get_physical_register(&Register::Physical(REG_RETURN_ADDRESS))?;
 
-        // 生成RET指令
-        self.emit_ret(code_builder);
+        // 加载返回地址到专用寄存器
+        self.emit_ldr_reg_mem(code_builder, return_addr_reg, vm_sp_reg, 0);
+        // 弹出返回地址槽位
+        self.emit_add_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 8);
+
+        if is_main_function {
+            // main 函数负责从VM世界回退到宿主环境
+            let host_return_label = self.next_label("jit_return_host");
+            self.emit_cmp_reg_imm(code_builder, return_addr_reg, 0);
+            code_builder.emit_jump(JumpType::ConditionalEqual, &host_return_label);
+
+            // 非零返回地址：继续在JIT世界中执行
+            // 🔧 修复：如果是JIT内部调用，不需要写回返回槽（因为调用者没传槽指针）
+            // 直接返回X0中的值即可
+            let ret_reg = Register::Physical(REG_RETURN_ADDRESS);
+            self.compile_jump_register(&ret_reg, code_builder)?;
+
+            // 零返回地址：回到宿主
+            code_builder.define_label(&host_return_label)?;
+            
+            // 🔧 修复：不需要写回返回槽，直接返回X0中的值
+            // if let Some(slot_reg) = return_slot_reg {
+            //     self.emit_store_return_value_to_slot(code_builder, slot_reg);
+            // }
+
+            self.emit_function_epilogue(code_builder)?;
+            self.emit_ret(code_builder);
+        } else {
+            // 普通函数：直接跳向被调用者设置的继续执行位置
+            let ret_reg = Register::Physical(REG_RETURN_ADDRESS);
+            self.compile_jump_register(&ret_reg, code_builder)?;
+        }
 
         Ok(())
     }
@@ -1108,6 +1149,9 @@ impl AArch64Compiler {
         self.emit_mov_reg_reg(code_builder, vm_sp, x0);
         self.emit_mov_reg_reg(code_builder, vm_fp, x1);
 
+        // 保存返回值槽指针，供Return阶段写回
+        self.save_return_slot_pointer(code_builder);
+
         // // 🔧 新增：保存参数寄存器到栈，防止被后续指令覆盖
         // // STP X0, X1, [SP, #-16]! (保存参数寄存器)
         // let stp_x0_x1 = 0xA9BF03E0u32;
@@ -1121,34 +1165,9 @@ impl AArch64Compiler {
     /// 生成内部函数序言（简化版本，用于虚拟机内部函数调用）
     fn emit_internal_function_prologue(
         &self,
-        code_builder: &mut CodeBuilder,
+        _code_builder: &mut CodeBuilder,
     ) -> Result<(), String> {
-        // 🔧 修复：内部函数也需要保存和设置 VM_SP/VM_FP
-        // 因为 compile_call 通过 X0/X1 传递它们
-        
-        // STP X6, X7, [SP, #-16]!
-        let stp_x6_x7 = 0xA9BF1FE6u32;
-        code_builder.emit_bytes(&stp_x6_x7.to_le_bytes());
-
-        // 标准函数序言：保存帧指针和链接寄存器
-        // STP X29, X30, [SP, #-16]!
-        let instruction = 0xA9BF7BFDu32;
-        code_builder.emit_bytes(&instruction.to_le_bytes());
-
-        // MOV X29, SP (设置帧指针)
-        self.emit_mov_reg_reg(
-            code_builder,
-            AArch64Register::X29 as u8,
-            AArch64Register::SP as u8,
-        );
-
-        // 🔧 内部函数不需要参数处理，因为参数已经通过寄存器传递
-        // 但需要确保r6和r7寄存器可以正常工作作为虚拟栈指针
-        // X0 -> X6 (VM_SP)
-        // self.emit_mov_reg_reg(code_builder, AArch64Register::X6 as u8, AArch64Register::X0 as u8);
-        // X1 -> X7 (VM_FP)
-        // self.emit_mov_reg_reg(code_builder, AArch64Register::X7 as u8, AArch64Register::X1 as u8);
-
+        // 内部函数完全依赖VM栈和寄存器，不需要与宿主交换返回槽
         Ok(())
     }
 
@@ -1171,6 +1190,61 @@ impl AArch64Compiler {
         code_builder.emit_bytes(&ldp_x6_x7.to_le_bytes());
 
         Ok(())
+    }
+
+    /// 保存返回槽指针（caller通过X0传入）
+    fn save_return_slot_pointer(&self, code_builder: &mut CodeBuilder) {
+        self.emit_add_reg_reg_imm(
+            code_builder,
+            AArch64Register::SP as u8,
+            AArch64Register::SP as u8,
+            -16,
+        );
+        self.emit_str_reg_mem(
+            code_builder,
+            AArch64Register::X0 as u8,
+            AArch64Register::SP as u8,
+            0,
+        );
+    }
+
+    /// 恢复返回槽指针并弹出栈空间
+    fn load_and_pop_return_slot_pointer(&self, code_builder: &mut CodeBuilder, dst: u8) {
+        self.emit_ldr_reg_mem(
+            code_builder,
+            dst,
+            AArch64Register::SP as u8,
+            0,
+        );
+        self.emit_add_reg_reg_imm(
+            code_builder,
+            AArch64Register::SP as u8,
+            AArch64Register::SP as u8,
+            16,
+        );
+    }
+
+    /// 将当前X0返回值写入返回槽地址
+    fn emit_store_return_value_to_slot(
+        &self,
+        code_builder: &mut CodeBuilder,
+        slot_reg: u8,
+    ) {
+        self.emit_str_reg_mem(
+            code_builder,
+            AArch64Register::X0 as u8,
+            slot_reg,
+            0,
+        );
+        // 🔧 修复：不要修改X0，保持返回值在X0中
+        // self.emit_mov_reg_reg(code_builder, AArch64Register::X0 as u8, slot_reg);
+    }
+
+    /// 生成唯一label名称
+    fn next_label(&mut self, prefix: &str) -> String {
+        let label = format!("{}_{}", prefix, self.unique_label_counter);
+        self.unique_label_counter += 1;
+        label
     }
 }
 
@@ -1423,7 +1497,7 @@ mod tests {
 
         // 语法分析和类型检查
         log::debug!("\n2. 语法分析和类型检查");
-        let (result, parse_diagnostics) = parse_with_type_check(&tokens);
+        let (result, parse_diagnostics) = parse_with_type_check(&tokens, karte_parser::ParserMode::Script);
         if !parse_diagnostics.is_empty() {
             log::debug!("语法分析诊断信息:");
             parse_diagnostics.print_fancy(input, "test").unwrap();

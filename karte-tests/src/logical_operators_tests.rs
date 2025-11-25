@@ -2,7 +2,7 @@
 mod logical_operators_tests {
     use karte_hir::Type;
     use karte_lexer::tokenize;
-    use karte_parser::{parse, parse_with_type_check};
+    use karte_parser::{parse, parse_with_type_check, ParserMode};
 
     use crate::{execute_from_string, execute_with_pipeline_debug};
 
@@ -184,7 +184,7 @@ mod logical_operators_tests {
     fn test_logical_type_checking() {
         let input = "true && false";
         let (tokens, _) = tokenize(input);
-        let (result, diagnostics) = parse_with_type_check(&tokens);
+        let (result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script);
 
         assert!(diagnostics.is_empty());
         assert!(result.is_some());
@@ -197,7 +197,7 @@ mod logical_operators_tests {
     fn test_logical_or_type_checking() {
         let input = "true || false";
         let (tokens, _) = tokenize(input);
-        let (result, diagnostics) = parse_with_type_check(&tokens);
+        let (result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script);
 
         assert!(diagnostics.is_empty());
         assert!(result.is_some());
@@ -210,7 +210,7 @@ mod logical_operators_tests {
     fn test_logical_not_type_checking() {
         let input = "!true";
         let (tokens, _) = tokenize(input);
-        let (result, diagnostics) = parse_with_type_check(&tokens);
+        let (result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script);
 
         assert!(diagnostics.is_empty());
         assert!(result.is_some());
