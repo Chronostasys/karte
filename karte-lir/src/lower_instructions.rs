@@ -620,7 +620,10 @@ impl InstructionLowerer {
                 // 获取 caller-saved 寄存器并排序以保证确定性
                 // 排除返回值寄存器(r0)，因为它包含返回值，不应被恢复操作覆盖
                 let return_reg = self.calling_convention.return_register;
-                let mut caller_saved: Vec<_> = self.calling_convention.caller_saved.iter()
+                let mut caller_saved: Vec<_> = self
+                    .calling_convention
+                    .caller_saved
+                    .iter()
                     .filter(|&&r| r != return_reg)
                     .cloned()
                     .collect();
@@ -636,7 +639,9 @@ impl InstructionLowerer {
                 if need_padding {
                     new_instructions.push(Instruction::Sub {
                         dst: self.stack_pointer_reg,
-                        src1: Operand::Register { id: self.stack_pointer_reg },
+                        src1: Operand::Register {
+                            id: self.stack_pointer_reg,
+                        },
                         src2: Operand::Immediate { value: 8 },
                         span: *span,
                     });
@@ -737,7 +742,9 @@ impl InstructionLowerer {
                 if need_padding {
                     new_instructions.push(Instruction::Add {
                         dst: self.stack_pointer_reg,
-                        src1: Operand::Register { id: self.stack_pointer_reg },
+                        src1: Operand::Register {
+                            id: self.stack_pointer_reg,
+                        },
                         src2: Operand::Immediate { value: 8 },
                         span: *span,
                     });
@@ -775,7 +782,10 @@ impl InstructionLowerer {
                 // 获取 caller-saved 寄存器并排序
                 // 排除返回值寄存器(r0)
                 let return_reg = self.calling_convention.return_register;
-                let mut caller_saved: Vec<_> = self.calling_convention.caller_saved.iter()
+                let mut caller_saved: Vec<_> = self
+                    .calling_convention
+                    .caller_saved
+                    .iter()
                     .filter(|&&r| r != return_reg)
                     .cloned()
                     .collect();
@@ -789,7 +799,9 @@ impl InstructionLowerer {
                 if need_padding {
                     new_instructions.push(Instruction::Sub {
                         dst: self.stack_pointer_reg,
-                        src1: Operand::Register { id: self.stack_pointer_reg },
+                        src1: Operand::Register {
+                            id: self.stack_pointer_reg,
+                        },
                         src2: Operand::Immediate { value: 8 },
                         span: *span,
                     });
@@ -821,7 +833,9 @@ impl InstructionLowerer {
                 let temp_func_reg = self.effect_resume_temp_register();
                 new_instructions.push(Instruction::Move {
                     dst: temp_func_reg,
-                    src: Operand::Register { id: *function_register },
+                    src: Operand::Register {
+                        id: *function_register,
+                    },
                     span: *span,
                 });
 
@@ -896,7 +910,9 @@ impl InstructionLowerer {
                 if need_padding {
                     new_instructions.push(Instruction::Add {
                         dst: self.stack_pointer_reg,
-                        src1: Operand::Register { id: self.stack_pointer_reg },
+                        src1: Operand::Register {
+                            id: self.stack_pointer_reg,
+                        },
                         src2: Operand::Immediate { value: 8 },
                         span: *span,
                     });

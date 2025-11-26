@@ -182,6 +182,27 @@ functions: {
         }
 ```
 
+### 跨模块命名示例
+
+项目模式（`--mode project`）会先根据 `karte.mod.toml` 编译依赖模块，再合并为统一的 MIR/LIR。合并后，`functions` 字典中的 key 即为 canonical `module::symbol` 名称，`main_function` 同样持久化该命名方式：
+
+```text
+functions: {
+        main::main: MirFunction
+                name: main::main
+                params: []
+                blocks: { ... }
+        utils::add: MirFunction
+                name: utils::add
+                params: [Param]
+                blocks: { ... }
+        }
+main_function: main::main
+```
+
+- `MirProgram::function_symbols` / `external_function_symbols` 仍会在内存中记录原始别名（例如 `main` → `main::main`，`utils.add` → `utils::add`），但为保持 IR 文本可读性，这两个映射在编码时被 `#[ir_codec(skip)]` 忽略。
+- 降到 LIR 后会继承相同的命名策略，JIT 执行器据此定位入口函数与跨模块调用，调试 `karte-tests::cli_integration_tests::test_compile_and_run_project_mode` 可看到完整链路。
+
 ## 集合与缩进规则
 
 运行时库在 `karte-ir-codec/src/display.rs` 与 `collections.rs` 中实现了统一的缩进策略。

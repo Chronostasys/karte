@@ -2,30 +2,37 @@ use clap::{Parser, Subcommand, ValueEnum};
 // use karte_codegen::lir_interpreter::execute;
 use karte_codegen::vm::professional_executor::ProfessionalExecutor;
 use karte_diagnostics::DiagnosticBag;
+use karte_hir::type_checker::{
+    ExternalFunctionSignature, ExternalModuleInterface, ExternalStructField,
+    ExternalStructSignature,
+};
 use karte_ir_codec::{IrDisplay, IrParse};
 use karte_lexer::tokenize;
 use karte_lir::lower::lower_mir_to_lir;
 use karte_lir::optimization_pipeline::{OptimizationLevel, OptimizationPipeline};
 use karte_lir::LirProgram;
 use karte_mir::{
-    lower::{lower_expr_to_mir, SCRIPT_ENTRY_POINT},
+    lower::{lower_expr_to_mir_with_options, LoweringOptions, SCRIPT_ENTRY_POINT},
     MirProgram, Statement, Value,
 };
-use karte_parser::{parse_with_type_check, ParserMode};
+use karte_parser::{parse_with_type_check, ImportDecl, ParsedProgram, ParserMode};
 use karte_rt::{ffi, HeapStats};
-use log::error;
-use std::collections::hash_map::DefaultHasher;
-use std::collections::{BTreeSet, HashMap};
+use log::{error, warn};
+use rayon::prelude::*;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 mod cache;
 use cache::CompilationCache;
-mod modules;
-use modules::{ModuleGraph, ModuleId, ModuleMetadata};
+use karte_module_system::{
+    compute_module_cache_version, validate_module_imports, write_module_interface_artifact,
+    ModuleGraph, ModuleId, ModuleInterfaceAccumulator, ModuleInterfaceArtifact,
+    ModuleInterfaceSummary, ModuleMetadata, ModulePlan,
+};
 
 #[derive(Parser)]
 #[command(name = "karte")]
@@ -187,9 +194,24 @@ impl IrStage {
     }
 }
 
+#[derive(Clone)]
 struct CompilationArtifacts {
+    parsed_program: ParsedProgram,
     mir_program: MirProgram,
     lir_program: LirProgram,
+}
+
+impl CompilationArtifacts {
+    fn module_name(&self) -> Option<&str> {
+        self.parsed_program
+            .module
+            .as_ref()
+            .map(|decl| decl.name.as_str())
+    }
+
+    fn imports(&self) -> &[ImportDecl] {
+        &self.parsed_program.imports
+    }
 }
 
 struct CacheContext<'a> {
@@ -219,6 +241,7 @@ fn compile_source_to_artifacts(
     verbose: bool,
     cache_key: Option<CacheContext>,
     mode: ParserMode,
+    dependency_interfaces: Option<&HashMap<String, ExternalModuleInterface>>,
 ) -> Result<CompilationArtifacts, Box<dyn std::error::Error>> {
     if verbose {
         if filename != "input" {
@@ -246,7 +269,7 @@ fn compile_source_to_artifacts(
     }
 
     // 语法分析和类型检查
-    let (result, parse_diagnostics) = parse_with_type_check(&tokens, mode);
+    let (result, parse_diagnostics) = parse_with_type_check(&tokens, mode, dependency_interfaces);
 
     if !parse_diagnostics.is_empty() {
         print_diagnostics(&parse_diagnostics, input, filename);
@@ -256,43 +279,55 @@ fn compile_source_to_artifacts(
     }
 
     let result = result.ok_or("Failed to parse expression or type check failed")?;
+    let parsed_program = result.program;
+    let result_type = result.result_type;
+    let module_context = result.module_context;
+    let lowering_options = LoweringOptions {
+        known_functions: module_context
+            .imports
+            .iter()
+            .filter(|binding| binding.symbol != "*")
+            .map(|binding| binding.alias.clone())
+            .collect::<HashSet<_>>(),
+        module_context: Some(module_context.clone()),
+    };
 
     if verbose && filename == "input" {
-        println!("AST: {}", result.expr);
+        println!("AST: {}", &parsed_program.body);
     }
     if verbose {
-        println!("Type: {}", result.result_type);
+        println!("Type: {}", result_type);
     }
 
     // Lowering to MIR
     if verbose {
         println!("\n--- Lowering to MIR ---");
     }
-    let mut mir_program = match lower_expr_to_mir(&result.expr) {
-        Ok(prog) => prog,
-        Err(errors) => {
-            for err in errors {
-                error!("MIR Lowering Error: {}", err);
+    let mut mir_program =
+        match lower_expr_to_mir_with_options(&parsed_program.body, lowering_options) {
+            Ok(prog) => prog,
+            Err(errors) => {
+                for err in errors {
+                    error!("MIR Lowering Error: {}", err);
+                }
+                return Err("MIR lowering failed".into());
             }
-            return Err("MIR lowering failed".into());
-        }
-    };
+        };
 
     // 检查是否为 Project Mode (脚本入口为空，且存在 main 函数)
     if let Some(script_entry) = mir_program.functions.get(SCRIPT_ENTRY_POINT) {
-        let is_trivial = if let Some(entry_block) =
-            script_entry.basic_blocks.get(&script_entry.entry_block)
-        {
-            entry_block.statements.iter().all(|stmt| match stmt {
-                Statement::Assign {
-                    source: Value::Unit,
-                    ..
-                } => true,
-                _ => false,
-            })
-        } else {
-            true
-        };
+        let is_trivial =
+            if let Some(entry_block) = script_entry.basic_blocks.get(&script_entry.entry_block) {
+                entry_block.statements.iter().all(|stmt| match stmt {
+                    Statement::Assign {
+                        source: Value::Unit,
+                        ..
+                    } => true,
+                    _ => false,
+                })
+            } else {
+                true
+            };
 
         if is_trivial {
             if mir_program.functions.contains_key("main") {
@@ -316,6 +351,7 @@ fn compile_source_to_artifacts(
     }
 
     Ok(CompilationArtifacts {
+        parsed_program,
         mir_program,
         lir_program,
     })
@@ -328,8 +364,15 @@ fn compile_to_lir(
     verbose: bool,
     mode: ParserMode,
 ) -> Result<LirProgram, Box<dyn std::error::Error>> {
-    let artifacts =
-        compile_source_to_artifacts(input, filename, optimization_level, verbose, None, mode)?;
+    let artifacts = compile_source_to_artifacts(
+        input,
+        filename,
+        optimization_level,
+        verbose,
+        None,
+        mode,
+        None,
+    )?;
     Ok(artifacts.lir_program)
 }
 
@@ -346,6 +389,10 @@ fn compile_entry_file(
         .map_err(|err| format!("{}", err))?;
     let canonical_entry = fs::canonicalize(entry_path)?;
     let mut interface_hashes: HashMap<ModuleId, u64> = HashMap::new();
+    let mut interface_artifacts: HashMap<ModuleId, ModuleInterfaceArtifact> = HashMap::new();
+    let mut compiled_artifacts_by_module: HashMap<ModuleId, Vec<CompilationArtifacts>> =
+        HashMap::new();
+    let layers = module_graph.schedule_layers(&plan);
 
     if verbose {
         if let Some(manifest) = module_graph.manifest_path() {
@@ -355,44 +402,64 @@ fn compile_entry_file(
             println!("[module] {}", description);
         }
         println!("[module] topo count = {}", plan.sequence.len());
+        println!("[module] layer count = {}", layers.len());
     }
 
     let mut entry_result = None;
-    for module_id in plan.sequence {
-        let meta = module_graph
-            .metadata(&module_id)
-            .ok_or_else(|| format!("缺少模块元数据: {}", module_id))?;
-
-        let cache_version = compute_module_cache_version(&module_id, meta, &interface_hashes);
-        let mut interface_acc = ModuleInterfaceAccumulator::default();
-
-        for source_path in &meta.sources {
-            let source = fs::read_to_string(source_path)?;
-            let path_str = source_path.to_string_lossy().to_string();
-            let cache_ctx = CacheContext {
-                module_id: module_id.as_str(),
-                interface_hash: cache_version,
-            };
-            let artifacts = compile_source_to_artifacts(
-                &source,
-                &path_str,
-                optimization_level,
-                verbose,
-                Some(cache_ctx),
-                mode,
-            )?;
-            interface_acc.observe(&artifacts.mir_program);
-            if module_id == plan.entry && *source_path == canonical_entry {
-                entry_result = Some(artifacts);
-            }
+    for (layer_idx, layer) in layers.iter().enumerate() {
+        if verbose {
+            let summary = layer
+                .iter()
+                .map(|id| id.as_str().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("[module] layer {} => [{}]", layer_idx + 1, summary);
         }
 
-        let public_interface_hash =
-            interface_acc.finish(&module_id, &meta.dependencies, &interface_hashes);
-        interface_hashes.insert(module_id.clone(), public_interface_hash);
+        let dependency_snapshot = interface_hashes.clone();
+        let artifact_snapshot = interface_artifacts.clone();
+        let results: Vec<Result<LayerCompilationResult, String>> = layer
+            .par_iter()
+            .map(|module_id| {
+                compile_module_in_layer(
+                    &module_graph,
+                    module_id,
+                    &dependency_snapshot,
+                    &artifact_snapshot,
+                    optimization_level,
+                    verbose,
+                    mode,
+                    &plan.entry,
+                    &canonical_entry,
+                )
+            })
+            .collect();
+
+        for result in results {
+            match result {
+                Ok(layer_result) => {
+                    let module_id = layer_result.module_id.clone();
+                    if module_id == plan.entry {
+                        if let Some(artifacts) = layer_result.entry_artifacts {
+                            entry_result = Some(artifacts);
+                        }
+                    }
+                    compiled_artifacts_by_module
+                        .insert(module_id.clone(), layer_result.compiled_artifacts);
+                    interface_hashes.insert(module_id.clone(), layer_result.interface_hash);
+                    interface_artifacts.insert(module_id, layer_result.interface_artifact);
+                }
+                Err(err) => {
+                    return Err(Box::new(io::Error::new(io::ErrorKind::Other, err)));
+                }
+            }
+        }
     }
 
-    entry_result.ok_or_else(|| "入口模块未被编译".into())
+    let mut entry_artifacts =
+        entry_result.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "入口模块未被编译"))?;
+    merge_module_artifacts(&plan, &compiled_artifacts_by_module, &mut entry_artifacts);
+    Ok(entry_artifacts)
 }
 
 fn lower_mir_to_final_lir(
@@ -515,83 +582,269 @@ fn load_and_execute_ir(
     execute_lir(&lir_program, verbose)
 }
 
-fn fingerprint_content(content: &str) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    content.hash(&mut hasher);
-    hasher.finish()
-}
-
-fn compute_module_cache_version(
-    module_id: &ModuleId,
-    meta: &ModuleMetadata,
-    dependency_interfaces: &HashMap<ModuleId, u64>,
-) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    module_id.as_str().hash(&mut hasher);
-    meta.source_fingerprint.hash(&mut hasher);
-    let mut deps = meta.dependencies.clone();
-    deps.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-    for dep in deps {
-        if let Some(dep_hash) = dependency_interfaces.get(&dep) {
-            dep_hash.hash(&mut hasher);
-        }
-    }
-    hasher.finish()
-}
-
-#[derive(Default)]
-struct ModuleInterfaceAccumulator {
-    functions: BTreeSet<String>,
-    structs: BTreeSet<String>,
-    mains: BTreeSet<String>,
-}
-
-impl ModuleInterfaceAccumulator {
-    fn observe(&mut self, program: &MirProgram) {
-        for (name, function) in &program.functions {
-            let sig = format!("fn {}({})", name, function.params.len());
-            self.functions.insert(sig);
-        }
-        for (name, ty) in &program.struct_types {
-            let mut fields = ty
-                .fields
-                .iter()
-                .map(|field| format!("{}:{}", field.name, field.field_type))
-                .collect::<Vec<_>>();
-            fields.sort();
-            let sig = format!("struct {}{{{}}}", name, fields.join(";"));
-            self.structs.insert(sig);
-        }
-        if let Some(main) = &program.main_function {
-            self.mains.insert(main.clone());
-        }
-    }
-
-    fn finish(
-        self,
-        module_id: &ModuleId,
-        dependencies: &[ModuleId],
-        dependency_interfaces: &HashMap<ModuleId, u64>,
-    ) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        module_id.as_str().hash(&mut hasher);
-        for sig in self.functions {
-            sig.hash(&mut hasher);
-        }
-        for sig in self.structs {
-            sig.hash(&mut hasher);
-        }
-        for main in self.mains {
-            main.hash(&mut hasher);
-        }
-        let mut deps = dependencies.to_vec();
-        deps.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-        for dep in deps {
-            if let Some(dep_hash) = dependency_interfaces.get(&dep) {
-                dep_hash.hash(&mut hasher);
+fn merge_module_artifacts(
+    plan: &ModulePlan,
+    compiled: &HashMap<ModuleId, Vec<CompilationArtifacts>>,
+    entry_artifacts: &mut CompilationArtifacts,
+) {
+    let mut merged_lir = LirProgram::new();
+    let mut merged_mir = MirProgram::new();
+    for module_id in &plan.sequence {
+        if let Some(units) = compiled.get(module_id) {
+            for unit in units {
+                merge_mir_program(&mut merged_mir, &unit.mir_program);
+                merge_lir_program(&mut merged_lir, &unit.lir_program);
             }
         }
-        hasher.finish()
+    }
+    merged_mir.main_function = entry_artifacts.mir_program.main_function.clone();
+    merged_lir.main_function = entry_artifacts.lir_program.main_function.clone();
+    entry_artifacts.mir_program = merged_mir;
+    entry_artifacts.lir_program = merged_lir;
+}
+
+fn merge_mir_program(target: &mut MirProgram, source: &MirProgram) {
+    for (name, function) in &source.functions {
+        target.functions.insert(name.clone(), function.clone());
+    }
+    for (name, ty) in &source.struct_types {
+        target.struct_types.insert(name.clone(), ty.clone());
+    }
+    for (name, symbol) in &source.function_symbols {
+        target.function_symbols.insert(name.clone(), symbol.clone());
+    }
+    for (name, symbol) in &source.external_function_symbols {
+        target
+            .external_function_symbols
+            .insert(name.clone(), symbol.clone());
+    }
+}
+
+fn merge_lir_program(target: &mut LirProgram, source: &LirProgram) {
+    for (name, function) in &source.functions {
+        target
+            .functions
+            .entry(name.clone())
+            .or_insert_with(|| function.clone());
+    }
+    for (name, layout) in &source.global_struct_types {
+        target
+            .global_struct_types
+            .insert(name.clone(), layout.clone());
+    }
+    for (name, memory) in &source.global_variables {
+        target.global_variables.insert(name.clone(), *memory);
+    }
+}
+
+struct LayerCompilationResult {
+    module_id: ModuleId,
+    interface_hash: u64,
+    entry_artifacts: Option<CompilationArtifacts>,
+    compiled_artifacts: Vec<CompilationArtifacts>,
+    interface_artifact: ModuleInterfaceArtifact,
+}
+
+fn compile_module_in_layer(
+    graph: &ModuleGraph,
+    module_id: &ModuleId,
+    dependency_interfaces: &HashMap<ModuleId, u64>,
+    dependency_interface_artifacts: &HashMap<ModuleId, ModuleInterfaceArtifact>,
+    optimization_level: OptimizationLevel,
+    verbose: bool,
+    mode: ParserMode,
+    entry_module: &ModuleId,
+    canonical_entry: &Path,
+) -> Result<LayerCompilationResult, String> {
+    let meta = graph
+        .metadata(module_id)
+        .ok_or_else(|| format!("缺少模块元数据: {}", module_id))?
+        .clone();
+
+    let cache_version = compute_module_cache_version(module_id, &meta, dependency_interfaces);
+    let mut interface_acc = ModuleInterfaceAccumulator::default();
+    let mut entry_result = None;
+    let enforce_module_ids = graph.manifest_path().is_some();
+    let mut compiled_artifacts = Vec::new();
+    let dependency_interface_map =
+        build_type_checker_dependency_map(&meta, dependency_interface_artifacts);
+
+    for source_path in &meta.sources {
+        let source = fs::read_to_string(source_path)
+            .map_err(|e| format!("读取 {} 失败: {}", source_path.display(), e))?;
+        let path_str = source_path.to_string_lossy().to_string();
+        let cache_ctx = CacheContext {
+            module_id: module_id.as_str(),
+            interface_hash: cache_version,
+        };
+        let artifacts = compile_source_to_artifacts(
+            &source,
+            &path_str,
+            optimization_level,
+            verbose,
+            Some(cache_ctx),
+            mode,
+            Some(&dependency_interface_map),
+        )
+        .map_err(|e| format!("编译 {} 失败: {}", source_path.display(), e))?;
+        if enforce_module_ids {
+            ensure_module_decl(module_id, &artifacts, source_path)?;
+            validate_module_imports(
+                module_id,
+                artifacts.imports(),
+                &meta,
+                dependency_interface_artifacts,
+            )?;
+        }
+        interface_acc.observe(&artifacts.mir_program);
+        if module_id == entry_module && source_path == canonical_entry {
+            entry_result = Some(artifacts.clone());
+        }
+        compiled_artifacts.push(artifacts);
+    }
+
+    let interface_summary = interface_acc.finalize(module_id, &meta, dependency_interfaces);
+    if let Err(err) = write_module_interface_artifact(module_id, &interface_summary.artifact) {
+        warn!("[module] 无法写入接口文件 {}: {}", module_id.as_str(), err);
+    } else if verbose {
+        println!(
+            "[module] interface persisted for {} -> {}",
+            module_id.as_str(),
+            interface_summary.artifact.interface_hash
+        );
+    }
+
+    let ModuleInterfaceSummary {
+        interface_hash: public_interface_hash,
+        artifact,
+    } = interface_summary;
+
+    Ok(LayerCompilationResult {
+        module_id: module_id.clone(),
+        interface_hash: public_interface_hash,
+        entry_artifacts: entry_result,
+        compiled_artifacts,
+        interface_artifact: artifact,
+    })
+}
+
+fn build_type_checker_dependency_map(
+    meta: &ModuleMetadata,
+    artifacts: &HashMap<ModuleId, ModuleInterfaceArtifact>,
+) -> HashMap<String, ExternalModuleInterface> {
+    let mut map = HashMap::new();
+    for dep in &meta.dependencies {
+        if let Some(artifact) = artifacts.get(dep) {
+            map.insert(
+                dep.as_str().to_string(),
+                external_interface_from_artifact(artifact),
+            );
+        }
+    }
+    map
+}
+
+fn external_interface_from_artifact(artifact: &ModuleInterfaceArtifact) -> ExternalModuleInterface {
+    let functions = artifact
+        .exports
+        .functions
+        .iter()
+        .map(|func| {
+            (
+                func.name.clone(),
+                ExternalFunctionSignature {
+                    name: func.name.clone(),
+                    params: func.params,
+                },
+            )
+        })
+        .collect();
+
+    let structs = artifact
+        .exports
+        .structs
+        .iter()
+        .map(|structure| {
+            (
+                structure.name.clone(),
+                ExternalStructSignature {
+                    name: structure.name.clone(),
+                    fields: structure
+                        .fields
+                        .iter()
+                        .map(|field| ExternalStructField {
+                            name: field.name.clone(),
+                            ty: field.ty.clone(),
+                        })
+                        .collect(),
+                },
+            )
+        })
+        .collect();
+
+    ExternalModuleInterface { functions, structs }
+}
+
+fn ensure_module_decl(
+    module_id: &ModuleId,
+    artifacts: &CompilationArtifacts,
+    source_path: &Path,
+) -> Result<(), String> {
+    match artifacts.module_name() {
+        Some(name) if name == module_id.as_str() => Ok(()),
+        Some(name) => Err(format!(
+            "{} 声明 `module {}`，但 manifest 将其注册为 `{}`",
+            source_path.display(),
+            name,
+            module_id.as_str()
+        )),
+        None => Err(format!(
+            "{} 缺少 `module {}` 声明 (manifest id `{}`)",
+            source_path.display(),
+            module_id.as_str(),
+            module_id.as_str()
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn compile_entry_merges_dependency_functions() {
+        let mut entry_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        entry_path.pop();
+        entry_path.push("test_project");
+        entry_path.push("src");
+        entry_path.push("main.karte");
+
+        let artifacts = compile_entry_file(
+            entry_path
+                .to_str()
+                .expect("non-UTF8 path to test project entry"),
+            OptimizationLevel::Balanced,
+            false,
+            ParserMode::Project,
+        )
+        .expect("project compilation should succeed");
+
+        assert!(
+            artifacts
+                .mir_program
+                .function_symbols
+                .values()
+                .any(|symbol| symbol == "utils::add"),
+            "merged MIR should record canonical dependency functions"
+        );
+        assert!(
+            artifacts
+                .lir_program
+                .functions
+                .contains_key("utils::add"),
+            "merged LIR should contain dependency functions"
+        );
     }
 }
 
@@ -772,7 +1025,15 @@ fn export_ir(
     let artifacts = if from_file {
         compile_entry_file(filename, optimization_level, verbose, mode)?
     } else {
-        compile_source_to_artifacts(&source_content, filename, optimization_level, verbose, None, mode)?
+        compile_source_to_artifacts(
+            &source_content,
+            filename,
+            optimization_level,
+            verbose,
+            None,
+            mode,
+            None,
+        )?
     };
 
     let content = match stage {
@@ -845,17 +1106,29 @@ fn run_repl(optimization_level: OptimizationLevel, verbose: bool) {
                 // 在交互模式中也支持文件加载
                 if input.starts_with("load ") {
                     let filename = input.strip_prefix("load ").unwrap().trim();
-                    if let Err(err) =
-                        process_file(filename, optimization_level, verbose, false, None, false, ParserMode::Script)
-                    {
+                    if let Err(err) = process_file(
+                        filename,
+                        optimization_level,
+                        verbose,
+                        false,
+                        None,
+                        false,
+                        ParserMode::Script,
+                    ) {
                         error!("Error reading file '{}': {}", filename, err);
                     }
                     continue;
                 }
 
-                if let Err(err) =
-                    process_expression(input, optimization_level, verbose, false, None, false, ParserMode::Script)
-                {
+                if let Err(err) = process_expression(
+                    input,
+                    optimization_level,
+                    verbose,
+                    false,
+                    None,
+                    false,
+                    ParserMode::Script,
+                ) {
                     error!("Error: {}", err);
                 }
             }
@@ -866,9 +1139,6 @@ fn run_repl(optimization_level: OptimizationLevel, verbose: bool) {
         }
     }
 }
-
-use rayon::prelude::*;
-use std::sync::{Arc, Mutex};
 
 fn build_project(
     entry_path: &str,
@@ -882,7 +1152,9 @@ fn build_project(
 
     // 1. 加载模块图
     let graph = ModuleGraph::load_for_entry(entry_path).map_err(|e| e.to_string())?;
-    let plan = graph.plan_for_entry(entry_path).map_err(|e| e.to_string())?;
+    let plan = graph
+        .plan_for_entry(entry_path)
+        .map_err(|e| e.to_string())?;
 
     println!("构建计划: {} 个模块", plan.sequence.len());
     if verbose {
@@ -906,15 +1178,21 @@ fn build_project(
     let compiled_modules = Arc::new(Mutex::new(HashMap::new()));
 
     for (i, layer) in layers.iter().enumerate() {
-        println!("正在编译第 {}/{} 层 ({} 个模块)...", i + 1, layers.len(), layer.len());
-        
+        println!(
+            "正在编译第 {}/{} 层 ({} 个模块)...",
+            i + 1,
+            layers.len(),
+            layer.len()
+        );
+
         // 并行处理当前层的所有模块
         let results: Vec<Result<(ModuleId, LirProgram), String>> = layer
             .par_iter()
             .map(|module_id| {
                 let metadata = graph.metadata(module_id).unwrap();
-                let cache_key = cache::CacheKey::new(module_id.as_str(), metadata.source_fingerprint);
-                
+                let cache_key =
+                    cache::CacheKey::new(module_id.as_str(), metadata.source_fingerprint);
+
                 // 检查缓存
                 let cache_lock = cache.lock().unwrap();
                 if let Some(_cached_lir) = cache_lock.get(&cache_key) {
@@ -947,19 +1225,30 @@ fn build_project(
                 // 目前 Karte 还是单文件编译模型，这里假设模块间通过 extern 引用，或者源码合并
                 // 为了支持真正的模块化，需要在 HIR/MIR 阶段引入符号表导入机制
                 // 这里暂时只做源码层面的编译，不解决跨模块符号解析（假设是独立的或者通过运行时链接）
-                
+
                 let (tokens, _) = tokenize(&combined_source);
-                let (ast_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project);
-                
+                let (ast_result, diagnostics) =
+                    parse_with_type_check(&tokens, ParserMode::Project, None);
+
                 if diagnostics.has_errors() {
                     return Err(format!("Parse failed for {}: {:?}", module_id, diagnostics));
                 }
-                
+
                 let ast = ast_result.ok_or_else(|| format!("Parse failed for {}", module_id))?;
-                
-                let mir_program = lower_expr_to_mir(&ast.expr)
+
+                let module_context = ast.module_context().clone();
+                let lowering_options = LoweringOptions {
+                    known_functions: module_context
+                        .imports
+                        .iter()
+                        .filter(|binding| binding.symbol != "*")
+                        .map(|binding| binding.alias.clone())
+                        .collect(),
+                    module_context: Some(module_context),
+                };
+                let mir_program = lower_expr_to_mir_with_options(ast.expr(), lowering_options)
                     .map_err(|errs| format!("MIR lowering failed for {}: {:?}", module_id, errs))?;
-                
+
                 let mut lir_program = lower_mir_to_lir(&mir_program)
                     .map_err(|errs| format!("LIR lowering failed for {}: {:?}", module_id, errs))?;
 
@@ -990,12 +1279,12 @@ fn build_project(
     }
 
     println!("构建完成！");
-    
+
     // 5. 链接（合并所有LIR程序）
     // 简单地将所有函数合并到一个 LirProgram 中
     let mut final_program = LirProgram::new();
     let modules = compiled_modules.lock().unwrap();
-    
+
     // 按照 plan 顺序合并，保证确定性
     for module_id in &plan.sequence {
         if let Some(prog) = modules.get(module_id) {
@@ -1015,7 +1304,7 @@ fn build_project(
     let output_file = output_dir.join("main.lir");
     let lir_code = final_program.to_ir_string();
     fs::write(&output_file, lir_code).map_err(|e| format!("Failed to write output: {}", e))?;
-    
+
     println!("输出文件: {}", output_file.display());
 
     Ok(())
@@ -1069,15 +1358,20 @@ fn main() {
                 run_repl(optimization_level, cli.verbose);
             }
         },
-        Some(Commands::Compile { input, output, mode }) => {
+        Some(Commands::Compile {
+            input,
+            output,
+            mode,
+        }) => {
             let mode = mode.map(|m| m.into()).unwrap_or(default_mode);
-            let lir_program = match compile_entry_file(&input, optimization_level, cli.verbose, mode) {
-                Ok(artifacts) => artifacts.lir_program,
-                Err(err) => {
-                    error!("Compilation failed: {}", err);
-                    std::process::exit(1);
-                }
-            };
+            let lir_program =
+                match compile_entry_file(&input, optimization_level, cli.verbose, mode) {
+                    Ok(artifacts) => artifacts.lir_program,
+                    Err(err) => {
+                        error!("Compilation failed: {}", err);
+                        std::process::exit(1);
+                    }
+                };
 
             let output_file = output.unwrap_or_else(|| {
                 Path::new(&input)

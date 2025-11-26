@@ -4,8 +4,8 @@ use crate::{
 };
 use karte_common::memory::OwnershipKind;
 use karte_diagnostics::Span;
-use karte_hir::{BinaryOperator as HirBinaryOp, Expr, UnaryOperator as HirUnaryOp};
-use std::collections::HashMap;
+use karte_hir::{BinaryOperator as HirBinaryOp, Expr, ModuleContext, UnaryOperator as HirUnaryOp};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone)]
 struct VariableBinding {
@@ -31,6 +31,12 @@ impl ScopeFrame {
 
 pub const SCRIPT_ENTRY_POINT: &str = "__script_entry__";
 
+#[derive(Default, Clone)]
+pub struct LoweringOptions {
+    pub known_functions: HashSet<String>,
+    pub module_context: Option<ModuleContext>,
+}
+
 /// HIR到MIR的lowering上下文
 pub struct LoweringContext<'a> {
     program: &'a mut MirProgram,
@@ -44,6 +50,10 @@ pub struct LoweringContext<'a> {
     errors: Vec<String>,
     /// 匿名函数计数器
     lambda_counter: usize,
+    /// 通过 import 提前声明的函数
+    external_functions: HashSet<String>,
+    /// 模块上下文（用于解析模块符号）
+    module_context: Option<ModuleContext>,
 }
 
 impl<'a> LoweringContext<'a> {
@@ -55,9 +65,50 @@ impl<'a> LoweringContext<'a> {
             scopes: Vec::new(),
             errors: Vec::new(),
             lambda_counter: 0,
+            external_functions: HashSet::new(),
+            module_context: None,
         };
         ctx.enter_scope();
         ctx
+    }
+
+    fn canonical_module_symbol(&self, module_path: &[String], symbol: &str) -> String {
+        let module_identifier = self
+            .resolve_module_identifier(module_path)
+            .unwrap_or_else(|| module_path.join("."));
+        format!("{}::{}", module_identifier, symbol)
+    }
+
+    fn resolve_module_identifier(&self, module_path: &[String]) -> Option<String> {
+        if module_path.is_empty() {
+            return None;
+        }
+
+        let direct = module_path.join(".");
+        if let Some(ctx) = &self.module_context {
+            if ctx.dependency_interfaces.contains_key(&direct) {
+                return Some(direct);
+            }
+
+            let alias = module_path.first()?.as_str();
+            if let Some(binding) = ctx
+                .imports
+                .iter()
+                .find(|binding| binding.symbol == "*" && binding.alias == alias)
+            {
+                let mut resolved = binding.module_path.clone();
+                if module_path.len() > 1 {
+                    resolved.extend_from_slice(&module_path[1..]);
+                }
+                return Some(resolved.join("."));
+            }
+        }
+
+        Some(direct)
+    }
+
+    fn is_known_function(&self, name: &str) -> bool {
+        self.program.functions.contains_key(name) || self.external_functions.contains(name)
     }
 
     /// 开始新函数
@@ -222,8 +273,21 @@ impl<'a> LoweringContext<'a> {
 
 /// 将HIR表达式转换为MIR
 pub fn lower_expr_to_mir(expr: &Expr) -> Result<MirProgram, Vec<String>> {
+    lower_expr_to_mir_with_options(expr, LoweringOptions::default())
+}
+
+pub fn lower_expr_to_mir_with_options(
+    expr: &Expr,
+    options: LoweringOptions,
+) -> Result<MirProgram, Vec<String>> {
+    let LoweringOptions {
+        known_functions,
+        module_context,
+    } = options;
     let mut program = MirProgram::new();
     let mut context = LoweringContext::new(&mut program);
+    context.external_functions = known_functions;
+    context.module_context = module_context.clone();
 
     // 创建主函数
     context.start_function(SCRIPT_ENTRY_POINT.to_string(), vec![]);
@@ -248,9 +312,43 @@ pub fn lower_expr_to_mir(expr: &Expr) -> Result<MirProgram, Vec<String>> {
         program.set_main(SCRIPT_ENTRY_POINT.to_string());
         // 保存主函数的返回值
         program.main_return_value = Some(result_temp);
+        if let Some(module_ctx) = module_context {
+            annotate_module_symbols(&mut program, &module_ctx);
+        }
         Ok(program)
     } else {
         Err(context.errors)
+    }
+}
+
+fn annotate_module_symbols(program: &mut MirProgram, module_ctx: &ModuleContext) {
+    let function_names: Vec<String> = program.functions.keys().cloned().collect();
+    if let Some(module_name) = &module_ctx.module_name {
+        for function_name in &function_names {
+            let symbol = format!("{}::{}", module_name, function_name);
+            program.set_function_symbol(function_name, symbol);
+        }
+    } else {
+        for function_name in &function_names {
+            program.set_function_symbol(function_name, function_name.clone());
+        }
+    }
+
+    for binding in &module_ctx.imports {
+        if binding.symbol == "*" {
+            continue;
+        }
+        let module_path = if binding.module_path.is_empty() {
+            String::new()
+        } else {
+            binding.module_path.join(".")
+        };
+        let canonical = if module_path.is_empty() {
+            binding.symbol.clone()
+        } else {
+            format!("{}::{}", module_path, binding.symbol)
+        };
+        program.set_external_function_symbol(&binding.alias, canonical);
     }
 }
 
@@ -305,7 +403,7 @@ fn lower_expression(
                         });
                     }
                 }
-            } else if ctx.program.functions.contains_key(name) {
+            } else if ctx.is_known_function(name) {
                 // 如果是函数名，返回函数值
                 ctx.add_statement(Statement::Assign {
                     target: destination.clone(),
@@ -316,6 +414,17 @@ fn lower_expression(
                 ctx.errors.push(format!("Undefined variable: {}", name));
                 return Err(ctx.errors.clone());
             }
+        }
+
+        Expr::ModuleSymbolAccess {
+            module_path, symbol, ..
+        } => {
+            let canonical = ctx.canonical_module_symbol(module_path, symbol);
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: Value::Function { name: canonical },
+                span,
+            });
         }
 
         Expr::BinaryOp {
@@ -620,7 +729,7 @@ fn lower_expression(
             if let Expr::Identifier { name, .. } = function.as_ref() {
                 eprintln!("DEBUG: FunctionCall to identifier: {}", name);
                 // If it's a global function and not shadowed by a local variable
-                if ctx.program.functions.contains_key(name) && ctx.lookup_variable(name).is_none() {
+                if ctx.is_known_function(name) && ctx.lookup_variable(name).is_none() {
                     eprintln!("DEBUG: Found global function: {}", name);
                     let arg_vals: Vec<Value> = args
                         .iter()
@@ -648,12 +757,48 @@ fn lower_expression(
                     });
                     return Ok(());
                 } else {
-                    eprintln!("DEBUG: Not a global function or shadowed: {} (in functions: {}, in vars: {})", 
-                        name, 
+                    eprintln!(
+                        "DEBUG: Not a global function or shadowed: {} (in functions: {}, in vars: {})",
+                        name,
                         ctx.program.functions.contains_key(name),
                         ctx.lookup_variable(name).is_some()
                     );
                 }
+            }
+
+            // Special-case: direct module symbol access (module::symbol(...))
+            if let Expr::ModuleSymbolAccess {
+                module_path,
+                symbol,
+                ..
+            } = function.as_ref()
+            {
+                let canonical = ctx.canonical_module_symbol(module_path, symbol);
+                let arg_vals: Vec<Value> = args
+                    .iter()
+                    .map(|a| lower_expression_to_temp(ctx, a))
+                    .collect::<Result<_, _>>()?;
+
+                for (arg_expr, arg_val) in args.iter().zip(arg_vals.iter()) {
+                    if matches!(
+                        infer_expr_ownership(ctx, arg_expr),
+                        Some(OwnershipKind::RefCounted)
+                    ) && !expr_creates_new_ref(arg_expr)
+                    {
+                        ctx.add_statement(Statement::Retain {
+                            value: arg_val.clone(),
+                            span: arg_expr.span(),
+                        });
+                    }
+                }
+
+                ctx.add_statement(Statement::Call {
+                    target: Some(destination.clone()),
+                    function: Value::Function { name: canonical },
+                    args: arg_vals,
+                    span,
+                });
+                return Ok(());
             }
 
             // 统一闭包调用策略：
@@ -819,7 +964,8 @@ fn lower_expression(
                     // 仅当函数尚未定义时注册
                     if !ctx.program.functions.contains_key(name) {
                         eprintln!("DEBUG: Hoisting function: {}", name);
-                        let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+                        let param_names: Vec<String> =
+                            params.iter().map(|p| p.name.clone()).collect();
                         let function = MirFunction::new(name.clone(), param_names);
                         ctx.program.add_function(function);
                     } else {
@@ -1314,10 +1460,8 @@ fn lower_statement(
                 Ok(return_value) => {
                     // 添加返回指令
                     if let Some(block_id) = ctx.current_block {
-                        if let Some(block) = ctx
-                            .current_function_mut()
-                            .basic_blocks
-                            .get_mut(&block_id)
+                        if let Some(block) =
+                            ctx.current_function_mut().basic_blocks.get_mut(&block_id)
                         {
                             if block.terminator.is_none() {
                                 block.terminator = Some(Terminator::Return {
@@ -1329,8 +1473,10 @@ fn lower_statement(
                     }
                 }
                 Err(e) => {
-                    ctx.errors
-                        .push(format!("Error lowering function body for {}: {}", name, e[0]));
+                    ctx.errors.push(format!(
+                        "Error lowering function body for {}: {}",
+                        name, e[0]
+                    ));
                 }
             }
 
@@ -1772,7 +1918,10 @@ mod assignment_lowering_tests {
         assert!(result.is_ok(), "MIR lowering 应该成功");
 
         let program = result.unwrap();
-        assert!(program.functions.contains_key(SCRIPT_ENTRY_POINT), "应该有main函数");
+        assert!(
+            program.functions.contains_key(SCRIPT_ENTRY_POINT),
+            "应该有main函数"
+        );
 
         let main_fn = &program.functions[SCRIPT_ENTRY_POINT];
         assert!(!main_fn.basic_blocks.is_empty(), "main函数应该有基本块");

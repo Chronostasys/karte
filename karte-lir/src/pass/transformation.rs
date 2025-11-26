@@ -176,9 +176,7 @@ impl DeadCodeElimination {
                 self.add_operand_registers(src, &mut used);
             }
             Instruction::Call {
-                args,
-                arg_operands,
-                ..
+                args, arg_operands, ..
             } => {
                 used.extend_from_slice(args);
                 for operand in arg_operands {

@@ -222,6 +222,7 @@ pub enum Statement {
     /// 函数调用
     #[ir_codec(token = "call")]
     Call {
+        #[ir_codec(args, target)]
         target: Option<Value>,
         #[ir_codec(args)]
         function: Value,
@@ -614,6 +615,10 @@ pub struct MirProgram {
     /// 结构体类型定义
     #[ir_codec(extra)]
     pub struct_types: HashMap<String, MirStructType>,
+    #[ir_codec(skip)]
+    pub function_symbols: HashMap<String, String>,
+    #[ir_codec(skip)]
+    pub external_function_symbols: HashMap<String, String>,
 }
 
 impl Default for MirProgram {
@@ -630,6 +635,8 @@ impl MirProgram {
             main_return_value: None,
             temp_values: HashMap::new(),
             struct_types: HashMap::new(),
+            function_symbols: HashMap::new(),
+            external_function_symbols: HashMap::new(),
         }
     }
 
@@ -648,6 +655,24 @@ impl MirProgram {
 
     pub fn set_main(&mut self, name: String) {
         self.main_function = Some(name);
+    }
+
+    pub fn set_function_symbol<S: Into<String>>(&mut self, name: &str, symbol: S) {
+        self.function_symbols
+            .insert(name.to_string(), symbol.into());
+    }
+
+    pub fn function_symbol(&self, name: &str) -> Option<&str> {
+        self.function_symbols.get(name).map(|s| s.as_str())
+    }
+
+    pub fn set_external_function_symbol<S: Into<String>>(&mut self, alias: &str, symbol: S) {
+        self.external_function_symbols
+            .insert(alias.to_string(), symbol.into());
+    }
+
+    pub fn external_function_symbols(&self) -> &HashMap<String, String> {
+        &self.external_function_symbols
     }
 }
 

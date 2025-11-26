@@ -530,18 +530,21 @@ impl ExecutionEngine {
             }
 
             let element_size = std::mem::size_of::<i64>();
-                    if self.virtual_stack.is_empty() {
-                        return Err("虚拟栈未初始化".to_string());
-                    }
+            if self.virtual_stack.is_empty() {
+                return Err("虚拟栈未初始化".to_string());
+            }
 
-                    let element_size = std::mem::size_of::<i64>();
-                    let stack_bottom = self.virtual_stack.as_ptr() as usize;
-                    let stack_top_uninitialized = stack_bottom + self.virtual_stack.len() * element_size;
+            let element_size = std::mem::size_of::<i64>();
+            let stack_bottom = self.virtual_stack.as_ptr() as usize;
+            let stack_top_uninitialized = stack_bottom + self.virtual_stack.len() * element_size;
 
             // 在进入JIT主函数前，预先压入宿主返回哨兵（0），避免回退时读取未初始化的栈空间
-                    let initial_sp = stack_top_uninitialized - element_size;
+            let initial_sp = stack_top_uninitialized - element_size;
             unsafe {
-                        self.virtual_stack.as_mut_ptr().add(self.virtual_stack.len() - 1).write(0);
+                self.virtual_stack
+                    .as_mut_ptr()
+                    .add(self.virtual_stack.len() - 1)
+                    .write(0);
             }
 
             // 创建函数指针并调用

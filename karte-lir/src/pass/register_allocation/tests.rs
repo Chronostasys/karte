@@ -253,12 +253,10 @@ fn test_parameter_return_conflict() {
 
     let mut function = LirFunction {
         name: "identity".to_string(),
-        instructions: vec![
-            Instruction::Return {
-                value: Some(Register::Virtual(100)),
-                span: Span::dummy(),
-            },
-        ],
+        instructions: vec![Instruction::Return {
+            value: Some(Register::Virtual(100)),
+            span: Span::dummy(),
+        }],
         next_register: 102,
         struct_types: std::collections::HashMap::new(),
         stack_frame_size: 0,
@@ -274,10 +272,16 @@ fn test_parameter_return_conflict() {
     // The Return instruction should have value: Some(Physical(1)) (r1)
     // NOT Physical(0) (r0)
 
-    if let Instruction::Return { value: Some(reg), .. } = &function.instructions[0] {
+    if let Instruction::Return {
+        value: Some(reg), ..
+    } = &function.instructions[0]
+    {
         match reg {
             Register::Physical(p) => {
-                assert_eq!(*p, 1, "Parameter should remain in r1, not moved to r0 by allocator");
+                assert_eq!(
+                    *p, 1,
+                    "Parameter should remain in r1, not moved to r0 by allocator"
+                );
             }
             _ => panic!("Expected physical register"),
         }

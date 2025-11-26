@@ -600,12 +600,13 @@ dependencies = [
  "karte-lexer",
  "karte-lir",
  "karte-mir",
+ "karte-module-system",
  "karte-parser",
  "karte-rt",
  "log",
  "rayon",
  "serde",
- "toml",
+ "serde_json",
 ]
 
 [[package]]
@@ -719,6 +720,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "karte-module-system"
+version = "0.1.0"
+dependencies = [
+ "karte-diagnostics",
+ "karte-mir",
+ "karte-parser",
+ "log",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "karte-parser"
 version = "0.1.0"
 dependencies = [
@@ -753,6 +767,7 @@ dependencies = [
  "karte-lexer",
  "karte-lir",
  "karte-mir",
+ "karte-module-system",
  "karte-parser",
  "log",
  "tokio",

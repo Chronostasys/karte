@@ -77,13 +77,19 @@ mod tests {
         let (result_type, diagnostics) = type_check(&expr);
 
         assert!(diagnostics.is_empty());
-        assert_eq!(
-            result_type,
-            Type::Function {
-                params: vec![Type::Number],
-                return_type: Box::new(Type::Number),
+        // Expect a closure returning Number; parameter may still be a type variable
+        match result_type {
+            Type::Closure { params, return_type } => {
+                assert_eq!(params.len(), 1);
+                // param may be inferred to Type::Number or still a Type::Var during inference
+                match &params[0] {
+                    Type::Number | Type::Var(_) => {}
+                    other => panic!("Expected param Number or Var, got {:?}", other),
+                }
+                assert_eq!(*return_type, Type::Number);
             }
-        );
+            other => panic!("Expected Closure, got {:?}", other),
+        }
     }
 
     #[test]

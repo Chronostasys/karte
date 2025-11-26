@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use karte_lexer::tokenize;
-use karte_parser::{parse, parse_with_type_check};
+use karte_parser::{parse, parse_with_type_check, ParserMode};
 
 fn bench_lexer(c: &mut Criterion) {
     let inputs = vec![
@@ -42,7 +42,11 @@ fn bench_parser(c: &mut Criterion) {
     c.bench_function("parser_with_type_check", |b| {
         b.iter(|| {
             for tokens in &tokenized {
-                black_box(parse_with_type_check(black_box(tokens)));
+                black_box(parse_with_type_check(
+                    black_box(tokens),
+                    ParserMode::Script,
+                    None,
+                ));
             }
         })
     });
@@ -65,7 +69,11 @@ fn bench_complex_expressions(c: &mut Criterion) {
 
     c.bench_function("complex_expression_type_check", |b| {
         b.iter(|| {
-            black_box(parse_with_type_check(black_box(&tokens)));
+            black_box(parse_with_type_check(
+                black_box(&tokens),
+                ParserMode::Script,
+                None,
+            ));
         })
     });
 }

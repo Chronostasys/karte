@@ -311,7 +311,7 @@ fn generate_enum_parse(
                                 !should_skip_field(f)
                                     && f.ident
                                         .as_ref()
-                                        .map(|id| id != func_ident && id != args_ident)
+                                        .map(|id| id != func_ident && id != args_ident && id != "target")
                                         .unwrap_or(false)
                             })
                             .map(|f| {
@@ -325,6 +325,26 @@ fn generate_enum_parse(
                                 fn call_parser(input: &str) -> nom::IResult<&str, #enum_name, nom::error::Error<&str>> {
                                     let original = input;
                                     let (input, _) = karte_ir_codec::parse::keyword("call")(input)?;
+
+                                    // optional leading `target: <Option<Value>>` (allows "target: none, function: ...").
+                                    // We accept an optional trailing comma after the target so that
+                                    // the subsequent `function` label can follow.
+                                    let (input, opt_target) = nom::combinator::opt(
+                                        nom::sequence::preceded(
+                                            nom::sequence::preceded(
+                                                karte_ir_codec::parse::ws(nom::bytes::complete::tag("target")),
+                                                nom::sequence::delimited(
+                                                    nom::character::complete::multispace0,
+                                                    nom::branch::alt((nom::bytes::complete::tag(":"), nom::bytes::complete::tag("="))),
+                                                    nom::character::complete::multispace0,
+                                                ),
+                                            ),
+                                            nom::sequence::terminated(
+                                                <Option<Value>>::parse_nom,
+                                                nom::combinator::opt(karte_ir_codec::parse::ws(nom::character::complete::char(',')))
+                                            )
+                                        )
+                                    )(input)?;
 
                                     // function: <value>
                                     let (input, _) = karte_ir_codec::parse::ws(nom::bytes::complete::tag("function"))(input)?;
@@ -355,6 +375,8 @@ fn generate_enum_parse(
                                         #func_ident: #func_ident,
                                         #args_ident: #args_ident,
                                         #(#pre_and_skipped_inits,)*
+                                        // parsed optional target (or default None)
+                                        target: opt_target.unwrap_or_default(),
                                         #(#non_suffix_defaults),*
                                     }))
                                 }

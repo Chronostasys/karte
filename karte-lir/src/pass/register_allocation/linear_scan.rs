@@ -91,10 +91,7 @@ impl LinearScanAllocator {
             // 🔧 修复：预分配物理寄存器
             if let Register::Physical(p) = lifetime.register {
                 register_mapping.insert(lifetime.register, p);
-                println!(
-                    "🔧 预分配物理寄存器: {:?} -> r{}",
-                    lifetime.register, p
-                );
+                println!("🔧 预分配物理寄存器: {:?} -> r{}", lifetime.register, p);
                 available_registers.retain(|&reg| reg != p);
                 active_intervals.push(lifetime.clone());
             }

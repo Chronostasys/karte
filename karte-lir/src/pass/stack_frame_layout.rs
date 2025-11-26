@@ -352,21 +352,23 @@ impl FunctionPass for StackFrameLayoutPass {
         for slot in &used_slots {
             let start = slot.start.unwrap();
             let end = slot.end.unwrap();
-            
+
             allocator.expire_old_intervals(start);
             let offset = allocator.allocate(slot.size, slot.alignment);
             allocator.add_active(slot.addr_reg, end, offset, slot.size, slot.alignment);
-            
+
             offset_map.insert(slot.addr_reg, offset);
             alloc_offset_map.insert(slot.alloc_index, offset);
-            debug!("  - 分配槽 {:?} (idx {}): offset {}, range [{}-{}]", 
-                slot.addr_reg, slot.alloc_index, offset, start, end);
+            debug!(
+                "  - 分配槽 {:?} (idx {}): offset {}, range [{}-{}]",
+                slot.addr_reg, slot.alloc_index, offset, start, end
+            );
         }
-        
+
         function.stack_frame_size = (-allocator.current_neg_offset) as usize;
         // 保持16字节对齐
         function.stack_frame_size = (function.stack_frame_size + 15) & !15;
-        
+
         info!("  - 栈帧大小: {}", function.stack_frame_size);
 
         self.lower_to_fp_offsets(function, &offset_map, &alloc_offset_map);

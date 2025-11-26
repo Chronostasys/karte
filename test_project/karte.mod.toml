@@ -5,4 +5,8 @@ path = "src/utils.karte"
 [[modules]]
 id = "main"
 path = "src/main.karte"
-deps = ["utils"]
+deps = ["utils", "utils.sub"]
+
+[[modules]]
+id = "utils.sub"
+path = "src/utils/sub.karte"

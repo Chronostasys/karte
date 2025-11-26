@@ -51,6 +51,58 @@ let relative_offset = memory_manager.calculate_relative_offset("main", "helper")
 
 ---
 
+## 模块化 2.0 快速入门
+
+Karte 的 CLI 现已默认支持 `karte.mod.toml` 描述的多模块项目管线。所有模块先各自生成 MIR/LIR 接口工件，再由入口模块汇总后交给 JIT 执行，整个过程始终保持 canonical `module::symbol` 命名（例如 `main::main`, `utils::add`）。
+
+### Manifest 与模块拆分
+
+`karte.mod.toml` 通过 `modules` 数组声明模块、源码来源与依赖：
+
+```toml
+[[modules]]
+id = "utils"
+sources = ["src/utils.karte"]
+
+[[modules]]
+id = "main"
+sources = ["src/main.karte"]
+deps = ["utils"]
+```
+
+每个源文件顶部声明 `module <id>`，并使用 `import` 语句连接其他模块：
+
+```karte
+// src/main.karte
+module main
+
+import utils::{add}
+
+fn main() -> i32 {
+    add(10, 20)
+}
+```
+
+```karte
+// src/utils.karte
+module utils
+
+pub fn add(x: i32, y: i32) -> i32 {
+    x + y
+}
+```
+
+编译时，`karte-cli` 会为 `utils` 写入 `target/.karte-cache/utils.interface.json`，入口模块在解析 `import utils::{add}` 时直接读取该接口来补全类型信息和 canonical 名称。
+
+### CLI 运行方式
+
+```bash
+cargo run -p karte-cli -- run --mode project test_project/src/main.karte
+```
+
+- `--mode project` 会触发 ModuleGraph 加载 `karte.mod.toml`，依拓扑顺序编译 `utils -> main`。
+- 除了执行结果外，`--verbose` 还能看到 `[module]` 指纹、接口哈希以及 `main_function = main::main` 等 canonical 标签，便于排查跨模块调用。
+
 ## 功能特性
 
 ### 语言特性
@@ -91,7 +143,7 @@ let relative_offset = memory_manager.calculate_relative_offset("main", "helper")
 
 ## 项目结构
 
-```
+```text
 karte/
 ├── karte-lexer/       # 词法分析器
 ├── karte-parser/      # 语法分析器 + 类型检查器

@@ -119,6 +119,7 @@ impl StructLayoutManager {
                 Ok((layout.total_size, layout.alignment))
             }
             Type::Function { .. } => Ok((8, 8)), // 函数指针
+            Type::Closure { .. } => Ok((8, 8)),  // 闭包指针/结构体按指针对齐
             Type::Sum { name, .. } => {
                 // 对于Sum类型（包括Bool），我们使用固定大小
                 if name == "Bool" {
