@@ -1,10 +1,12 @@
-fn add(a: i32, b: i32) -> i32 {
-    a + b
-}
+module main
 
+import utils::{add}
+import utils.sub;
 
 fn main() -> i32 {
     let x = 10;
     let y = 20;
-    add(x, y)
+    let added = add(x, y);
+    let multiplied = utils.sub::multiply(x, y);
+    added
 }

@@ -17,6 +17,71 @@ pub struct Constraint {
     pub span: karte_diagnostics::Span,
 }
 
+/// 模块上下文：携带 module/import 元信息
+#[derive(Debug, Clone, Default)]
+pub struct ModuleContext {
+    pub module_name: Option<String>,
+    pub imports: Vec<ImportBinding>,
+    pub dependency_interfaces: HashMap<String, ExternalModuleInterface>,
+}
+
+impl ModuleContext {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn add_import_symbol(&mut self, module_path: Vec<String>, symbol: String, alias: String) {
+        self.imports.push(ImportBinding {
+            module_path,
+            symbol,
+            alias,
+        });
+    }
+
+    pub fn set_dependency_interfaces(
+        &mut self,
+        interfaces: HashMap<String, ExternalModuleInterface>,
+    ) {
+        self.dependency_interfaces = interfaces;
+    }
+
+    pub fn dependency_interfaces(&self) -> &HashMap<String, ExternalModuleInterface> {
+        &self.dependency_interfaces
+    }
+}
+
+/// 单个 import 绑定信息
+#[derive(Debug, Clone)]
+pub struct ImportBinding {
+    pub module_path: Vec<String>,
+    pub symbol: String,
+    pub alias: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ExternalModuleInterface {
+    pub functions: HashMap<String, ExternalFunctionSignature>,
+    pub structs: HashMap<String, ExternalStructSignature>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternalFunctionSignature {
+    pub name: String,
+    pub params: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternalStructSignature {
+    pub name: String,
+    pub fields: Vec<ExternalStructField>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternalStructField {
+    pub name: String,
+    pub ty: String,
+}
+
 /// 改进的类型检查器，支持类型推断
 pub struct TypeChecker {
     diagnostics: DiagnosticBag,
@@ -24,6 +89,7 @@ pub struct TypeChecker {
     next_type_var: u32,
     constraints: Vec<Constraint>,
     custom_types: HashMap<String, Type>, // 存储自定义类型
+    module_context: ModuleContext,
 }
 
 impl Default for TypeChecker {
@@ -40,6 +106,7 @@ impl TypeChecker {
             next_type_var: 0,
             constraints: Vec::new(),
             custom_types: HashMap::new(),
+            module_context: ModuleContext::default(),
         }
     }
 
@@ -320,13 +387,20 @@ impl TypeChecker {
 
     /// 检查整个程序
     pub fn check_program(&mut self, expr: &Expr) -> Type {
+        self.check_program_with_context(expr, &ModuleContext::default())
+    }
+
+    pub fn check_program_with_context(&mut self, expr: &Expr, context: &ModuleContext) -> Type {
         // 首先收集所有结构体定义
         self.collect_struct_definitions(expr);
 
         let mut env = TypeEnvironment::new();
-        
+
         // 🔧 Hoisting Pass: 收集顶层函数定义
         self.collect_function_definitions(expr, &mut env);
+
+        // 预置 import 别名，避免“未定义”诊断
+        self.apply_module_context(context, &mut env);
 
         let result_type = self.infer_expr(expr, &env);
 
@@ -342,6 +416,110 @@ impl TypeChecker {
         } else {
             final_type
         }
+    }
+
+    fn apply_module_context(&mut self, context: &ModuleContext, env: &mut TypeEnvironment) {
+        self.module_context = context.clone();
+        for binding in &context.imports {
+            let ty = self
+                .resolve_import_binding(context, binding)
+                .unwrap_or_else(|| Type::Var(self.fresh_type_var()));
+            env.entry(binding.alias.clone()).or_insert(ty);
+        }
+    }
+
+    fn resolve_import_binding(
+        &self,
+        context: &ModuleContext,
+        binding: &ImportBinding,
+    ) -> Option<Type> {
+        if binding.symbol == "*" {
+            return None;
+        }
+
+        let module_key = binding.module_path.join(".");
+        let module_iface = context.dependency_interfaces().get(&module_key)?;
+        if let Some(function) = module_iface.functions.get(&binding.symbol) {
+            let params = vec![Type::Unknown; function.params];
+            return Some(Type::function(params, Type::Unknown));
+        }
+        None
+    }
+
+    fn resolve_module_symbol(
+        &mut self,
+        module_path: &[String],
+        symbol: &str,
+        span: karte_diagnostics::Span,
+    ) -> Type {
+        if module_path.is_empty() {
+            self.add_error(TypeCheckError::ModuleInterfaceUnavailable {
+                module: "<unknown>".to_string(),
+                span,
+            });
+            return Type::Unknown;
+        }
+
+        let module_identifier = self
+            .resolve_module_identifier(module_path)
+            .unwrap_or_else(|| module_path.join("."));
+
+        let interface = if let Some(iface) = self
+            .module_context
+            .dependency_interfaces()
+            .get(&module_identifier)
+        {
+            iface
+        } else {
+            self.add_error(TypeCheckError::ModuleInterfaceUnavailable {
+                module: module_identifier,
+                span,
+            });
+            return Type::Unknown;
+        };
+
+        if let Some(function) = interface.functions.get(symbol) {
+            let params = vec![Type::Unknown; function.params];
+            return Type::function(params, Type::Unknown);
+        }
+
+        self.add_error(TypeCheckError::UndefinedModuleSymbol {
+            module: module_identifier,
+            symbol: symbol.to_string(),
+            span,
+        });
+        Type::Unknown
+    }
+
+    fn resolve_module_identifier(&self, module_path: &[String]) -> Option<String> {
+        if module_path.is_empty() {
+            return None;
+        }
+
+        let direct = module_path.join(".");
+        if self
+            .module_context
+            .dependency_interfaces()
+            .contains_key(&direct)
+        {
+            return Some(direct);
+        }
+
+        let alias = module_path.first()?.as_str();
+        if let Some(binding) = self
+            .module_context
+            .imports
+            .iter()
+            .find(|binding| binding.symbol == "*" && binding.alias == alias)
+        {
+            let mut resolved = binding.module_path.clone();
+            if module_path.len() > 1 {
+                resolved.extend_from_slice(&module_path[1..]);
+            }
+            return Some(resolved.join("."));
+        }
+
+        Some(direct)
     }
 
     /// 递归收集所有结构体定义并预处理它们
@@ -561,6 +739,12 @@ impl TypeChecker {
                 }
             }
 
+            Expr::ModuleSymbolAccess {
+                module_path,
+                symbol,
+                span,
+            } => self.resolve_module_symbol(&module_path, &symbol, *span),
+
             Expr::BinaryOp {
                 left,
                 op,
@@ -647,7 +831,7 @@ impl TypeChecker {
 
                 let return_type = self.infer_expr(body, &new_env);
 
-                Type::function(param_types, return_type)
+                Type::closure(param_types, return_type)
             }
 
             Expr::FunctionCall {
@@ -677,6 +861,26 @@ impl TypeChecker {
                         }
 
                         // 统一参数类型
+                        for (param_type, arg_type) in params.iter().zip(arg_types.iter()) {
+                            self.add_constraint(param_type.clone(), arg_type.clone(), *span);
+                        }
+
+                        *return_type.clone()
+                    }
+                    Type::Closure {
+                        params,
+                        return_type,
+                    } => {
+                        // Closure 调用规则与普通函数相同，但在运行时会走闭包调用路径
+                        if params.len() != args.len() {
+                            self.add_error(TypeCheckError::ArityMismatch {
+                                expected: params.len(),
+                                found: args.len(),
+                                span: *span,
+                            });
+                            return *return_type.clone();
+                        }
+
                         for (param_type, arg_type) in params.iter().zip(arg_types.iter()) {
                             self.add_constraint(param_type.clone(), arg_type.clone(), *span);
                         }
@@ -1791,8 +1995,12 @@ impl TypeChecker {
 
 /// 便捷函数：对表达式进行类型检查
 pub fn type_check(expr: &Expr) -> (Type, DiagnosticBag) {
+    type_check_with_context(expr, ModuleContext::default())
+}
+
+pub fn type_check_with_context(expr: &Expr, context: ModuleContext) -> (Type, DiagnosticBag) {
     let mut checker = TypeChecker::new();
-    let result_type = checker.check_program(expr);
+    let result_type = checker.check_program_with_context(expr, &context);
     (result_type, checker.into_diagnostics())
 }
 
@@ -1832,6 +2040,156 @@ mod assignment_type_check_tests {
         assert!(checker.diagnostics().is_empty(), "不应该有类型错误");
     }
 
+    #[cfg(test)]
+    mod module_context_type_tests {
+        use super::*;
+
+        #[test]
+        fn dependency_interfaces_seed_function_types() {
+            let mut context = ModuleContext::default();
+            context.add_import_symbol(vec!["utils".into()], "add".into(), "add".into());
+
+            let mut iface = ExternalModuleInterface::default();
+            iface.functions.insert(
+                "add".into(),
+                ExternalFunctionSignature {
+                    name: "add".into(),
+                    params: 2,
+                },
+            );
+            let mut interfaces = HashMap::new();
+            interfaces.insert("utils".into(), iface);
+            context.set_dependency_interfaces(interfaces);
+
+            let mut checker = TypeChecker::new();
+            let mut env = TypeEnvironment::new();
+            checker.apply_module_context(&context, &mut env);
+
+            match env.get("add") {
+                Some(Type::Function { params, .. }) => assert_eq!(params.len(), 2),
+                other => panic!(
+                    "expected function type seeded from interface, got {:?}",
+                    other
+                ),
+            }
+        }
+
+        #[test]
+        fn unknown_dependencies_stay_unbound() {
+            let mut context = ModuleContext::default();
+            context.add_import_symbol(vec!["utils".into()], "missing".into(), "missing".into());
+
+            let mut checker = TypeChecker::new();
+            let mut env = TypeEnvironment::new();
+            checker.apply_module_context(&context, &mut env);
+
+            match env.get("missing") {
+                Some(Type::Var(_)) => {} // fallback to fresh type variable
+                other => panic!(
+                    "expected fresh type variable for missing symbol, got {:?}",
+                    other
+                ),
+            }
+        }
+
+        #[test]
+        fn module_symbol_alias_resolves_function_type() {
+            let mut context = ModuleContext::default();
+            context.add_import_symbol(
+                vec!["std".into(), "array".into()],
+                "*".into(),
+                "array".into(),
+            );
+
+            let mut iface = ExternalModuleInterface::default();
+            iface.functions.insert(
+                "len".into(),
+                ExternalFunctionSignature {
+                    name: "len".into(),
+                    params: 1,
+                },
+            );
+            let mut interfaces = HashMap::new();
+            interfaces.insert("std.array".into(), iface);
+            context.set_dependency_interfaces(interfaces);
+
+            let expr = Expr::ModuleSymbolAccess {
+                module_path: vec!["array".into()],
+                symbol: "len".into(),
+                span: Span::new(0, 0),
+            };
+
+            let (ty, diagnostics) = type_check_with_context(&expr, context);
+            assert!(
+                diagnostics.is_empty(),
+                "unexpected diagnostics: {:?}",
+                diagnostics
+            );
+
+            match ty {
+                Type::Function { params, .. } => assert_eq!(params.len(), 1),
+                other => panic!("expected function type, got {:?}", other),
+            }
+        }
+
+        #[test]
+        fn module_symbol_without_interface_reports_error() {
+            let mut context = ModuleContext::default();
+            context.add_import_symbol(
+                vec!["std".into(), "array".into()],
+                "*".into(),
+                "array".into(),
+            );
+
+            let expr = Expr::ModuleSymbolAccess {
+                module_path: vec!["array".into()],
+                symbol: "len".into(),
+                span: Span::new(0, 0),
+            };
+
+            let (_, diagnostics) = type_check_with_context(&expr, context);
+            assert!(diagnostics.has_errors(), "expected availability error");
+            assert!(diagnostics
+                .diagnostics
+                .iter()
+                .any(|diag| diag.message.contains("std.array")));
+        }
+
+        #[test]
+        fn module_symbol_undefined_export_reports_error() {
+            let mut context = ModuleContext::default();
+            context.add_import_symbol(
+                vec!["std".into(), "array".into()],
+                "*".into(),
+                "array".into(),
+            );
+
+            let mut iface = ExternalModuleInterface::default();
+            iface.functions.insert(
+                "len".into(),
+                ExternalFunctionSignature {
+                    name: "len".into(),
+                    params: 1,
+                },
+            );
+            let mut interfaces = HashMap::new();
+            interfaces.insert("std.array".into(), iface);
+            context.set_dependency_interfaces(interfaces);
+
+            let expr = Expr::ModuleSymbolAccess {
+                module_path: vec!["array".into()],
+                symbol: "missing".into(),
+                span: Span::new(0, 0),
+            };
+
+            let (_, diagnostics) = type_check_with_context(&expr, context);
+            assert!(diagnostics.has_errors(), "expected export error");
+            assert!(diagnostics
+                .diagnostics
+                .iter()
+                .any(|diag| diag.message.contains("does not export `missing`")));
+        }
+    }
     #[test]
     fn test_assignment_to_undefined_variable() {
         let mut checker = TypeChecker::new();

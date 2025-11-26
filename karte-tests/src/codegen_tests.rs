@@ -155,16 +155,13 @@ mod tests {
         let (expr_type, type_diagnostics) = karte_hir::type_check(&expr);
         assert!(!type_diagnostics.has_errors());
 
-        // Lambda表达式应该有函数类型
-        if let karte_hir::Type::Function {
-            params,
-            return_type: _,
-        } = expr_type
-        {
-            assert_eq!(params.len(), 1);
-            // 参数类型可能是类型变量，这是正常的
-        } else {
-            panic!("Expected function type, got {:?}", expr_type);
+        // Lambda表达式应该有函数或 closure 类型
+        match expr_type {
+            karte_hir::Type::Function { params, .. } | karte_hir::Type::Closure { params, .. } => {
+                assert_eq!(params.len(), 1);
+                // 参数类型可能是类型变量，这是正常的
+            }
+            _ => panic!("Expected function/closure type, got {:?}", expr_type),
         }
 
         // 测试lambda可以被调用

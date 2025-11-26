@@ -187,6 +187,52 @@ mod tests {
     }
 
     #[test]
+    fn test_module_and_import_metadata() {
+        let source = r#"
+module demo.core
+import std.runtime
+import std.array as array
+import utils::{add as sum, Subtractor}
+
+fn main() -> i32 {
+    array::len([1, 2, 3]) + sum(1, 2)
+}
+"#;
+        let (tokens, _) = tokenize(source);
+        let (program, diagnostics) = parse_program_with_metadata(&tokens, ParserMode::Project);
+
+        assert!(diagnostics.is_empty(), "diagnostics: {:?}", diagnostics);
+        let program = program.expect("program should parse");
+        let module = program.module.expect("module declaration missing");
+        assert_eq!(module.name, "demo.core");
+        assert_eq!(program.imports.len(), 3);
+
+        let array_import = &program.imports[1];
+        assert_eq!(array_import.path.join("."), "std.array");
+        assert_eq!(array_import.alias.as_deref(), Some("array"));
+        assert!(matches!(
+            array_import.specifier,
+            ImportSpecifier::EntireModule
+        ));
+
+        let utils_import = program
+            .imports
+            .iter()
+            .find(|imp| imp.path.join(".") == "utils")
+            .expect("utils import missing");
+        match &utils_import.specifier {
+            ImportSpecifier::Symbols(symbols) => {
+                assert_eq!(symbols.len(), 2);
+                assert_eq!(symbols[0].name, "add");
+                assert_eq!(symbols[0].alias.as_deref(), Some("sum"));
+                assert_eq!(symbols[1].name, "Subtractor");
+                assert!(symbols[1].alias.is_none());
+            }
+            _ => panic!("expected selective import"),
+        }
+    }
+
+    #[test]
     fn test_parse_array_literal_and_index() {
         let (tokens, _) = tokenize("let arr = [1, 2]; arr[0]");
         let (expr, diagnostics) = parse(&tokens);

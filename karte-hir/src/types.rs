@@ -54,6 +54,11 @@ pub enum Type {
         params: Vec<Type>,
         return_type: Box<Type>,
     },
+    /// Closure 类型（与 Function 区分，用于捕获环境的匿名函数）
+    Closure {
+        params: Vec<Type>,
+        return_type: Box<Type>,
+    },
     /// 加法类型 (Sum Type / Tagged Union)
     Sum {
         name: String,
@@ -140,6 +145,23 @@ impl Type {
                     && r1.structural_eq(r2)
             }
             (
+                Type::Closure {
+                    params: p1,
+                    return_type: r1,
+                },
+                Type::Closure {
+                    params: p2,
+                    return_type: r2,
+                },
+            ) => {
+                p1.len() == p2.len()
+                    && p1
+                        .iter()
+                        .zip(p2.iter())
+                        .all(|(t1, t2)| t1.structural_eq(t2))
+                    && r1.structural_eq(r2)
+            }
+            (
                 Type::Sum {
                     name: n1,
                     variants: v1,
@@ -206,6 +228,22 @@ impl fmt::Display for Type {
                     return_type
                 )
             }
+            Type::Closure {
+                params,
+                return_type,
+            } => {
+                // Closure should be displayed distinctly from plain functions
+                write!(
+                    f,
+                    "closure(fn({}) -> {})",
+                    params
+                        .iter()
+                        .map(|t| t.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    return_type
+                )
+            }
             Type::Sum { name, variants } => {
                 let variants_str = variants
                     .iter()
@@ -253,6 +291,14 @@ impl Type {
     /// 创建函数类型
     pub fn function(params: Vec<Type>, return_type: Type) -> Self {
         Type::Function {
+            params,
+            return_type: Box::new(return_type),
+        }
+    }
+
+    /// 创建 closure 类型（与 Function 区分）
+    pub fn closure(params: Vec<Type>, return_type: Type) -> Self {
+        Type::Closure {
             params,
             return_type: Box::new(return_type),
         }
@@ -328,6 +374,13 @@ impl Type {
                 params: params.iter().map(|p| p.substitute(subst)).collect(),
                 return_type: Box::new(return_type.substitute(subst)),
             },
+            Type::Closure {
+                params,
+                return_type,
+            } => Type::Closure {
+                params: params.iter().map(|p| p.substitute(subst)).collect(),
+                return_type: Box::new(return_type.substitute(subst)),
+            },
             Type::Sum { name, variants } => Type::Sum {
                 name: name.clone(),
                 variants: variants
@@ -371,6 +424,17 @@ impl Type {
         match self {
             Type::Number | Type::Unit | Type::Unknown => vec![],
             Type::Function {
+                params,
+                return_type,
+            } => {
+                let mut vars = Vec::new();
+                for param in params {
+                    vars.extend(param.free_vars());
+                }
+                vars.extend(return_type.free_vars());
+                vars
+            }
+            Type::Closure {
                 params,
                 return_type,
             } => {

@@ -570,7 +570,8 @@ impl AArch64Compiler {
 
         // VM调用约定：返回时需要弹出虚拟返回地址并跳转
         let vm_sp_reg = self.get_physical_register(&Register::Physical(REG_STACK_POINTER))?;
-        let return_addr_reg = self.get_physical_register(&Register::Physical(REG_RETURN_ADDRESS))?;
+        let return_addr_reg =
+            self.get_physical_register(&Register::Physical(REG_RETURN_ADDRESS))?;
 
         // 加载返回地址到专用寄存器
         self.emit_ldr_reg_mem(code_builder, return_addr_reg, vm_sp_reg, 0);
@@ -591,7 +592,7 @@ impl AArch64Compiler {
 
             // 零返回地址：回到宿主
             code_builder.define_label(&host_return_label)?;
-            
+
             // 🔧 修复：不需要写回返回槽，直接返回X0中的值
             // if let Some(slot_reg) = return_slot_reg {
             //     self.emit_store_return_value_to_slot(code_builder, slot_reg);
@@ -1210,12 +1211,7 @@ impl AArch64Compiler {
 
     /// 恢复返回槽指针并弹出栈空间
     fn load_and_pop_return_slot_pointer(&self, code_builder: &mut CodeBuilder, dst: u8) {
-        self.emit_ldr_reg_mem(
-            code_builder,
-            dst,
-            AArch64Register::SP as u8,
-            0,
-        );
+        self.emit_ldr_reg_mem(code_builder, dst, AArch64Register::SP as u8, 0);
         self.emit_add_reg_reg_imm(
             code_builder,
             AArch64Register::SP as u8,
@@ -1225,17 +1221,8 @@ impl AArch64Compiler {
     }
 
     /// 将当前X0返回值写入返回槽地址
-    fn emit_store_return_value_to_slot(
-        &self,
-        code_builder: &mut CodeBuilder,
-        slot_reg: u8,
-    ) {
-        self.emit_str_reg_mem(
-            code_builder,
-            AArch64Register::X0 as u8,
-            slot_reg,
-            0,
-        );
+    fn emit_store_return_value_to_slot(&self, code_builder: &mut CodeBuilder, slot_reg: u8) {
+        self.emit_str_reg_mem(code_builder, AArch64Register::X0 as u8, slot_reg, 0);
         // 🔧 修复：不要修改X0，保持返回值在X0中
         // self.emit_mov_reg_reg(code_builder, AArch64Register::X0 as u8, slot_reg);
     }
@@ -1245,6 +1232,17 @@ impl AArch64Compiler {
         let label = format!("{}_{}", prefix, self.unique_label_counter);
         self.unique_label_counter += 1;
         label
+    }
+
+    /// 判断当前函数是否是程序入口（main）
+    fn is_entry_function(&self, function_name: &str, program: &LirProgram) -> bool {
+        if let Some(main) = &program.main_function {
+            if main == function_name {
+                return true;
+            }
+        }
+
+        function_name == "main" || function_name == karte_mir::lower::SCRIPT_ENTRY_POINT
     }
 }
 
@@ -1274,7 +1272,7 @@ impl JitCompiler for AArch64Compiler {
             return Err(format!("函数 '{}' 的第一个指令必须是label", function.name));
         }
 
-        let is_main_function = function.name == "main" || function.name == karte_mir::lower::SCRIPT_ENTRY_POINT;
+        let is_main_function = self.is_entry_function(&function.name, program);
         // 生成函数序言
         if is_main_function {
             self.emit_function_prologue(&mut code_builder)?;
@@ -1359,7 +1357,7 @@ impl JitCompiler for AArch64Compiler {
         code_builder.define_label(&function_label)?;
 
         // 🔧 修复：只有main函数才需要C FFI序言尾声，其他函数使用简化版本
-        let is_main_function = function.name == "main" || function.name == karte_mir::lower::SCRIPT_ENTRY_POINT;
+        let is_main_function = self.is_entry_function(&function.name, program);
         // 检查第一个instruction是label，是则编译，不是则返回错误
         if let Some(Instruction::Label { id, .. }) = function.instructions.first() {
             code_builder.define_label(&format!("label_{}", id.0))?;
@@ -1497,7 +1495,8 @@ mod tests {
 
         // 语法分析和类型检查
         log::debug!("\n2. 语法分析和类型检查");
-        let (result, parse_diagnostics) = parse_with_type_check(&tokens, karte_parser::ParserMode::Script);
+        let (result, parse_diagnostics) =
+            parse_with_type_check(&tokens, karte_parser::ParserMode::Script, None);
         if !parse_diagnostics.is_empty() {
             log::debug!("语法分析诊断信息:");
             parse_diagnostics.print_fancy(input, "test").unwrap();
@@ -1507,12 +1506,12 @@ mod tests {
         }
 
         let result = result.ok_or("表达式解析或类型检查失败")?;
-        log::debug!("语法分析成功，AST: {}", result.expr);
+        log::debug!("语法分析成功，AST: {}", result.expr());
         log::debug!("类型: {}", result.result_type);
 
         // Lowering to MIR
         log::debug!("\n3. 降级到MIR");
-        let mir_program = match lower_expr_to_mir(&result.expr) {
+        let mir_program = match lower_expr_to_mir(result.expr()) {
             Ok(prog) => {
                 log::debug!("MIR生成成功");
                 log::debug!("{}", prog);

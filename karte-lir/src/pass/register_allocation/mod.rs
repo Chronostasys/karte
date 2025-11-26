@@ -88,7 +88,7 @@ impl FunctionPass for SimpleStackRegisterAllocation {
         // 🔧 新增：根据调用约定构建寄存器分配映射
         let mut allocation_map =
             self.build_calling_convention_allocation_map(function, &virtual_registers);
-        
+
         // 🔧 为溢出的寄存器分配唯一的槽ID (按确定性顺序)
         let mut next_spill_slot = 1;
         for reg in &virtual_registers {
@@ -101,7 +101,7 @@ impl FunctionPass for SimpleStackRegisterAllocation {
                 }
             }
         }
-        
+
         info!("🎯 调用约定寄存器分配映射: {:?}", allocation_map);
 
         // 应用分配并处理溢出
@@ -255,17 +255,19 @@ impl SimpleStackRegisterAllocation {
         info!("🔧 第三步：分配函数调用寄存器");
         for inst in &function.instructions {
             match inst {
-                Instruction::Call { result, .. }
-                | Instruction::CallIndirect { result, .. } => {
+                Instruction::Call { result, .. } | Instruction::CallIndirect { result, .. } => {
                     // 🔧 修复：不再强制分配参数寄存器，由降级阶段生成Move指令
                     // 这避免了同一个虚拟寄存器在不同调用中作为不同参数时的冲突
-                    
+
                     // 返回值映射 cc的返回值
-                    if let Some(reg) = result {
-                        allocation_map.insert(
-                            *reg,
-                            AllocationTarget::Register(self.calling_convention.return_register),
-                        );
+                    if let Some(_reg) = result {
+                        // Don't force the call-result virtual register to be mapped to the
+                        // physical return register (r0). The lowering emits a Move that
+                        // moves from r0 into the virtual destination; if we map the
+                        // destination to r0 the Move becomes a no-op and earlier call
+                        // results can be overwritten by later calls. Instead, reserve
+                        // the return register as used at call sites so allocator won't
+                        // assign it to other live virtual registers across the call.
                         used_physical_regs.insert(self.calling_convention.return_register);
                     }
                     if let Instruction::CallIndirect {
@@ -780,7 +782,8 @@ impl SimpleStackRegisterAllocation {
         }
 
         // 2. 为当前指令的所有溢出操作数分配互不冲突的临时寄存器
-        let temp_assignments = self.allocate_temp_registers_for_inst(&spilled_operands, &unavailable_registers);
+        let temp_assignments =
+            self.allocate_temp_registers_for_inst(&spilled_operands, &unavailable_registers);
 
         // 3. 处理输入操作数（Used）
         for &used_reg in used_registers.iter() {
@@ -814,7 +817,7 @@ impl SimpleStackRegisterAllocation {
             if let Some(AllocationTarget::Spill(slot_id)) = allocation_map.get(&def_reg) {
                 if live_registers.contains(&def_reg) {
                     let temp_physical_reg = *temp_assignments.get(&def_reg).unwrap();
-                    
+
                     // 记录替换
                     current_replacements.push((def_reg, Register::Physical(temp_physical_reg)));
 
@@ -876,7 +879,7 @@ impl SimpleStackRegisterAllocation {
         }
 
         // 🔧 第三步：处理定义寄存器的存储（逻辑移到后面）
-        
+
         // 🔧 第四步：在指令后插入存储和恢复指令
         let after_offset = 1; // 从指令后一位开始
 
@@ -917,7 +920,7 @@ impl SimpleStackRegisterAllocation {
     ) -> HashMap<Register, PhysicalRegister> {
         let mut assignments = HashMap::new();
         let scratch_regs = &self.calling_convention.temp_registers;
-        
+
         if scratch_regs.is_empty() {
             // 极端情况回退
             for &reg in spilled_operands {
@@ -950,7 +953,7 @@ impl SimpleStackRegisterAllocation {
             let temp_reg = use_regs[i % use_regs.len()];
             assignments.insert(reg, temp_reg);
         }
-        
+
         assignments
     }
 

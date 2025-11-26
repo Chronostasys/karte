@@ -62,7 +62,10 @@ mod assignment_integration_tests {
                 info!("MIR程序: {:#?}", mir_program);
 
                 // 检查main函数存在
-                assert!(mir_program.functions.contains_key(SCRIPT_ENTRY_POINT), "应该有main函数");
+                assert!(
+                    mir_program.functions.contains_key(SCRIPT_ENTRY_POINT),
+                    "应该有main函数"
+                );
             }
             Err(errors) => {
                 info!("MIR降级失败: {:?}", errors);

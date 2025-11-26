@@ -64,6 +64,15 @@ pub enum TypeCheckError {
     InvalidAssignmentTarget {
         span: Span,
     },
+    ModuleInterfaceUnavailable {
+        module: String,
+        span: Span,
+    },
+    UndefinedModuleSymbol {
+        module: String,
+        symbol: String,
+        span: Span,
+    },
 }
 
 impl fmt::Display for TypeCheckError {
@@ -132,6 +141,16 @@ impl fmt::Display for TypeCheckError {
             TypeCheckError::InvalidAssignmentTarget { .. } => {
                 write!(f, "Invalid assignment target")
             }
+            TypeCheckError::ModuleInterfaceUnavailable { module, .. } => {
+                write!(
+                    f,
+                    "Module `{}` is not available in this compilation unit",
+                    module
+                )
+            }
+            TypeCheckError::UndefinedModuleSymbol { module, symbol, .. } => {
+                write!(f, "Module `{}` does not export `{}`", module, symbol)
+            }
         }
     }
 }
@@ -152,7 +171,9 @@ impl TypeCheckError {
             | TypeCheckError::UnknownField { span, .. }
             | TypeCheckError::NotAStruct { span, .. }
             | TypeCheckError::UndefinedType { span, .. }
-            | TypeCheckError::InvalidAssignmentTarget { span } => *span,
+            | TypeCheckError::InvalidAssignmentTarget { span }
+            | TypeCheckError::ModuleInterfaceUnavailable { span, .. }
+            | TypeCheckError::UndefinedModuleSymbol { span, .. } => *span,
         }
     }
 }

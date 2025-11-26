@@ -33,3 +33,8 @@
 - [x] 2025-11-22：修复 AArch64 JIT 返回值处理逻辑（区分 Host/JIT 返回）与 LIR Lowering 中的栈平衡问题（移除冗余 pop），解决 `ldr x0, [x0]` 崩溃
 - [x] 2025-11-22：修复 LIR Lowering 中 `Instruction::Call` 返回值寄存器分配错误（避免使用栈地址寄存器接收返回值）
 - [x] 2025-11-23: 完成 Language Modes 的 CLI 集成 (`--mode` flag) 并修复相关编译错误
+- [ ] 2025-11-26: `cargo run -p karte-cli -- run test_project/src/main.karte --mode project`出现了bus error，经过我的debug，现在这个问题根本上是我们的closure和函数类型不统一导致的，像`utils.sub::multiply()`这种调用符号，他被看作一个ModuleSymbolAccess，被assign给一个临时变量，然后再被调用，而对临时变量的调用会被视作调用closure，但是它实际上是普通function，这直接导致了bus error。
+ - [x] 2025-11-26: `cargo run -p karte-cli -- run test_project/src/main.karte --mode project`出现了bus error，原因是 closure 和 function 在类型/降级路径中被混淆：
+	 - 处理：在 `karte-hir` 中区分 `Type::Function` 与 `Type::Closure`；将 lambda 推断为 `Closure`，而 `ModuleSymbolAccess`/依赖接口解析仍产出 `Function`。
+	 - 同时在 `karte-mir` 的降级中为 `ModuleSymbolAccess` 增加 direct-call 分支（像 Identifier 一样直接生成 `Statement::Call` 使用 `Value::Function`），避免先写入临时再被误识别为闭包路径。
+	 - 验证：运行示例项目，JIT 完成并返回值（之前的 bus error 已解决）。

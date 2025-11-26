@@ -1,10 +1,15 @@
 use karte_common::memory::OwnershipKind;
 use karte_diagnostics::{DiagnosticBag, Span};
+use karte_hir::type_checker::ExternalModuleInterface;
 use karte_lexer::{Token, TokenWithSpan};
+use std::collections::HashMap;
 use std::fmt;
 
 // 重新导出HIR中的类型，保持向后兼容性
-pub use karte_hir::{type_check, BinaryOperator, Expr, Statement, Type, UnaryOperator};
+pub use karte_hir::{
+    type_check, type_check_with_context, BinaryOperator, Expr, ModuleContext, Statement, Type,
+    UnaryOperator,
+};
 
 /// 解析模式
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,6 +18,47 @@ pub enum ParserMode {
     Script,
     /// 项目模式：顶层只允许声明（fn, struct, enum, let），必须显式定义 main
     Project,
+}
+
+/// `module` 声明
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleDecl {
+    pub name: String,
+    pub span: Span,
+}
+
+/// import 语句的导入条目
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportSymbol {
+    pub name: String,
+    pub alias: Option<String>,
+    pub span: Span,
+}
+
+/// import 语句的选择器
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportSpecifier {
+    /// 导入整个模块（默认）
+    EntireModule,
+    /// 仅导入部分符号
+    Symbols(Vec<ImportSymbol>),
+}
+
+/// `import` 声明
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportDecl {
+    pub path: Vec<String>,
+    pub alias: Option<String>,
+    pub specifier: ImportSpecifier,
+    pub span: Span,
+}
+
+/// 解析得到的完整模块信息
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParsedProgram {
+    pub module: Option<ModuleDecl>,
+    pub imports: Vec<ImportDecl>,
+    pub body: Expr,
 }
 
 /// 解析器错误
@@ -98,6 +144,9 @@ pub struct Parser<'a> {
     position: usize,
     diagnostics: DiagnosticBag,
     mode: ParserMode,
+    module_decl: Option<ModuleDecl>,
+    imports: Vec<ImportDecl>,
+    prelude_parsed: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -107,6 +156,9 @@ impl<'a> Parser<'a> {
             position: 0,
             diagnostics: DiagnosticBag::new(),
             mode: ParserMode::Script, // 默认为脚本模式
+            module_decl: None,
+            imports: Vec::new(),
+            prelude_parsed: false,
         }
     }
 
@@ -116,20 +168,29 @@ impl<'a> Parser<'a> {
         self
     }
 
-    /// 解析程序 - 可以是单个表达式或包含语句的块
-    pub fn parse(&mut self) -> Option<Expr> {
+    /// 解析程序 - 可以是单个表达式或包含语句的块，带 module/import 前导
+    pub fn parse(&mut self) -> Option<ParsedProgram> {
         if self.tokens.is_empty() {
             self.diagnostics.add_error("Empty input", Span::new(0, 0));
             return None;
         }
 
-        // 检查是否以let开头（语句模式）或其他（表达式模式）
-        if self.starts_with_statement() {
+        self.parse_module_prelude();
+
+        if self.peek().is_none() {
+            self.diagnostics.add_error(
+                "Expected declarations or expressions after module/import prelude",
+                Span::new(0, 0),
+            );
+            return None;
+        }
+
+        let body_expr = if self.starts_with_statement() {
             match self.parse_program() {
-                Ok(expr) => Some(expr),
+                Ok(expr) => expr,
                 Err(err) => {
                     self.add_parse_error(err);
-                    None
+                    return None;
                 }
             }
         } else {
@@ -141,14 +202,325 @@ impl<'a> Parser<'a> {
                         self.diagnostics
                             .add_error(format!("Unexpected token: {}", token.token), token.span);
                     }
-                    Some(expr)
+                    expr
                 }
                 Err(err) => {
                     self.add_parse_error(err);
-                    None
+                    return None;
                 }
             }
+        };
+
+        Some(ParsedProgram {
+            module: self.module_decl.clone(),
+            imports: self.imports.clone(),
+            body: body_expr,
+        })
+    }
+
+    fn parse_module_prelude(&mut self) {
+        if self.prelude_parsed {
+            return;
         }
+        self.prelude_parsed = true;
+
+        loop {
+            let token = match self.peek() {
+                Some(token) => token.clone(),
+                None => break,
+            };
+
+            let keyword = match &token.token {
+                Token::Identifier(name) => name.clone(),
+                _ => break,
+            };
+
+            match keyword.as_str() {
+                "module" => {
+                    if !self.next_token_is_identifier() {
+                        break;
+                    }
+                    if let Err(err) = self.parse_module_decl() {
+                        self.add_parse_error(err);
+                        self.recover_from_error();
+                    }
+                }
+                "import" => {
+                    if !self.next_token_is_identifier() {
+                        break;
+                    }
+                    if let Err(err) = self.parse_import_decl() {
+                        self.add_parse_error(err);
+                        self.recover_from_error();
+                    }
+                }
+                _ => break,
+            }
+        }
+    }
+
+    fn parse_module_decl(&mut self) -> Result<(), ParseError> {
+        let keyword_span = self
+            .peek()
+            .ok_or(ParseError::UnexpectedEof {
+                expected: "module name".to_string(),
+            })?
+            .span;
+        self.advance(); // consume 'module'
+
+        if self.module_decl.is_some() {
+            return Err(ParseError::InvalidExpression {
+                message: "Duplicate module declaration".to_string(),
+                span: keyword_span,
+            });
+        }
+
+        let (parts, last_span) = self.parse_module_path("module name")?;
+        let span = Span::new(keyword_span.start, last_span.end);
+        self.module_decl = Some(ModuleDecl {
+            name: parts.join("."),
+            span,
+        });
+
+        if let Some(token) = self.peek() {
+            if matches!(token.token, Token::Semicolon) {
+                self.advance();
+            }
+        }
+        Ok(())
+    }
+
+    fn parse_import_decl(&mut self) -> Result<(), ParseError> {
+        let start_span = self
+            .peek()
+            .ok_or(ParseError::UnexpectedEof {
+                expected: "import path".to_string(),
+            })?
+            .span;
+        self.advance(); // consume 'import'
+
+        let (path, mut end_span) = self.parse_module_path("import path")?;
+
+        let alias = if self.peek_keyword("as") {
+            self.advance();
+            let (alias_name, alias_span) = self.expect_identifier("import alias")?;
+            end_span = alias_span;
+            Some(alias_name)
+        } else {
+            None
+        };
+
+        let mut specifier = ImportSpecifier::EntireModule;
+
+        if self.peek_is_double_colon() {
+            self.advance(); // consume '::'
+            let brace = self.peek().ok_or(ParseError::UnexpectedEof {
+                expected: "'{'".to_string(),
+            })?;
+            if !matches!(brace.token, Token::LeftBrace) {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "'{'".to_string(),
+                    found: brace.token.clone(),
+                    span: brace.span,
+                });
+            }
+            self.advance(); // consume '{'
+            let mut symbols = Vec::new();
+            loop {
+                let token = self.peek().ok_or(ParseError::UnexpectedEof {
+                    expected: "import symbol or '}'".to_string(),
+                })?;
+                match &token.token {
+                    Token::RightBrace => {
+                        end_span = token.span;
+                        self.advance();
+                        break;
+                    }
+                    Token::Identifier(_) => {
+                        let (symbol_name, mut symbol_span) =
+                            self.expect_identifier("import symbol")?;
+                        let alias = if self.peek_keyword("as") {
+                            self.advance();
+                            let (alias_name, alias_span) =
+                                self.expect_identifier("import alias")?;
+                            symbol_span = Span::new(symbol_span.start, alias_span.end);
+                            Some(alias_name)
+                        } else {
+                            None
+                        };
+                        symbols.push(ImportSymbol {
+                            name: symbol_name,
+                            alias,
+                            span: symbol_span,
+                        });
+
+                        if let Some(next) = self.peek() {
+                            match next.token {
+                                Token::Comma => {
+                                    self.advance();
+                                }
+                                Token::RightBrace => {}
+                                _ => {
+                                    return Err(ParseError::UnexpectedToken {
+                                        expected: "',' or '}'".to_string(),
+                                        found: next.token.clone(),
+                                        span: next.span,
+                                    })
+                                }
+                            }
+                        } else {
+                            return Err(ParseError::UnexpectedEof {
+                                expected: "',' or '}'".to_string(),
+                            });
+                        }
+                    }
+                    _ => {
+                        return Err(ParseError::UnexpectedToken {
+                            expected: "import symbol or '}'".to_string(),
+                            found: token.token.clone(),
+                            span: token.span,
+                        })
+                    }
+                }
+            }
+            specifier = ImportSpecifier::Symbols(symbols);
+        }
+
+        if let Some(token) = self.peek() {
+            if matches!(token.token, Token::Semicolon) {
+                end_span = token.span;
+                self.advance();
+            }
+        }
+
+        let span = Span::new(start_span.start, end_span.end);
+        self.imports.push(ImportDecl {
+            path,
+            alias,
+            specifier,
+            span,
+        });
+        Ok(())
+    }
+
+    fn parse_module_path(&mut self, context: &str) -> Result<(Vec<String>, Span), ParseError> {
+        let (first_ident, mut last_span) = self.expect_identifier(context)?;
+        let start_span = last_span;
+        let mut parts = vec![first_ident];
+
+        loop {
+            let token = match self.peek() {
+                Some(token) => token.clone(),
+                None => break,
+            };
+            match token.token {
+                Token::Dot => {
+                    self.advance();
+                    let (next_ident, span) = self.expect_identifier(context)?;
+                    last_span = span;
+                    parts.push(next_ident);
+                }
+                _ => break,
+            }
+        }
+
+        Ok((parts, Span::new(start_span.start, last_span.end)))
+    }
+
+    fn expect_identifier(&mut self, context: &str) -> Result<(String, Span), ParseError> {
+        if let Some(token) = self.peek() {
+            if let Token::Identifier(name) = &token.token {
+                let span = token.span;
+                let name = name.clone();
+                self.advance();
+                return Ok((name, span));
+            }
+            return Err(ParseError::UnexpectedToken {
+                expected: context.to_string(),
+                found: token.token.clone(),
+                span: token.span,
+            });
+        }
+        Err(ParseError::UnexpectedEof {
+            expected: context.to_string(),
+        })
+    }
+
+    fn next_token_is_identifier(&self) -> bool {
+        self.tokens
+            .get(self.position + 1)
+            .map(|token| matches!(token.token, Token::Identifier(_)))
+            .unwrap_or(false)
+    }
+
+    fn peek_keyword(&self, keyword: &str) -> bool {
+        matches!(self.peek(), Some(token) if matches!(&token.token, Token::Identifier(name) if name == keyword))
+    }
+
+    fn peek_is_double_colon(&self) -> bool {
+        matches!(self.peek(), Some(token) if matches!(token.token, Token::DoubleColon))
+    }
+
+    fn try_parse_module_symbol_access(
+        &mut self,
+        first_ident: &str,
+        start_span: Span,
+    ) -> Option<Expr> {
+        let (module_path, symbol, symbol_span, tokens_to_consume) =
+            self.preview_module_symbol_access(first_ident)?;
+        for _ in 0..tokens_to_consume {
+            self.advance();
+        }
+        let span = Span::new(start_span.start, symbol_span.end);
+        Some(Expr::ModuleSymbolAccess {
+            module_path,
+            symbol,
+            span,
+        })
+    }
+
+    fn preview_module_symbol_access(
+        &self,
+        first_ident: &str,
+    ) -> Option<(Vec<String>, String, Span, usize)> {
+        let mut module_path = vec![first_ident.to_string()];
+        let mut index = self.position;
+        let mut tokens_to_consume = 0usize;
+        let mut saw_dot = false;
+
+        while let Some(token) = self.tokens.get(index) {
+            match &token.token {
+                Token::Dot => {
+                    let next = self.tokens.get(index + 1)?;
+                    if let Token::Identifier(segment) = &next.token {
+                        module_path.push(segment.clone());
+                        index += 2;
+                        tokens_to_consume += 2;
+                        saw_dot = true;
+                    } else {
+                        return None;
+                    }
+                }
+                Token::DoubleColon => {
+                    if !saw_dot && self.is_constructor(first_ident) {
+                        return None;
+                    }
+                    let next = self.tokens.get(index + 1)?;
+                    if let Token::Identifier(symbol) = &next.token {
+                        return Some((
+                            module_path,
+                            symbol.clone(),
+                            next.span,
+                            tokens_to_consume + 2,
+                        ));
+                    } else {
+                        return None;
+                    }
+                }
+                _ => return None,
+            }
+        }
+        None
     }
 
     /// 检查是否以语句开头
@@ -226,10 +598,10 @@ impl<'a> Parser<'a> {
                     | Statement::Let { .. } => {
                         // 允许的声明
                     }
-                    Statement::Expression { span, .. }
-                    | Statement::Assignment { span, .. } => {
+                    Statement::Expression { span, .. } | Statement::Assignment { span, .. } => {
                         return Err(ParseError::InvalidExpression {
-                            message: "Top-level statements must be declarations in Project mode".to_string(),
+                            message: "Top-level statements must be declarations in Project mode"
+                                .to_string(),
                             span: *span,
                         });
                     }
@@ -1936,6 +2308,10 @@ impl<'a> Parser<'a> {
                             body: Box::new(body_expr),
                             span: full_span,
                         })
+                    } else if let Some(module_access) =
+                        self.try_parse_module_symbol_access(&name, span)
+                    {
+                        Ok(module_access)
                     } else {
                         // 检查是否为限定构造器 TypeName::Constructor
                         if let Some(next_token) = self.peek() {
@@ -2549,7 +2925,7 @@ impl<'a> Parser<'a> {
                                         &constructor_token.token
                                     {
                                         let constructor_name = constructor_name.clone();
-                                                                               let constructor_span = constructor_token.span;
+                                        let constructor_span = constructor_token.span;
                                         self.advance();
 
                                         // 检查是否有参数模式
@@ -3030,41 +3406,106 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// 解析结果，包含AST和类型信息
+/// 解析结果，包含 AST、module/import 元数据以及类型信息
 pub struct ParseResult {
-    pub expr: Expr,
+    pub program: ParsedProgram,
     pub result_type: Type,
+    pub module_context: ModuleContext,
+}
+
+impl ParseResult {
+    pub fn expr(&self) -> &Expr {
+        &self.program.body
+    }
+
+    pub fn module(&self) -> Option<&ModuleDecl> {
+        self.program.module.as_ref()
+    }
+
+    pub fn imports(&self) -> &[ImportDecl] {
+        &self.program.imports
+    }
+
+    pub fn module_context(&self) -> &ModuleContext {
+        &self.module_context
+    }
 }
 
 /// 便捷的解析函数（兼容性版本）
 pub fn parse(tokens: &[TokenWithSpan]) -> (Option<Expr>, DiagnosticBag) {
     let mut parser = Parser::new(tokens);
-    let expr = parser.parse();
-    (expr, parser.into_diagnostics())
+    let program = parser.parse();
+    (program.map(|p| p.body), parser.into_diagnostics())
+}
+
+/// 返回包含 module/import 信息的解析结果
+pub fn parse_program_with_metadata(
+    tokens: &[TokenWithSpan],
+    mode: ParserMode,
+) -> (Option<ParsedProgram>, DiagnosticBag) {
+    let mut parser = Parser::new(tokens).with_mode(mode);
+    let program = parser.parse();
+    (program, parser.into_diagnostics())
 }
 
 /// 带类型检查的解析函数
 pub fn parse_with_type_check(
     tokens: &[TokenWithSpan],
     mode: ParserMode,
+    dependency_interfaces: Option<&HashMap<String, ExternalModuleInterface>>,
 ) -> (Option<ParseResult>, DiagnosticBag) {
     let mut parser = Parser::new(tokens).with_mode(mode);
-    let expr = parser.parse();
+    let program = parser.parse();
     let mut diagnostics = parser.into_diagnostics();
 
-    if let Some(expr) = expr {
+    if let Some(program) = program {
+        let mut module_context = build_module_context(&program);
+        if let Some(interfaces) = dependency_interfaces {
+            module_context.set_dependency_interfaces(interfaces.clone());
+        }
         // 进行类型检查
-        let (result_type, type_diagnostics) = type_check(&expr);
+        let (result_type, type_diagnostics) =
+            type_check_with_context(&program.body, module_context.clone());
 
         // 合并诊断信息
         for error in &type_diagnostics.diagnostics {
             diagnostics.add_error(error.message.clone(), error.span);
         }
 
-        (Some(ParseResult { expr, result_type }), diagnostics)
+        (
+            Some(ParseResult {
+                program,
+                result_type,
+                module_context,
+            }),
+            diagnostics,
+        )
     } else {
         (None, diagnostics)
     }
+}
+
+fn build_module_context(program: &ParsedProgram) -> ModuleContext {
+    let mut context = ModuleContext::default();
+    if let Some(module_decl) = &program.module {
+        context.module_name = Some(module_decl.name.clone());
+    }
+    for import in &program.imports {
+        match &import.specifier {
+            ImportSpecifier::Symbols(symbols) => {
+                for symbol in symbols {
+                    let alias = symbol.alias.clone().unwrap_or_else(|| symbol.name.clone());
+                    context.add_import_symbol(import.path.clone(), symbol.name.clone(), alias);
+                }
+            }
+            ImportSpecifier::EntireModule => {
+                if let Some(alias) = &import.alias {
+                    context.add_import_symbol(import.path.clone(), "*".to_string(), alias.clone());
+                }
+            }
+        }
+    }
+    context
 }
 
 #[cfg(test)]
@@ -3256,56 +3697,141 @@ mod assignment_tests {
     }
 }
 
-    #[cfg(test)]
-    mod parser_mode_tests {
-        use super::*;
-        use karte_lexer::tokenize;
+#[cfg(test)]
+mod module_context_tests {
+    use super::*;
+    use karte_hir::type_checker::ExternalFunctionSignature;
+    use karte_lexer::tokenize;
+    use std::collections::HashMap;
 
-        #[test]
-        fn test_script_mode_allows_top_level_statements() {
-            let input = "let x = 1; x + 1;";
-            let (tokens, _) = tokenize(input);
-            let mut parser = Parser::new(&tokens).with_mode(ParserMode::Script);
-            let result = parser.parse_program();
-            assert!(result.is_ok());
-        }
+    #[test]
+    fn parse_with_type_check_attaches_dependency_interfaces() {
+        let input = "module main fn main() -> number { 0 }";
+        let (tokens, _) = tokenize(input);
 
-        #[test]
-        fn test_project_mode_disallows_top_level_statements() {
-            let input = "1 + 1;";
-            let (tokens, _) = tokenize(input);
-            let mut parser = Parser::new(&tokens).with_mode(ParserMode::Project);
-            let result = parser.parse_program();
-            assert!(result.is_err());
-            match result.unwrap_err() {
-                ParseError::InvalidExpression { message, .. } => {
-                    assert!(message.contains("Top-level statements must be declarations"));
-                }
-                _ => panic!("Expected InvalidExpression error"),
+        let mut interfaces: HashMap<String, ExternalModuleInterface> = HashMap::new();
+        let mut module_interface = ExternalModuleInterface::default();
+        module_interface.functions.insert(
+            "add".into(),
+            ExternalFunctionSignature {
+                name: "add".into(),
+                params: 2,
+            },
+        );
+        interfaces.insert("utils".into(), module_interface);
+
+        let (result, diagnostics) =
+            parse_with_type_check(&tokens, ParserMode::Project, Some(&interfaces));
+
+        assert!(
+            diagnostics.is_empty(),
+            "Expected no diagnostics: {:?}",
+            diagnostics
+        );
+        let parsed = result.expect("expected parse result");
+        assert!(
+            parsed
+                .module_context()
+                .dependency_interfaces()
+                .contains_key("utils"),
+            "module context should retain dependency interfaces"
+        );
+    }
+
+    #[test]
+    fn parses_alias_module_symbol_expression() {
+        let (tokens, _) = tokenize("array::len");
+        let mut parser = Parser::new(&tokens);
+        let expr = parser
+            .parse_expression()
+            .expect("module symbol expression should parse");
+        match expr {
+            Expr::ModuleSymbolAccess {
+                module_path,
+                symbol,
+                ..
+            } => {
+                assert_eq!(module_path, vec!["array".to_string()]);
+                assert_eq!(symbol, "len");
             }
-        }
-
-        #[test]
-        fn test_project_mode_disallows_top_level_expressions() {
-            let input = "1 + 2";
-            let (tokens, _) = tokenize(input);
-            let mut parser = Parser::new(&tokens).with_mode(ParserMode::Project);
-            let result = parser.parse_program();
-            assert!(result.is_err());
-            match result.unwrap_err() {
-                ParseError::InvalidExpression { message, .. } => {
-                    assert!(message.contains("Top-level expressions are not allowed"));
-                }
-                _ => panic!("Expected InvalidExpression error"),
-            }
-        }
-
-        #[test]
-        fn test_project_mode_allows_declarations() {
-            let input = "fn main() {} struct Point { x: i32 } let CONST = 1;";
-            let (tokens, _) = tokenize(input);
-            let mut parser = Parser::new(&tokens).with_mode(ParserMode::Project);
-            let result = parser.parse_program();
-            assert!(result.is_ok());
+            other => panic!("expected ModuleSymbolAccess, got {:?}", other),
         }
     }
+
+    #[test]
+    fn parses_dotted_module_symbol_expression() {
+        let (tokens, _) = tokenize("std.array::len");
+        let mut parser = Parser::new(&tokens);
+        let expr = parser
+            .parse_expression()
+            .expect("module symbol expression should parse");
+        match expr {
+            Expr::ModuleSymbolAccess {
+                module_path,
+                symbol,
+                ..
+            } => {
+                assert_eq!(
+                    module_path,
+                    vec!["std".to_string(), "array".to_string()]
+                );
+                assert_eq!(symbol, "len");
+            }
+            other => panic!("expected ModuleSymbolAccess, got {:?}", other),
+        }
+    }
+}
+
+#[cfg(test)]
+mod parser_mode_tests {
+    use super::*;
+    use karte_lexer::tokenize;
+
+    #[test]
+    fn test_script_mode_allows_top_level_statements() {
+        let input = "let x = 1; x + 1;";
+        let (tokens, _) = tokenize(input);
+        let mut parser = Parser::new(&tokens).with_mode(ParserMode::Script);
+        let result = parser.parse_program();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_project_mode_disallows_top_level_statements() {
+        let input = "1 + 1;";
+        let (tokens, _) = tokenize(input);
+        let mut parser = Parser::new(&tokens).with_mode(ParserMode::Project);
+        let result = parser.parse_program();
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ParseError::InvalidExpression { message, .. } => {
+                assert!(message.contains("Top-level statements must be declarations"));
+            }
+            _ => panic!("Expected InvalidExpression error"),
+        }
+    }
+
+    #[test]
+    fn test_project_mode_disallows_top_level_expressions() {
+        let input = "1 + 2";
+        let (tokens, _) = tokenize(input);
+        let mut parser = Parser::new(&tokens).with_mode(ParserMode::Project);
+        let result = parser.parse_program();
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ParseError::InvalidExpression { message, .. } => {
+                assert!(message.contains("Top-level expressions are not allowed"));
+            }
+            _ => panic!("Expected InvalidExpression error"),
+        }
+    }
+
+    #[test]
+    fn test_project_mode_allows_declarations() {
+        let input = "fn main() {} struct Point { x: i32 } let CONST = 1;";
+        let (tokens, _) = tokenize(input);
+        let mut parser = Parser::new(&tokens).with_mode(ParserMode::Project);
+        let result = parser.parse_program();
+        assert!(result.is_ok());
+    }
+}

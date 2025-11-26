@@ -5,8 +5,146 @@ use crate::{
 use karte_mir::{
     BasicBlockId, BinaryOperator, MirProgram, Statement, TempId, Terminator, UnaryOperator, Value,
 };
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
+
+fn stable_label_from_parts(parts: &[&str]) -> LabelId {
+    let mut hasher = DefaultHasher::new();
+    for part in parts {
+        part.hash(&mut hasher);
+        0xFFu8.hash(&mut hasher);
+    }
+    let mut value = hasher.finish() as usize;
+    if value == 0 {
+        value = 1;
+    } else if value % 2 == 0 {
+        value += 1; // 保持非零并减少冲突
+    }
+    LabelId(value)
+}
+
+/// Helper: collect function names from a Value recursively
+fn collect_function_names_from_value(value: &karte_mir::Value, set: &mut HashSet<String>) {
+    match value {
+        karte_mir::Value::Function { name } => {
+            set.insert(name.clone());
+        }
+        karte_mir::Value::Struct { fields, .. } => {
+            for v in fields.values() {
+                collect_function_names_from_value(v, set);
+            }
+        }
+        karte_mir::Value::Reference { value: inner } => {
+            collect_function_names_from_value(inner, set);
+        }
+        karte_mir::Value::Constructor { arg, .. } => {
+            if let Some(a) = arg.as_ref() {
+                collect_function_names_from_value(a, set);
+            }
+        }
+        karte_mir::Value::QualifiedConstructor { arg, .. } => {
+            if let Some(a) = arg.as_ref() {
+                collect_function_names_from_value(a, set);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Helper: collect function names referenced in a Statement
+fn collect_function_names_from_statement(stmt: &karte_mir::Statement, set: &mut HashSet<String>) {
+    use karte_mir::Statement::*;
+    match stmt {
+        Assign { target, source, .. } => {
+            collect_function_names_from_value(target, set);
+            collect_function_names_from_value(source, set);
+        }
+        BinaryOp { target, left, right, .. } => {
+            collect_function_names_from_value(target, set);
+            collect_function_names_from_value(left, set);
+            collect_function_names_from_value(right, set);
+        }
+        UnaryOp { target, operand, .. } => {
+            collect_function_names_from_value(target, set);
+            collect_function_names_from_value(operand, set);
+        }
+        Call { target, function, args, .. } => {
+            if let Some(t) = target {
+                collect_function_names_from_value(t, set);
+            }
+            collect_function_names_from_value(function, set);
+            for a in args {
+                collect_function_names_from_value(a, set);
+            }
+        }
+        Store { target, value, .. } => {
+            collect_function_names_from_value(target, set);
+            collect_function_names_from_value(value, set);
+        }
+        FieldAccess { target, object, .. } => {
+            collect_function_names_from_value(target, set);
+            collect_function_names_from_value(object, set);
+        }
+        Dereference { target, reference, .. } => {
+            collect_function_names_from_value(target, set);
+            collect_function_names_from_value(reference, set);
+        }
+        ConstructorArgExtract { target, constructor, .. } => {
+            collect_function_names_from_value(target, set);
+            collect_function_names_from_value(constructor, set);
+        }
+        FieldAssign { object, value, .. } => {
+            collect_function_names_from_value(object, set);
+            collect_function_names_from_value(value, set);
+        }
+        Allocate { target, .. } => {
+            collect_function_names_from_value(target, set);
+        }
+        Deallocate { pointer, .. } => {
+            collect_function_names_from_value(pointer, set);
+        }
+        Retain { value, .. } => {
+            collect_function_names_from_value(value, set);
+        }
+        Release { value, .. } => {
+            collect_function_names_from_value(value, set);
+        }
+        MarkGcRoot { value, .. } => {
+            collect_function_names_from_value(value, set);
+        }
+        WriteBarrier { object, value, .. } => {
+            collect_function_names_from_value(object, set);
+            collect_function_names_from_value(value, set);
+        }
+        ReadBarrier { target, object, .. } => {
+            collect_function_names_from_value(target, set);
+            collect_function_names_from_value(object, set);
+        }
+        _ => {}
+    }
+}
+
+/// Helper: collect function names in a Terminator
+fn collect_function_names_from_terminator(term: &karte_mir::Terminator, set: &mut HashSet<String>) {
+    match term {
+        karte_mir::Terminator::Return { value, .. } => {
+            if let Some(v) = value {
+                collect_function_names_from_value(v, set);
+            }
+        }
+        karte_mir::Terminator::Branch { condition, .. } => {
+            collect_function_names_from_value(condition, set);
+        }
+        karte_mir::Terminator::Match { value, arms, default: _, .. } => {
+            collect_function_names_from_value(value, set);
+            for _arm in arms {
+                // nothing to do for arm
+            }
+        }
+        _ => {}
+    }
+}
 
 /// MIR到LIR的lowering上下文（简化版本）
 ///
@@ -21,10 +159,14 @@ pub struct LirLoweringContext {
     block_to_label: HashMap<BasicBlockId, LabelId>,
     /// 函数名到标签的映射
     function_labels: HashMap<String, LabelId>,
+    /// 函数名到规范符号的映射
+    function_symbols: HashMap<String, String>,
+    /// 当前函数的规范符号
+    current_function_symbol: Option<String>,
     /// 当前函数的参数列表
     current_function_params: Vec<String>,
-    /// 全局标签计数器
-    global_label_counter: usize,
+    /// 每个函数内部生成标签的计数器
+    label_seed: u64,
     /// 待处理的指令
     pending_instructions: Vec<Instruction>,
     /// 错误信息
@@ -53,8 +195,10 @@ impl LirLoweringContext {
             current_function: None,
             block_to_label: HashMap::new(),
             function_labels: HashMap::new(),
+            function_symbols: HashMap::new(),
+            current_function_symbol: None,
             current_function_params: vec![],
-            global_label_counter: 0,
+            label_seed: 0,
             pending_instructions: vec![],
             errors: vec![],
             tagged_union_manager: TaggedUnionManager::new(),
@@ -136,6 +280,12 @@ impl LirLoweringContext {
         self.block_to_label.clear();
         // 清空栈分配，每个函数都重新开始
         self.stack_allocations.clear();
+        self.label_seed = 0;
+        self.current_function_symbol = self
+            .function_symbols
+            .get(&name)
+            .cloned()
+            .or_else(|| Some(name.clone()));
 
         // 设置当前函数参数列表
         self.current_function_params = params.to_vec();
@@ -154,6 +304,7 @@ impl LirLoweringContext {
         if let Some(func) = &mut f {
             func.instructions.append(&mut self.pending_instructions);
         }
+        self.current_function_symbol = None;
         f
     }
 
@@ -258,9 +409,22 @@ impl LirLoweringContext {
         if let Some(label) = self.block_to_label.get(&block_id) {
             return *label;
         }
-        let label = LabelId(self.global_label_counter);
-        self.global_label_counter += 1;
+        let symbol = self
+            .current_function_symbol
+            .clone()
+            .unwrap_or_else(|| "anonymous_function".to_string());
+        let label = stable_label_from_parts(&[&symbol, "bb", &block_id.0.to_string()]);
         self.block_to_label.insert(block_id, label);
+        label
+    }
+
+    fn next_internal_label(&mut self, hint: &str) -> LabelId {
+        let symbol = self
+            .current_function_symbol
+            .clone()
+            .unwrap_or_else(|| "anonymous_function".to_string());
+        let label = stable_label_from_parts(&[&symbol, "gen", hint, &self.label_seed.to_string()]);
+        self.label_seed += 1;
         label
     }
 
@@ -1026,14 +1190,50 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
     let mut function_names: Vec<_> = mir_program.functions.keys().cloned().collect();
     function_names.sort();
 
-    // 🔧 修复：从1开始分配标签ID，避免使用0
-    context.global_label_counter = 1; // 确保从1开始
-
+    let mut function_symbol_map = HashMap::new();
     for name in &function_names {
-        let label_id = LabelId(context.global_label_counter);
-        context.global_label_counter += 1;
+        let symbol = mir_program
+            .function_symbol(name)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| name.clone());
+        let label_id = stable_label_from_parts(&[&symbol]);
         context.function_labels.insert(name.clone(), label_id);
+        function_symbol_map.insert(name.clone(), symbol);
         log::debug!("分配函数标签: {} -> {:?}", name, label_id);
+    }
+    context.function_symbols = function_symbol_map;
+
+    for (alias, symbol) in &mir_program.external_function_symbols {
+        let label_id = stable_label_from_parts(&[symbol]);
+        // 注册时同时按 alias 和 canonical symbol 注册标签，
+        // 以便在LIR降级阶段通过canonical name (e.g. "utils.sub::multiply")
+        // 或者通过import alias访问时都能找到对应标签。
+        context.function_labels.insert(alias.clone(), label_id);
+        context.function_labels.insert(symbol.clone(), label_id);
+        log::debug!("注册外部函数标签: {} / {} -> {:?}", alias, symbol, label_id);
+    }
+
+    // 额外扫描MIR中的所有Value，确保使用到的外部函数（以canonical name出现）
+    // 也被预分配了label。这会捕获直接通过 module::symbol 引用但未通过
+    // import alias 声明的符号（例如直接写 `utils.sub::multiply` 的情况）。
+    let mut referenced_funcs: HashSet<String> = HashSet::new();
+    for mir_fn in mir_program.functions.values() {
+        for block in mir_fn.basic_blocks.values() {
+            for stmt in &block.statements {
+                collect_function_names_from_statement(stmt, &mut referenced_funcs);
+            }
+            if let Some(term) = &block.terminator {
+                collect_function_names_from_terminator(term, &mut referenced_funcs);
+            }
+        }
+    }
+
+    for name in referenced_funcs {
+        if !context.function_labels.contains_key(&name) {
+            let label_id = stable_label_from_parts(&[&name]);
+            context.function_labels.insert(name.clone(), label_id);
+            log::debug!("预分配引用函数标签: {} -> {:?}", name, label_id);
+        }
     }
 
     // 转换每个函数
@@ -1094,7 +1294,9 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
                         addr: addr_reg,
                         offset: 0,
                         src: Operand::Register {
-                            id: Register::Physical(karte_common::calling_convention::REG_EFFECT_PAYLOAD),
+                            id: Register::Physical(
+                                karte_common::calling_convention::REG_EFFECT_PAYLOAD,
+                            ),
                         }, // r1 (payload)
                         span: karte_diagnostics::Span::dummy(),
                     });
@@ -1117,14 +1319,29 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
         }
 
         // 完成函数并添加到程序
-        if let Some(lir_function) = context.finish_function() {
+        if let Some(mut lir_function) = context.finish_function() {
+            // Ensure the stored function name is globally unique by using the
+            // canonical symbol (module::symbol) when available.
+            if let Some(canonical) = context
+                .function_symbols
+                .get(&lir_function.name)
+                .cloned()
+            {
+                if canonical != lir_function.name {
+                    lir_function.name = canonical;
+                }
+            }
             lir_program.add_function(lir_function);
         }
     }
 
     // 设置主函数
     if let Some(main_name) = &mir_program.main_function {
-        lir_program.set_main(main_name.clone());
+        let canonical = mir_program
+            .function_symbol(main_name)
+            .unwrap_or(main_name.as_str())
+            .to_string();
+        lir_program.set_main(canonical);
     }
 
     // 返回未降级的LIR，让优化阶段处理Alloc指令
@@ -1145,6 +1362,34 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
         Ok(lir_program)
     } else {
         Err(context.errors)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::lower_mir_to_lir;
+    use karte_diagnostics::Span;
+    use karte_mir::{MirFunction, MirProgram, Terminator};
+
+    #[test]
+    fn lower_uses_canonical_function_symbols() {
+        let mut mir_program = MirProgram::new();
+        let mut function = MirFunction::new("main".to_string(), vec![]);
+        if let Some(entry_block) = function.get_block_mut(function.entry_block) {
+            entry_block.set_terminator(Terminator::Return {
+                value: None,
+                span: Span::new(0, 0),
+            });
+        }
+        mir_program.add_function(function);
+        mir_program.set_main("main".to_string());
+        mir_program.set_function_symbol("main", "foo.bar::main");
+
+        let lir_program = lower_mir_to_lir(&mir_program).expect("lowering should succeed");
+
+        assert!(lir_program.functions.contains_key("foo.bar::main"));
+        assert!(!lir_program.functions.contains_key("main"));
+        assert_eq!(lir_program.main_function.as_deref(), Some("foo.bar::main"));
     }
 }
 
@@ -1283,10 +1528,8 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
                         span: *span,
                     });
 
-                    let true_label = LabelId(ctx.global_label_counter);
-                    ctx.global_label_counter += 1;
-                    let end_label = LabelId(ctx.global_label_counter);
-                    ctx.global_label_counter += 1;
+                    let true_label = ctx.next_internal_label("cmp_true");
+                    let end_label = ctx.next_internal_label("cmp_end");
 
                     let jump_instr = match op {
                         BinaryOperator::Equal => Instruction::JumpEqual {
@@ -1347,10 +1590,8 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
                 }
                 BinaryOperator::And => {
                     // Logical AND: if src1 == 0, result = 0; else result = src2
-                    let false_label = LabelId(ctx.global_label_counter);
-                    ctx.global_label_counter += 1;
-                    let end_label = LabelId(ctx.global_label_counter);
-                    ctx.global_label_counter += 1;
+                    let false_label = ctx.next_internal_label("and_false");
+                    let end_label = ctx.next_internal_label("and_end");
 
                     // Compare src1 with 0 (false)
                     ctx.add_instruction(Instruction::Compare {
@@ -1395,10 +1636,8 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
                 }
                 BinaryOperator::Or => {
                     // Logical OR: if src1 != 0, result = 1; else result = src2
-                    let true_label = LabelId(ctx.global_label_counter);
-                    ctx.global_label_counter += 1;
-                    let end_label = LabelId(ctx.global_label_counter);
-                    ctx.global_label_counter += 1;
+                    let true_label = ctx.next_internal_label("or_true");
+                    let end_label = ctx.next_internal_label("or_end");
 
                     // Compare src1 with 0 (false)
                     ctx.add_instruction(Instruction::Compare {
@@ -1645,12 +1884,7 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
 
                     // 🔧 关键修复：Stack-First策略：如果有返回值，在调用后存储到栈
                     if let (Some(target_value), Some(temp_reg)) = (target, result_temp_reg) {
-                        ctx.store_value_to_stack(
-                            target_value,
-                            Operand::Register {
-                                id: temp_reg,
-                            },
-                        );
+                        ctx.store_value_to_stack(target_value, Operand::Register { id: temp_reg });
                     }
                 }
             } else {
@@ -1868,12 +2102,7 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
 
                 // 🔧 关键修复：Stack-First策略：如果有返回值，在调用后存储到栈
                 if let (Some(target_value), Some(temp_reg)) = (target, result_temp_reg) {
-                    ctx.store_value_to_stack(
-                        target_value,
-                        Operand::Register {
-                            id: temp_reg,
-                        },
-                    );
+                    ctx.store_value_to_stack(target_value, Operand::Register { id: temp_reg });
                 }
             }
 
@@ -2150,12 +2379,7 @@ fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Resul
 
         Statement::WriteBarrier { .. } => Ok(()),
 
-        Statement::ReadBarrier {
-            target,
-            object,
-            span,
-            ..
-        } => {
+        Statement::ReadBarrier { target, object, .. } => {
             let operand = ctx.lower_to_rvalue(object);
             ctx.store_value_to_stack(target, operand);
             Ok(())

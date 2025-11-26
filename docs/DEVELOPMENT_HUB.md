@@ -17,6 +17,7 @@
 | `docs/DEVELOPMENT_HUB.md`（本文件） | 中心导航、基础功能 backlog、ARC 准备。 | 每次架构级决策/阶段收尾时更新。 |
 | `TODOS.md` | 日常任务列表（按日期/主题）。 | 每次改动后同步打勾/新增事项。 |
 | `examples/*.karte` | CLI/JIT 样例（如 `box_free_example.karte`）。 | 为新语法（数组/引用）补充 runnable 示例。 |
+| `docs/plans/module_system_phase2.md` | 模块化 2.0：import 语法、跨模块调用与 CLI 缓存设计。 | 2025-11-25：实现前计划已提交，按计划推进。 |
 
 > 规范：新增专题文档时，需要在此表补充索引；已有文档完成阶段性目标，也需在“负责人/下一步”列记录状态。
 
@@ -90,6 +91,7 @@
    - 针对每个模块的公共接口（函数签名、结构体字段、依赖接口哈希）生成稳定摘要，保证实现层面的修改不会导致下游误重编；接口变化时会级联触发缓存失效。
    - 缓存 key 现包含 `(module_id + source_fingerprint + deps_interface_hash + opt_level)`，命中后可直接 reuse MIR/LIR；入口模块的 interface hash 会写入 `interface_hashes` 映射供依赖查询。
    - 在标准库拆分前（如 `std/array`），仍要求模块暴露显式接口描述，CLI `describe()` 输出现已包含文件列表与 interface 指纹，足以在调试/回归时进行比对。
+   - 2025-11-26：Parser/HIR/MIR 已完整携带 `ModuleContext`，Type Checker 会加载 `target/.karte-cache/<module>.interface.json` 并根据 import alias / `module::symbol` / 选择性导入进行解析；LIR 降级阶段与 JIT 执行器都改为使用 canonical `module::symbol` 名称（`main::main` 等），CLI 集成测试可直接验证跨模块调用。
 
    ```toml
      [[modules]]
@@ -117,5 +119,5 @@
 
 | 日期 | 模块 | 问题描述 | 修复方案 | 影响 |
 | --- | --- | --- | --- | --- |
-| 2025-11-22 | JIT / LIR | `cargo run` 脚本模式下出现 `EXC_BAD_ACCESS` (SIGSEGV)，原因是 `main` 返回值被错误地作为指针解引用。 | 1. **LIR Lowering**: 修复 `Instruction::Call` 降级逻辑，使用临时寄存器接收返回值，避免覆盖栈地址寄存器。<br>2. **Stack Balance**: 移除 LIR Lowering 中冗余的栈弹出指令（JIT epilogue 已处理）。<br>3. **JIT**: `compile_return` 仅在返回 Host 时写入 Return Slot。 | 彻底修复了 CLI 执行脚本时的崩溃问题，验证了 Script Mode 的稳定性。 |
+| 2025-11-22 | JIT / LIR | `cargo run` 脚本模式下出现 `EXC_BAD_ACCESS` (SIGSEGV)，原因是 `main` 返回值被错误地作为指针解引用。 | 1. **LIR Lowering**: 修复 `Instruction::Call` 降级逻辑，使用临时寄存器接收返回值，避免覆盖栈地址寄存器；2. **Stack Balance**: 移除 LIR Lowering 中冗余的栈弹出指令（JIT epilogue 已处理）；3. **JIT**: `compile_return` 仅在返回 Host 时写入 Return Slot。 | 彻底修复了 CLI 执行脚本时的崩溃问题，验证了 Script Mode 的稳定性。 |
 

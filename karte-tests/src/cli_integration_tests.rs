@@ -1,77 +1,244 @@
 #[cfg(test)]
 mod cli_tests {
-    use std::path::PathBuf;
-    use std::fs;
-    use karte_lexer::tokenize;
-    use karte_parser::{parse_with_type_check, ParserMode};
-    use karte_mir::{lower::lower_expr_to_mir, Statement, Value, lower::SCRIPT_ENTRY_POINT};
-    use karte_lir::{lower::lower_mir_to_lir, optimization_pipeline::{OptimizationLevel, OptimizationPipeline}};
     use karte_codegen::vm::professional_executor::ProfessionalExecutor;
+    use karte_lexer::tokenize;
+    use karte_lir::{
+        lower::lower_mir_to_lir,
+        optimization_pipeline::{OptimizationLevel, OptimizationPipeline},
+    };
+    use karte_mir::{
+        lower::{lower_expr_to_mir_with_options, LoweringOptions, SCRIPT_ENTRY_POINT},
+        MirProgram, Statement, Value,
+    };
+    use karte_module_system::{ModuleGraph, ModuleId};
+    use karte_hir::type_checker::ExternalModuleInterface;
+    use karte_parser::{parse_with_type_check, ParserMode};
+    use std::collections::{HashMap, HashSet};
+    use std::fs;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn test_compile_and_run_project_mode() {
-        // 1. Locate the source file
-        let mut project_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        project_file.pop();
-        project_file.push("test_project");
-        project_file.push("src");
-        project_file.push("main.karte");
+        // Locate the entry Karte file declared in test_project/karte.mod.toml
+        let mut entry_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        entry_path.pop();
+        entry_path.push("test_project");
+        entry_path.push("src");
+        entry_path.push("main.karte");
 
-        let input = fs::read_to_string(&project_file).expect("Failed to read main.karte");
+        let mir_program = compile_project_to_mir(&entry_path);
 
-        // 2. Tokenize
-        let (tokens, lex_diagnostics) = tokenize(&input);
-        assert!(!lex_diagnostics.has_errors(), "Lexical analysis failed: {:?}", lex_diagnostics);
-
-        // 3. Parse (Project Mode)
-        let (result, parse_diagnostics) = parse_with_type_check(&tokens, ParserMode::Project);
-        assert!(!parse_diagnostics.has_errors(), "Parsing failed: {:?}", parse_diagnostics);
-        let result = result.expect("Parser returned no result");
-
-        // 4. Lower to MIR
-        let mut mir_program = lower_expr_to_mir(&result.expr).expect("MIR lowering failed");
-
-        // 5. Handle Project Mode entry point (similar to CLI logic)
-        if let Some(script_entry) = mir_program.functions.get(SCRIPT_ENTRY_POINT) {
-            let is_trivial = if let Some(entry_block) =
-                script_entry.basic_blocks.get(&script_entry.entry_block)
-            {
-                entry_block.statements.iter().all(|stmt| match stmt {
-                    Statement::Assign {
-                        source: Value::Unit,
-                        ..
-                    } => true,
-                    _ => false,
-                })
-            } else {
-                true
-            };
-
-            if is_trivial {
-                if mir_program.functions.contains_key("main") {
-                    mir_program.set_main("main".to_string());
-                }
-            }
-        }
-
-        // 6. Lower to LIR
+        // 2. Lower combined MIR to LIR
         let mut lir_program = lower_mir_to_lir(&mir_program).expect("LIR lowering failed");
 
         // 7. Optimize
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
-        pipeline.optimize(&mut lir_program).expect("Optimization failed");
+        pipeline
+            .optimize(&mut lir_program)
+            .expect("Optimization failed");
 
         // 8. Lower Instructions (prepare for execution)
-        karte_lir::lower_program_instructions(&mut lir_program).expect("Instruction lowering failed");
+        karte_lir::lower_program_instructions(&mut lir_program)
+            .expect("Instruction lowering failed");
 
         // 9. Execute with JIT
         // Note: JIT might not be available on all platforms, but we assume it is for this test environment (macOS/AArch64 or x86_64)
         // If JIT is not supported, ProfessionalExecutor::new_with_jit will return Err or fallback.
         // The CLI test asserted exit code 30.
-        
-        let mut executor = ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
-        let exit_code = executor.execute_with_jit(&lir_program).expect("JIT execution failed");
 
-        assert_eq!(exit_code, 30, "Expected exit code 30 (10 + 20), got {}", exit_code);
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir_program)
+            .expect("JIT execution failed");
+
+        assert_eq!(
+            exit_code, 30,
+            "Expected exit code 30 (10 + 20), got {}",
+            exit_code
+        );
+    }
+
+    fn compile_project_to_mir(entry_path: &Path) -> MirProgram {
+        let graph = ModuleGraph::load_for_entry(entry_path)
+            .expect("Failed to construct module graph for test project");
+        let plan = graph
+            .plan_for_entry(entry_path)
+            .expect("Failed to compute module compilation plan");
+
+        let mut compiled_modules: HashMap<ModuleId, MirProgram> = HashMap::new();
+        // Map of module id -> ExternalModuleInterface for already compiled modules
+        let mut compiled_interfaces: HashMap<String, ExternalModuleInterface> = HashMap::new();
+
+        for module_id in &plan.sequence {
+            // Build dependency interfaces for this module from previously compiled modules
+            let mut dep_ifaces: HashMap<String, ExternalModuleInterface> = HashMap::new();
+            if let Some(meta) = graph.metadata(module_id) {
+                for dep in &meta.dependencies {
+                    if let Some(iface) = compiled_interfaces.get(dep.as_str()) {
+                        dep_ifaces.insert(dep.as_str().to_string(), iface.clone());
+                    }
+                }
+            }
+
+            let module_program = compile_module(&graph, module_id, &dep_ifaces);
+
+            // After successful compilation, build the external interface for this module
+            let iface = external_interface_from_mir(&module_program);
+            compiled_interfaces.insert(module_id.as_str().to_string(), iface);
+
+            compiled_modules.insert(module_id.clone(), module_program);
+        }
+
+        let entry_id = plan.entry.clone();
+        let mut mir_program = compiled_modules
+            .remove(&entry_id)
+            .expect("Entry module with `main` not found");
+
+        for module_program in compiled_modules.into_values() {
+            merge_mir_programs(&mut mir_program, module_program);
+        }
+
+        if mir_program.main_function.is_none() && mir_program.functions.contains_key("main") {
+            mir_program.set_main("main".to_string());
+        }
+
+        mir_program
+    }
+
+    fn compile_module(
+        graph: &ModuleGraph,
+        module_id: &ModuleId,
+        dependency_interfaces: &HashMap<String, ExternalModuleInterface>,
+    ) -> MirProgram {
+        let meta = graph
+            .metadata(module_id)
+            .unwrap_or_else(|| panic!("Missing metadata for module {}", module_id.as_str()));
+
+        let mut module_program: Option<MirProgram> = None;
+        for source_path in &meta.sources {
+            let unit_program = compile_module_file(source_path, dependency_interfaces);
+            if let Some(program) = &mut module_program {
+                merge_mir_programs(program, unit_program);
+            } else {
+                module_program = Some(unit_program);
+            }
+        }
+
+        module_program.unwrap_or_else(MirProgram::new)
+    }
+
+    fn compile_module_file(
+        path: &Path,
+        dependency_interfaces: &HashMap<String, ExternalModuleInterface>,
+    ) -> MirProgram {
+        let input = fs::read_to_string(path).expect("Failed to read module source");
+        let (tokens, lex_diagnostics) = tokenize(&input);
+        assert!(
+            !lex_diagnostics.has_errors(),
+            "Lexical analysis failed for {:?}: {:?}",
+            path,
+            lex_diagnostics
+        );
+
+        let (result, parse_diagnostics) = parse_with_type_check(
+            &tokens,
+            ParserMode::Project,
+            Some(dependency_interfaces),
+        );
+        assert!(
+            !parse_diagnostics.has_errors(),
+            "Parsing failed for {:?}: {:?}",
+            path,
+            parse_diagnostics
+        );
+        let result = result.expect("Parser returned no result");
+
+        let module_context = result.module_context().clone();
+        let lowering_options = LoweringOptions {
+            known_functions: module_context
+                .imports
+                .iter()
+                .filter(|binding: &&karte_hir::type_checker::ImportBinding| binding.symbol != "*")
+                .map(|binding| binding.alias.clone())
+                .collect::<HashSet<_>>(),
+            module_context: Some(module_context),
+        };
+
+        let mut mir_program = lower_expr_to_mir_with_options(result.expr(), lowering_options)
+            .expect("MIR lowering failed");
+        promote_project_entry(&mut mir_program);
+        mir_program.functions.remove(SCRIPT_ENTRY_POINT);
+        mir_program
+    }
+
+    fn promote_project_entry(mir_program: &mut MirProgram) {
+        if let Some(script_entry) = mir_program.functions.get(SCRIPT_ENTRY_POINT) {
+            let is_trivial = if let Some(entry_block) =
+                script_entry.basic_blocks.get(&script_entry.entry_block)
+            {
+                entry_block.statements.iter().all(|stmt| {
+                    matches!(
+                        stmt,
+                        Statement::Assign {
+                            source: Value::Unit,
+                            ..
+                        }
+                    )
+                })
+            } else {
+                true
+            };
+
+            if is_trivial && mir_program.functions.contains_key("main") {
+                mir_program.set_main("main".to_string());
+            }
+        }
+    }
+
+    fn merge_mir_programs(dest: &mut MirProgram, mut src: MirProgram) {
+        for (name, function) in src.functions.drain() {
+            assert!(
+                !dest.functions.contains_key(&name),
+                "Duplicate function {} when merging modules",
+                name
+            );
+            dest.functions.insert(name, function);
+        }
+
+        dest.struct_types.extend(src.struct_types.drain());
+        dest.function_symbols.extend(src.function_symbols.drain());
+        dest.external_function_symbols
+            .extend(src.external_function_symbols.drain());
+    }
+
+    fn external_interface_from_mir(program: &MirProgram) -> ExternalModuleInterface {
+        let mut iface = ExternalModuleInterface::default();
+
+        for (name, func) in &program.functions {
+            let sig = karte_hir::type_checker::ExternalFunctionSignature {
+                name: name.clone(),
+                params: func.params.len(),
+            };
+            iface.functions.insert(name.clone(), sig);
+        }
+
+        for (name, struct_type) in &program.struct_types {
+            let fields = struct_type
+                .fields
+                .iter()
+                .map(|f| karte_hir::type_checker::ExternalStructField {
+                    name: f.name.clone(),
+                    ty: f.field_type.clone(),
+                })
+                .collect();
+            let ssig = karte_hir::type_checker::ExternalStructSignature {
+                name: name.clone(),
+                fields,
+            };
+            iface.structs.insert(name.clone(), ssig);
+        }
+
+        iface
     }
 }

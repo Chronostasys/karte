@@ -51,6 +51,12 @@ pub enum Expr {
         name: String,
         span: Span,
     },
+    /// 模块符号访问（module::symbol）
+    ModuleSymbolAccess {
+        module_path: Vec<String>,
+        symbol: String,
+        span: Span,
+    },
 
     // 二元和一元操作
     BinaryOp {
@@ -479,6 +485,18 @@ impl fmt::Display for Expr {
             Expr::Number { value, .. } => write!(f, "{}", value),
             Expr::Unit { .. } => write!(f, "()"),
             Expr::Identifier { name, .. } => write!(f, "{}", name),
+            Expr::ModuleSymbolAccess {
+                module_path,
+                symbol,
+                ..
+            } => {
+                let path = module_path.join(".");
+                if path.is_empty() {
+                    write!(f, "::{}", symbol)
+                } else {
+                    write!(f, "{}::{}", path, symbol)
+                }
+            }
             Expr::BinaryOp {
                 left, op, right, ..
             } => write!(f, "({} {} {})", left, op, right),
@@ -645,6 +663,7 @@ impl Expr {
             Expr::Number { span, .. } => *span,
             Expr::Unit { span, .. } => *span,
             Expr::Identifier { span, .. } => *span,
+            Expr::ModuleSymbolAccess { span, .. } => *span,
             Expr::BinaryOp { span, .. } => *span,
             Expr::UnaryOp { span, .. } => *span,
             Expr::Lambda { span, .. } => *span,

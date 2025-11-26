@@ -55,16 +55,22 @@ mod tests {
         ffi::karte_jit_runtime_retain(ptr);
         let mut stats = HeapStats::default();
         ffi::karte_jit_runtime_heap_stats(&mut stats as *mut _);
-        
+
         // Check relative changes
         assert_eq!(stats.total_retain_ops, initial_stats.total_retain_ops + 1);
-        assert_eq!(stats.rc_tracked_objects, initial_stats.rc_tracked_objects + 1);
+        assert_eq!(
+            stats.rc_tracked_objects,
+            initial_stats.rc_tracked_objects + 1
+        );
 
         // 第一次 release：计数回到 1，不会释放
         ffi::karte_jit_runtime_release(ptr);
         ffi::karte_jit_runtime_heap_stats(&mut stats as *mut _);
         assert_eq!(stats.total_release_ops, initial_stats.total_release_ops + 1);
-        assert_eq!(stats.active_allocations, initial_stats.active_allocations + 1);
+        assert_eq!(
+            stats.active_allocations,
+            initial_stats.active_allocations + 1
+        );
         assert_eq!(stats.rc_zero_releases, initial_stats.rc_zero_releases);
 
         // 第二次 release：计数降为 0，自动释放
