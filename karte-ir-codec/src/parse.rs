@@ -1,9 +1,10 @@
 use crate::error::{ParseError, ParseResult};
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_while, take_while1},
+    bytes::complete::tag,
     character::complete::{char, digit1, multispace0},
     combinator::{map, map_res, opt, recognize},
+    error::{Error, ErrorKind},
     multi::separated_list0,
     sequence::{delimited, pair},
     IResult,
@@ -50,11 +51,46 @@ where
 }
 
 /// 解析标识符
+///
+/// 允许 `foo::bar` 或 `utils.sub::multiply` 这样的命名空间形式，
+/// 但仍要求首字符为字母或下划线。
 pub fn identifier(input: &str) -> IResult<&str, &str> {
-    recognize(pair(
-        take_while1(|c: char| c.is_alphabetic() || c == '_'),
-        take_while(|c: char| c.is_alphanumeric() || c == '_' || c == '$'),
-    ))(input)
+    fn err(input: &str) -> nom::Err<Error<&str>> {
+        nom::Err::Error(Error::new(input, ErrorKind::Alpha))
+    }
+
+    let mut chars = input.char_indices();
+    let (_, first) = chars.next().ok_or_else(|| err(input))?;
+    if !(first.is_alphabetic() || first == '_') {
+        return Err(err(input));
+    }
+
+    let mut idx = first.len_utf8();
+    let len = input.len();
+
+    while idx < len {
+        let remaining = &input[idx..];
+        let mut iter = remaining.chars();
+        let ch = iter.next().expect("identifier slicing bug");
+        if ch.is_alphanumeric() || matches!(ch, '_' | '$' | '.') {
+            idx += ch.len_utf8();
+            continue;
+        }
+        if ch == ':' {
+            let next_idx = idx + ch.len_utf8();
+            if next_idx < len {
+                let mut la_iter = input[next_idx..].chars();
+                if let Some(':') = la_iter.next() {
+                    idx = next_idx + 1;
+                    continue;
+                }
+            }
+            break;
+        }
+        break;
+    }
+
+    Ok((&input[idx..], &input[..idx]))
 }
 
 /// 解析整数
@@ -78,6 +114,10 @@ pub fn boolean(input: &str) -> IResult<&str, bool> {
 pub fn keyword<'a>(kw: &'static str) -> impl FnMut(&'a str) -> IResult<&'a str, &'a str> {
     move |input: &'a str| ws(tag(kw))(input)
 }
+
+// Debugging helper: wraps `keyword` and logs attempts. Temporarily used to trace parse failures.
+#[allow(dead_code)]
+// debug_keyword removed - kept earlier for temporary diagnostics
 
 /// 解析token前缀 (only leading whitespace, no trailing whitespace)
 /// 用于解析像 "bb0" 这样的token，其中 "bb" 是前缀，后面紧跟数字

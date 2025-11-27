@@ -311,7 +311,9 @@ fn generate_enum_parse(
                                 !should_skip_field(f)
                                     && f.ident
                                         .as_ref()
-                                        .map(|id| id != func_ident && id != args_ident && id != "target")
+                                        .map(|id| {
+                                            id != func_ident && id != args_ident && id != "target"
+                                        })
                                         .unwrap_or(false)
                             })
                             .map(|f| {
@@ -801,8 +803,12 @@ fn generate_enum_parse(
                                                     nom::character::complete::multispace0
                                                 )
                                             ),
-                                            <#field_type>::parse_nom
+                                            nom::branch::alt((
+                                                karte_ir_codec::parse::parens(<#field_type>::parse_nom),
+                                                <#field_type>::parse_nom
+                                            ))
                                         ),
+                                        karte_ir_codec::parse::parens(<#field_type>::parse_nom),
                                         <#field_type>::parse_nom
                                     ))
                                 ),
@@ -914,6 +920,34 @@ fn generate_enum_parse(
                 } else if field_count == 1 {
                     let field_type = &fields.unnamed.first().unwrap().ty;
 
+                    // If this variant has a token and the single field is an `args` field,
+                    // prefer parsing using token_prefix (e.g. `#v1`). This matches common
+                    // patterns like registers and immediates which are token-prefixed.
+                    let is_arg = fields
+                        .unnamed
+                        .first()
+                        .map(|f| crate::utils::is_arg_field(f))
+                        .unwrap_or(false);
+
+                    if let Some(token) = &variant_token {
+                        if is_arg {
+                            variant_parsers.push((
+                                quote! {
+                                    nom::combinator::map(
+                                        nom::sequence::preceded(
+                                            karte_ir_codec::parse::token_prefix(#token),
+                                            <#field_type>::parse_nom
+                                        ),
+                                        |value| #enum_name::#variant_name(value)
+                                    )
+                                },
+                                5,
+                            ));
+                            // fall through to also add the name-based parser as a fallback
+                        }
+                    }
+
+                    // Default: VariantName(...)
                     variant_parsers.push((
                         quote! {
                             nom::combinator::map(
@@ -1085,11 +1119,46 @@ fn generate_struct_parse(
 
             // If is_program is true, parse fields directly without expecting struct name
             if is_program {
+                // program 类型：兼容两种序列化格式（带类型名前缀的括号形式，或直接展开的字段列表），
+                // 因为显示器在不同场景下可能输出带或不带外层类型名的格式。
+                // Build a version of the field parsers where every non-first field is
+                // preceded by a comma (to match the serializer which emits commas
+                // between fields). This is done at derive-time so the generated
+                // parser handles both comma-separated and non-separated forms.
+                let mut field_parsers_with_commas: Vec<proc_macro2::TokenStream> = Vec::new();
+                for (i, fp) in field_parsers.iter().enumerate() {
+                    if i == 0 {
+                        field_parsers_with_commas.push(fp.clone());
+                    } else {
+                        field_parsers_with_commas.push(quote! {
+                            nom::sequence::preceded(
+                                nom::combinator::opt(
+                                    karte_ir_codec::parse::ws(
+                                        nom::character::complete::char(',')
+                                    )
+                                ),
+                                #fp
+                            )
+                        });
+                    }
+                }
+
                 quote! {
-                    nom::combinator::map(
-                        nom::sequence::tuple((#(#field_parsers,)*)),
-                        |(#(#parsed_field_names,)*)| #struct_name { #(#all_field_inits,)* }
-                    )(input)
+                    nom::branch::alt((
+                        // 带类型名前缀的形式: TypeName(...)
+                        nom::combinator::map(
+                            nom::sequence::preceded(
+                                karte_ir_codec::parse::keyword(#struct_name_str),
+                                karte_ir_codec::parse::parens(nom::sequence::tuple((#(#field_parsers,)*)))
+                            ),
+                            |(#(#parsed_field_names,)*)| #struct_name { #(#all_field_inits,)* }
+                        ),
+                        // 直接展开的字段列表（允许逗号分隔）
+                        nom::combinator::map(
+                            nom::sequence::tuple((#(#field_parsers_with_commas,)*)),
+                            |(#(#parsed_field_names,)*)| #struct_name { #(#all_field_inits,)* }
+                        )
+                    ))(input)
                 }
             } else {
                 // Normal struct parsing: expect struct name followed by fields in braces

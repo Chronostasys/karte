@@ -113,7 +113,6 @@ impl JitManager {
     /// 检查是否应该使用JIT执行
     pub fn should_use_jit(&self, function_name: &str) -> bool {
         match self.execution_mode {
-            ExecutionMode::Interpreter => false,
             ExecutionMode::JitOnly => true,
             ExecutionMode::Hybrid => {
                 // 简单的启发式：如果函数已经编译过，使用JIT
@@ -246,9 +245,6 @@ mod tests {
         let mut jit = JitManager::new(TargetArchitecture::X86_64, false).unwrap();
 
         // 测试不同执行模式
-        jit.set_execution_mode(ExecutionMode::Interpreter);
-        assert!(!jit.should_use_jit("test_function"));
-
         jit.set_execution_mode(ExecutionMode::JitOnly);
         assert!(jit.should_use_jit("test_function"));
 

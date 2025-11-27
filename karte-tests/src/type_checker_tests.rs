@@ -79,7 +79,10 @@ mod tests {
         assert!(diagnostics.is_empty());
         // Expect a closure returning Number; parameter may still be a type variable
         match result_type {
-            Type::Closure { params, return_type } => {
+            Type::Closure {
+                params,
+                return_type,
+            } => {
                 assert_eq!(params.len(), 1);
                 // param may be inferred to Type::Number or still a Type::Var during inference
                 match &params[0] {

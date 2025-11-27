@@ -9,7 +9,7 @@
             "request": "launch",
             "name": "Debug Function Compile",
             "program": "${workspaceFolder}/target/debug/karte",
-            "args": ["test_project/src/main.karte","--mode","project"],
+            "args": ["build", "test_project/src/main.karte"],
             "cwd": "${workspaceFolder}"
         },
         {

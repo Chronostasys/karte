@@ -1,0 +1,267 @@
+/// 上下文管理模块
+///
+/// 本模块包含LoweringContext的所有实现方法：
+/// - 上下文创建和初始化
+/// - 函数管理（开始、完成、获取当前函数）
+/// - 基本块管理（创建、切换）
+/// - 作用域管理（进入、退出、恢复）
+/// - 变量绑定管理（绑定、查找、更新）
+/// - 语句和终结器添加
+
+use super::types::{LoweringContext, ScopeFrame, VariableBinding};
+use crate::{BasicBlockId, MirFunction, Statement, Terminator, Value};
+use karte_common::memory::OwnershipKind;
+use karte_diagnostics::Span;
+
+impl<'a> LoweringContext<'a> {
+    /// 创建新的LoweringContext
+    pub fn new(program: &'a mut crate::MirProgram) -> Self {
+        let mut ctx = Self {
+            program,
+            current_function_name: None,
+            current_block: None,
+            scopes: Vec::new(),
+            errors: Vec::new(),
+            lambda_counter: 0,
+            external_functions: Default::default(),
+            module_context: None,
+        };
+        ctx.enter_scope();
+        ctx
+    }
+
+    /// 解析模块标识符的规范化名称
+    ///
+    /// 将模块路径转换为规范化的模块标识符，考虑别名和依赖关系
+    pub(crate) fn canonical_module_symbol(&self, module_path: &[String], symbol: &str) -> String {
+        let module_identifier = self
+            .resolve_module_identifier(module_path)
+            .unwrap_or_else(|| module_path.join("."));
+        format!("{}::{}", module_identifier, symbol)
+    }
+
+    /// 解析模块路径为模块标识符
+    ///
+    /// 处理直接路径和别名引用
+    pub(crate) fn resolve_module_identifier(&self, module_path: &[String]) -> Option<String> {
+        if module_path.is_empty() {
+            return None;
+        }
+
+        let direct = module_path.join(".");
+        if let Some(ctx) = &self.module_context {
+            if ctx.dependency_interfaces.contains_key(&direct) {
+                return Some(direct);
+            }
+
+            let alias = module_path.first()?.as_str();
+            if let Some(binding) = ctx
+                .imports
+                .iter()
+                .find(|binding| binding.symbol == "*" && binding.alias == alias)
+            {
+                let mut resolved = binding.module_path.clone();
+                if module_path.len() > 1 {
+                    resolved.extend_from_slice(&module_path[1..]);
+                }
+                return Some(resolved.join("."));
+            }
+        }
+
+        Some(direct)
+    }
+
+    /// 检查是否为已知函数
+    pub(crate) fn is_known_function(&self, name: &str) -> bool {
+        self.program.functions.contains_key(name) || self.external_functions.contains(name)
+    }
+
+    /// 开始新函数
+    ///
+    /// 创建新的MirFunction并初始化其作用域
+    pub fn start_function(&mut self, name: String, params: Vec<String>) {
+        let function = MirFunction::new(name.clone(), params.clone());
+        let entry_block = function.entry_block;
+
+        self.scopes.clear();
+        self.enter_scope();
+
+        // 将参数添加到变量作用域
+        for param in params {
+            self.bind_variable(
+                param.clone(),
+                Value::Variable {
+                    name: param.clone(),
+                },
+                None,
+            );
+        }
+
+        self.program.add_function(function);
+        self.current_function_name = Some(name);
+        self.current_block = Some(entry_block);
+    }
+
+    /// 完成当前函数
+    pub fn finish_function(&mut self) {
+        self.current_function_name = None;
+        self.current_block = None;
+    }
+
+    /// 获取当前函数的可变引用
+    pub(crate) fn current_function_mut(&mut self) -> &mut MirFunction {
+        let name = self
+            .current_function_name
+            .as_ref()
+            .expect("No current function");
+        self.program
+            .functions
+            .get_mut(name)
+            .expect("Current function not found in program")
+    }
+
+    /// 获取当前基本块ID
+    pub(crate) fn current_block(&self) -> BasicBlockId {
+        self.current_block.expect("No current block")
+    }
+
+    /// 设置当前基本块
+    pub(crate) fn set_current_block(&mut self, block: BasicBlockId) {
+        self.current_block = Some(block);
+    }
+
+    /// 创建新的基本块
+    pub(crate) fn new_block(&mut self) -> BasicBlockId {
+        self.current_function_mut().new_block()
+    }
+
+    /// 创建新的临时变量
+    pub(crate) fn new_temp(&mut self) -> Value {
+        let id = self.current_function_mut().new_temp();
+        Value::Temp { id }
+    }
+
+    /// 进入新的作用域
+    pub(crate) fn enter_scope(&mut self) {
+        self.scopes.push(ScopeFrame::new());
+    }
+
+    /// 退出当前作用域
+    ///
+    /// 释放作用域内所有引用计数的变量
+    pub(crate) fn exit_scope(&mut self, span: Span) {
+        if let Some(frame) = self.scopes.pop() {
+            for name in frame.order.iter().rev() {
+                if let Some(binding) = frame.bindings.get(name) {
+                    self.release_binding(binding, span);
+                }
+            }
+        }
+    }
+
+    /// 获取当前作用域的可变引用
+    pub(crate) fn current_scope_mut(&mut self) -> &mut ScopeFrame {
+        self.scopes
+            .last_mut()
+            .expect("at least one scope must exist")
+    }
+
+    /// 绑定变量
+    ///
+    /// 在当前作用域中添加新的变量绑定
+    pub(crate) fn bind_variable(
+        &mut self,
+        name: String,
+        value: Value,
+        ownership: Option<OwnershipKind>,
+    ) {
+        let frame = self.current_scope_mut();
+        frame.order.push(name.clone());
+        frame.bindings.insert(
+            name,
+            VariableBinding {
+                value,
+                ownership,
+                moved: false,
+            },
+        );
+    }
+
+    /// 更新变量
+    ///
+    /// 在作用域链中查找变量并更新其值，返回旧的绑定
+    pub(crate) fn update_variable(
+        &mut self,
+        name: &str,
+        value: Value,
+        ownership: Option<OwnershipKind>,
+    ) -> Option<VariableBinding> {
+        for frame in self.scopes.iter_mut().rev() {
+            if let Some(binding) = frame.bindings.get_mut(name) {
+                let old = binding.clone();
+                binding.value = value;
+                binding.ownership = ownership;
+                binding.moved = false;
+                return Some(old);
+            }
+        }
+        None
+    }
+
+    /// 查找变量
+    ///
+    /// 在作用域链中查找变量绑定
+    pub(crate) fn lookup_variable(&self, name: &str) -> Option<&VariableBinding> {
+        for frame in self.scopes.iter().rev() {
+            if let Some(binding) = frame.bindings.get(name) {
+                return Some(binding);
+            }
+        }
+        None
+    }
+
+    /// 释放变量绑定
+    ///
+    /// 对于引用计数的变量，生成Release语句
+    pub(crate) fn release_binding(&mut self, binding: &VariableBinding, span: Span) {
+        if binding.moved {
+            return;
+        }
+        if matches!(binding.ownership, Some(OwnershipKind::RefCounted)) {
+            self.add_statement(Statement::Release {
+                value: binding.value.clone(),
+                span,
+            });
+        }
+    }
+
+    /// 克隆作用域栈
+    ///
+    /// 用于保存上下文状态（如在处理嵌套函数时）
+    pub(crate) fn clone_scopes(&self) -> Vec<ScopeFrame> {
+        self.scopes.clone()
+    }
+
+    /// 恢复作用域栈
+    ///
+    /// 用于恢复之前保存的上下文状态
+    pub(crate) fn restore_scopes(&mut self, scopes: Vec<ScopeFrame>) {
+        self.scopes = scopes;
+    }
+
+    /// 添加语句到当前基本块
+    pub(crate) fn add_statement(&mut self, stmt: Statement) {
+        let block_id = self.current_block();
+        if let Some(block) = self.current_function_mut().get_block_mut(block_id) {
+            block.add_statement(stmt);
+        }
+    }
+
+    /// 设置当前基本块的终结语句
+    pub(crate) fn set_terminator(&mut self, terminator: Terminator) {
+        let block_id = self.current_block();
+        if let Some(block) = self.current_function_mut().get_block_mut(block_id) {
+            block.set_terminator(terminator);
+        }
+    }
+}

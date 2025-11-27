@@ -94,14 +94,48 @@ pub fn add(x: i32, y: i32) -> i32 {
 
 编译时，`karte-cli` 会为 `utils` 写入 `target/.karte-cache/utils.interface.json`，入口模块在解析 `import utils::{add}` 时直接读取该接口来补全类型信息和 canonical 名称。
 
+### 增量编译与缓存
+
+Karte 实现了智能的增量编译缓存机制：
+
+- **缓存位置**: `target/.karte-cache/`
+- **缓存键**: 基于 `(module_id + source_fingerprint + deps_interface_hash + optimization_level)` 计算
+- **缓存内容**: 每个模块生成的 LIR 和接口文件
+- **自动失效**: 源文件修改或依赖变更会自动重新编译
+
+这意味着只有真正改动的模块才会重新编译，大大提升大型项目的构建速度。
+
 ### CLI 运行方式
 
 ```bash
+# 项目模式 - 多模块项目
 cargo run -p karte-cli -- run --mode project test_project/src/main.karte
+
+# 脚本模式 - 单文件快速执行（默认）
+cargo run -p karte-cli -- run --mode script "let x = 42; x * 2"
+
+# 详细输出 - 查看编译流程
+cargo run -p karte-cli -- run --verbose --mode project test_project/src/main.karte
+
+# 优化级别控制
+cargo run -p karte-cli -- run --optimization aggressive examples/demo.karte
+
+# 内存统计
+cargo run -p karte-cli -- run --heap-stats "let x = 42; x + 10"
 ```
 
-- `--mode project` 会触发 ModuleGraph 加载 `karte.mod.toml`，依拓扑顺序编译 `utils -> main`。
-- 除了执行结果外，`--verbose` 还能看到 `[module]` 指纹、接口哈希以及 `main_function = main::main` 等 canonical 标签，便于排查跨模块调用。
+**参数说明：**
+- `--mode {script|project}` - 编译模式
+  - `script`: 脚本模式，顶层表达式自动包装在 `main` 函数中（默认）
+  - `project`: 项目模式，触发 ModuleGraph 加载 `karte.mod.toml`，依拓扑顺序编译模块
+- `--verbose` - 详细输出，显示 `[module]` 指纹、接口哈希、`main_function = main::main` 等 canonical 标签
+- `--optimization {none|balanced|aggressive}` - 优化级别
+  - `none`: 无优化，最快编译
+  - `balanced`: 基础优化（默认）
+  - `aggressive`: 激进优化（mem2reg、常量传播等）
+- `--heap-stats` - 显示堆内存分配统计
+- `--emit-lir` - 输出 LIR 文本表示
+- `--emit-mir` - 输出 MIR 文本表示
 
 ## 功能特性
 

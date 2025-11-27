@@ -5,13 +5,10 @@
 /// 执行模式
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExecutionMode {
-    /// 纯解释器模式 - 所有代码都通过解释器执行
-    Interpreter,
-
     /// 纯JIT模式 - 所有代码都通过JIT编译后执行
     JitOnly,
 
-    /// 混合模式 - 根据启发式算法决定使用解释器还是JIT
+    /// 混合模式 - 根据启发式算法决定是否使用JIT编译
     /// 这是默认模式，平衡编译开销和执行性能
     #[default]
     Hybrid,
@@ -21,7 +18,6 @@ impl ExecutionMode {
     /// 从字符串解析执行模式
     pub fn from_str(s: &str) -> Result<Self, String> {
         match s.to_lowercase().as_str() {
-            "interpreter" | "解释器" => Ok(ExecutionMode::Interpreter),
             "jit" | "jit-only" => Ok(ExecutionMode::JitOnly),
             "hybrid" | "混合" => Ok(ExecutionMode::Hybrid),
             _ => Err(format!("未知的执行模式: {}", s)),
@@ -31,7 +27,6 @@ impl ExecutionMode {
     /// 转换为字符串
     pub fn as_str(&self) -> &'static str {
         match self {
-            ExecutionMode::Interpreter => "interpreter",
             ExecutionMode::JitOnly => "jit-only",
             ExecutionMode::Hybrid => "hybrid",
         }
@@ -40,7 +35,6 @@ impl ExecutionMode {
     /// 获取中文描述
     pub fn description(&self) -> &'static str {
         match self {
-            ExecutionMode::Interpreter => "纯解释器模式",
             ExecutionMode::JitOnly => "纯JIT模式",
             ExecutionMode::Hybrid => "混合模式",
         }

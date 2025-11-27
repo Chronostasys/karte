@@ -1,38 +1,16 @@
 use clap::{Parser, Subcommand, ValueEnum};
-// use karte_codegen::lir_interpreter::execute;
-use karte_codegen::vm::professional_executor::ProfessionalExecutor;
-use karte_diagnostics::DiagnosticBag;
-use karte_hir::type_checker::{
-    ExternalFunctionSignature, ExternalModuleInterface, ExternalStructField,
-    ExternalStructSignature,
-};
+// runtime/execution and progress utilities moved to `runner` module
 use karte_ir_codec::{IrDisplay, IrParse};
-use karte_lexer::tokenize;
-use karte_lir::lower::lower_mir_to_lir;
-use karte_lir::optimization_pipeline::{OptimizationLevel, OptimizationPipeline};
+use karte_lir::optimization_pipeline::OptimizationLevel;
+#[cfg(test)]
+use karte_lir::LirFunction;
 use karte_lir::LirProgram;
-use karte_mir::{
-    lower::{lower_expr_to_mir_with_options, LoweringOptions, SCRIPT_ENTRY_POINT},
-    MirProgram, Statement, Value,
-};
-use karte_parser::{parse_with_type_check, ImportDecl, ParsedProgram, ParserMode};
-use karte_rt::{ffi, HeapStats};
-use log::{error, warn};
-use rayon::prelude::*;
-use std::collections::{HashMap, HashSet};
-use std::env;
+use karte_mir::MirProgram;
+use karte_module_system::{compile_entry_file, lower_mir_to_final_lir};
+use karte_parser::ParserMode;
+use log::error;
 use std::fs;
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-
-mod cache;
-use cache::CompilationCache;
-use karte_module_system::{
-    compute_module_cache_version, validate_module_imports, write_module_interface_artifact,
-    ModuleGraph, ModuleId, ModuleInterfaceAccumulator, ModuleInterfaceArtifact,
-    ModuleInterfaceSummary, ModuleMetadata, ModulePlan,
-};
+use std::path::Path;
 
 #[derive(Parser)]
 #[command(name = "karte")]
@@ -124,7 +102,6 @@ enum Commands {
     Export {
         /// 输入文件或表达式
         input: String,
-
         /// 导出的IR阶段
         #[arg(long, value_enum, default_value_t = IrStage::Lir)]
         stage: IrStage,
@@ -146,6 +123,12 @@ enum Commands {
         /// 并发编译任务数 (默认: CPU核心数)
         #[arg(short = 'j', long)]
         jobs: Option<usize>,
+        /// 输出中间 MIR 文件到 output_dir/mir
+        #[arg(long)]
+        emit_mir: bool,
+        /// 显示进度条
+        #[arg(long, default_value_t = true)]
+        progress: bool,
     },
 }
 
@@ -194,31 +177,6 @@ impl IrStage {
     }
 }
 
-#[derive(Clone)]
-struct CompilationArtifacts {
-    parsed_program: ParsedProgram,
-    mir_program: MirProgram,
-    lir_program: LirProgram,
-}
-
-impl CompilationArtifacts {
-    fn module_name(&self) -> Option<&str> {
-        self.parsed_program
-            .module
-            .as_ref()
-            .map(|decl| decl.name.as_str())
-    }
-
-    fn imports(&self) -> &[ImportDecl] {
-        &self.parsed_program.imports
-    }
-}
-
-struct CacheContext<'a> {
-    module_id: &'a str,
-    interface_hash: u64,
-}
-
 impl From<OptimizationArg> for OptimizationLevel {
     fn from(opt: OptimizationArg) -> Self {
         match opt {
@@ -228,308 +186,6 @@ impl From<OptimizationArg> for OptimizationLevel {
             OptimizationArg::Performance => OptimizationLevel::Performance,
         }
     }
-}
-
-fn print_diagnostics(diagnostics: &DiagnosticBag, source_code: &str, filename: &str) {
-    diagnostics.print_fancy(source_code, filename).unwrap();
-}
-
-fn compile_source_to_artifacts(
-    input: &str,
-    filename: &str,
-    optimization_level: OptimizationLevel,
-    verbose: bool,
-    cache_key: Option<CacheContext>,
-    mode: ParserMode,
-    dependency_interfaces: Option<&HashMap<String, ExternalModuleInterface>>,
-) -> Result<CompilationArtifacts, Box<dyn std::error::Error>> {
-    if verbose {
-        if filename != "input" {
-            println!("Processing file: {}", filename);
-        } else {
-            println!("Input: {}", input);
-        }
-    }
-
-    // 词法分析
-    let (tokens, lex_diagnostics) = tokenize(input);
-
-    if !lex_diagnostics.is_empty() {
-        print_diagnostics(&lex_diagnostics, input, filename);
-        if lex_diagnostics.has_errors() {
-            return Err("Lexical analysis failed".into());
-        }
-    }
-
-    if verbose && filename == "input" {
-        println!(
-            "Tokens: {:?}",
-            tokens.iter().map(|t| &t.token).collect::<Vec<_>>()
-        );
-    }
-
-    // 语法分析和类型检查
-    let (result, parse_diagnostics) = parse_with_type_check(&tokens, mode, dependency_interfaces);
-
-    if !parse_diagnostics.is_empty() {
-        print_diagnostics(&parse_diagnostics, input, filename);
-        if parse_diagnostics.has_errors() {
-            return Err("Parsing or type checking failed".into());
-        }
-    }
-
-    let result = result.ok_or("Failed to parse expression or type check failed")?;
-    let parsed_program = result.program;
-    let result_type = result.result_type;
-    let module_context = result.module_context;
-    let lowering_options = LoweringOptions {
-        known_functions: module_context
-            .imports
-            .iter()
-            .filter(|binding| binding.symbol != "*")
-            .map(|binding| binding.alias.clone())
-            .collect::<HashSet<_>>(),
-        module_context: Some(module_context.clone()),
-    };
-
-    if verbose && filename == "input" {
-        println!("AST: {}", &parsed_program.body);
-    }
-    if verbose {
-        println!("Type: {}", result_type);
-    }
-
-    // Lowering to MIR
-    if verbose {
-        println!("\n--- Lowering to MIR ---");
-    }
-    let mut mir_program =
-        match lower_expr_to_mir_with_options(&parsed_program.body, lowering_options) {
-            Ok(prog) => prog,
-            Err(errors) => {
-                for err in errors {
-                    error!("MIR Lowering Error: {}", err);
-                }
-                return Err("MIR lowering failed".into());
-            }
-        };
-
-    // 检查是否为 Project Mode (脚本入口为空，且存在 main 函数)
-    if let Some(script_entry) = mir_program.functions.get(SCRIPT_ENTRY_POINT) {
-        let is_trivial =
-            if let Some(entry_block) = script_entry.basic_blocks.get(&script_entry.entry_block) {
-                entry_block.statements.iter().all(|stmt| match stmt {
-                    Statement::Assign {
-                        source: Value::Unit,
-                        ..
-                    } => true,
-                    _ => false,
-                })
-            } else {
-                true
-            };
-
-        if is_trivial {
-            if mir_program.functions.contains_key("main") {
-                if verbose {
-                    println!("Project Mode detected: switching entry point to 'main'");
-                }
-                mir_program.set_main("main".to_string());
-            }
-        }
-    }
-
-    if verbose {
-        println!("{}", mir_program.to_ir_string());
-    }
-    let lir_program = lower_mir_to_final_lir(&mir_program, optimization_level, verbose)?;
-
-    if let Some(ctx) = cache_key {
-        let cache = CompilationCache::new();
-        let key_str = format!("{}-{:x}", ctx.module_id, ctx.interface_hash);
-        cache.store(&key_str, &mir_program, &lir_program);
-    }
-
-    Ok(CompilationArtifacts {
-        parsed_program,
-        mir_program,
-        lir_program,
-    })
-}
-
-fn compile_to_lir(
-    input: &str,
-    filename: &str,
-    optimization_level: OptimizationLevel,
-    verbose: bool,
-    mode: ParserMode,
-) -> Result<LirProgram, Box<dyn std::error::Error>> {
-    let artifacts = compile_source_to_artifacts(
-        input,
-        filename,
-        optimization_level,
-        verbose,
-        None,
-        mode,
-        None,
-    )?;
-    Ok(artifacts.lir_program)
-}
-
-fn compile_entry_file(
-    filename: &str,
-    optimization_level: OptimizationLevel,
-    verbose: bool,
-    mode: ParserMode,
-) -> Result<CompilationArtifacts, Box<dyn std::error::Error>> {
-    let entry_path = Path::new(filename);
-    let module_graph = ModuleGraph::load_for_entry(entry_path).map_err(|err| format!("{}", err))?;
-    let plan = module_graph
-        .plan_for_entry(entry_path)
-        .map_err(|err| format!("{}", err))?;
-    let canonical_entry = fs::canonicalize(entry_path)?;
-    let mut interface_hashes: HashMap<ModuleId, u64> = HashMap::new();
-    let mut interface_artifacts: HashMap<ModuleId, ModuleInterfaceArtifact> = HashMap::new();
-    let mut compiled_artifacts_by_module: HashMap<ModuleId, Vec<CompilationArtifacts>> =
-        HashMap::new();
-    let layers = module_graph.schedule_layers(&plan);
-
-    if verbose {
-        if let Some(manifest) = module_graph.manifest_path() {
-            println!("[module] manifest: {}", manifest.display());
-        }
-        for description in module_graph.describe() {
-            println!("[module] {}", description);
-        }
-        println!("[module] topo count = {}", plan.sequence.len());
-        println!("[module] layer count = {}", layers.len());
-    }
-
-    let mut entry_result = None;
-    for (layer_idx, layer) in layers.iter().enumerate() {
-        if verbose {
-            let summary = layer
-                .iter()
-                .map(|id| id.as_str().to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            println!("[module] layer {} => [{}]", layer_idx + 1, summary);
-        }
-
-        let dependency_snapshot = interface_hashes.clone();
-        let artifact_snapshot = interface_artifacts.clone();
-        let results: Vec<Result<LayerCompilationResult, String>> = layer
-            .par_iter()
-            .map(|module_id| {
-                compile_module_in_layer(
-                    &module_graph,
-                    module_id,
-                    &dependency_snapshot,
-                    &artifact_snapshot,
-                    optimization_level,
-                    verbose,
-                    mode,
-                    &plan.entry,
-                    &canonical_entry,
-                )
-            })
-            .collect();
-
-        for result in results {
-            match result {
-                Ok(layer_result) => {
-                    let module_id = layer_result.module_id.clone();
-                    if module_id == plan.entry {
-                        if let Some(artifacts) = layer_result.entry_artifacts {
-                            entry_result = Some(artifacts);
-                        }
-                    }
-                    compiled_artifacts_by_module
-                        .insert(module_id.clone(), layer_result.compiled_artifacts);
-                    interface_hashes.insert(module_id.clone(), layer_result.interface_hash);
-                    interface_artifacts.insert(module_id, layer_result.interface_artifact);
-                }
-                Err(err) => {
-                    return Err(Box::new(io::Error::new(io::ErrorKind::Other, err)));
-                }
-            }
-        }
-    }
-
-    let mut entry_artifacts =
-        entry_result.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "入口模块未被编译"))?;
-    merge_module_artifacts(&plan, &compiled_artifacts_by_module, &mut entry_artifacts);
-    Ok(entry_artifacts)
-}
-
-fn lower_mir_to_final_lir(
-    mir_program: &MirProgram,
-    optimization_level: OptimizationLevel,
-    verbose: bool,
-) -> Result<LirProgram, Box<dyn std::error::Error>> {
-    if verbose {
-        println!("\n--- Lowering to LIR ---");
-        println!("=== 返回高级LIR (包含Alloc指令，待优化) ===");
-    }
-
-    let mut lir_program = match lower_mir_to_lir(mir_program) {
-        Ok(prog) => prog,
-        Err(errors) => {
-            for err in errors {
-                error!("LIR Lowering Error: {}", err);
-            }
-            return Err("LIR lowering failed".into());
-        }
-    };
-
-    if verbose {
-        println!("{}", lir_program.to_ir_string());
-        println!("================================================");
-    }
-
-    if verbose {
-        println!("\n--- LIR 优化 ---");
-    }
-    let mut pipeline = OptimizationPipeline::new(optimization_level);
-    match pipeline.optimize(&mut lir_program) {
-        Ok(stats) => {
-            if verbose {
-                println!("优化完成:");
-                println!("  - 总耗时: {}ms", stats.total_time_ms);
-                println!("  - 执行pass数: {}", stats.passes_executed);
-                println!(
-                    "  - 指令数变化: {} -> {}",
-                    stats.instructions_before, stats.instructions_after
-                );
-            }
-        }
-        Err(errors) => {
-            for err in errors {
-                error!("LIR 优化错误: {}", err);
-            }
-            return Err("LIR optimization failed".into());
-        }
-    }
-
-    if verbose {
-        println!("\n--- 优化后LIR ---");
-        println!("{}", lir_program.to_ir_string());
-    }
-
-    if verbose {
-        println!("\n--- 指令降级 ---");
-    }
-    if let Err(lowering_error) = karte_lir::lower_program_instructions(&mut lir_program) {
-        error!("指令降级错误: {}", lowering_error);
-        return Err("Instruction lowering failed".into());
-    }
-
-    if verbose {
-        println!("\n--- 降级后LIR (可执行) ---");
-        println!("{}", lir_program.to_ir_string());
-    }
-
-    Ok(lir_program)
 }
 
 fn parse_ir_content<T: IrParse>(
@@ -579,237 +235,13 @@ fn load_and_execute_ir(
     verbose: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let lir_program = load_ir_for_execution(filename, stage, optimization_level, verbose)?;
-    execute_lir(&lir_program, verbose)
-}
-
-fn merge_module_artifacts(
-    plan: &ModulePlan,
-    compiled: &HashMap<ModuleId, Vec<CompilationArtifacts>>,
-    entry_artifacts: &mut CompilationArtifacts,
-) {
-    let mut merged_lir = LirProgram::new();
-    let mut merged_mir = MirProgram::new();
-    for module_id in &plan.sequence {
-        if let Some(units) = compiled.get(module_id) {
-            for unit in units {
-                merge_mir_program(&mut merged_mir, &unit.mir_program);
-                merge_lir_program(&mut merged_lir, &unit.lir_program);
-            }
-        }
-    }
-    merged_mir.main_function = entry_artifacts.mir_program.main_function.clone();
-    merged_lir.main_function = entry_artifacts.lir_program.main_function.clone();
-    entry_artifacts.mir_program = merged_mir;
-    entry_artifacts.lir_program = merged_lir;
-}
-
-fn merge_mir_program(target: &mut MirProgram, source: &MirProgram) {
-    for (name, function) in &source.functions {
-        target.functions.insert(name.clone(), function.clone());
-    }
-    for (name, ty) in &source.struct_types {
-        target.struct_types.insert(name.clone(), ty.clone());
-    }
-    for (name, symbol) in &source.function_symbols {
-        target.function_symbols.insert(name.clone(), symbol.clone());
-    }
-    for (name, symbol) in &source.external_function_symbols {
-        target
-            .external_function_symbols
-            .insert(name.clone(), symbol.clone());
-    }
-}
-
-fn merge_lir_program(target: &mut LirProgram, source: &LirProgram) {
-    for (name, function) in &source.functions {
-        target
-            .functions
-            .entry(name.clone())
-            .or_insert_with(|| function.clone());
-    }
-    for (name, layout) in &source.global_struct_types {
-        target
-            .global_struct_types
-            .insert(name.clone(), layout.clone());
-    }
-    for (name, memory) in &source.global_variables {
-        target.global_variables.insert(name.clone(), *memory);
-    }
-}
-
-struct LayerCompilationResult {
-    module_id: ModuleId,
-    interface_hash: u64,
-    entry_artifacts: Option<CompilationArtifacts>,
-    compiled_artifacts: Vec<CompilationArtifacts>,
-    interface_artifact: ModuleInterfaceArtifact,
-}
-
-fn compile_module_in_layer(
-    graph: &ModuleGraph,
-    module_id: &ModuleId,
-    dependency_interfaces: &HashMap<ModuleId, u64>,
-    dependency_interface_artifacts: &HashMap<ModuleId, ModuleInterfaceArtifact>,
-    optimization_level: OptimizationLevel,
-    verbose: bool,
-    mode: ParserMode,
-    entry_module: &ModuleId,
-    canonical_entry: &Path,
-) -> Result<LayerCompilationResult, String> {
-    let meta = graph
-        .metadata(module_id)
-        .ok_or_else(|| format!("缺少模块元数据: {}", module_id))?
-        .clone();
-
-    let cache_version = compute_module_cache_version(module_id, &meta, dependency_interfaces);
-    let mut interface_acc = ModuleInterfaceAccumulator::default();
-    let mut entry_result = None;
-    let enforce_module_ids = graph.manifest_path().is_some();
-    let mut compiled_artifacts = Vec::new();
-    let dependency_interface_map =
-        build_type_checker_dependency_map(&meta, dependency_interface_artifacts);
-
-    for source_path in &meta.sources {
-        let source = fs::read_to_string(source_path)
-            .map_err(|e| format!("读取 {} 失败: {}", source_path.display(), e))?;
-        let path_str = source_path.to_string_lossy().to_string();
-        let cache_ctx = CacheContext {
-            module_id: module_id.as_str(),
-            interface_hash: cache_version,
-        };
-        let artifacts = compile_source_to_artifacts(
-            &source,
-            &path_str,
-            optimization_level,
-            verbose,
-            Some(cache_ctx),
-            mode,
-            Some(&dependency_interface_map),
-        )
-        .map_err(|e| format!("编译 {} 失败: {}", source_path.display(), e))?;
-        if enforce_module_ids {
-            ensure_module_decl(module_id, &artifacts, source_path)?;
-            validate_module_imports(
-                module_id,
-                artifacts.imports(),
-                &meta,
-                dependency_interface_artifacts,
-            )?;
-        }
-        interface_acc.observe(&artifacts.mir_program);
-        if module_id == entry_module && source_path == canonical_entry {
-            entry_result = Some(artifacts.clone());
-        }
-        compiled_artifacts.push(artifacts);
-    }
-
-    let interface_summary = interface_acc.finalize(module_id, &meta, dependency_interfaces);
-    if let Err(err) = write_module_interface_artifact(module_id, &interface_summary.artifact) {
-        warn!("[module] 无法写入接口文件 {}: {}", module_id.as_str(), err);
-    } else if verbose {
-        println!(
-            "[module] interface persisted for {} -> {}",
-            module_id.as_str(),
-            interface_summary.artifact.interface_hash
-        );
-    }
-
-    let ModuleInterfaceSummary {
-        interface_hash: public_interface_hash,
-        artifact,
-    } = interface_summary;
-
-    Ok(LayerCompilationResult {
-        module_id: module_id.clone(),
-        interface_hash: public_interface_hash,
-        entry_artifacts: entry_result,
-        compiled_artifacts,
-        interface_artifact: artifact,
-    })
-}
-
-fn build_type_checker_dependency_map(
-    meta: &ModuleMetadata,
-    artifacts: &HashMap<ModuleId, ModuleInterfaceArtifact>,
-) -> HashMap<String, ExternalModuleInterface> {
-    let mut map = HashMap::new();
-    for dep in &meta.dependencies {
-        if let Some(artifact) = artifacts.get(dep) {
-            map.insert(
-                dep.as_str().to_string(),
-                external_interface_from_artifact(artifact),
-            );
-        }
-    }
-    map
-}
-
-fn external_interface_from_artifact(artifact: &ModuleInterfaceArtifact) -> ExternalModuleInterface {
-    let functions = artifact
-        .exports
-        .functions
-        .iter()
-        .map(|func| {
-            (
-                func.name.clone(),
-                ExternalFunctionSignature {
-                    name: func.name.clone(),
-                    params: func.params,
-                },
-            )
-        })
-        .collect();
-
-    let structs = artifact
-        .exports
-        .structs
-        .iter()
-        .map(|structure| {
-            (
-                structure.name.clone(),
-                ExternalStructSignature {
-                    name: structure.name.clone(),
-                    fields: structure
-                        .fields
-                        .iter()
-                        .map(|field| ExternalStructField {
-                            name: field.name.clone(),
-                            ty: field.ty.clone(),
-                        })
-                        .collect(),
-                },
-            )
-        })
-        .collect();
-
-    ExternalModuleInterface { functions, structs }
-}
-
-fn ensure_module_decl(
-    module_id: &ModuleId,
-    artifacts: &CompilationArtifacts,
-    source_path: &Path,
-) -> Result<(), String> {
-    match artifacts.module_name() {
-        Some(name) if name == module_id.as_str() => Ok(()),
-        Some(name) => Err(format!(
-            "{} 声明 `module {}`，但 manifest 将其注册为 `{}`",
-            source_path.display(),
-            name,
-            module_id.as_str()
-        )),
-        None => Err(format!(
-            "{} 缺少 `module {}` 声明 (manifest id `{}`)",
-            source_path.display(),
-            module_id.as_str(),
-            module_id.as_str()
-        )),
-    }
+    runner::execute_lir(&lir_program, verbose)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use karte_module_system::merge_lir_program;
     use std::path::PathBuf;
 
     #[test]
@@ -839,476 +271,36 @@ mod tests {
             "merged MIR should record canonical dependency functions"
         );
         assert!(
-            artifacts
-                .lir_program
-                .functions
-                .contains_key("utils::add"),
+            artifacts.lir_program.functions.contains_key("utils::add"),
             "merged LIR should contain dependency functions"
         );
+        assert_eq!(
+            artifacts.lir_program.main_function.as_deref(),
+            Some("main::main"),
+            "entry LIR should retain canonical main function"
+        );
+    }
+
+    #[test]
+    fn merge_lir_program_preserves_main_function() {
+        let mut target = LirProgram::new();
+        let mut source = LirProgram::new();
+        let main_name = "foo.bar::main".to_string();
+        let mut function = LirFunction::new(main_name.clone());
+        function.parameter_count = 0;
+        source.add_function(function);
+        source.set_main(main_name.clone());
+
+        merge_lir_program(&mut target, &source);
+
+        assert_eq!(target.main_function.as_deref(), Some(main_name.as_str()));
     }
 }
 
 /// 🔧 新增：获取环境变量中的JIT设置
-fn should_use_jit() -> bool {
-    env::var("KARTE_JIT")
-        .map(|v| v == "1" || v.to_lowercase() == "true")
-        .unwrap_or(true)
-}
+// The runner module holds the non-CLI runtime/processing logic.
+mod runner;
 
-/// 🔧 修改：改进的execute_lir函数，支持JIT
-fn execute_lir(lir_program: &LirProgram, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
-    if verbose {
-        println!("\n--- Executing LIR ---");
-    }
-
-    // 🔧 新增：检查是否应该使用JIT
-    let use_jit = should_use_jit();
-
-    if use_jit && verbose {
-        println!("尝试使用JIT执行器...");
-    }
-
-    if use_jit {
-        match ProfessionalExecutor::new_with_jit(verbose) {
-            Ok(mut executor) => {
-                if verbose {
-                    println!("使用JIT执行器");
-                }
-                match executor.execute_with_jit(lir_program) {
-                    Ok(exit_code) => {
-                        println!("JIT执行完成，退出码: {}", exit_code);
-                        return Ok(());
-                    }
-                    Err(err) => {
-                        if verbose {
-                            println!("JIT执行失败，回退到解释器: {}", err);
-                        }
-                        // 继续到解释器执行
-                    }
-                }
-            }
-            Err(err) => {
-                if verbose {
-                    println!("无法创建JIT执行器，回退到解释器: {}", err);
-                }
-                // 继续到解释器执行
-            }
-        }
-    }
-
-    panic!("Not implemented")
-}
-
-fn capture_heap_stats() -> HeapStats {
-    let mut stats = HeapStats::default();
-    ffi::karte_jit_runtime_heap_stats(&mut stats as *mut _);
-    stats
-}
-
-fn print_heap_stats(context: &str, target: &str, before: HeapStats, after: HeapStats) {
-    println!("[heap][{}] {}", context, target);
-    println!(
-        "  active_allocations: {} -> {} (Δ{})",
-        before.active_allocations,
-        after.active_allocations,
-        delta_u64(after.active_allocations, before.active_allocations)
-    );
-    println!(
-        "  rc_tracked_objects: {} -> {} (Δ{})",
-        before.rc_tracked_objects,
-        after.rc_tracked_objects,
-        delta_u64(after.rc_tracked_objects, before.rc_tracked_objects)
-    );
-    println!(
-        "  retain/release ops: +{}/+{} (rc_zero Δ {})",
-        delta_u64(after.total_retain_ops, before.total_retain_ops),
-        delta_u64(after.total_release_ops, before.total_release_ops),
-        delta_u64(after.rc_zero_releases, before.rc_zero_releases)
-    );
-    println!(
-        "  bytes_in_use: {} -> {} (Δ{})",
-        before.bytes_in_use,
-        after.bytes_in_use,
-        delta_usize(after.bytes_in_use, before.bytes_in_use)
-    );
-}
-
-fn delta_u64(after: u64, before: u64) -> i128 {
-    after as i128 - before as i128
-}
-
-fn delta_usize(after: usize, before: usize) -> i128 {
-    after as i128 - before as i128
-}
-
-fn process_file(
-    filename: &str,
-    optimization_level: OptimizationLevel,
-    verbose: bool,
-    emit_lir: bool,
-    output_file: Option<&str>,
-    heap_stats: bool,
-    mode: ParserMode,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let artifacts = compile_entry_file(filename, optimization_level, verbose, mode)?;
-    let lir_program = artifacts.lir_program;
-    let before_stats = heap_stats.then_some(capture_heap_stats());
-
-    if let Some(output_path) = output_file {
-        let lir_code = lir_program.to_ir_string();
-        write_content_creating_parent(output_path, &lir_code)?;
-        println!("LIR代码已输出到: {}", output_path);
-    }
-
-    if emit_lir {
-        println!("{}", lir_program.to_ir_string());
-    } else {
-        execute_lir(&lir_program, verbose)?;
-    }
-
-    if let Some(before) = before_stats {
-        let after = capture_heap_stats();
-        print_heap_stats("file", filename, before, after);
-    }
-
-    Ok(())
-}
-
-fn process_expression(
-    input: &str,
-    optimization_level: OptimizationLevel,
-    verbose: bool,
-    emit_lir: bool,
-    output_file: Option<&str>,
-    heap_stats: bool,
-    mode: ParserMode,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let lir_program = compile_to_lir(input, "input", optimization_level, verbose, mode)?;
-    let before_stats = heap_stats.then_some(capture_heap_stats());
-
-    if let Some(output_path) = output_file {
-        let lir_code = lir_program.to_ir_string();
-        write_content_creating_parent(output_path, &lir_code)?;
-        println!("LIR代码已输出到: {}", output_path);
-    }
-
-    if emit_lir {
-        println!("{}", lir_program.to_ir_string());
-    } else {
-        execute_lir(&lir_program, verbose)?;
-    }
-
-    if let Some(before) = before_stats {
-        let after = capture_heap_stats();
-        print_heap_stats("expression", "input", before, after);
-    }
-
-    Ok(())
-}
-
-fn export_ir(
-    input: &str,
-    stage: IrStage,
-    output: Option<&str>,
-    optimization_level: OptimizationLevel,
-    verbose: bool,
-    mode: ParserMode,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let (source_content, filename_owned, from_file) = if Path::new(input).exists() {
-        (fs::read_to_string(input)?, Some(input.to_string()), true)
-    } else {
-        (input.to_string(), None, false)
-    };
-
-    let filename = filename_owned.as_deref().unwrap_or("input");
-
-    let artifacts = if from_file {
-        compile_entry_file(filename, optimization_level, verbose, mode)?
-    } else {
-        compile_source_to_artifacts(
-            &source_content,
-            filename,
-            optimization_level,
-            verbose,
-            None,
-            mode,
-            None,
-        )?
-    };
-
-    let content = match stage {
-        IrStage::Mir => artifacts.mir_program.to_ir_string(),
-        IrStage::Lir => artifacts.lir_program.to_ir_string(),
-    };
-
-    if let Some(custom_path) = output {
-        write_content_creating_parent(custom_path, &content)?;
-        println!("{} IR已输出到: {}", stage.label(), custom_path);
-    } else if from_file {
-        let mut default_path = PathBuf::from(filename);
-        default_path.set_extension(stage.default_extension());
-        write_content_creating_parent(&default_path, &content)?;
-        println!("{} IR已输出到: {}", stage.label(), default_path.display());
-    } else {
-        println!("{}", content);
-    }
-
-    Ok(())
-}
-
-fn write_content_creating_parent<P: AsRef<Path>>(path: P, content: &str) -> io::Result<()> {
-    let path_ref = path.as_ref();
-    if let Some(parent) = path_ref.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)?;
-        }
-    }
-    fs::write(path_ref, content)
-}
-
-fn run_repl(optimization_level: OptimizationLevel, verbose: bool) {
-    println!("Karte 编程语言解释器");
-    println!("当前优化级别: {:?}", optimization_level);
-    println!();
-    println!("支持的功能:");
-    println!("  - 基础运算: 1 + 2 * 3");
-    println!("  - 变量绑定: let x = 5; x + 10");
-    println!("  - 函数定义: let f = |x| x * 2; f(5)");
-    println!("  - 布尔类型: true, false");
-    println!("  - 条件表达式: if true then 42 else 0");
-    println!("  - 循环表达式: while false do 42");
-    println!("  - 加法类型: Some(42), None");
-    println!("  - 模式匹配: match Some(42) {{ Some(x) -> x, None -> 0 }}");
-    println!("  - 结构体: struct Point {{ x: number, y: number }}");
-    println!("输入表达式进行计算，输入 'quit' 或 'exit' 退出");
-    println!("你也可以传入文件名作为参数来执行文件: karte run filename.karte");
-    println!("使用 --help 查看所有选项");
-    println!();
-
-    loop {
-        print!("> ");
-        io::stdout().flush().unwrap();
-
-        let mut input = String::new();
-        match io::stdin().read_line(&mut input) {
-            Ok(_) => {
-                let input = input.trim();
-
-                if input.is_empty() {
-                    continue;
-                }
-
-                if input == "quit" || input == "exit" {
-                    println!("再见！");
-                    break;
-                }
-
-                // 在交互模式中也支持文件加载
-                if input.starts_with("load ") {
-                    let filename = input.strip_prefix("load ").unwrap().trim();
-                    if let Err(err) = process_file(
-                        filename,
-                        optimization_level,
-                        verbose,
-                        false,
-                        None,
-                        false,
-                        ParserMode::Script,
-                    ) {
-                        error!("Error reading file '{}': {}", filename, err);
-                    }
-                    continue;
-                }
-
-                if let Err(err) = process_expression(
-                    input,
-                    optimization_level,
-                    verbose,
-                    false,
-                    None,
-                    false,
-                    ParserMode::Script,
-                ) {
-                    error!("Error: {}", err);
-                }
-            }
-            Err(error) => {
-                error!("Error reading input: {}", error);
-                break;
-            }
-        }
-    }
-}
-
-fn build_project(
-    entry_path: &str,
-    output_dir: &str,
-    optimization_level: OptimizationLevel,
-    verbose: bool,
-) -> Result<(), String> {
-    let entry_path = Path::new(entry_path);
-    let output_dir = Path::new(output_dir);
-    fs::create_dir_all(output_dir).map_err(|e| format!("Failed to create output dir: {}", e))?;
-
-    // 1. 加载模块图
-    let graph = ModuleGraph::load_for_entry(entry_path).map_err(|e| e.to_string())?;
-    let plan = graph
-        .plan_for_entry(entry_path)
-        .map_err(|e| e.to_string())?;
-
-    println!("构建计划: {} 个模块", plan.sequence.len());
-    if verbose {
-        for module in &plan.sequence {
-            println!("  - {}", module);
-        }
-    }
-
-    // 2. 计算分层调度
-    let layers = graph.schedule_layers(&plan);
-    println!("分层调度: {} 层", layers.len());
-
-    // 3. 缓存管理
-    let cache = CompilationCache::new_with_root(output_dir.join("cache"));
-    let cache = Arc::new(Mutex::new(cache));
-
-    // 4. 并发编译
-    // 共享的编译结果（LIR程序片段），用于链接
-    // 注意：这里简化处理，实际上可能需要更复杂的链接逻辑
-    // 目前假设每个模块编译为独立的LIR片段，最后合并
-    let compiled_modules = Arc::new(Mutex::new(HashMap::new()));
-
-    for (i, layer) in layers.iter().enumerate() {
-        println!(
-            "正在编译第 {}/{} 层 ({} 个模块)...",
-            i + 1,
-            layers.len(),
-            layer.len()
-        );
-
-        // 并行处理当前层的所有模块
-        let results: Vec<Result<(ModuleId, LirProgram), String>> = layer
-            .par_iter()
-            .map(|module_id| {
-                let metadata = graph.metadata(module_id).unwrap();
-                let cache_key =
-                    cache::CacheKey::new(module_id.as_str(), metadata.source_fingerprint);
-
-                // 检查缓存
-                let cache_lock = cache.lock().unwrap();
-                if let Some(_cached_lir) = cache_lock.get(&cache_key) {
-                    if verbose {
-                        println!("  [Cache] {}", module_id);
-                    }
-                    // 反序列化缓存的LIR (这里简化为重新解析文本格式，实际应使用二进制格式)
-                    // 暂时不支持从缓存恢复完整LIR对象，所以这里只是模拟命中
-                    // 实际实现需要 LirProgram 支持 serde 或者自定义二进制编解码
-                    // 这里为了演示，如果命中缓存，我们仍然重新编译（因为还没实现LIR反序列化）
-                    // TODO: 实现 LirProgram 的序列化/反序列化
-                }
-                drop(cache_lock);
-
-                if verbose {
-                    println!("  [Compiling] {}", module_id);
-                }
-
-                // 读取源码
-                let mut combined_source = String::new();
-                for src_path in &metadata.sources {
-                    let content = fs::read_to_string(src_path)
-                        .map_err(|e| format!("Failed to read {}: {}", src_path.display(), e))?;
-                    combined_source.push_str(&content);
-                    combined_source.push('\n');
-                }
-
-                // 编译单个模块
-                // 注意：这里简化了依赖处理。实际上编译一个模块可能需要其依赖的符号表（HIR/MIR阶段）
-                // 目前 Karte 还是单文件编译模型，这里假设模块间通过 extern 引用，或者源码合并
-                // 为了支持真正的模块化，需要在 HIR/MIR 阶段引入符号表导入机制
-                // 这里暂时只做源码层面的编译，不解决跨模块符号解析（假设是独立的或者通过运行时链接）
-
-                let (tokens, _) = tokenize(&combined_source);
-                let (ast_result, diagnostics) =
-                    parse_with_type_check(&tokens, ParserMode::Project, None);
-
-                if diagnostics.has_errors() {
-                    return Err(format!("Parse failed for {}: {:?}", module_id, diagnostics));
-                }
-
-                let ast = ast_result.ok_or_else(|| format!("Parse failed for {}", module_id))?;
-
-                let module_context = ast.module_context().clone();
-                let lowering_options = LoweringOptions {
-                    known_functions: module_context
-                        .imports
-                        .iter()
-                        .filter(|binding| binding.symbol != "*")
-                        .map(|binding| binding.alias.clone())
-                        .collect(),
-                    module_context: Some(module_context),
-                };
-                let mir_program = lower_expr_to_mir_with_options(ast.expr(), lowering_options)
-                    .map_err(|errs| format!("MIR lowering failed for {}: {:?}", module_id, errs))?;
-
-                let mut lir_program = lower_mir_to_lir(&mir_program)
-                    .map_err(|errs| format!("LIR lowering failed for {}: {:?}", module_id, errs))?;
-
-                // 优化
-                let mut pipeline = OptimizationPipeline::new(optimization_level);
-                pipeline
-                    .optimize(&mut lir_program)
-                    .expect("Optimization failed");
-
-                // 更新缓存
-                let cache_lock = cache.lock().unwrap();
-                cache_lock.put(cache_key, lir_program.to_ir_string()); // 存入文本IR作为缓存
-                drop(cache_lock);
-
-                Ok((module_id.clone(), lir_program))
-            })
-            .collect();
-
-        // 收集结果并处理错误
-        for result in results {
-            match result {
-                Ok((id, program)) => {
-                    compiled_modules.lock().unwrap().insert(id, program);
-                }
-                Err(e) => return Err(e),
-            }
-        }
-    }
-
-    println!("构建完成！");
-
-    // 5. 链接（合并所有LIR程序）
-    // 简单地将所有函数合并到一个 LirProgram 中
-    let mut final_program = LirProgram::new();
-    let modules = compiled_modules.lock().unwrap();
-
-    // 按照 plan 顺序合并，保证确定性
-    for module_id in &plan.sequence {
-        if let Some(prog) = modules.get(module_id) {
-            for (name, func) in &prog.functions {
-                // 简单的重名处理：如果不是入口模块，可能需要加前缀
-                // 这里假设函数名全局唯一
-                final_program.functions.insert(name.clone(), func.clone());
-            }
-            // 合并全局变量和结构体定义
-            for (name, layout) in &prog.global_struct_types {
-                final_program.add_global_struct_type(name.clone(), layout.clone());
-            }
-        }
-    }
-
-    // 输出最终产物
-    let output_file = output_dir.join("main.lir");
-    let lir_code = final_program.to_ir_string();
-    fs::write(&output_file, lir_code).map_err(|e| format!("Failed to write output: {}", e))?;
-
-    println!("输出文件: {}", output_file.display());
-
-    Ok(())
-}
 
 fn main() {
     env_logger::init();
@@ -1329,7 +321,7 @@ fn main() {
             Some(ref input_str) => {
                 let mode = mode.map(|m| m.into()).unwrap_or(default_mode);
                 if Path::new(input_str).exists() {
-                    if let Err(err) = process_file(
+                    if let Err(err) = runner::process_file(
                         input_str,
                         optimization_level,
                         cli.verbose,
@@ -1341,7 +333,7 @@ fn main() {
                         error!("Error: {}", err);
                         std::process::exit(1);
                     }
-                } else if let Err(err) = process_expression(
+                } else if let Err(err) = runner::process_expression(
                     input_str,
                     optimization_level,
                     cli.verbose,
@@ -1355,7 +347,7 @@ fn main() {
                 }
             }
             None => {
-                run_repl(optimization_level, cli.verbose);
+                runner::run_repl(optimization_level, cli.verbose);
             }
         },
         Some(Commands::Compile {
@@ -1399,7 +391,7 @@ fn main() {
             stage,
             output,
         }) => {
-            if let Err(err) = export_ir(
+            if let Err(err) = runner::export_ir(
                 &input,
                 stage,
                 output.as_deref(),
@@ -1412,12 +404,14 @@ fn main() {
             }
         }
         Some(Commands::Repl) => {
-            run_repl(optimization_level, cli.verbose);
+            runner::run_repl(optimization_level, cli.verbose);
         }
         Some(Commands::Build {
             input,
             output_dir,
             jobs,
+            emit_mir,
+            progress,
         }) => {
             if let Some(j) = jobs {
                 rayon::ThreadPoolBuilder::new()
@@ -1426,15 +420,24 @@ fn main() {
                     .unwrap();
             }
 
-            if let Err(err) = build_project(&input, &output_dir, optimization_level, cli.verbose) {
-                error!("Build failed: {}", err);
+            // Use the consolidated build_project which provides per-layer progress
+            // and will also write merged MIR when requested.
+            if let Err(e) = runner::build_project(
+                &input,
+                &output_dir,
+                optimization_level,
+                cli.verbose,
+                emit_mir,
+                progress,
+            ) {
+                error!("Build failed: {}", e);
                 std::process::exit(1);
             }
         }
         None => {
             if let Some(ref input) = cli.input {
                 if Path::new(input).exists() {
-                    if let Err(err) = process_file(
+                    if let Err(err) = runner::process_file(
                         input,
                         optimization_level,
                         cli.verbose,
@@ -1446,7 +449,7 @@ fn main() {
                         error!("Error: {}", err);
                         std::process::exit(1);
                     }
-                } else if let Err(err) = process_expression(
+                } else if let Err(err) = runner::process_expression(
                     input,
                     optimization_level,
                     cli.verbose,
@@ -1459,7 +462,7 @@ fn main() {
                     std::process::exit(1);
                 }
             } else {
-                run_repl(optimization_level, cli.verbose);
+                runner::run_repl(optimization_level, cli.verbose);
             }
         }
     }
