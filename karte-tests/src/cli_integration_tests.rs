@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod cli_tests {
     use karte_codegen::vm::professional_executor::ProfessionalExecutor;
+    use karte_hir::type_checker::ExternalModuleInterface;
     use karte_lexer::tokenize;
     use karte_lir::{
         lower::lower_mir_to_lir,
@@ -11,7 +12,6 @@ mod cli_tests {
         MirProgram, Statement, Value,
     };
     use karte_module_system::{ModuleGraph, ModuleId};
-    use karte_hir::type_checker::ExternalModuleInterface;
     use karte_parser::{parse_with_type_check, ParserMode};
     use std::collections::{HashMap, HashSet};
     use std::fs;
@@ -141,11 +141,8 @@ mod cli_tests {
             lex_diagnostics
         );
 
-        let (result, parse_diagnostics) = parse_with_type_check(
-            &tokens,
-            ParserMode::Project,
-            Some(dependency_interfaces),
-        );
+        let (result, parse_diagnostics) =
+            parse_with_type_check(&tokens, ParserMode::Project, Some(dependency_interfaces));
         assert!(
             !parse_diagnostics.has_errors(),
             "Parsing failed for {:?}: {:?}",

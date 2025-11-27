@@ -7,6 +7,8 @@ use std::hash::{Hash, Hasher};
 use std::io;
 use std::path::{Path, PathBuf};
 
+pub mod cache;
+pub use cache::CompilationCache;
 pub mod interface;
 pub use interface::{
     compute_module_cache_version, read_module_interface_artifact, write_module_interface_artifact,
@@ -15,6 +17,12 @@ pub use interface::{
 };
 pub mod import_validation;
 pub use import_validation::validate_module_imports;
+pub mod project;
+pub use project::{
+    compile_entry_file, compile_module_in_layer, compile_source_to_artifacts, compile_to_lir,
+    lower_mir_to_final_lir, merge_lir_program, merge_mir_program, merge_module_artifacts,
+    CacheContext, CompilationArtifacts, LayerCompilationResult,
+};
 
 const MANIFEST_NAME: &str = "karte.mod.toml";
 const PRELUDE_ENV_VAR: &str = "KARTE_PRELUDE_PATH";
@@ -305,7 +313,8 @@ impl ModuleGraph {
 
             // 找出所有依赖已满足的模块
             for module_id in &remaining {
-                let metadata = self.nodes.get(module_id).unwrap();
+                let metadata = self.nodes.get(module_id)
+                    .expect("模块ID应该存在于图中：所有plan中的模块都应该已注册");
                 let deps_satisfied = metadata.dependencies.iter().all(|dep| {
                     // 依赖必须在之前的层中已访问，或者不在本次计划中（可能是外部依赖，暂不考虑）
                     // 这里假设plan包含了所有传递依赖

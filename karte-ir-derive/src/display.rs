@@ -752,10 +752,18 @@ fn generate_named_struct_display(
             })
             .collect();
 
-        quote! {
-            write!(f, "{}(", #type_name)?;
-            #(#field_writes)*
-            write!(f, ")")
+        // 如果标记为 program，则不要输出外层类型名和括号，直接输出字段列表（与解析器的 program 格式一致）
+        if type_spec.attrs.is_program {
+            quote! {
+                #(#field_writes)*
+                Ok(())
+            }
+        } else {
+            quote! {
+                write!(f, "{}(", #type_name)?;
+                #(#field_writes)*
+                write!(f, ")")
+            }
         }
     }
 }

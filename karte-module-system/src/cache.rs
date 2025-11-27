@@ -1,4 +1,5 @@
 use karte_ir_codec::{IrDisplay, IrParse};
+use karte_lir::optimization_pipeline::OptimizationLevel;
 use karte_lir::LirProgram;
 use karte_mir::MirProgram;
 use std::collections::hash_map::DefaultHasher;
@@ -47,7 +48,7 @@ impl CompilationCache {
         source_fingerprint: u64,
         interface_hash: u64,
         module_id: Option<&str>,
-        optimization_level: crate::OptimizationLevel,
+        optimization_level: OptimizationLevel,
     ) -> String {
         let mut hasher = DefaultHasher::new();
         self.version_tag.hash(&mut hasher);

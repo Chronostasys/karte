@@ -88,7 +88,7 @@ pub fn execute_with_pipeline_debug(expr: &Expr, debug: bool) -> Result<i64, Stri
     }
 
     // 5. 执行（使用简化的寄存器映射，因为寄存器分配已经在编译时完成）
-    karte_codegen::lir_interpreter::execute_professional(&lir_program, debug)
+    karte_codegen::lir_codegen::execute_professional(&lir_program, debug)
 }
 
 /// 简化的执行函数，直接返回i64结果

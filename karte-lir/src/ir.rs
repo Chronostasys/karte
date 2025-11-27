@@ -170,8 +170,8 @@ pub enum Instruction {
         span: Span,
     },
 
-    /// 无条件跳转：jmp label
-    #[ir_codec(token = "jmp")]
+    /// 无条件跳转：Jump label
+    #[ir_codec(token = "Jump")]
     Jump { target: LabelId, span: Span },
 
     /// 条件跳转：je label (jump if equal)
@@ -1172,6 +1172,7 @@ impl LirFunction {
 
 /// LIR程序
 #[derive(Debug, Clone, PartialEq, IrCodec)]
+#[ir_codec(program)]
 pub struct LirProgram {
     pub functions: HashMap<String, LirFunction>,
     pub main_function: Option<String>,

@@ -1,0 +1,210 @@
+//! 模式匹配解析
+//!
+//! 本模块包含解析Karte模式匹配语法的功能，支持以下模式：
+//! - 通配符模式（`_`）
+//! - 数字字面量模式
+//! - 布尔字面量模式（`true`、`false`）
+//! - 变量模式
+//! - 构造器模式（如 `Some(x)`）
+//! - 限定构造器模式（如 `Option::Some(x)`）
+//!
+//! 模式在match表达式中使用，进行模式匹配和解构。
+
+use crate::types::ParseError;
+use crate::Parser;
+use karte_diagnostics::Span;
+use karte_lexer::Token;
+
+impl<'a> Parser<'a> {
+    /// 解析模式
+    ///
+    /// 支持的模式类型：
+    /// - `_`: 通配符，匹配任何值
+    /// - `42`: 数字字面量
+    /// - `true`/`false`: 布尔字面量
+    /// - `x`: 变量绑定
+    /// - `Some(x)`: 构造器模式
+    /// - `Option::Some(x)`: 限定构造器模式
+    pub(crate) fn parse_pattern(&mut self) -> Result<karte_hir::Pattern, ParseError> {
+        if let Some(token) = self.peek() {
+            match &token.token {
+                Token::Underscore => {
+                    let span = token.span;
+                    self.advance();
+                    Ok(karte_hir::Pattern::Wildcard { span })
+                }
+                Token::Number(value) => {
+                    let value = *value;
+                    let span = token.span;
+                    self.advance();
+                    Ok(karte_hir::Pattern::Number { value, span })
+                }
+                Token::Identifier(name) => {
+                    let name = name.clone();
+                    let span = token.span;
+                    self.advance();
+
+                    if name == "true" {
+                        Ok(karte_hir::Pattern::Boolean { value: true, span })
+                    } else if name == "false" {
+                        Ok(karte_hir::Pattern::Boolean { value: false, span })
+                    } else {
+                        // 检查是否为限定构造器模式 TypeName::Constructor
+                        if let Some(next_token) = self.peek() {
+                            if matches!(next_token.token, Token::DoubleColon) {
+                                self.parse_qualified_constructor_pattern(name, span)
+                            } else if matches!(next_token.token, Token::LeftParen) {
+                                self.parse_constructor_pattern(name, span)
+                            } else {
+                                // 变量模式或简单构造器
+                                Ok(karte_hir::Pattern::Variable { name, span })
+                            }
+                        } else {
+                            Ok(karte_hir::Pattern::Variable { name, span })
+                        }
+                    }
+                }
+                _ => Err(ParseError::UnexpectedToken {
+                    expected: "pattern".to_string(),
+                    found: token.token.clone(),
+                    span: token.span,
+                }),
+            }
+        } else {
+            Err(ParseError::UnexpectedEof {
+                expected: "pattern".to_string(),
+            })
+        }
+    }
+
+    /// 解析限定构造器模式（如 `Option::Some(x)`）
+    fn parse_qualified_constructor_pattern(
+        &mut self,
+        type_name: String,
+        start_span: Span,
+    ) -> Result<karte_hir::Pattern, ParseError> {
+        self.advance(); // consume '::'
+
+        // 期望构造器名
+        if let Some(constructor_token) = self.peek() {
+            if let Token::Identifier(constructor_name) = &constructor_token.token {
+                let constructor_name = constructor_name.clone();
+                let constructor_span = constructor_token.span;
+                self.advance();
+
+                // 检查是否有参数模式
+                if let Some(arg_token) = self.peek() {
+                    if matches!(arg_token.token, Token::LeftParen) {
+                        self.advance(); // consume '('
+                        let arg = if let Some(peeked) = self.peek() {
+                            if matches!(peeked.token, Token::RightParen) {
+                                None
+                            } else {
+                                Some(Box::new(self.parse_pattern()?))
+                            }
+                        } else {
+                            return Err(ParseError::UnexpectedEof {
+                                expected: "pattern or ')'".to_string(),
+                            });
+                        };
+
+                        if let Some(close_token) = self.peek() {
+                            if matches!(close_token.token, Token::RightParen) {
+                                let end_span = close_token.span;
+                                self.advance(); // consume ')'
+                                let full_span = Span::new(start_span.start, end_span.end);
+                                Ok(karte_hir::Pattern::QualifiedConstructor {
+                                    type_name,
+                                    constructor_name,
+                                    arg,
+                                    span: full_span,
+                                })
+                            } else {
+                                Err(ParseError::UnexpectedToken {
+                                    expected: "')'".to_string(),
+                                    found: close_token.token.clone(),
+                                    span: close_token.span,
+                                })
+                            }
+                        } else {
+                            Err(ParseError::UnexpectedEof {
+                                expected: "')'".to_string(),
+                            })
+                        }
+                    } else {
+                        // 无参数限定构造器模式
+                        let full_span = Span::new(start_span.start, constructor_span.end);
+                        Ok(karte_hir::Pattern::QualifiedConstructor {
+                            type_name,
+                            constructor_name,
+                            arg: None,
+                            span: full_span,
+                        })
+                    }
+                } else {
+                    // 无参数限定构造器模式
+                    let full_span = Span::new(start_span.start, constructor_span.end);
+                    Ok(karte_hir::Pattern::QualifiedConstructor {
+                        type_name,
+                        constructor_name,
+                        arg: None,
+                        span: full_span,
+                    })
+                }
+            } else {
+                Err(ParseError::UnexpectedToken {
+                    expected: "constructor name".to_string(),
+                    found: constructor_token.token.clone(),
+                    span: constructor_token.span,
+                })
+            }
+        } else {
+            Err(ParseError::UnexpectedEof {
+                expected: "constructor name".to_string(),
+            })
+        }
+    }
+
+    /// 解析构造器模式（如 `Some(x)`）
+    fn parse_constructor_pattern(
+        &mut self,
+        name: String,
+        start_span: Span,
+    ) -> Result<karte_hir::Pattern, ParseError> {
+        self.advance(); // consume '('
+        let arg = if let Some(peeked) = self.peek() {
+            if matches!(peeked.token, Token::RightParen) {
+                None
+            } else {
+                Some(Box::new(self.parse_pattern()?))
+            }
+        } else {
+            return Err(ParseError::UnexpectedEof {
+                expected: "pattern or ')'".to_string(),
+            });
+        };
+
+        if let Some(token) = self.peek() {
+            if matches!(token.token, Token::RightParen) {
+                let end_span = token.span;
+                self.advance(); // consume ')'
+                let full_span = Span::new(start_span.start, end_span.end);
+                Ok(karte_hir::Pattern::Constructor {
+                    name,
+                    arg,
+                    span: full_span,
+                })
+            } else {
+                Err(ParseError::UnexpectedToken {
+                    expected: "')'".to_string(),
+                    found: token.token.clone(),
+                    span: token.span,
+                })
+            }
+        } else {
+            Err(ParseError::UnexpectedEof {
+                expected: "')'".to_string(),
+            })
+        }
+    }
+}
