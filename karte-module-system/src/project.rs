@@ -279,6 +279,7 @@ pub fn compile_source_to_artifacts(
             .map(|binding| binding.alias.clone())
             .collect::<std::collections::HashSet<_>>(),
         module_context: Some(module_context.clone()),
+        expr_types: Default::default(),
     };
 
     if verbose && filename == "input" {

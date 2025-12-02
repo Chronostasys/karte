@@ -1451,6 +1451,7 @@ impl<'a> Parser<'a> {
         Ok(Expr::Lambda {
             params: Vec::new(), // 空参数列表
             body: Box::new(body),
+            inferred_type: None,
             span,
         })
     }
@@ -1546,6 +1547,7 @@ impl<'a> Parser<'a> {
         Ok(Expr::Lambda {
             params,
             body: Box::new(body),
+            inferred_type: None,
             span,
         })
     }

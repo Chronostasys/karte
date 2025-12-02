@@ -2,6 +2,8 @@ use karte_common::memory::OwnershipKind;
 use karte_diagnostics::Span;
 use std::fmt;
 
+use crate::types::Type;
+
 /// 格式化模式用于显示
 fn format_pattern(pattern: &Pattern) -> String {
     match pattern {
@@ -75,6 +77,7 @@ pub enum Expr {
     Lambda {
         params: Vec<Parameter>,
         body: Box<Expr>,
+        inferred_type: Option<Type>,
         span: Span,
     },
     FunctionCall {

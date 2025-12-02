@@ -160,6 +160,7 @@ mod cli_tests {
                 .map(|binding| binding.alias.clone())
                 .collect::<HashSet<_>>(),
             module_context: Some(module_context),
+            expr_types: Default::default(),
         };
 
         let mut mir_program = lower_expr_to_mir_with_options(result.expr(), lowering_options)
@@ -266,6 +267,7 @@ fn main() -> number {
         let options = LoweringOptions {
             known_functions: HashSet::new(),
             module_context: None,
+            expr_types: Default::default(),
         };
 
         let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
@@ -321,6 +323,7 @@ fn main() -> number {
         let options = LoweringOptions {
             known_functions: HashSet::new(),
             module_context: None,
+            expr_types: Default::default(),
         };
 
         let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
@@ -376,6 +379,7 @@ fn main() -> number {
         let options = LoweringOptions {
             known_functions: HashSet::new(),
             module_context: None,
+            expr_types: Default::default(),
         };
 
         let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
@@ -440,6 +444,7 @@ fn main() -> number {
         let options = LoweringOptions {
             known_functions: HashSet::new(),
             module_context: None,
+            expr_types: Default::default(),
         };
 
         let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");

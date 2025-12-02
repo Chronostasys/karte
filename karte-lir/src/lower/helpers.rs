@@ -32,7 +32,7 @@ pub(super) fn collect_function_names_from_value(
     set: &mut HashSet<String>,
 ) {
     match value {
-        karte_mir::Value::Function { name } => {
+        karte_mir::Value::Function { name, .. } => {
             set.insert(name.clone());
         }
         karte_mir::Value::Struct { fields, .. } => {
@@ -40,7 +40,7 @@ pub(super) fn collect_function_names_from_value(
                 collect_function_names_from_value(v, set);
             }
         }
-        karte_mir::Value::Reference { value: inner } => {
+        karte_mir::Value::Reference { value: inner, .. } => {
             collect_function_names_from_value(inner, set);
         }
         karte_mir::Value::Constructor { arg, .. } => {
@@ -183,12 +183,13 @@ pub(super) fn collect_function_names_from_terminator(
 /// 将值转换为字符串键用于映射
 pub(super) fn value_to_key(value: &Value) -> String {
     match value {
-        Value::Variable { name } => format!("var:{}", name),
-        Value::Temp { id } => format!("temp:{}", id.0),
-        Value::Function { name } => format!("fn:{}", name),
+        Value::Variable { name, .. } => format!("var:{}", name),
+        Value::Temp { id, .. } => format!("temp:{}", id.0),
+        Value::Function { name, .. } => format!("fn:{}", name),
         Value::Closure {
             function_name,
             captured_values,
+            ..
         } => {
             let captured_str = captured_values
                 .iter()
@@ -198,16 +199,17 @@ pub(super) fn value_to_key(value: &Value) -> String {
             format!("closure:{}:({})", function_name, captured_str)
         }
         // Note: This is a simplification. Hash of constructor/struct would be better
-        Value::Constructor { name, arg } => format!("ctor:{}({:?})", name, arg),
+        Value::Constructor { name, arg, .. } => format!("ctor:{}({:?})", name, arg),
         Value::QualifiedConstructor {
             type_name,
             constructor_name,
             arg,
+            ..
         } => format!("qctor:{}::{}({:?})", type_name, constructor_name, arg),
-        Value::Number { value } => format!("num:{}", value),
-        Value::Boolean { value } => format!("bool:{}", value),
+        Value::Number { value, .. } => format!("num:{}", value),
+        Value::Boolean { value, .. } => format!("bool:{}", value),
         Value::Unit => "unit".to_string(),
-        Value::Struct { name, fields } => {
+        Value::Struct { name, fields, .. } => {
             let fields_str = fields
                 .iter()
                 .map(|(k, v)| format!("{}:{}", k, value_to_key(v)))
@@ -215,7 +217,7 @@ pub(super) fn value_to_key(value: &Value) -> String {
                 .join(",");
             format!("struct:{}({})", name, fields_str)
         }
-        Value::Reference { value } => {
+        Value::Reference { value, .. } => {
             format!("ref:({})", value_to_key(value))
         }
     }

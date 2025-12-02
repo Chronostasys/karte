@@ -409,11 +409,11 @@ pub(super) fn lower_statement(
                 actual_function_to_call = resolved_function.clone();
             }
             // 🔧 修复：如果是Closure结构体，需要提取function_ptr和env_ptr字段
-            else if let Value::Struct { name, fields } = &resolved_function {
+            else if let Value::Struct { name, fields, .. } = &resolved_function {
                 if name == "Closure" {
                     // 🔧 关键修复：检查env_ptr是否为0，如果是0则不添加环境参数
                     if let Some(env_ptr) = fields.get("env_ptr") {
-                        if let Value::Number { value: 0 } = env_ptr {
+                        if let Value::Number { value: 0, .. } = env_ptr {
                             // env_ptr为0，不添加环境参数，这是一个简单函数
                             log::debug!("🔧 Closure的env_ptr为0，不添加环境参数，不进行任何env_ptr相关的存储操作");
                             // 🔧 重要：当env_ptr为0时，完全跳过env_ptr的处理，避免错误的存储操作
@@ -448,7 +448,7 @@ pub(super) fn lower_statement(
 
             // 检查是否是函数参数调用
             let is_function_parameter = match &actual_function_to_call {
-                Value::Variable { name } => ctx.current_function_params.contains(name),
+                Value::Variable { name, .. } => ctx.current_function_params.contains(name),
                 _ => false,
             };
 
@@ -506,9 +506,9 @@ pub(super) fn lower_statement(
             } else {
                 // 尝试从值中提取函数名，支持更多类型的可调用值
                 let function_name = match &actual_function_to_call {
-                    Value::Function { name } => name.clone(),
+                    Value::Function { name, .. } => name.clone(),
                     Value::Closure { function_name, .. } => function_name.clone(),
-                    Value::Variable { name } => {
+                    Value::Variable { name, .. } => {
                         // 🔧 关键修复：变量可能包含Closure结构体，需要从中提取函数指针
                         // 获取变量的存储地址（这应该是Closure结构体的地址）
                         let var_addr = ctx.lower_to_lvalue(&actual_function_to_call);

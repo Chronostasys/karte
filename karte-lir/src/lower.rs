@@ -154,6 +154,7 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
                     // 把 r1 写入变量 param_name 的栈槽
                     let var_value = Value::Variable {
                         name: param_name.clone(),
+                        ty: None,
                     };
                     let var_addr = context.lower_to_lvalue(&var_value);
                     // 确保目标是寄存器地址
