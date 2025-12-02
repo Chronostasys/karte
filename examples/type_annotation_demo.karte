@@ -1,0 +1,17 @@
+fn add(x: number, y: number) -> number {
+    x + y
+}
+
+fn get_answer() -> number {
+    42
+}
+
+fn double(x: number) -> number {
+    x * 2
+}
+
+let result = add(1, 2);
+let answer = get_answer();
+let doubled = double(5);
+
+result + answer + doubled

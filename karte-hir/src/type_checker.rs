@@ -90,6 +90,14 @@ pub struct TypeChecker {
     constraints: Vec<Constraint>,
     custom_types: HashMap<String, Type>, // 存储自定义类型
     module_context: ModuleContext,
+    function_signatures: HashMap<String, FunctionSignature>, // 缓存函数签名，避免重复解析
+}
+
+/// 函数签名，包含参数类型和返回类型
+#[derive(Debug, Clone)]
+struct FunctionSignature {
+    param_types: Vec<Type>,
+    return_type: Type,
 }
 
 impl Default for TypeChecker {
@@ -107,6 +115,7 @@ impl TypeChecker {
             constraints: Vec::new(),
             custom_types: HashMap::new(),
             module_context: ModuleContext::default(),
+            function_signatures: HashMap::new(),
         }
     }
 
@@ -533,6 +542,11 @@ impl TypeChecker {
     }
 
     /// 收集顶层函数定义，支持相互递归
+    ///
+    /// 这个函数会：
+    /// 1. 严格验证所有类型标注（如果有的话）
+    /// 2. 将解析的函数签名缓存到 self.function_signatures 中
+    /// 3. 将函数类型添加到环境中
     fn collect_function_definitions(&mut self, expr: &Expr, env: &mut TypeEnvironment) {
         if let Expr::Block { statements, .. } = expr {
             for stmt in statements {
@@ -540,6 +554,7 @@ impl TypeChecker {
                     name,
                     params,
                     return_type,
+                    span,
                     ..
                 } = stmt
                 {
@@ -549,26 +564,60 @@ impl TypeChecker {
                     }
 
                     let mut param_types = Vec::new();
+                    let mut parse_failed = false;
+
+                    // 解析参数类型（严格模式）
                     for param in params {
                         let param_ty = if let Some(type_name) = &param.type_annotation {
-                            self.parse_field_type(type_name)
+                            // 使用严格模式解析类型标注
+                            match self.parse_type_annotation(type_name, *span, true) {
+                                Ok(ty) => ty,
+                                Err(err) => {
+                                    self.diagnostics.add_error(err.to_string(), err.span());
+                                    parse_failed = true;
+                                    Type::Unknown
+                                }
+                            }
                         } else {
+                            // 没有类型标注，创建类型变量
                             Type::Var(self.fresh_type_var())
                         };
                         param_types.push(param_ty);
                     }
 
+                    // 解析返回类型（严格模式）
                     let ret_ty = if let Some(type_name) = return_type {
-                        self.parse_field_type(type_name)
+                        match self.parse_type_annotation(type_name, *span, true) {
+                            Ok(ty) => ty,
+                            Err(err) => {
+                                self.diagnostics.add_error(err.to_string(), err.span());
+                                parse_failed = true;
+                                Type::Unknown
+                            }
+                        }
                     } else {
+                        // 没有返回类型标注，创建类型变量
                         Type::Var(self.fresh_type_var())
                     };
+
+                    // 缓存函数签名，供后续检查函数体时使用
+                    // 即使解析失败，也要缓存，以便继续类型检查发现更多错误
+                    self.function_signatures.insert(
+                        name.clone(),
+                        FunctionSignature {
+                            param_types: param_types.clone(),
+                            return_type: ret_ty.clone(),
+                        },
+                    );
 
                     let func_type = Type::Function {
                         params: param_types,
                         return_type: Box::new(ret_ty),
                     };
                     env.insert(name.clone(), func_type);
+
+                    // 注意：即使类型解析失败（parse_failed == true），
+                    // 我们也继续处理，以便发现更多的类型错误
                 }
             }
         }
@@ -1567,45 +1616,39 @@ impl TypeChecker {
             Statement::FunctionDef {
                 name,
                 params,
-                return_type,
                 body,
                 span,
+                ..
             } => {
+                // 从缓存中获取函数签名（已在 collect_function_definitions 中解析和验证）
+                let signature = self
+                    .function_signatures
+                    .get(name)
+                    .cloned()
+                    .expect("函数签名应该已在 collect_function_definitions 中缓存");
+
                 // 1. 创建新的作用域
                 let mut func_env = env.clone();
 
-                // 2. 处理参数
-                let mut param_types = Vec::new();
-                for param in params {
-                    let param_ty = if let Some(type_name) = &param.type_annotation {
-                        self.parse_field_type(type_name)
-                    } else {
-                        Type::Var(self.fresh_type_var())
-                    };
+                // 2. 将参数及其类型添加到函数环境中（使用缓存的类型）
+                for (param, param_ty) in params.iter().zip(signature.param_types.iter()) {
                     func_env.insert(param.name.clone(), param_ty.clone());
-                    param_types.push(param_ty);
                 }
 
-                // 3. 处理返回类型
-                let ret_ty = if let Some(type_name) = return_type {
-                    self.parse_field_type(type_name)
-                } else {
-                    Type::Var(self.fresh_type_var())
-                };
-
-                // 4. 推断函数体
+                // 3. 推断函数体类型
                 let body_ty = self.infer_expr(body, &mut func_env);
 
-                // 5. 约束返回值
-                self.add_constraint(ret_ty.clone(), body_ty, *span);
+                // 4. 添加约束：函数体的类型必须与声明的返回类型一致
+                // 这是关键的检查点：确保函数体返回的值与类型标注匹配
+                self.add_constraint(signature.return_type.clone(), body_ty, *span);
 
-                // 6. 构造函数类型
+                // 5. 构造函数类型（使用缓存的签名）
                 let func_type = Type::Function {
-                    params: param_types,
-                    return_type: Box::new(ret_ty),
+                    params: signature.param_types.clone(),
+                    return_type: Box::new(signature.return_type.clone()),
                 };
 
-                // 7. 将函数名加入当前环境
+                // 6. 将函数名加入当前环境
                 env.insert(name.clone(), func_type);
             }
         }
@@ -1818,6 +1861,95 @@ impl TypeChecker {
     /// 解析字段类型字符串，支持引用类型、结构体名称引用和泛型类型
     fn parse_field_type(&mut self, type_str: &str) -> Type {
         self.parse_generic_type(type_str)
+    }
+
+    /// 解析类型标注，严格模式下遇到未定义类型会报错
+    ///
+    /// # 参数
+    /// - `type_str`: 类型字符串
+    /// - `span`: 源代码位置，用于报错
+    /// - `strict`: 是否启用严格模式。严格模式下遇到未定义类型会返回 Err
+    ///
+    /// # 返回
+    /// - Ok(Type): 解析成功的类型
+    /// - Err(TypeCheckError): 严格模式下遇到未定义类型
+    fn parse_type_annotation(&mut self, type_str: &str, span: karte_diagnostics::Span, strict: bool) -> Result<Type, TypeCheckError> {
+        self.parse_generic_type_strict(type_str, span, strict)
+    }
+
+    /// 严格模式的泛型类型解析
+    fn parse_generic_type_strict(&mut self, type_str: &str, span: karte_diagnostics::Span, strict: bool) -> Result<Type, TypeCheckError> {
+        // 检查是否是引用类型
+        if let Some(inner_type_str) = type_str.strip_prefix('&') {
+            let inner_type = self.parse_generic_type_strict(inner_type_str, span, strict)?;
+            return Ok(Type::reference(inner_type));
+        }
+
+        // 检查是否是泛型类型
+        if let Some(open_bracket) = type_str.find('<') {
+            if let Some(close_bracket) = type_str.rfind('>') {
+                let base_type = &type_str[..open_bracket];
+                let args_str = &type_str[open_bracket + 1..close_bracket];
+
+                // 解析泛型参数
+                let generic_args = self.parse_generic_args_strict(args_str, span, strict)?;
+
+                match base_type {
+                    "Option" => {
+                        if generic_args.len() == 1 {
+                            return Ok(Type::option(generic_args[0].clone()));
+                        } else {
+                            return Ok(Type::Unknown); // 错误的参数数量
+                        }
+                    }
+                    _ => {
+                        // 其他泛型类型可以在将来支持
+                        return Ok(Type::Unknown);
+                    }
+                }
+            } else {
+                return Ok(Type::Unknown); // 没有匹配的 >
+            }
+        } else {
+            // 非泛型类型
+            match type_str {
+                "number" | "i32" | "i64" => return Ok(Type::Number),
+                "unit" => return Ok(Type::Unit),
+                _ => {
+                    // 检查是否是已定义的类型
+                    if let Some(custom_type) = self.custom_types.get(type_str) {
+                        return Ok(custom_type.clone());
+                    } else {
+                        // 未定义的类型
+                        if strict {
+                            return Err(TypeCheckError::UndefinedType {
+                                name: type_str.to_string(),
+                                span,
+                            });
+                        } else {
+                            // 非严格模式：创建类型变量作为占位符
+                            return Ok(Type::Var(self.fresh_type_var()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 严格模式的泛型参数解析
+    fn parse_generic_args_strict(&mut self, args_str: &str, span: karte_diagnostics::Span, strict: bool) -> Result<Vec<Type>, TypeCheckError> {
+        if args_str.trim().is_empty() {
+            return Ok(vec![]);
+        }
+
+        // 简单的逗号分隔解析（不处理嵌套的泛型）
+        let parts: Vec<&str> = args_str.split(',').collect();
+        let mut types = Vec::new();
+        for part in parts {
+            let ty = self.parse_generic_type_strict(part.trim(), span, strict)?;
+            types.push(ty);
+        }
+        Ok(types)
     }
 
     /// 解析泛型类型字符串，例如 "Option<&Node>" 或 "&Option<number>"

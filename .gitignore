@@ -1,4 +1,6 @@
 target
 *.mdc
+*.cache
+*.interface.json
 
 .vscode/settings.json

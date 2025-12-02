@@ -10,3 +10,20 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+tower-lsp.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+env_logger.workspace = true
+
+# Karte 内部依赖
+karte-lexer = { path = "../karte-lexer" }
+karte-parser = { path = "../karte-parser" }
+karte-hir = { path = "../karte-hir" }
+karte-diagnostics = { path = "../karte-diagnostics" }
+karte-common = { path = "../karte-common" }
+
+[[bin]]
+name = "karte-lsp-server"
+path = "src/bin/server.rs"

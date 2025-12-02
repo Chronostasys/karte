@@ -1,3 +1,7 @@
+mod context;
+mod expr;
+mod helpers;
+mod stmt;
 /// HIR到MIR的lowering模块
 ///
 /// 本模块负责将高级中间表示（HIR）降低为中级中间表示（MIR）。
@@ -9,12 +13,7 @@
 /// - `expr`: 表达式降低逻辑
 /// - `stmt`: 语句降低逻辑
 /// - `helpers`: 辅助函数（类型转换、变量收集、所有权推断、模式转换）
-
 mod types;
-mod context;
-mod expr;
-mod stmt;
-mod helpers;
 
 // 重新导出公共类型和常量
 pub use types::{LoweringContext, LoweringOptions, SCRIPT_ENTRY_POINT};

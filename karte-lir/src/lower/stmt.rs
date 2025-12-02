@@ -7,7 +7,10 @@ use super::types::LirLoweringContext;
 use crate::{AllocationType, Instruction, Operand};
 use karte_mir::{BinaryOperator, Statement, UnaryOperator, Value};
 
-pub(super) fn lower_statement(ctx: &mut LirLoweringContext, statement: &Statement) -> Result<(), Vec<String>> {
+pub(super) fn lower_statement(
+    ctx: &mut LirLoweringContext,
+    statement: &Statement,
+) -> Result<(), Vec<String>> {
     match statement {
         Statement::Assign {
             target,

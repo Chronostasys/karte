@@ -1,0 +1,87 @@
+{
+  "name": "karte-lang",
+  "displayName": "Karte Language Support",
+  "description": "Language support for Karte programming language",
+  "version": "0.1.0",
+  "publisher": "karte-lang",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "karte",
+    "functional",
+    "compiler"
+  ],
+  "activationEvents": [
+    "onLanguage:karte"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "karte",
+        "aliases": [
+          "Karte",
+          "karte"
+        ],
+        "extensions": [
+          ".karte"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "karte",
+        "scopeName": "source.karte",
+        "path": "./syntaxes/karte.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "karte.restartServer",
+        "title": "Restart Karte LSP Server",
+        "category": "Karte"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Karte",
+      "properties": {
+        "karte.lsp.serverPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the Karte LSP server binary. If empty, will auto-detect from:\n- `target/debug/karte-lsp-server`\n- `target/release/karte-lsp-server`\n- System PATH"
+        },
+        "karte.lsp.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "messages",
+          "description": "Traces the communication between VS Code and the language server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.0.0",
+    "@vscode/vsce": "^2.19.0"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}

@@ -2,7 +2,9 @@
 //!
 //! 本模块包含栈分配、寄存器分配、结构体布局管理等功能。
 
-use super::helpers::{value_to_key, collect_function_names_from_value, collect_function_names_from_statement};
+use super::helpers::{
+    collect_function_names_from_statement, collect_function_names_from_value, value_to_key,
+};
 use super::types::LirLoweringContext;
 use crate::{AllocationType, Instruction, Operand, Register, StructField, StructLayout};
 use karte_mir::{MirFunction, Statement, TempId, Terminator, Value};
@@ -665,7 +667,11 @@ impl LirLoweringContext {
 
     /// 为构造器创建Tagged Union结构体
 
-    pub(super) fn create_tagged_union_for_constructor(&mut self, name: &str, arg: Option<&Value>) -> Register {
+    pub(super) fn create_tagged_union_for_constructor(
+        &mut self,
+        name: &str,
+        arg: Option<&Value>,
+    ) -> Register {
         let tag_id = self.tagged_union_manager.get_constructor_id(name);
         let struct_addr = self.current_function_mut().new_register();
 
@@ -823,7 +829,11 @@ impl LirLoweringContext {
 
     /// 从值中收集临时变量
 
-    pub(super) fn collect_temp_values_from_value(&self, value: &Value, temp_values: &mut HashSet<String>) {
+    pub(super) fn collect_temp_values_from_value(
+        &self,
+        value: &Value,
+        temp_values: &mut HashSet<String>,
+    ) {
         match value {
             Value::Temp { .. } => {
                 temp_values.insert(value_to_key(value));

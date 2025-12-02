@@ -1,8 +1,8 @@
-mod types;
+mod expression;
 mod module;
 mod pattern;
 mod statement;
-mod expression;
+mod types;
 
 use karte_diagnostics::{DiagnosticBag, Span};
 use karte_hir::type_checker::ExternalModuleInterface;

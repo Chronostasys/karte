@@ -203,7 +203,10 @@ impl<'a> Parser<'a> {
     }
 
     /// 解析模块路径（如 `utils.math`）
-    pub(crate) fn parse_module_path(&mut self, context: &str) -> Result<(Vec<String>, Span), ParseError> {
+    pub(crate) fn parse_module_path(
+        &mut self,
+        context: &str,
+    ) -> Result<(Vec<String>, Span), ParseError> {
         let (first_ident, mut last_span) = self.expect_identifier(context)?;
         let start_span = last_span;
         let mut parts = vec![first_ident];
@@ -228,7 +231,10 @@ impl<'a> Parser<'a> {
     }
 
     /// 期望一个标识符token
-    pub(crate) fn expect_identifier(&mut self, context: &str) -> Result<(String, Span), ParseError> {
+    pub(crate) fn expect_identifier(
+        &mut self,
+        context: &str,
+    ) -> Result<(String, Span), ParseError> {
         if let Some(token) = self.peek() {
             if let Token::Identifier(name) = &token.token {
                 let span = token.span;

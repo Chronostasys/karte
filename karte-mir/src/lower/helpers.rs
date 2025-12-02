@@ -6,7 +6,6 @@
 /// - 所有权推断
 /// - 模式转换（HIR Pattern -> MIR Pattern）
 /// - 堆布局推断
-
 use super::types::LoweringContext;
 use crate::{
     BinaryOperator as MirBinaryOp, EscapeState, HeapLayout, Pattern, Statement,
@@ -165,10 +164,7 @@ fn collect_vars_in_statement(stmt: &karte_hir::Statement, vars: &mut Vec<String>
 }
 
 /// 推断表达式的所有权类型
-pub(crate) fn infer_expr_ownership(
-    ctx: &LoweringContext,
-    expr: &Expr,
-) -> Option<OwnershipKind> {
+pub(crate) fn infer_expr_ownership(ctx: &LoweringContext, expr: &Expr) -> Option<OwnershipKind> {
     match expr {
         Expr::HeapAllocate { ownership, .. } => Some(*ownership),
         Expr::Identifier { name, .. } => ctx.lookup_variable(name).and_then(|b| b.ownership),

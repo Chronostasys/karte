@@ -1,23 +1,21 @@
-use indicatif::{ProgressBar, ProgressStyle, ProgressDrawTarget};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use karte_codegen::vm::professional_executor::ProfessionalExecutor;
 use karte_ir_codec::IrDisplay;
-use crate::IrStage;
 use karte_lir::optimization_pipeline::OptimizationLevel;
 use karte_lir::LirProgram;
+use karte_mir::{MirProgram, Statement, Terminator, Value};
 use karte_module_system::{
-    compile_entry_file, compile_module_in_layer, compile_source_to_artifacts, compile_to_lir,
-    merge_lir_program, merge_module_artifacts, CompilationArtifacts,
-    CompilationCache, LayerCompilationResult, ModuleGraph, ModuleId, ModuleInterfaceArtifact,
+    compile_entry_file, compile_project_with_context, compile_to_lir, merge_module_artifacts,
+    CompilationArtifacts, ProjectBuildContext, ProjectCompilationOutput,
 };
 use karte_parser::ParserMode;
 use karte_rt::{ffi, HeapStats};
 use log::{error, warn};
-use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 fn get_terminal_width() -> usize {
     // Prefer explicit COLUMNS env (common in CI/containers). Fallback to 80.
@@ -53,16 +51,469 @@ fn get_terminal_width() -> usize {
     80
 }
 
+enum BuildInput {
+    AutoDetect,
+    Project(ProjectBuildContext),
+    Script,
+}
 
+enum BuildProduct {
+    Project(ProjectCompilationOutput),
+    Script(CompilationArtifacts),
+}
 
-pub fn execute_lir(lir_program: &LirProgram, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
+struct BuildOutputPaths {
+    lir_path: PathBuf,
+    mir_path: Option<PathBuf>,
+}
+
+fn canonical_mir_program(program: &MirProgram) -> MirProgram {
+    let mut canonical = program.clone();
+    let mut symbol_map = program.function_symbols.clone();
+    symbol_map.extend(program.external_function_symbols.clone());
+
+    if program.functions.is_empty() {
+        canonical.function_symbols.clear();
+        return canonical;
+    }
+
+    let mut renamed = HashMap::with_capacity(program.functions.len());
+    for (alias, function) in &program.functions {
+        let canonical_name = symbol_map
+            .get(alias)
+            .cloned()
+            .unwrap_or_else(|| alias.clone());
+        let mut function = function.clone();
+        function.name = canonical_name.clone();
+        canonicalize_function_values(&mut function, &symbol_map);
+        renamed.insert(canonical_name, function);
+    }
+    canonical.functions = renamed;
+
+    if let Some(main) = &program.main_function {
+        let canonical_main = symbol_map
+            .get(main)
+            .cloned()
+            .unwrap_or_else(|| main.clone());
+        canonical.main_function = Some(canonical_main);
+    }
+
+    canonical.function_symbols.clear();
+    canonical
+}
+
+fn canonicalize_function_values(
+    function: &mut karte_mir::MirFunction,
+    symbols: &HashMap<String, String>,
+) {
+    for block in function.basic_blocks.values_mut() {
+        for statement in &mut block.statements {
+            canonicalize_statement(statement, symbols);
+        }
+        if let Some(terminator) = &mut block.terminator {
+            canonicalize_terminator(terminator, symbols);
+        }
+    }
+}
+
+fn canonicalize_statement(statement: &mut Statement, symbols: &HashMap<String, String>) {
+    match statement {
+        Statement::Assign { target, source, .. } => {
+            canonicalize_value(target, symbols);
+            canonicalize_value(source, symbols);
+        }
+        Statement::BinaryOp {
+            target,
+            left,
+            right,
+            ..
+        } => {
+            canonicalize_value(target, symbols);
+            canonicalize_value(left, symbols);
+            canonicalize_value(right, symbols);
+        }
+        Statement::UnaryOp {
+            target, operand, ..
+        } => {
+            canonicalize_value(target, symbols);
+            canonicalize_value(operand, symbols);
+        }
+        Statement::Call {
+            target,
+            function,
+            args,
+            ..
+        } => {
+            if let Some(target) = target {
+                canonicalize_value(target, symbols);
+            }
+            canonicalize_value(function, symbols);
+            for arg in args {
+                canonicalize_value(arg, symbols);
+            }
+        }
+        Statement::Store { target, value, .. } => {
+            canonicalize_value(target, symbols);
+            canonicalize_value(value, symbols);
+        }
+        Statement::FieldAccess { target, object, .. } => {
+            canonicalize_value(target, symbols);
+            canonicalize_value(object, symbols);
+        }
+        Statement::Dereference {
+            target, reference, ..
+        } => {
+            canonicalize_value(target, symbols);
+            canonicalize_value(reference, symbols);
+        }
+        Statement::ConstructorArgExtract {
+            target,
+            constructor,
+            ..
+        } => {
+            canonicalize_value(target, symbols);
+            canonicalize_value(constructor, symbols);
+        }
+        Statement::FieldAssign { object, value, .. } => {
+            canonicalize_value(object, symbols);
+            canonicalize_value(value, symbols);
+        }
+        Statement::Allocate { target, .. } => {
+            canonicalize_value(target, symbols);
+        }
+        Statement::Deallocate { pointer, .. } => {
+            canonicalize_value(pointer, symbols);
+        }
+        Statement::Retain { value, .. } | Statement::Release { value, .. } => {
+            canonicalize_value(value, symbols);
+        }
+        Statement::MarkGcRoot { value, .. } => {
+            canonicalize_value(value, symbols);
+        }
+        Statement::WriteBarrier { object, value, .. } => {
+            canonicalize_value(object, symbols);
+            canonicalize_value(value, symbols);
+        }
+        Statement::ReadBarrier { target, object, .. } => {
+            canonicalize_value(target, symbols);
+            canonicalize_value(object, symbols);
+        }
+        Statement::HeapAlloc { target, .. } => {
+            canonicalize_value(target, symbols);
+        }
+        Statement::Phi {
+            target, incoming, ..
+        } => {
+            canonicalize_value(target, symbols);
+            for (_, value) in incoming {
+                canonicalize_value(value, symbols);
+            }
+        }
+        Statement::EffectPerform {
+            tag,
+            payload,
+            target,
+            ..
+        } => {
+            canonicalize_value(tag, symbols);
+            canonicalize_value(payload, symbols);
+            if let Some(target) = target {
+                canonicalize_value(target, symbols);
+            }
+        }
+        Statement::EffectResume { value, .. } => {
+            canonicalize_value(value, symbols);
+        }
+        Statement::EffectHandlerPush { tag, .. } => {
+            canonicalize_value(tag, symbols);
+        }
+        Statement::EffectHandlerPop { .. } => {}
+    }
+}
+
+fn canonicalize_terminator(terminator: &mut Terminator, symbols: &HashMap<String, String>) {
+    match terminator {
+        Terminator::Goto { .. } => {}
+        Terminator::Branch { condition, .. } => {
+            canonicalize_value(condition, symbols);
+        }
+        Terminator::Return { value, .. } => {
+            if let Some(value) = value {
+                canonicalize_value(value, symbols);
+            }
+        }
+        Terminator::Match { value, .. } => {
+            canonicalize_value(value, symbols);
+        }
+    }
+}
+
+fn canonicalize_value(value: &mut Value, symbols: &HashMap<String, String>) {
+    match value {
+        Value::Function { name } => {
+            if let Some(canonical) = symbols.get(name) {
+                *name = canonical.clone();
+            }
+        }
+        Value::Closure {
+            function_name,
+            captured_values,
+        } => {
+            if let Some(canonical) = symbols.get(function_name) {
+                *function_name = canonical.clone();
+            }
+            for captured in captured_values {
+                canonicalize_value(captured, symbols);
+            }
+        }
+        Value::Constructor { arg, .. } | Value::QualifiedConstructor { arg, .. } => {
+            if let Some(arg) = arg.as_deref_mut() {
+                canonicalize_value(arg, symbols);
+            }
+        }
+        Value::Struct { fields, .. } => {
+            for field_value in fields.values_mut() {
+                canonicalize_value(field_value, symbols);
+            }
+        }
+        Value::Reference { value, .. } => {
+            canonicalize_value(value, symbols);
+        }
+        Value::Variable { .. }
+        | Value::Number { .. }
+        | Value::Boolean { .. }
+        | Value::Unit
+        | Value::Temp { .. } => {}
+    }
+}
+
+impl BuildProduct {
+    fn lir_program(&self) -> &LirProgram {
+        match self {
+            BuildProduct::Project(p) => &p.final_program,
+            BuildProduct::Script(a) => &a.lir_program,
+        }
+    }
+
+    fn into_lir_program(self) -> LirProgram {
+        match self {
+            BuildProduct::Project(p) => p.final_program,
+            BuildProduct::Script(a) => a.lir_program,
+        }
+    }
+
+    fn write_outputs(
+        &mut self,
+        output_dir: &Path,
+        emit_mir: bool,
+    ) -> Result<BuildOutputPaths, String> {
+        fs::create_dir_all(output_dir).map_err(|e| {
+            format!(
+                "Failed to create output dir {}: {}",
+                output_dir.display(),
+                e
+            )
+        })?;
+
+        let lir_path = output_dir.join("main.lir");
+        fs::write(&lir_path, self.lir_program().to_ir_string())
+            .map_err(|e| format!("Failed to write output {}: {}", lir_path.display(), e))?;
+
+        let mir_path = if emit_mir {
+            let mir_dir = output_dir.join("mir");
+            if let Err(e) = fs::create_dir_all(&mir_dir) {
+                warn!(
+                    "Failed to create mir output dir {}: {}",
+                    mir_dir.display(),
+                    e
+                );
+                None
+            } else {
+                let out = mir_dir.join("main.mir");
+                match self {
+                    BuildProduct::Project(project) => {
+                        let entry_artifacts = project
+                            .entry_artifacts
+                            .as_mut()
+                            .ok_or_else(|| "入口模块未被编译，无法生成合并的 MIR".to_string())?;
+                        merge_module_artifacts(
+                            &project.plan,
+                            &project.compiled_artifacts_by_module,
+                            entry_artifacts,
+                        );
+                        let canonical_mir = canonical_mir_program(&entry_artifacts.mir_program);
+                        if let Err(e) = fs::write(&out, canonical_mir.to_ir_string()) {
+                            warn!("Failed to write merged MIR file {}: {}", out.display(), e);
+                            None
+                        } else {
+                            Some(out)
+                        }
+                    }
+                    BuildProduct::Script(artifacts) => {
+                        let canonical_mir = canonical_mir_program(&artifacts.mir_program);
+                        if let Err(e) = fs::write(&out, canonical_mir.to_ir_string()) {
+                            warn!("Failed to write MIR file {}: {}", out.display(), e);
+                            None
+                        } else {
+                            Some(out)
+                        }
+                    }
+                }
+            }
+        } else {
+            None
+        };
+
+        Ok(BuildOutputPaths { lir_path, mir_path })
+    }
+}
+
+fn create_progress_bar(
+    total_modules: usize,
+    layer_count: usize,
+    progress: bool,
+) -> Option<Arc<ProgressBar>> {
+    if !progress {
+        return None;
+    }
+
+    let pb = ProgressBar::new(total_modules as u64);
+
+    // Compute adaptive sections so the template scales with any terminal width.
+    let term_width = get_terminal_width();
+    let reserved = 48usize;
+    let max_bar = 80usize;
+    let min_bar = 20usize;
+    let avail = term_width.saturating_sub(reserved);
+    let bar_len = std::cmp::min(max_bar, std::cmp::max(min_bar, avail));
+
+    // Allow the message line to grow on larger screens but stay bounded.
+    let msg_reserved = 12usize;
+    let min_msg = 24usize;
+    let max_msg = 120usize;
+    let msg_avail = term_width.saturating_sub(msg_reserved);
+    let msg_width = std::cmp::min(max_msg, std::cmp::max(min_msg, msg_avail));
+
+    let template = format!(
+        "{{prefix:.bold.cyan}}\n  {{spinner:.green}} [{{elapsed_precise}}<{{eta_precise}}] \
+             {{bar:{bar_len}.bright_cyan/bright_blue}} {{percent:>3}}% \
+             ({{human_pos}}/{{human_len}}) {{per_sec:>7}}\n  -> {{msg:<{msg_width}!}}",
+        bar_len = bar_len,
+        msg_width = msg_width,
+    );
+
+    let style = ProgressStyle::with_template(&template)
+        .expect("进度条模板格式应该有效")
+        .progress_chars("█▓░")
+        .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]);
+
+    pb.set_style(style);
+    pb.set_draw_target(ProgressDrawTarget::stderr_with_hz(30));
+    pb.enable_steady_tick(std::time::Duration::from_millis(120));
+    pb.set_prefix(format!("Layer 1/{}", std::cmp::max(1, layer_count)));
+    pb.set_message("初始化构建计划");
+    Some(Arc::new(pb))
+}
+
+fn compile_script_entry(
+    entry_path: &Path,
+    optimization_level: OptimizationLevel,
+    verbose: bool,
+) -> Result<CompilationArtifacts, String> {
+    let path_str = entry_path
+        .to_str()
+        .ok_or_else(|| "入口文件路径不是有效的 UTF-8".to_string())?;
+    compile_entry_file(path_str, optimization_level, verbose, ParserMode::Script)
+        .map_err(|e| e.to_string())
+}
+
+fn build_project_product(
+    context: ProjectBuildContext,
+    optimization_level: OptimizationLevel,
+    verbose: bool,
+    progress: bool,
+    announce: bool,
+) -> Result<BuildProduct, String> {
+    if announce {
+        println!("构建计划: {} 个模块", context.total_modules());
+        if verbose {
+            for module in &context.plan.sequence {
+                println!("  - {}", module);
+            }
+        }
+        println!("分层调度: {} 层", context.layer_count());
+    }
+
+    let progress_bar =
+        create_progress_bar(context.total_modules(), context.layer_count(), progress);
+    let project =
+        compile_project_with_context(&context, optimization_level, verbose, progress_bar)?;
+
+    if announce {
+        println!("构建完成！");
+    }
+
+    Ok(BuildProduct::Project(project))
+}
+
+fn build_script_product(
+    entry_path: &Path,
+    optimization_level: OptimizationLevel,
+    verbose: bool,
+    announce: bool,
+) -> Result<BuildProduct, String> {
+    if announce {
+        println!("脚本构建: {}", entry_path.display());
+    }
+    let artifacts = compile_script_entry(entry_path, optimization_level, verbose)?;
+    if announce {
+        println!("构建完成！");
+    }
+    Ok(BuildProduct::Script(artifacts))
+}
+
+fn build_product_for_entry(
+    entry_path: &Path,
+    input: BuildInput,
+    optimization_level: OptimizationLevel,
+    verbose: bool,
+    progress: bool,
+    announce: bool,
+) -> Result<BuildProduct, String> {
+    match input {
+        BuildInput::Project(context) => {
+            build_project_product(context, optimization_level, verbose, progress, announce)
+        }
+        BuildInput::Script => {
+            build_script_product(entry_path, optimization_level, verbose, announce)
+        }
+        BuildInput::AutoDetect => {
+            if let Some(context) = ProjectBuildContext::try_new(entry_path)? {
+                build_project_product(context, optimization_level, verbose, progress, announce)
+            } else {
+                build_script_product(entry_path, optimization_level, verbose, announce)
+            }
+        }
+    }
+}
+
+pub fn execute_lir(
+    lir_program: &LirProgram,
+    verbose: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     if verbose {
         println!("\n--- Executing LIR ---");
     }
 
     // 始终尝试使用 JIT 执行；解释器已被移除，因此失败会返回错误
     if verbose {
-        println!("entry: {}", lir_program.main_function.as_ref().map_or("<none>".to_string(), |f| f.clone()));
+        println!(
+            "entry: {}",
+            lir_program
+                .main_function
+                .as_ref()
+                .map_or("<none>".to_string(), |f| f.clone())
+        );
         println!("尝试使用 JIT 执行...");
     }
 
@@ -143,9 +594,55 @@ pub fn process_file(
     output_file: Option<&str>,
     heap_stats: bool,
     mode: ParserMode,
+    mode_is_explicit: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let artifacts = compile_entry_file(filename, optimization_level, verbose, mode)?;
-    let lir_program = artifacts.lir_program;
+    let entry_path = Path::new(filename);
+    let project_context = ProjectBuildContext::try_new(entry_path)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+    let build_input = if let Some(context) = project_context {
+        if mode != ParserMode::Project {
+            if mode_is_explicit {
+                return Err(format!(
+                    "检测到 `{}` 位于 Karte 项目中，但指定了 --mode script；请改用 --mode project",
+                    filename
+                )
+                .into());
+            } else {
+                println!(
+                    "ℹ️  检测到项目结构，自动切换到 project 模式编译 `{}`",
+                    filename
+                );
+            }
+        }
+        BuildInput::Project(context)
+    } else {
+        if mode == ParserMode::Project {
+            if mode_is_explicit {
+                return Err(format!(
+                    "`{}` 看起来是独立脚本，无法使用 --mode project；请省略该参数或使用 --mode script",
+                    filename
+                )
+                .into());
+            } else {
+                println!("ℹ️  `{}` 不在项目中，自动切换到 script 模式", filename);
+            }
+        }
+        BuildInput::Script
+    };
+
+    let progress = matches!(build_input, BuildInput::Project(_));
+    let build_product = build_product_for_entry(
+        entry_path,
+        build_input,
+        optimization_level,
+        verbose,
+        progress,
+        false,
+    )
+    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+    let lir_program = build_product.into_lir_program();
     let before_stats = heap_stats.then_some(capture_heap_stats());
 
     if let Some(output_path) = output_file {
@@ -200,56 +697,6 @@ pub fn process_expression(
     Ok(())
 }
 
-pub fn export_ir(
-    input: &str,
-    stage: IrStage,
-    output: Option<&str>,
-    optimization_level: OptimizationLevel,
-    verbose: bool,
-    mode: ParserMode,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let (source_content, filename_owned, from_file) = if Path::new(input).exists() {
-        (fs::read_to_string(input)?, Some(input.to_string()), true)
-    } else {
-        (input.to_string(), None, false)
-    };
-
-    let filename = filename_owned.as_deref().unwrap_or("input");
-
-    let artifacts = if from_file {
-        compile_entry_file(filename, optimization_level, verbose, mode)?
-    } else {
-        compile_source_to_artifacts(
-            &source_content,
-            filename,
-            optimization_level,
-            verbose,
-            None,
-            mode,
-            None,
-        )?
-    };
-
-    let content = match stage {
-        IrStage::Mir => artifacts.mir_program.to_ir_string(),
-        IrStage::Lir => artifacts.lir_program.to_ir_string(),
-    };
-
-    if let Some(custom_path) = output {
-        write_content_creating_parent(custom_path, &content)?;
-        println!("{} IR已输出到: {}", stage.label(), custom_path);
-    } else if from_file {
-        let mut default_path = PathBuf::from(filename);
-        default_path.set_extension(stage.default_extension());
-        write_content_creating_parent(&default_path, &content)?;
-        println!("{} IR已输出到: {}", stage.label(), default_path.display());
-    } else {
-        println!("{}", content);
-    }
-
-    Ok(())
-}
-
 pub fn run_repl(optimization_level: OptimizationLevel, verbose: bool) {
     println!("Karte REPL (JIT 执行)");
     println!("当前优化级别: {:?}", optimization_level);
@@ -289,9 +736,7 @@ pub fn run_repl(optimization_level: OptimizationLevel, verbose: bool) {
                 }
 
                 if input.starts_with("load ") {
-                    let filename = input.strip_prefix("load ")
-                        .expect("已检查前缀存在")
-                        .trim();
+                    let filename = input.strip_prefix("load ").expect("已检查前缀存在").trim();
                     if let Err(err) = process_file(
                         filename,
                         optimization_level,
@@ -300,6 +745,7 @@ pub fn run_repl(optimization_level: OptimizationLevel, verbose: bool) {
                         None,
                         false,
                         ParserMode::Script,
+                        true,
                     ) {
                         error!("Error reading file '{}': {}", filename, err);
                     }
@@ -335,187 +781,22 @@ pub fn build_project(
     progress: bool,
 ) -> Result<(), String> {
     let entry_path = Path::new(entry_path);
-    let output_dir = Path::new(output_dir);
-    fs::create_dir_all(output_dir).map_err(|e| format!("Failed to create output dir: {}", e))?;
+    let output_dir_path = Path::new(output_dir);
+    let mut build_product = build_product_for_entry(
+        entry_path,
+        BuildInput::AutoDetect,
+        optimization_level,
+        verbose,
+        progress,
+        true,
+    )?;
 
-    let graph = ModuleGraph::load_for_entry(entry_path).map_err(|e| e.to_string())?;
-    let plan = graph
-        .plan_for_entry(entry_path)
-        .map_err(|e| e.to_string())?;
+    let BuildOutputPaths { lir_path, mir_path } =
+        build_product.write_outputs(output_dir_path, emit_mir)?;
 
-    println!("构建计划: {} 个模块", plan.sequence.len());
-    if verbose {
-        for module in &plan.sequence {
-            println!("  - {}", module);
-        }
-    }
-
-    let layers = graph.schedule_layers(&plan);
-    println!("分层调度: {} 层", layers.len());
-
-    let total_modules: usize = plan.sequence.len();
-    let progress_bar = if progress {
-        let pb = ProgressBar::new(total_modules as u64);
-
-        // Compute a stable bar width based on terminal size, but clamp it so
-        // the bar doesn't become huge. Reserve space for spinner, percent,
-        // pos/len and timestamps (approx 40 cols).
-        let term_width = get_terminal_width();
-        let reserved = 40usize;
-        let max_bar = 60usize;
-        let min_bar = 20usize;
-        let avail = term_width.saturating_sub(reserved);
-        let bar_len = std::cmp::min(max_bar, std::cmp::max(min_bar, avail));
-
-        let template = format!(
-            "{{spinner:.green}} {{bar:{w}.cyan/blue}} {{percent:>3}}% {{pos}}/{{len}} [{{elapsed}}<{{eta}}] {{msg}}",
-            w = bar_len
-        );
-
-        let style = ProgressStyle::with_template(&template)
-            .expect("进度条模板格式应该有效")
-            .progress_chars("#>-")
-            .tick_strings(&[
-                "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
-            ]);
-
-        pb.set_style(style);
-        pb.set_draw_target(ProgressDrawTarget::stderr_with_hz(30));
-        pb.enable_steady_tick(std::time::Duration::from_millis(120));
-        // Keep the message short so it doesn't affect layout stability.
-        pb.set_message("编译中");
-        Some(Arc::new(pb))
-    } else {
-        None
-    };
-
-    let cache = CompilationCache::new_with_root(output_dir.join("cache"));
-    let _cache = Arc::new(Mutex::new(cache));
-
-    let compiled_modules = Arc::new(Mutex::new(HashMap::new()));
-    let canonical_entry = fs::canonicalize(entry_path).map_err(|e| format!("canonicalize entry failed: {}", e))?;
-    let mut interface_hashes: HashMap<ModuleId, u64> = HashMap::new();
-    let mut interface_artifacts: HashMap<ModuleId, ModuleInterfaceArtifact> = HashMap::new();
-    let mut compiled_artifacts_by_module: HashMap<ModuleId, Vec<CompilationArtifacts>> = HashMap::new();
-    let mut entry_result: Option<CompilationArtifacts> = None;
-    let entry_module = plan.entry.clone();
-
-    for (i, layer) in layers.iter().enumerate() {
-        if let Some(pb) = &progress_bar {
-            pb.println(format!(
-                "正在编译第 {}/{} 层 ({} 个模块)...",
-                i + 1,
-                layers.len(),
-                layer.len()
-            ));
-        } else {
-            println!(
-                "正在编译第 {}/{} 层 ({} 个模块)...",
-                i + 1,
-                layers.len(),
-                layer.len()
-            );
-        }
-
-        let dependency_snapshot = interface_hashes.clone();
-        let artifact_snapshot = interface_artifacts.clone();
-
-        let results: Vec<Result<LayerCompilationResult, String>> = layer
-            .par_iter()
-            .map(|module_id| {
-                compile_module_in_layer(
-                    &graph,
-                    module_id,
-                    &dependency_snapshot,
-                    &artifact_snapshot,
-                    optimization_level,
-                    verbose,
-                    progress_bar.clone(),
-                    ParserMode::Project,
-                    &entry_module,
-                    &canonical_entry,
-                )
-            })
-            .collect();
-
-        for result in results {
-            match result {
-                Ok(layer_result) => {
-                    let module_id = layer_result.module_id.clone();
-                    if module_id == entry_module {
-                        if let Some(art) = layer_result.entry_artifacts.clone() {
-                            entry_result = Some(art);
-                        }
-                    }
-                    for unit in &layer_result.compiled_artifacts {
-                        compiled_modules
-                            .lock()
-                            .expect("锁不应该被污染")
-                            .insert(module_id.clone(), unit.lir_program.clone());
-                    }
-                    compiled_artifacts_by_module
-                        .insert(module_id.clone(), layer_result.compiled_artifacts.clone());
-                    interface_hashes.insert(module_id.clone(), layer_result.interface_hash);
-                    interface_artifacts.insert(module_id.clone(), layer_result.interface_artifact);
-
-                    if let Some(pb) = &progress_bar {
-                        pb.inc(1);
-                    }
-                }
-                Err(e) => return Err(e),
-            }
-        }
-    }
-
-    if let Some(pb) = &progress_bar {
-        pb.finish_with_message("✅ 编译完成");
-    }
-
-    println!("构建完成！");
-
-    let mut final_program = LirProgram::new();
-    let modules = compiled_modules.lock()
-        .expect("锁不应该被污染");
-
-    for module_id in &plan.sequence {
-        if let Some(prog) = modules.get(module_id) {
-            merge_lir_program(&mut final_program, prog);
-            if module_id == &plan.entry {
-                final_program.main_function = prog.main_function.clone();
-            }
-        }
-    }
-
-    if final_program.main_function.is_none() {
-        if let Some(entry_artifacts) = &entry_result {
-            final_program.main_function = entry_artifacts.lir_program.main_function.clone();
-        }
-    }
-
-    let output_file = output_dir.join("main.lir");
-    let lir_code = final_program.to_ir_string();
-    fs::write(&output_file, lir_code).map_err(|e| format!("Failed to write output: {}", e))?;
-
-    println!("输出文件: {}", output_file.display());
-
-    if emit_mir {
-        let mut entry_artifacts = entry_result.ok_or_else(|| "入口模块未被编译，无法生成合并的 MIR".to_string())?;
-        merge_module_artifacts(&plan, &compiled_artifacts_by_module, &mut entry_artifacts);
-        let mir_out_dir = Path::new(&output_dir).join("mir");
-        if let Err(e) = fs::create_dir_all(&mir_out_dir) {
-            warn!(
-                "Failed to create mir output dir {}: {}",
-                mir_out_dir.display(),
-                e
-            );
-        } else {
-            let out = mir_out_dir.join("main.mir");
-            if let Err(e) = fs::write(&out, entry_artifacts.mir_program.to_ir_string()) {
-                warn!("Failed to write merged MIR file {}: {}", out.display(), e);
-            } else {
-                println!("Wrote MIR to {}", out.display());
-            }
-        }
+    println!("输出文件: {}", lir_path.display());
+    if let Some(mir) = mir_path {
+        println!("Wrote MIR to {}", mir.display());
     }
 
     Ok(())

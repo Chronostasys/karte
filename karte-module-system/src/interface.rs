@@ -148,6 +148,18 @@ impl ModuleInterfaceAccumulator {
     }
 }
 
+/// 将 module_id 转换为安全的文件名部分（不包含路径分隔符）
+/// 对于包含路径分隔符的 module_id（如绝对路径），使用哈希值
+pub fn sanitize_module_id_for_filename(module_id: &str) -> String {
+    if module_id.contains('/') || module_id.contains('\\') {
+        let mut hasher = DefaultHasher::new();
+        module_id.hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    } else {
+        module_id.to_string()
+    }
+}
+
 pub fn compute_module_cache_version(
     module_id: &ModuleId,
     meta: &ModuleMetadata,
@@ -175,7 +187,8 @@ pub fn write_module_interface_artifact(
     fs::create_dir_all(&cache_dir)
         .map_err(|e| format!("创建接口目录失败 {}: {}", cache_dir.display(), e))?;
 
-    let filename = format!("{}.interface.json", module_id.as_str());
+    let safe_module_id = sanitize_module_id_for_filename(module_id.as_str());
+    let filename = format!("{}.interface.json", safe_module_id);
     let file_path = cache_dir.join(&filename);
     let temp_path = cache_dir.join(format!("{}.tmp", filename));
     let payload = serde_json::to_vec_pretty(artifact)
@@ -192,7 +205,9 @@ pub fn read_module_interface_artifact(
     module_id: &ModuleId,
 ) -> Result<ModuleInterfaceArtifact, String> {
     let cache_dir = Path::new("target").join(".karte-cache");
-    let filename = format!("{}.interface.json", module_id.as_str());
+
+    let safe_module_id = sanitize_module_id_for_filename(module_id.as_str());
+    let filename = format!("{}.interface.json", safe_module_id);
     let file_path = cache_dir.join(&filename);
     let payload = fs::read(&file_path)
         .map_err(|e| format!("读取接口文件失败 {}: {}", file_path.display(), e))?;

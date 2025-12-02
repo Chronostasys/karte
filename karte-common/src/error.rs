@@ -14,45 +14,28 @@ use std::path::PathBuf;
 #[derive(Debug)]
 pub enum KarteError {
     /// IO错误（文件读写、路径操作等）
-    Io {
-        source: io::Error,
-        context: String,
-    },
+    Io { source: io::Error, context: String },
 
     /// 文件未找到
-    FileNotFound {
-        path: PathBuf,
-    },
+    FileNotFound { path: PathBuf },
 
     /// 词法分析错误
-    Lexer {
-        message: String,
-    },
+    Lexer { message: String },
 
     /// 语法分析错误
-    Parse {
-        message: String,
-    },
+    Parse { message: String },
 
     /// 类型检查错误
-    TypeCheck {
-        message: String,
-    },
+    TypeCheck { message: String },
 
     /// 代码生成错误
-    Codegen {
-        message: String,
-    },
+    Codegen { message: String },
 
     /// 模块系统错误
-    Module {
-        message: String,
-    },
+    Module { message: String },
 
     /// 缓存操作错误
-    Cache {
-        message: String,
-    },
+    Cache { message: String },
 
     /// JSON序列化/反序列化错误
     Json {
@@ -61,14 +44,10 @@ pub enum KarteError {
     },
 
     /// IR解析错误
-    IrParse {
-        message: String,
-    },
+    IrParse { message: String },
 
     /// 运行时错误
-    Runtime {
-        message: String,
-    },
+    Runtime { message: String },
 
     /// 内部编译器错误（不应该发生的错误）
     Internal {
@@ -78,9 +57,7 @@ pub enum KarteError {
     },
 
     /// 多个错误的集合
-    Multiple {
-        errors: Vec<KarteError>,
-    },
+    Multiple { errors: Vec<KarteError> },
 }
 
 impl fmt::Display for KarteError {
@@ -119,7 +96,11 @@ impl fmt::Display for KarteError {
             KarteError::Runtime { message } => {
                 write!(f, "运行时错误: {}", message)
             }
-            KarteError::Internal { message, file, line } => {
+            KarteError::Internal {
+                message,
+                file,
+                line,
+            } => {
                 write!(f, "内部编译器错误: {} (at {}:{})", message, file, line)
             }
             KarteError::Multiple { errors } => {
@@ -306,10 +287,7 @@ mod tests {
 
     #[test]
     fn test_multiple_errors() {
-        let errors = vec![
-            KarteError::parse("错误1"),
-            KarteError::type_check("错误2"),
-        ];
+        let errors = vec![KarteError::parse("错误1"), KarteError::type_check("错误2")];
         let multi = KarteError::multiple(errors);
         let display = multi.to_string();
         assert!(display.contains("发现 2 个错误"));
