@@ -5,7 +5,6 @@
 /// - ScopeFrame: 作用域帧（变量绑定的映射和顺序）
 /// - LoweringOptions: Lowering选项配置
 /// - LoweringContext: Lowering上下文结构体定义
-
 use crate::{BasicBlockId, MirProgram, Value};
 use karte_common::memory::OwnershipKind;
 use karte_hir::ModuleContext;
@@ -62,6 +61,8 @@ pub struct LoweringOptions {
 /// - 错误信息收集
 /// - 匿名函数计数器
 /// - 外部函数声明
+/// - 临时变量值追踪
+/// - 函数返回类型追踪（用于正确处理返回函数的调用）
 pub struct LoweringContext<'a> {
     /// MIR程序（正在构建中）
     pub(crate) program: &'a mut MirProgram,
@@ -79,4 +80,10 @@ pub struct LoweringContext<'a> {
     pub(crate) external_functions: HashSet<String>,
     /// 模块上下文（用于解析模块符号）
     pub(crate) module_context: Option<ModuleContext>,
+    /// 临时变量到实际值的映射（用于追踪函数值）
+    /// 当临时变量被赋予 Value::Function 或 Value::Struct(Closure) 时记录
+    pub(crate) temp_value_map: HashMap<crate::TempId, Value>,
+    /// 函数名到其返回类型的映射
+    /// 用于在函数调用时确定返回值是否为函数/闭包类型
+    pub(crate) function_return_types: HashMap<String, karte_hir::Type>,
 }

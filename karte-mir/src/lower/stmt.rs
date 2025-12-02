@@ -7,7 +7,6 @@
 /// - TypeDef：类型定义
 /// - StructDef：结构体定义
 /// - FunctionDef：函数定义
-
 use super::helpers::{infer_expr_ownership, lower_expression_to_temp, maybe_retain_for_expr};
 use super::types::LoweringContext;
 use crate::{MirStructField, MirStructType, Statement, Terminator, Value};
@@ -22,7 +21,11 @@ pub(crate) fn lower_statement(
 ) -> Result<(), Vec<String>> {
     match stmt {
         karte_hir::Statement::Let { name, value, .. } => {
-            let var_value = lower_expression_to_temp(ctx, value)?;
+            // 求值表达式
+            let temp_value = lower_expression_to_temp(ctx, value)?;
+            // 解析临时变量的实际值（如果是函数/闭包）
+            let var_value = ctx.resolve_value(&temp_value);
+
             let ownership = infer_expr_ownership(ctx, value);
             if matches!(ownership, Some(OwnershipKind::RefCounted)) {
                 maybe_retain_for_expr(ctx, value, &var_value);
@@ -65,9 +68,16 @@ pub(crate) fn lower_statement(
             name,
             params,
             body,
-            return_type: _,
+            return_type,
             span,
         } => {
+            // 如果有返回类型注解，解析并注册
+            if let Some(return_type_str) = return_type {
+                if let Some(parsed_type) = ctx.parse_type_annotation(return_type_str) {
+                    ctx.register_function_return_type(name.clone(), parsed_type);
+                }
+            }
+
             // 保存当前上下文状态
             let old_function_name = ctx.current_function_name.clone();
             let old_block = ctx.current_block;

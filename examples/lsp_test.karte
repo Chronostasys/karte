@@ -1,0 +1,64 @@
+// Karte LSP 测试文件
+// 该文件用于测试 Karte VS Code 扩展的功能
+
+// 1. 函数定义测试
+fn factorial(n: number) -> number {
+  if n <= 1 {
+    1
+  } else {
+    n * factorial(n - 1)
+  }
+}
+
+// 2. 变量绑定测试
+let x = 10;
+let result = factorial(x);
+
+// 3. 结构体测试
+struct Point {
+  x: number,
+  y: number
+}
+
+let p = Point { x: 3, y: 4 };
+let distance = p.x * p.x + p.y * p.y;
+
+// 4. 枚举类型测试
+enum Color {
+  Red,
+  Green,
+  Blue
+}
+
+let c = Color::Red;
+
+// 5. 模式匹配测试
+let color_name = match c {
+  Color::Red => "red",
+  Color::Green => "green",
+  Color::Blue => "blue"
+};
+
+// 6. Lambda 表达式测试
+let add = |a, b| a + b;
+let sum = add(5, 3);
+
+// 7. While 循环测试
+let counter = 0;
+while counter < 5 {
+  let temp = counter + 1;
+  counter
+};
+
+// 8. 引用测试
+let value = 42;
+let ref_value = &value;
+let deref_value = *ref_value;
+
+// 9. 错误测试（应该显示错误）
+// let undefined = some_undefined_variable;
+
+// 10. 类型错误测试（应该显示类型错误）
+// let wrong_type = factorial("not a number");
+
+result

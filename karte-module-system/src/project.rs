@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct CompilationArtifacts {
@@ -52,6 +52,171 @@ impl CompilationArtifacts {
 pub struct CacheContext<'a> {
     pub module_id: &'a str,
     pub interface_hash: u64,
+}
+
+pub struct ProjectBuildContext {
+    pub graph: ModuleGraph,
+    pub plan: ModulePlan,
+    pub layers: Vec<Vec<ModuleId>>,
+    pub canonical_entry: std::path::PathBuf,
+}
+
+impl ProjectBuildContext {
+    pub fn new(entry_path: &Path) -> Result<Self, String> {
+        Self::try_new(entry_path)?
+            .ok_or_else(|| "入口文件不在 Karte 项目中，缺少 karte.mod.toml".to_string())
+    }
+
+    pub fn try_new(entry_path: &Path) -> Result<Option<Self>, String> {
+        let graph = ModuleGraph::load_for_entry(entry_path).map_err(|e| e.to_string())?;
+
+        if graph.manifest_path().is_none() {
+            return Ok(None);
+        }
+
+        let plan = graph
+            .plan_for_entry(entry_path)
+            .map_err(|e| e.to_string())?;
+        let layers = graph.schedule_layers(&plan);
+        let canonical_entry = fs::canonicalize(entry_path)
+            .map_err(|e| format!("canonicalize entry failed: {}", e))?;
+
+        Ok(Some(Self {
+            graph,
+            plan,
+            layers,
+            canonical_entry,
+        }))
+    }
+
+    pub fn total_modules(&self) -> usize {
+        self.plan.sequence.len()
+    }
+
+    pub fn layer_count(&self) -> usize {
+        self.layers.len()
+    }
+}
+
+pub struct ProjectCompilationOutput {
+    pub plan: ModulePlan,
+    pub final_program: LirProgram,
+    pub entry_artifacts: Option<CompilationArtifacts>,
+    pub compiled_artifacts_by_module: HashMap<ModuleId, Vec<CompilationArtifacts>>,
+}
+
+pub fn compile_project_with_context(
+    context: &ProjectBuildContext,
+    optimization_level: OptimizationLevel,
+    verbose: bool,
+    progress_bar: Option<Arc<ProgressBar>>,
+) -> Result<ProjectCompilationOutput, String> {
+    let compiled_modules = Arc::new(Mutex::new(HashMap::new()));
+    let mut interface_hashes: HashMap<ModuleId, u64> = HashMap::new();
+    let mut interface_artifacts: HashMap<ModuleId, ModuleInterfaceArtifact> = HashMap::new();
+    let mut compiled_artifacts_by_module: HashMap<ModuleId, Vec<CompilationArtifacts>> =
+        HashMap::new();
+    let mut entry_result: Option<CompilationArtifacts> = None;
+    let entry_module = context.plan.entry.clone();
+
+    for (i, layer) in context.layers.iter().enumerate() {
+        if let Some(pb) = &progress_bar {
+            pb.set_prefix(format!("Layer {}/{}", i + 1, context.layer_count()));
+            pb.set_message(format!("准备 {} 个模块", layer.len()));
+            pb.println(format!(
+                "正在编译第 {}/{} 层 ({} 个模块)...",
+                i + 1,
+                context.layer_count(),
+                layer.len()
+            ));
+        } else if verbose {
+            println!(
+                "正在编译第 {}/{} 层 ({} 个模块)...",
+                i + 1,
+                context.layer_count(),
+                layer.len()
+            );
+        }
+
+        let dependency_snapshot = interface_hashes.clone();
+        let artifact_snapshot = interface_artifacts.clone();
+
+        let results: Vec<Result<LayerCompilationResult, String>> = layer
+            .par_iter()
+            .map(|module_id| {
+                compile_module_in_layer(
+                    &context.graph,
+                    module_id,
+                    &dependency_snapshot,
+                    &artifact_snapshot,
+                    optimization_level,
+                    verbose,
+                    progress_bar.clone(),
+                    ParserMode::Project,
+                    &entry_module,
+                    &context.canonical_entry,
+                )
+            })
+            .collect();
+
+        for result in results {
+            match result {
+                Ok(layer_result) => {
+                    let module_id = layer_result.module_id.clone();
+                    if module_id == entry_module {
+                        if let Some(art) = layer_result.entry_artifacts.clone() {
+                            entry_result = Some(art);
+                        }
+                    }
+                    for unit in &layer_result.compiled_artifacts {
+                        compiled_modules
+                            .lock()
+                            .expect("锁不应该被污染")
+                            .insert(module_id.clone(), unit.lir_program.clone());
+                    }
+                    compiled_artifacts_by_module
+                        .insert(module_id.clone(), layer_result.compiled_artifacts.clone());
+                    interface_hashes.insert(module_id.clone(), layer_result.interface_hash);
+                    interface_artifacts.insert(module_id.clone(), layer_result.interface_artifact);
+
+                    if let Some(pb) = &progress_bar {
+                        pb.set_message(format!("完成 {}", module_id));
+                        pb.inc(1);
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    if let Some(pb) = &progress_bar {
+        pb.finish_with_message("✅ 编译完成");
+    }
+
+    let mut final_program = LirProgram::new();
+    let modules = compiled_modules.lock().expect("锁不应该被污染");
+
+    for module_id in &context.plan.sequence {
+        if let Some(prog) = modules.get(module_id) {
+            merge_lir_program(&mut final_program, prog);
+            if module_id == &context.plan.entry {
+                final_program.main_function = prog.main_function.clone();
+            }
+        }
+    }
+
+    if final_program.main_function.is_none() {
+        if let Some(entry_artifacts) = &entry_result {
+            final_program.main_function = entry_artifacts.lir_program.main_function.clone();
+        }
+    }
+
+    Ok(ProjectCompilationOutput {
+        plan: context.plan.clone(),
+        final_program,
+        entry_artifacts: entry_result,
+        compiled_artifacts_by_module,
+    })
 }
 
 fn print_diagnostics(diagnostics: &DiagnosticBag, source_code: &str, filename: &str) {
@@ -170,7 +335,8 @@ pub fn compile_source_to_artifacts(
 
     if let Some(ctx) = cache_key {
         let cache = CompilationCache::new();
-        let key_str = format!("{}-{:x}", ctx.module_id, ctx.interface_hash);
+        let safe_module_id = crate::sanitize_module_id_for_filename(ctx.module_id);
+        let key_str = format!("{}-{:x}", safe_module_id, ctx.interface_hash);
         cache.store(&key_str, &mir_program, &lir_program);
     }
 

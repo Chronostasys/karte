@@ -1,0 +1,9 @@
+fn wrong_return() -> number {
+    1
+}
+
+fn main() -> number {
+    let a = |d| {d};
+    let f = a(wrong_return);
+    f()
+}
