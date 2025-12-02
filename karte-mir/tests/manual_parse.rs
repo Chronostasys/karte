@@ -32,29 +32,29 @@ fn build_sample_function() -> MirFunction {
         .expect("entry block should exist");
 
     block.statements.push(Statement::Assign {
-        target: Value::Temp { id: TempId(1) },
-        source: Value::Number { value: 2 },
+        target: Value::Temp { id: TempId(1), ty: None },
+        source: Value::Number { value: 2, ty: None },
         span: Span::default(),
     });
     block.statements.push(Statement::Assign {
-        target: Value::Temp { id: TempId(2) },
-        source: Value::Temp { id: TempId(1) },
+        target: Value::Temp { id: TempId(2), ty: None },
+        source: Value::Temp { id: TempId(1), ty: None },
         span: Span::default(),
     });
     block.statements.push(Statement::Assign {
-        target: Value::Temp { id: TempId(3) },
-        source: Value::Number { value: 3 },
+        target: Value::Temp { id: TempId(3), ty: None },
+        source: Value::Number { value: 3, ty: None },
         span: Span::default(),
     });
     block.statements.push(Statement::BinaryOp {
-        target: Value::Temp { id: TempId(0) },
-        left: Value::Temp { id: TempId(2) },
+        target: Value::Temp { id: TempId(0), ty: None },
+        left: Value::Temp { id: TempId(2), ty: None },
         op: BinaryOperator::Multiply,
-        right: Value::Temp { id: TempId(3) },
+        right: Value::Temp { id: TempId(3), ty: None },
         span: Span::default(),
     });
     block.terminator = Some(Terminator::Return {
-        value: Some(Value::Temp { id: TempId(0) }),
+        value: Some(Value::Temp { id: TempId(0), ty: None }),
         span: Span::default(),
     });
 

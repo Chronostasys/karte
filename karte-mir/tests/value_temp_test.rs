@@ -10,7 +10,7 @@ fn test_temp_id_display() {
 
 #[test]
 fn test_value_temp_display() {
-    let val = Value::Temp { id: TempId(0) };
+    let val = Value::Temp { id: TempId(0), ty: None };
     let s = format!("{}", val);
     println!("Value::Temp displays as: '{}'", s);
 }

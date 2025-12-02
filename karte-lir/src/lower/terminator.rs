@@ -234,6 +234,7 @@ pub(super) fn lower_terminator(
                         if let Some(var_name) = arg {
                             let var_reg_id = ctx.allocate_register_for_value(&Value::Variable {
                                 name: var_name.clone(),
+                                ty: None,
                             });
                             let extract_instructions = ctx
                                 .tagged_union_manager

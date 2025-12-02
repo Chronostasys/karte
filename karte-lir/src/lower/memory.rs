@@ -113,7 +113,7 @@ impl LirLoweringContext {
 
     pub(super) fn allocate_register_for_value(&mut self, value: &Value) -> Register {
         // 检查是否是函数参数 - 函数参数仍然使用寄存器传递
-        if let Value::Variable { name } = value {
+        if let Value::Variable { name, .. } = value {
             if let Some(param_index) = self.current_function_params.iter().position(|p| p == name) {
                 // 函数参数使用固定的寄存器：r1, r2, r3, r4（跳过r0作为特殊用途）
                 return Register::Virtual(param_index + 1);
@@ -135,7 +135,7 @@ impl LirLoweringContext {
 
         // 🔧 专业修复：正确处理结构体值的初始化
         match value {
-            Value::Struct { name, fields } => {
+            Value::Struct { name, fields, .. } => {
                 // 检查是否已经处理过这个结构体
                 if let Some(&existing_addr) = self.stack_allocations.get(&value_key) {
                     return Operand::Register { id: existing_addr };
@@ -161,7 +161,7 @@ impl LirLoweringContext {
         }
 
         // 对于函数参数，我们需要为其分配栈空间
-        if let Value::Variable { name } = value {
+        if let Value::Variable { name, .. } = value {
             if self.current_function_params.contains(name) {
                 // 函数参数：如果还没有栈分配，先创建一个
                 if let Some(&stack_addr) = self.stack_allocations.get(&value_key) {
@@ -276,7 +276,7 @@ impl LirLoweringContext {
 
     pub(super) fn lower_to_rvalue(&mut self, value: &Value) -> Operand {
         // 🔧 修复：特殊处理函数参数 - 直接使用参数寄存器
-        if let Value::Variable { name } = value {
+        if let Value::Variable { name, .. } = value {
             if self.current_function_params.contains(name) {
                 if let Some(param_index) =
                     self.current_function_params.iter().position(|p| p == name)
@@ -294,14 +294,14 @@ impl LirLoweringContext {
 
         match value {
             // 立即数值直接返回
-            Value::Number { value } => Operand::Immediate { value: *value },
-            Value::Boolean { value } => Operand::Immediate {
+            Value::Number { value, .. } => Operand::Immediate { value: *value },
+            Value::Boolean { value, .. } => Operand::Immediate {
                 value: if *value { 1 } else { 0 },
             },
             Value::Unit => Operand::Immediate { value: 0 },
 
             // 函数值
-            Value::Function { name } => {
+            Value::Function { name, .. } => {
                 if let Some(&label_id) = self.function_labels.get(name) {
                     Operand::Label { id: label_id }
                 } else {
@@ -314,6 +314,7 @@ impl LirLoweringContext {
             // 对于引用值，返回被引用值的地址
             Value::Reference {
                 value: referenced_value,
+                ..
             } => {
                 // 引用表达式的R-Value就是被引用值的L-Value（地址）
                 self.lower_to_lvalue(referenced_value)
@@ -362,7 +363,7 @@ impl LirLoweringContext {
 
     pub(super) fn initialize_stack_value(&mut self, value: &Value, stack_addr: Register) {
         match value {
-            Value::Boolean { value } => {
+            Value::Boolean { value, .. } => {
                 // Bool特殊处理：直接存储0/1值，不使用Tagged Union
                 let bool_value = if *value { 1 } else { 0 };
                 self.add_instruction(Instruction::Store64 {
@@ -373,7 +374,7 @@ impl LirLoweringContext {
                 });
             }
 
-            Value::Constructor { name, arg } => {
+            Value::Constructor { name, arg, .. } => {
                 // 创建Tagged Union for constructor
                 let struct_addr = self.create_tagged_union_for_constructor(name, arg.as_deref());
 
@@ -413,6 +414,7 @@ impl LirLoweringContext {
                 type_name,
                 constructor_name,
                 arg,
+                ..
             } => {
                 // 创建Tagged Union for qualified constructor
                 let struct_addr = self.create_tagged_union_for_qualified_constructor(
@@ -462,6 +464,7 @@ impl LirLoweringContext {
 
             Value::Reference {
                 value: referenced_value,
+                ..
             } => {
                 // 🔧 关键修复：引用值需要存储被引用值的地址
                 log::debug!("🔧 初始化引用值: referenced_value={:?}", referenced_value);
@@ -811,7 +814,7 @@ impl LirLoweringContext {
             if temp_key.starts_with("temp:") {
                 // 修复：应该是 "temp:" 而不是 "temp_"
                 if let Ok(id) = temp_key[5..].parse::<usize>() {
-                    let temp_value = Value::Temp { id: TempId(id) };
+                    let temp_value = Value::Temp { id: TempId(id), ty: None };
                     temp_values_to_allocate.push(temp_value);
                 }
             }
@@ -838,7 +841,7 @@ impl LirLoweringContext {
             Value::Temp { .. } => {
                 temp_values.insert(value_to_key(value));
             }
-            Value::Reference { value: inner } => {
+            Value::Reference { value: inner, .. } => {
                 self.collect_temp_values_from_value(inner, temp_values);
             }
             _ => {}

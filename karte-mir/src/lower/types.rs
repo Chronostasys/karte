@@ -51,6 +51,9 @@ pub struct LoweringOptions {
     pub known_functions: HashSet<String>,
     /// 模块上下文（用于解析模块符号）
     pub module_context: Option<ModuleContext>,
+    /// 表达式类型映射（从HIR type checker传递）
+    /// 键是Expr的指针，值是推断出的类型
+    pub expr_types: HashMap<usize, karte_hir::Type>,
 }
 
 /// HIR到MIR的lowering上下文
@@ -63,6 +66,7 @@ pub struct LoweringOptions {
 /// - 外部函数声明
 /// - 临时变量值追踪
 /// - 函数返回类型追踪（用于正确处理返回函数的调用）
+/// - 表达式类型信息（从HIR type checker传递）
 pub struct LoweringContext<'a> {
     /// MIR程序（正在构建中）
     pub(crate) program: &'a mut MirProgram,
@@ -86,4 +90,8 @@ pub struct LoweringContext<'a> {
     /// 函数名到其返回类型的映射
     /// 用于在函数调用时确定返回值是否为函数/闭包类型
     pub(crate) function_return_types: HashMap<String, karte_hir::Type>,
+    /// 临时变量的类型映射
+    pub(crate) temp_types: HashMap<crate::TempId, karte_hir::Type>,
+    /// 表达式类型映射（从HIR type checker传递）
+    pub(crate) expr_types: HashMap<usize, karte_hir::Type>,
 }

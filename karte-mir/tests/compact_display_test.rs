@@ -6,7 +6,7 @@ fn test_compact_value_display() {
     // 测试简洁的值显示
 
     // Number(1) -> num 1
-    let val = Value::Number { value: 42 };
+    let val = Value::Number { value: 42, ty: None };
     let output = val.to_ir_string();
     println!("\n数字: {}", output);
     assert!(
@@ -19,6 +19,7 @@ fn test_compact_value_display() {
     // Variable(x) -> var x
     let val = Value::Variable {
         name: "x".to_string(),
+        ty: None,
     };
     let output = val.to_ir_string();
     println!("变量: {}", output);
@@ -30,7 +31,7 @@ fn test_compact_value_display() {
     assert!(output.contains("x"), "变量输出应包含变量名: {}", output);
 
     // Boolean(true) -> bool true
-    let val = Value::Boolean { value: true };
+    let val = Value::Boolean { value: true, ty: None };
     let output = val.to_ir_string();
     println!("布尔: {}", output);
     assert!(
@@ -47,7 +48,7 @@ fn test_compact_value_display() {
     assert_eq!(output.trim(), "()");
 
     // Temp(TempId(5)) -> t TempId(5)
-    let val = Value::Temp { id: TempId(5) };
+    let val = Value::Temp { id: TempId(5), ty: None };
     let output = val.to_ir_string();
     println!("临时变量: {}", output);
     assert!(
@@ -59,6 +60,7 @@ fn test_compact_value_display() {
     // Function(add) -> fn add
     let val = Value::Function {
         name: "add".to_string(),
+        ty: None,
     };
     let output = val.to_ir_string();
     println!("函数: {}", output);
@@ -73,7 +75,9 @@ fn test_compact_value_display() {
     let val = Value::Reference {
         value: Box::new(Value::Variable {
             name: "x".to_string(),
+            ty: None,
         }),
+        ty: None,
     };
     let output = val.to_ir_string();
     println!("引用: {}", output);
@@ -96,7 +100,7 @@ fn test_compact_terminator_display() {
 
     // Return(n 42) -> ret n 42
     let term = Terminator::Return {
-        value: Some(Value::Number { value: 42 }),
+        value: Some(Value::Number { value: 42, ty: None }),
         span: Default::default(),
     };
     let output = term.to_ir_string();
@@ -129,16 +133,18 @@ fn test_format_comparison() {
 
     println!("\n优化前 vs 优化后:");
 
-    let val = Value::Number { value: 42 };
+    let val = Value::Number { value: 42, ty: None };
     println!("  Number(42) -> {}", val.to_ir_string());
 
     let val = Value::Variable {
         name: "x".to_string(),
+        ty: None,
     };
     println!("  Variable(x) -> {}", val.to_ir_string());
 
     let val = Value::Function {
         name: "factorial".to_string(),
+        ty: None,
     };
     println!("  Function(factorial) -> {}", val.to_ir_string());
 
@@ -146,7 +152,7 @@ fn test_format_comparison() {
     println!("  BinaryOperator::Add -> {}", op.to_ir_string());
 
     let term = Terminator::Return {
-        value: Some(Value::Number { value: 0 }),
+        value: Some(Value::Number { value: 0, ty: None }),
         span: Default::default(),
     };
     println!("  Return(Number(0)) -> {}", term.to_ir_string());

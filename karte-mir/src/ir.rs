@@ -1,5 +1,6 @@
 use karte_common::memory::OwnershipKind;
 use karte_diagnostics::Span;
+use karte_hir::types::Type;
 use karte_ir_codec::parse::{body_field, keyword};
 use karte_ir_codec::{IrDisplay, IrParse, ParseError, ParseResult};
 use karte_ir_derive::IrCodec;
@@ -32,6 +33,8 @@ pub enum Value {
     Variable {
         #[ir_codec(args)]
         name: String,
+        #[ir_codec(skip)]
+        ty: Option<Type>,
     },
 
     /// 数字常量
@@ -39,6 +42,8 @@ pub enum Value {
     Number {
         #[ir_codec(args)]
         value: i64,
+        #[ir_codec(skip)]
+        ty: Option<Type>,
     },
 
     /// 布尔常量
@@ -46,6 +51,8 @@ pub enum Value {
     Boolean {
         #[ir_codec(args)]
         value: bool,
+        #[ir_codec(skip)]
+        ty: Option<Type>,
     },
 
     /// 单元值
@@ -57,12 +64,16 @@ pub enum Value {
     Temp {
         #[ir_codec(args)]
         id: TempId,
+        #[ir_codec(skip)]
+        ty: Option<Type>,
     },
 
     /// 构造器值
     Constructor {
         name: String,
         arg: Option<Box<Value>>,
+        #[ir_codec(skip)]
+        ty: Option<Type>,
     },
 
     /// 限定构造器值
@@ -70,12 +81,16 @@ pub enum Value {
         type_name: String,
         constructor_name: String,
         arg: Option<Box<Value>>,
+        #[ir_codec(skip)]
+        ty: Option<Type>,
     },
 
     /// 结构体值
     Struct {
         name: String,
         fields: std::collections::BTreeMap<String, Value>,
+        #[ir_codec(skip)]
+        ty: Option<Type>,
     },
 
     /// 函数值
@@ -83,12 +98,16 @@ pub enum Value {
     Function {
         #[ir_codec(args)]
         name: String,
+        #[ir_codec(skip)]
+        ty: Option<Type>,
     },
 
     /// 闭包值（包含函数名和捕获的值）
     Closure {
         function_name: String,
         captured_values: Vec<Value>,
+        #[ir_codec(skip)]
+        ty: Option<Type>,
     },
 
     /// 引用值
@@ -96,6 +115,8 @@ pub enum Value {
     Reference {
         #[ir_codec(args)]
         value: Box<Value>,
+        #[ir_codec(skip)]
+        ty: Option<Type>,
     },
 }
 
@@ -539,6 +560,12 @@ pub struct MirFunction {
     pub name: String,
     #[ir_codec(label = "params")]
     pub params: Vec<String>,
+    /// 参数类型
+    #[ir_codec(skip)]
+    pub param_types: Vec<Type>,
+    /// 返回类型
+    #[ir_codec(skip)]
+    pub return_type: Option<Type>,
     #[ir_codec(body, label = "blocks")]
     pub basic_blocks: BTreeMap<BasicBlockId, BasicBlock>,
     #[ir_codec(skip)]
@@ -558,6 +585,8 @@ impl MirFunction {
         Self {
             name,
             params,
+            param_types: Vec::new(),
+            return_type: None,
             basic_blocks,
             entry_block,
             next_block_id: 1,

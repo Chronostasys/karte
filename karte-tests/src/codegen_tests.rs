@@ -147,6 +147,7 @@ mod tests {
                 name: "x".to_string(),
                 span: dummy_span(),
             }),
+            inferred_type: None,
             span: dummy_span(),
         };
 
@@ -399,6 +400,7 @@ mod tests {
                 }),
                 span: dummy_span(),
             }),
+            inferred_type: None,
             span: dummy_span(),
         };
 
@@ -434,6 +436,7 @@ mod tests {
                 }),
                 span: dummy_span(),
             }),
+            inferred_type: None,
             span: dummy_span(),
         };
 
@@ -484,6 +487,7 @@ mod tests {
                 }),
                 span: dummy_span(),
             }),
+            inferred_type: None,
             span: dummy_span(),
         };
 
@@ -510,6 +514,7 @@ mod tests {
                 }),
                 span: dummy_span(),
             }),
+            inferred_type: None,
             span: dummy_span(),
         };
 
@@ -575,6 +580,7 @@ mod tests {
                         }),
                         span: dummy_span(),
                     }),
+                    inferred_type: None,
                     span: dummy_span(),
                 },
                 span: dummy_span(),
@@ -666,6 +672,7 @@ mod tests {
                             }),
                             span: dummy_span(),
                         }),
+                        inferred_type: None,
                         span: dummy_span(),
                     },
                     span: dummy_span(),
