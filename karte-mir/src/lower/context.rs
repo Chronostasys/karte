@@ -7,7 +7,6 @@
 /// - 作用域管理（进入、退出、恢复）
 /// - 变量绑定管理（绑定、查找、更新）
 /// - 语句和终结器添加
-
 use super::types::{LoweringContext, ScopeFrame, VariableBinding};
 use crate::{BasicBlockId, MirFunction, Statement, Terminator, Value};
 use karte_common::memory::OwnershipKind;
@@ -25,6 +24,8 @@ impl<'a> LoweringContext<'a> {
             lambda_counter: 0,
             external_functions: Default::default(),
             module_context: None,
+            temp_value_map: std::collections::HashMap::new(),
+            function_return_types: std::collections::HashMap::new(),
         };
         ctx.enter_scope();
         ctx
@@ -251,10 +252,37 @@ impl<'a> LoweringContext<'a> {
 
     /// 添加语句到当前基本块
     pub(crate) fn add_statement(&mut self, stmt: Statement) {
+        // 追踪函数值和闭包值的赋值
+        if let Statement::Assign { target, source, .. } = &stmt {
+            if let Value::Temp { id } = target {
+                let should_track = match source {
+                    Value::Function { .. } => true,
+                    Value::Closure { .. } => true,
+                    Value::Struct { name, .. } => name == "Closure",
+                    _ => false,
+                };
+                if should_track {
+                    self.temp_value_map.insert(*id, source.clone());
+                }
+            }
+        }
+
         let block_id = self.current_block();
         if let Some(block) = self.current_function_mut().get_block_mut(block_id) {
             block.add_statement(stmt);
         }
+    }
+
+    /// 解析值的实际类型
+    ///
+    /// 如果值是临时变量且映射到函数/闭包，返回实际的函数/闭包值
+    pub(crate) fn resolve_value(&self, value: &Value) -> Value {
+        if let Value::Temp { id } = value {
+            if let Some(actual_value) = self.temp_value_map.get(id) {
+                return actual_value.clone();
+            }
+        }
+        value.clone()
     }
 
     /// 设置当前基本块的终结语句
@@ -263,5 +291,66 @@ impl<'a> LoweringContext<'a> {
         if let Some(block) = self.current_function_mut().get_block_mut(block_id) {
             block.set_terminator(terminator);
         }
+    }
+
+    /// 解析类型注解字符串为HIR Type
+    ///
+    /// 支持的类型注解：
+    /// - "number" -> Type::Number
+    /// - "()" -> Type::Unit
+    /// - "fn(...) -> ..." -> Type::Function
+    /// - "&T" -> Type::Reference
+    pub(crate) fn parse_type_annotation(&self, type_str: &str) -> Option<karte_hir::Type> {
+        let trimmed = type_str.trim();
+
+        // 基本类型
+        match trimmed {
+            "number" => return Some(karte_hir::Type::Number),
+            "()" | "unit" => return Some(karte_hir::Type::Unit),
+            _ => {}
+        }
+
+        // 引用类型：&T
+        if let Some(inner_str) = trimmed.strip_prefix('&') {
+            if let Some(inner_type) = self.parse_type_annotation(inner_str) {
+                return Some(karte_hir::Type::reference(inner_type));
+            }
+        }
+
+        // 函数类型：fn(...) -> ...
+        // 简化实现：只支持基本的函数类型语法
+        if trimmed.starts_with("fn") {
+            // 对于复杂的函数类型，暂时返回None
+            // 完整实现需要一个完整的类型解析器
+            return None;
+        }
+
+        // 检查是否是自定义类型（如struct或enum）
+        // 这里可以查询已知的自定义类型
+        None
+    }
+
+    /// 注册函数的返回类型
+    ///
+    /// 从函数定义的返回类型注解中提取类型信息并存储
+    pub(crate) fn register_function_return_type(&mut self, func_name: String, return_type: karte_hir::Type) {
+        self.function_return_types.insert(func_name, return_type);
+    }
+
+    /// 查询函数的返回类型
+    ///
+    /// 如果函数返回类型已知，返回其类型；否则返回None
+    pub(crate) fn get_function_return_type(&self, func_name: &str) -> Option<&karte_hir::Type> {
+        self.function_return_types.get(func_name)
+    }
+
+    /// 检查类型是否为函数或闭包类型
+    ///
+    /// 用于判断函数调用的返回值是否需要特殊处理
+    pub(crate) fn is_callable_type(ty: &karte_hir::Type) -> bool {
+        matches!(
+            ty,
+            karte_hir::Type::Function { .. } | karte_hir::Type::Closure { .. }
+        )
     }
 }

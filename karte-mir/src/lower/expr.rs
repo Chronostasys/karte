@@ -13,9 +13,8 @@
 /// - 引用：Reference, Dereference
 /// - 堆操作：HeapAllocate, HeapFree, Retain, Release
 /// - 赋值：Assignment
-
 use super::helpers::{
-    collect_referenced_variables, convert_binary_op, convert_unary_op, convert_pattern,
+    collect_referenced_variables, convert_binary_op, convert_pattern, convert_unary_op,
     expr_creates_new_ref, handle_pattern_bindings, infer_expr_ownership,
     infer_heap_layout_from_expr, lower_expression_to_temp, maybe_retain_for_escape,
     unknown_heap_layout,
@@ -24,7 +23,7 @@ use super::stmt::{handle_assignment, lower_statement};
 use super::types::LoweringContext;
 use crate::{
     BinaryOperator as MirBinaryOp, EscapeState, HeapLayout, MatchArm, MirFunction, Statement,
-    Terminator, TempId, Value,
+    TempId, Terminator, Value,
 };
 use karte_common::memory::OwnershipKind;
 use karte_hir::Expr;
@@ -64,7 +63,9 @@ pub(crate) fn lower_expression(
 
         Expr::Identifier { name, .. } => {
             if let Some(binding) = ctx.lookup_variable(name) {
-                match &binding.value {
+                // 解析临时变量的实际值
+                let resolved_value = ctx.resolve_value(&binding.value);
+                match &resolved_value {
                     Value::Reference { value: ref_target } => {
                         ctx.add_statement(Statement::Dereference {
                             target: destination.clone(),
@@ -75,7 +76,7 @@ pub(crate) fn lower_expression(
                     _ => {
                         ctx.add_statement(Statement::Assign {
                             target: destination.clone(),
-                            source: binding.value.clone(),
+                            source: resolved_value,
                             span,
                         });
                     }
@@ -879,6 +880,11 @@ fn lower_lambda_expression(
     let return_val = ctx.new_temp();
     lower_expression(ctx, body, &return_val)?;
     maybe_retain_for_escape(ctx, body, &return_val);
+
+    // 推断Lambda的返回类型并注册
+    // 对于identity闭包等情况，返回值可能是函数或闭包类型
+    infer_and_register_lambda_return_type(ctx, body, &lambda_name, &return_val);
+
     ctx.exit_scope(body.span());
     ctx.set_terminator(Terminator::Return {
         value: Some(return_val),
@@ -891,6 +897,120 @@ fn lower_lambda_expression(
     ctx.restore_scopes(original_scopes);
 
     Ok(())
+}
+
+/// 推断并注册Lambda的返回类型
+///
+/// 分析Lambda body表达式，尝试推断其返回类型
+/// 特别处理identity闭包等返回函数/闭包的情况
+fn infer_and_register_lambda_return_type(
+    ctx: &mut LoweringContext,
+    body: &Expr,
+    lambda_name: &str,
+    return_val: &Value,
+) {
+    // 检查返回值是否已经解析为函数或闭包
+    let resolved_return_val = ctx.resolve_value(return_val);
+
+    let should_register_callable = match &resolved_return_val {
+        Value::Function { .. } | Value::Closure { .. } => true,
+        Value::Struct { name, .. } => name == "Closure",
+        _ => {
+            // 如果body是简单的标识符，检查该标识符
+            if let Expr::Identifier { name: var_name, .. } = body {
+                if let Some(binding) = ctx.lookup_variable(var_name) {
+                    let resolved_binding = ctx.resolve_value(&binding.value);
+                    match &resolved_binding {
+                        Value::Function { .. } | Value::Closure { .. } => true,
+                        Value::Struct { name, .. } => name == "Closure",
+                        _ => false,
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        }
+    };
+
+    if should_register_callable {
+        // Lambda返回可调用类型，注册为闭包类型
+        // 使用一个泛型的闭包签名
+        let callable_type = karte_hir::Type::Closure {
+            params: vec![], // 参数类型未知
+            return_type: Box::new(karte_hir::Type::Unknown), // 返回类型未知
+        };
+        ctx.register_function_return_type(lambda_name.to_string(), callable_type);
+    }
+}
+
+/// 闭包调用后检查并标注返回值类型
+///
+/// 对于identity闭包等运行时才能确定返回类型的情况，
+/// 在调用后检查返回值实际内容并标注类型
+fn annotate_closure_return_value(
+    ctx: &mut LoweringContext,
+    destination: &Value,
+    args: &[Value],
+) {
+    // 采用启发式方法：如果调用闭包时传入了函数类型参数，
+    // 则该闭包可能返回该函数（比如identity闭包）
+    // 单参数情况：假设返回值可能是该函数
+    // 多参数情况：暂时不做假设，因为可能是高阶函数
+
+    if args.len() == 1 {
+        let arg = &args[0];
+        let resolved = ctx.resolve_value(arg);
+
+        let is_callable = matches!(
+            &resolved,
+            Value::Function { .. } | Value::Closure { .. }
+        ) || matches!(&resolved, Value::Struct { name, .. } if name == "Closure");
+
+        if is_callable {
+            if let Value::Temp { id } = destination {
+                ctx.temp_value_map.insert(*id, resolved);
+            }
+        }
+    }
+    // 注意：对于多参数闭包如 |func, val| { func(val) }，
+    // 我们不能简单假设返回值类型，因为需要更复杂的控制流分析
+}
+
+/// 在函数调用后标注返回值的类型信息
+///
+/// 如果函数的返回类型是Function或Closure，记录到temp_value_map中
+/// 这样后续使用时能正确识别该值为可调用类型
+fn annotate_function_return_type(
+    ctx: &mut LoweringContext,
+    function_name: &str,
+    destination: &Value,
+) {
+    if let Value::Temp { id } = destination {
+        if let Some(return_type) = ctx.get_function_return_type(function_name) {
+            if LoweringContext::is_callable_type(return_type) {
+                // 返回类型是函数或闭包，创建一个类型标注值
+                let type_marker = match return_type {
+                    karte_hir::Type::Function { .. } => {
+                        // 标记为函数类型（函数名未知，使用占位符）
+                        Value::Function {
+                            name: format!("__returned_function_{}", id),
+                        }
+                    }
+                    karte_hir::Type::Closure { .. } => {
+                        // 标记为闭包类型
+                        Value::Struct {
+                            name: "Closure".to_string(),
+                            fields: std::collections::BTreeMap::new(),
+                        }
+                    }
+                    _ => return,
+                };
+                ctx.temp_value_map.insert(*id, type_marker);
+            }
+        }
+    }
 }
 
 /// 降低函数调用表达式
@@ -906,10 +1026,19 @@ fn lower_function_call(
     destination: &Value,
     span: karte_diagnostics::Span,
 ) -> Result<(), Vec<String>> {
-    // Special handling for direct calls to global functions
+    // Special handling for identifiers that might be functions or closures
     if let Expr::Identifier { name, .. } = function {
-        // If it's a global function and not shadowed by a local variable
-        if ctx.is_known_function(name) && ctx.lookup_variable(name).is_none() {
+        // 首先检查变量环境中的绑定，并解析实际值
+        let resolved_value = if let Some(binding) = ctx.lookup_variable(name) {
+            Some(ctx.resolve_value(&binding.value))
+        } else if ctx.is_known_function(name) {
+            Some(Value::Function { name: name.clone() })
+        } else {
+            None
+        };
+
+        if let Some(Value::Function { name: func_name }) = resolved_value {
+            // 如果解析后的值是函数类型，直接调用
             let arg_vals: Vec<Value> = args
                 .iter()
                 .map(|a| lower_expression_to_temp(ctx, a))
@@ -930,18 +1059,15 @@ fn lower_function_call(
 
             ctx.add_statement(Statement::Call {
                 target: Some(destination.clone()),
-                function: Value::Function { name: name.clone() },
+                function: Value::Function {
+                    name: func_name.clone(),
+                },
                 args: arg_vals,
                 span,
             });
+            // 标注返回类型（如果返回函数/闭包）
+            annotate_function_return_type(ctx, &func_name, destination);
             return Ok(());
-        } else {
-            eprintln!(
-                "DEBUG: Not a global function or shadowed: {} (in functions: {}, in vars: {})",
-                name,
-                ctx.program.functions.contains_key(name),
-                ctx.lookup_variable(name).is_some()
-            );
         }
     }
 
@@ -973,19 +1099,23 @@ fn lower_function_call(
 
         ctx.add_statement(Statement::Call {
             target: Some(destination.clone()),
-            function: Value::Function { name: canonical },
+            function: Value::Function { name: canonical.clone() },
             args: arg_vals,
             span,
         });
+        // 标注返回类型（如果返回函数/闭包）
+        annotate_function_return_type(ctx, &canonical, destination);
         return Ok(());
     }
 
     // 统一闭包调用策略：
     // 1. 先将被调用表达式降级为值 func_val（可能是函数指针或Closure结构）
-    // 2. 如果是直接函数（Value::Function），直接调用（与之前一致）
-    // 3. 否则一律视为 Closure 结构体：提取 function_ptr 与 env_ptr，生成 call，参数序列为 (env_ptr, 原始参数...)
+    // 2. 解析临时变量的实际值（如果是函数/闭包）
+    // 3. 如果是直接函数（Value::Function），直接调用（与之前一致）
+    // 4. 否则一律视为 Closure 结构体：提取 function_ptr 与 env_ptr，生成 call，参数序列为 (env_ptr, 原始参数...)
     //    即使 env_ptr == 0 也不做分支；保持统一 ABI，便于后端优化。
-    let func_val = lower_expression_to_temp(ctx, function)?;
+    let func_temp = lower_expression_to_temp(ctx, function)?;
+    let func_val = ctx.resolve_value(&func_temp);
     let arg_vals: Vec<Value> = args
         .iter()
         .map(|a| lower_expression_to_temp(ctx, a))
@@ -1013,12 +1143,17 @@ fn lower_function_call(
                 args: arg_vals,
                 span,
             });
+            // 标注返回类型（如果返回函数/闭包）
+            annotate_function_return_type(ctx, name, destination);
         }
         Value::Closure {
             captured_values,
             function_name,
         } => {
             // 旧式 Closure 表示：captured_values 作为 env 展开到前面（保持兼容）。
+            // 在消费arg_vals之前，先标注返回值类型
+            annotate_closure_return_value(ctx, destination, &arg_vals);
+
             let mut all_args = captured_values.clone();
             all_args.extend(arg_vals);
             ctx.add_statement(Statement::Call {
@@ -1029,6 +1164,8 @@ fn lower_function_call(
                 args: all_args,
                 span,
             });
+            // 标注返回类型（如果返回函数/闭包）
+            annotate_function_return_type(ctx, function_name, destination);
         }
         _ => {
             // 视为标准 Closure 结构体：必须含有 function_ptr / env_ptr 字段。
@@ -1046,15 +1183,36 @@ fn lower_function_call(
                 field: "env_ptr".to_string(),
                 span,
             });
+
+            // 在消费arg_vals之前，先标注返回值类型
+            // 这对于identity闭包等返回函数的情况很重要
+            annotate_closure_return_value(ctx, destination, &arg_vals);
+
             // 统一：env 作为第一个参数传入
             let mut final_args = vec![env_ptr_temp];
             final_args.extend(arg_vals);
-            ctx.add_statement(Statement::Call {
-                target: Some(destination.clone()),
-                function: function_ptr_temp,
-                args: final_args,
-                span,
-            });
+
+            // 解析function_ptr_temp获取实际函数名
+            let resolved_func_ptr = ctx.resolve_value(&function_ptr_temp);
+            if let Value::Function { name: func_name } = &resolved_func_ptr {
+                ctx.add_statement(Statement::Call {
+                    target: Some(destination.clone()),
+                    function: Value::Function {
+                        name: func_name.clone(),
+                    },
+                    args: final_args,
+                    span,
+                });
+                // 标注返回类型（如果返回函数/闭包）
+                annotate_function_return_type(ctx, func_name, destination);
+            } else {
+                ctx.add_statement(Statement::Call {
+                    target: Some(destination.clone()),
+                    function: function_ptr_temp,
+                    args: final_args,
+                    span,
+                });
+            }
         }
     }
 

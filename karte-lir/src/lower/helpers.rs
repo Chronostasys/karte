@@ -27,7 +27,10 @@ pub(super) fn stable_label_from_parts(parts: &[&str]) -> LabelId {
 }
 
 /// Helper: collect function names from a Value recursively
-pub(super) fn collect_function_names_from_value(value: &karte_mir::Value, set: &mut HashSet<String>) {
+pub(super) fn collect_function_names_from_value(
+    value: &karte_mir::Value,
+    set: &mut HashSet<String>,
+) {
     match value {
         karte_mir::Value::Function { name } => {
             set.insert(name.clone());
@@ -55,7 +58,10 @@ pub(super) fn collect_function_names_from_value(value: &karte_mir::Value, set: &
 }
 
 /// Helper: collect function names referenced in a Statement
-pub(super) fn collect_function_names_from_statement(stmt: &karte_mir::Statement, set: &mut HashSet<String>) {
+pub(super) fn collect_function_names_from_statement(
+    stmt: &karte_mir::Statement,
+    set: &mut HashSet<String>,
+) {
     use karte_mir::Statement::*;
     match stmt {
         Assign { target, source, .. } => {
@@ -146,7 +152,10 @@ pub(super) fn collect_function_names_from_statement(stmt: &karte_mir::Statement,
 }
 
 /// Helper: collect function names in a Terminator
-pub(super) fn collect_function_names_from_terminator(term: &karte_mir::Terminator, set: &mut HashSet<String>) {
+pub(super) fn collect_function_names_from_terminator(
+    term: &karte_mir::Terminator,
+    set: &mut HashSet<String>,
+) {
     match term {
         karte_mir::Terminator::Return { value, .. } => {
             if let Some(v) = value {

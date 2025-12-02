@@ -229,4 +229,262 @@ mod tests {
             .iter()
             .any(|d| d.message.contains("Cannot call")));
     }
+
+    // ========================================
+    // 类型标注检查测试
+    // ========================================
+
+    #[test]
+    fn test_function_return_type_annotation_mismatch() {
+        // fn foo() -> number { true }
+        // 声明返回 number，但实际返回 bool，应该报错
+        let expr = Expr::Block {
+            statements: vec![Statement::FunctionDef {
+                name: "foo".to_string(),
+                params: vec![],
+                return_type: Some("number".to_string()),
+                body: Expr::Boolean {
+                    value: true,
+                    span: dummy_span(),
+                },
+                span: dummy_span(),
+            }],
+            final_expr: None,
+            span: dummy_span(),
+        };
+
+        let (_, diagnostics) = type_check(&expr);
+
+        // 应该有类型不匹配错误
+        assert!(diagnostics.has_errors());
+        assert!(diagnostics
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("Type mismatch")));
+    }
+
+    #[test]
+    fn test_function_param_type_annotation_enforced() {
+        // fn foo(x: number) -> number { x + 1 }
+        // 这应该成功
+        let expr = Expr::Block {
+            statements: vec![Statement::FunctionDef {
+                name: "foo".to_string(),
+                params: vec![Parameter {
+                    name: "x".to_string(),
+                    type_annotation: Some("number".to_string()),
+                    span: dummy_span(),
+                }],
+                return_type: Some("number".to_string()),
+                body: Expr::BinaryOp {
+                    left: Box::new(Expr::Identifier {
+                        name: "x".to_string(),
+                        span: dummy_span(),
+                    }),
+                    op: BinaryOperator::Add,
+                    right: Box::new(Expr::Number {
+                        value: 1,
+                        span: dummy_span(),
+                    }),
+                    span: dummy_span(),
+                },
+                span: dummy_span(),
+            }],
+            final_expr: None,
+            span: dummy_span(),
+        };
+
+        let (_, diagnostics) = type_check(&expr);
+
+        // 不应该有错误
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_function_undefined_type_annotation_error() {
+        // fn foo(x: UnknownType) -> number { 42 }
+        // 使用未定义的类型，应该报错
+        let expr = Expr::Block {
+            statements: vec![Statement::FunctionDef {
+                name: "foo".to_string(),
+                params: vec![Parameter {
+                    name: "x".to_string(),
+                    type_annotation: Some("UnknownType".to_string()),
+                    span: dummy_span(),
+                }],
+                return_type: Some("number".to_string()),
+                body: Expr::Number {
+                    value: 42,
+                    span: dummy_span(),
+                },
+                span: dummy_span(),
+            }],
+            final_expr: None,
+            span: dummy_span(),
+        };
+
+        let (_, diagnostics) = type_check(&expr);
+
+        // 应该有 UndefinedType 错误
+        assert!(diagnostics.has_errors());
+        assert!(diagnostics
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("Undefined type")));
+    }
+
+    #[test]
+    fn test_function_return_type_correct() {
+        // fn foo() -> number { 42 }
+        // 声明返回 number，实际也返回 number，应该成功
+        let expr = Expr::Block {
+            statements: vec![Statement::FunctionDef {
+                name: "foo".to_string(),
+                params: vec![],
+                return_type: Some("number".to_string()),
+                body: Expr::Number {
+                    value: 42,
+                    span: dummy_span(),
+                },
+                span: dummy_span(),
+            }],
+            final_expr: None,
+            span: dummy_span(),
+        };
+
+        let (_, diagnostics) = type_check(&expr);
+
+        // 不应该有错误
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_function_multiple_params_type_annotations() {
+        // fn add(x: number, y: number) -> number { x + y }
+        let expr = Expr::Block {
+            statements: vec![Statement::FunctionDef {
+                name: "add".to_string(),
+                params: vec![
+                    Parameter {
+                        name: "x".to_string(),
+                        type_annotation: Some("number".to_string()),
+                        span: dummy_span(),
+                    },
+                    Parameter {
+                        name: "y".to_string(),
+                        type_annotation: Some("number".to_string()),
+                        span: dummy_span(),
+                    },
+                ],
+                return_type: Some("number".to_string()),
+                body: Expr::BinaryOp {
+                    left: Box::new(Expr::Identifier {
+                        name: "x".to_string(),
+                        span: dummy_span(),
+                    }),
+                    op: BinaryOperator::Add,
+                    right: Box::new(Expr::Identifier {
+                        name: "y".to_string(),
+                        span: dummy_span(),
+                    }),
+                    span: dummy_span(),
+                },
+                span: dummy_span(),
+            }],
+            final_expr: None,
+            span: dummy_span(),
+        };
+
+        let (_, diagnostics) = type_check(&expr);
+
+        // 不应该有错误
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_function_return_type_mismatch_complex() {
+        // fn foo(x: number) -> number {
+        //     if x > 0 { true } else { false }
+        // }
+        // 声明返回 number，但实际返回 bool
+        let expr = Expr::Block {
+            statements: vec![Statement::FunctionDef {
+                name: "foo".to_string(),
+                params: vec![Parameter {
+                    name: "x".to_string(),
+                    type_annotation: Some("number".to_string()),
+                    span: dummy_span(),
+                }],
+                return_type: Some("number".to_string()),
+                body: Expr::If {
+                    condition: Box::new(Expr::BinaryOp {
+                        left: Box::new(Expr::Identifier {
+                            name: "x".to_string(),
+                            span: dummy_span(),
+                        }),
+                        op: BinaryOperator::Greater,
+                        right: Box::new(Expr::Number {
+                            value: 0,
+                            span: dummy_span(),
+                        }),
+                        span: dummy_span(),
+                    }),
+                    then_branch: Box::new(Expr::Boolean {
+                        value: true,
+                        span: dummy_span(),
+                    }),
+                    else_branch: Some(Box::new(Expr::Boolean {
+                        value: false,
+                        span: dummy_span(),
+                    })),
+                    span: dummy_span(),
+                },
+                span: dummy_span(),
+            }],
+            final_expr: None,
+            span: dummy_span(),
+        };
+
+        let (_, diagnostics) = type_check(&expr);
+
+        // 应该有类型不匹配错误
+        assert!(diagnostics.has_errors());
+        assert!(diagnostics
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("Type mismatch")));
+    }
+
+    #[test]
+    fn test_function_no_annotation_infers_correctly() {
+        // fn foo(x) { x + 1 }
+        // 没有类型标注，应该能正确推断
+        let expr = Expr::Block {
+            statements: vec![Statement::FunctionDef {
+                name: "foo".to_string(),
+                params: vec![Parameter::simple("x".to_string())],
+                return_type: None,
+                body: Expr::BinaryOp {
+                    left: Box::new(Expr::Identifier {
+                        name: "x".to_string(),
+                        span: dummy_span(),
+                    }),
+                    op: BinaryOperator::Add,
+                    right: Box::new(Expr::Number {
+                        value: 1,
+                        span: dummy_span(),
+                    }),
+                    span: dummy_span(),
+                },
+                span: dummy_span(),
+            }],
+            final_expr: None,
+            span: dummy_span(),
+        };
+
+        let (_, diagnostics) = type_check(&expr);
+
+        // 不应该有错误
+        assert!(diagnostics.is_empty());
+    }
 }

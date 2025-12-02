@@ -11,17 +11,19 @@ pub mod cache;
 pub use cache::CompilationCache;
 pub mod interface;
 pub use interface::{
-    compute_module_cache_version, read_module_interface_artifact, write_module_interface_artifact,
-    DependencyInterfaceExport, FunctionExport, ModuleExports, ModuleInterfaceAccumulator,
-    ModuleInterfaceArtifact, ModuleInterfaceSummary, StructExport, StructFieldExport,
+    compute_module_cache_version, read_module_interface_artifact, sanitize_module_id_for_filename,
+    write_module_interface_artifact, DependencyInterfaceExport, FunctionExport, ModuleExports,
+    ModuleInterfaceAccumulator, ModuleInterfaceArtifact, ModuleInterfaceSummary, StructExport,
+    StructFieldExport,
 };
 pub mod import_validation;
 pub use import_validation::validate_module_imports;
 pub mod project;
 pub use project::{
-    compile_entry_file, compile_module_in_layer, compile_source_to_artifacts, compile_to_lir,
-    lower_mir_to_final_lir, merge_lir_program, merge_mir_program, merge_module_artifacts,
-    CacheContext, CompilationArtifacts, LayerCompilationResult,
+    compile_entry_file, compile_module_in_layer, compile_project_with_context,
+    compile_source_to_artifacts, compile_to_lir, lower_mir_to_final_lir, merge_lir_program,
+    merge_mir_program, merge_module_artifacts, CacheContext, CompilationArtifacts,
+    LayerCompilationResult, ProjectBuildContext, ProjectCompilationOutput,
 };
 
 const MANIFEST_NAME: &str = "karte.mod.toml";
@@ -313,7 +315,9 @@ impl ModuleGraph {
 
             // 找出所有依赖已满足的模块
             for module_id in &remaining {
-                let metadata = self.nodes.get(module_id)
+                let metadata = self
+                    .nodes
+                    .get(module_id)
                     .expect("模块ID应该存在于图中：所有plan中的模块都应该已注册");
                 let deps_satisfied = metadata.dependencies.iter().all(|dep| {
                     // 依赖必须在之前的层中已访问，或者不在本次计划中（可能是外部依赖，暂不考虑）

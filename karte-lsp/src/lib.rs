@@ -1,14 +1,16 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+// Karte Language Server Protocol 实现
+//
+// 该模块提供 Karte 语言的 LSP 服务器实现，支持：
+// - 语法诊断
+// - 类型检查
+// - 代码补全
+// - 跳转定义
+// - 悬停信息
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub mod backend;
+pub mod compiler_bridge;
+pub mod document_store;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub use backend::Backend;
+pub use compiler_bridge::CompilerBridge;
+pub use document_store::DocumentStore;

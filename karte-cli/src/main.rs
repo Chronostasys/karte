@@ -72,20 +72,6 @@ enum Commands {
         heap_stats: bool,
     },
 
-    /// 编译Karte代码到LIR
-    Compile {
-        /// 输入文件
-        input: String,
-
-        /// 解析模式 (script/project)
-        #[arg(long, value_enum)]
-        mode: Option<ModeArg>,
-
-        /// 输出文件
-        #[arg(short, long)]
-        output: Option<String>,
-    },
-
     /// 运行LIR文件
     Execute {
         /// LIR文件路径
@@ -97,19 +83,6 @@ enum Commands {
 
     /// 交互式模式
     Repl,
-
-    /// 导出IR到文件或标准输出
-    Export {
-        /// 输入文件或表达式
-        input: String,
-        /// 导出的IR阶段
-        #[arg(long, value_enum, default_value_t = IrStage::Lir)]
-        stage: IrStage,
-
-        /// 输出文件
-        #[arg(short, long)]
-        output: Option<String>,
-    },
 
     /// 构建项目（支持增量编译与并发调度）
     Build {
@@ -301,7 +274,6 @@ mod tests {
 // The runner module holds the non-CLI runtime/processing logic.
 mod runner;
 
-
 fn main() {
     env_logger::init();
     let cli = Cli::parse();
@@ -309,6 +281,7 @@ fn main() {
     let optimization_level = cli.optimization.into();
 
     let default_mode = cli.mode.map(|m| m.into()).unwrap_or(ParserMode::Script);
+    let default_mode_is_explicit = cli.mode.is_some();
 
     match cli.command {
         Some(Commands::Run {
@@ -319,7 +292,13 @@ fn main() {
             mode,
         }) => match input {
             Some(ref input_str) => {
-                let mode = mode.map(|m| m.into()).unwrap_or(default_mode);
+                let (mode, mode_is_explicit) = if let Some(m) = mode {
+                    (m.into(), true)
+                } else if default_mode_is_explicit {
+                    (default_mode, true)
+                } else {
+                    (default_mode, false)
+                };
                 if Path::new(input_str).exists() {
                     if let Err(err) = runner::process_file(
                         input_str,
@@ -329,6 +308,7 @@ fn main() {
                         output.as_deref(),
                         heap_stats,
                         mode,
+                        mode_is_explicit,
                     ) {
                         error!("Error: {}", err);
                         std::process::exit(1);
@@ -350,55 +330,8 @@ fn main() {
                 runner::run_repl(optimization_level, cli.verbose);
             }
         },
-        Some(Commands::Compile {
-            input,
-            output,
-            mode,
-        }) => {
-            let mode = mode.map(|m| m.into()).unwrap_or(default_mode);
-            let lir_program =
-                match compile_entry_file(&input, optimization_level, cli.verbose, mode) {
-                    Ok(artifacts) => artifacts.lir_program,
-                    Err(err) => {
-                        error!("Compilation failed: {}", err);
-                        std::process::exit(1);
-                    }
-                };
-
-            let output_file = output.unwrap_or_else(|| {
-                Path::new(&input)
-                    .with_extension("lir")
-                    .to_string_lossy()
-                    .to_string()
-            });
-
-            let lir_code = lir_program.to_ir_string();
-            if let Err(err) = fs::write(&output_file, lir_code) {
-                error!("Failed to write output: {}", err);
-                std::process::exit(1);
-            }
-
-            println!("Compiled to: {}", output_file);
-        }
         Some(Commands::Execute { input, stage }) => {
             if let Err(err) = load_and_execute_ir(&input, stage, optimization_level, cli.verbose) {
-                error!("Error: {}", err);
-                std::process::exit(1);
-            }
-        }
-        Some(Commands::Export {
-            input,
-            stage,
-            output,
-        }) => {
-            if let Err(err) = runner::export_ir(
-                &input,
-                stage,
-                output.as_deref(),
-                optimization_level,
-                cli.verbose,
-                default_mode,
-            ) {
                 error!("Error: {}", err);
                 std::process::exit(1);
             }
@@ -445,6 +378,7 @@ fn main() {
                         cli.output.as_deref(),
                         cli.heap_stats,
                         default_mode,
+                        default_mode_is_explicit,
                     ) {
                         error!("Error: {}", err);
                         std::process::exit(1);

@@ -10,12 +10,12 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 // 模块组织：将大型lower.rs拆分为多个模块
-mod types;
-mod helpers;
 mod context;
+mod helpers;
 mod memory;
 mod stmt;
 mod terminator;
+mod types;
 
 // 重导出公共API
 pub use types::LirLoweringContext;
@@ -259,4 +259,3 @@ mod tests {
         assert_eq!(lir_program.main_function.as_deref(), Some("foo.bar::main"));
     }
 }
-
