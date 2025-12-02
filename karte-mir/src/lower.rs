@@ -35,11 +35,13 @@ pub fn lower_expr_to_mir_with_options(
     let LoweringOptions {
         known_functions,
         module_context,
+        expr_types,
     } = options;
     let mut program = MirProgram::new();
     let mut context = LoweringContext::new(&mut program);
     context.external_functions = known_functions;
     context.module_context = module_context.clone();
+    context.expr_types = expr_types;
 
     // 创建主函数
     context.start_function(SCRIPT_ENTRY_POINT.to_string(), vec![]);
@@ -196,7 +198,7 @@ mod assignment_lowering_tests {
             matches!(
                 stmt,
                 Statement::Assign {
-                    source: Value::Number { value: 42 },
+                    source: Value::Number { value: 42, .. },
                     ..
                 }
             )
@@ -346,6 +348,7 @@ mod closure_struct_tests {
                 }),
                 span: make_span(),
             }),
+            inferred_type: None,
             span: make_span(),
         };
 
@@ -359,14 +362,14 @@ mod closure_struct_tests {
         // 检查是否生成了Closure结构体
         let has_closure_struct = entry_block.statements.iter().any(|stmt| {
             if let Statement::Assign {
-                source: Value::Struct { name, fields },
+                source: Value::Struct { name, fields, .. },
                 ..
             } = stmt
             {
                 name == "Closure"
                     && fields
                         .get("env_ptr")
-                        .map(|v| matches!(v, Value::Number { value: 0 }))
+                        .map(|v| matches!(v, Value::Number { value: 0, .. }))
                         .unwrap_or(false)
             } else {
                 false
@@ -420,6 +423,7 @@ mod closure_struct_tests {
                     }),
                     span: make_span(),
                 }),
+                inferred_type: None,
                 span: make_span(),
             })),
             span: make_span(),
@@ -448,14 +452,14 @@ mod closure_struct_tests {
         // 检查是否生成了非零env_ptr的Closure结构体
         let has_closure_with_env = entry_block.statements.iter().any(|stmt| {
             if let Statement::Assign {
-                source: Value::Struct { name, fields },
+                source: Value::Struct { name, fields, .. },
                 ..
             } = stmt
             {
                 name == "Closure"
                     && fields
                         .get("env_ptr")
-                        .map(|v| !matches!(v, Value::Number { value: 0 }))
+                        .map(|v| !matches!(v, Value::Number { value: 0, .. }))
                         .unwrap_or(false)
             } else {
                 false
@@ -493,6 +497,7 @@ mod closure_struct_tests {
                     name: "x".to_string(),
                     span: make_span(),
                 }),
+                inferred_type: None,
                 span: make_span(),
             }),
             args: vec![Expr::Number {
@@ -541,6 +546,7 @@ mod closure_struct_tests {
                     name: "captured".to_string(),
                     span: make_span(),
                 }),
+                inferred_type: None,
                 span: make_span(),
             })),
             span: make_span(),

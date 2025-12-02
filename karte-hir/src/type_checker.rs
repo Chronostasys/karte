@@ -91,6 +91,8 @@ pub struct TypeChecker {
     custom_types: HashMap<String, Type>, // 存储自定义类型
     module_context: ModuleContext,
     function_signatures: HashMap<String, FunctionSignature>, // 缓存函数签名，避免重复解析
+    /// 存储Lambda表达式的推断类型
+    lambda_types: HashMap<*const Expr, Type>,
 }
 
 /// 函数签名，包含参数类型和返回类型
@@ -116,6 +118,7 @@ impl TypeChecker {
             custom_types: HashMap::new(),
             module_context: ModuleContext::default(),
             function_signatures: HashMap::new(),
+            lambda_types: HashMap::new(),
         }
     }
 
@@ -193,6 +196,55 @@ impl TypeChecker {
                     return_type: r1,
                 },
                 Type::Function {
+                    params: p2,
+                    return_type: r2,
+                },
+            ) => {
+                if p1.len() != p2.len() {
+                    self.add_error(TypeCheckError::ArityMismatch {
+                        expected: p1.len(),
+                        found: p2.len(),
+                        span,
+                    });
+                    return Err(());
+                }
+
+                // 统一参数类型
+                for (param1, param2) in p1.iter().zip(p2.iter()) {
+                    self.unify_recursive(param1, param2, span, orig_t1, orig_t2, visited)?;
+                }
+
+                // 统一返回类型
+                self.unify_recursive(r1, r2, span, orig_t1, orig_t2, visited)
+            }
+
+            // Function 和 Closure 可以统一（它们在语义上是兼容的）
+            (
+                Type::Function {
+                    params: p1,
+                    return_type: r1,
+                },
+                Type::Closure {
+                    params: p2,
+                    return_type: r2,
+                },
+            )
+            | (
+                Type::Closure {
+                    params: p1,
+                    return_type: r1,
+                },
+                Type::Function {
+                    params: p2,
+                    return_type: r2,
+                },
+            )
+            | (
+                Type::Closure {
+                    params: p1,
+                    return_type: r1,
+                },
+                Type::Closure {
                     params: p2,
                     return_type: r2,
                 },
@@ -364,8 +416,11 @@ impl TypeChecker {
 
             (Type::Unknown, _) | (_, Type::Unknown) => Ok(()),
 
-            // 特殊处理：当尝试统一非函数类型与函数类型时
-            (non_func, Type::Function { .. }) | (Type::Function { .. }, non_func) => {
+            // 特殊处理：当尝试统一非函数类型与函数/闭包类型时
+            (non_func, Type::Function { .. })
+            | (Type::Function { .. }, non_func)
+            | (non_func, Type::Closure { .. })
+            | (Type::Closure { .. }, non_func) => {
                 if !matches!(non_func, Type::Var(_) | Type::Unknown) {
                     // 报告类型不匹配错误，而不是"not callable"错误
                     // 因为这里的问题是类型无法统一，而不是直接的函数调用问题
@@ -860,6 +915,7 @@ impl TypeChecker {
             Expr::Lambda {
                 params,
                 body,
+                inferred_type: _,
                 span: _,
             } => {
                 let mut new_env = env.clone();
@@ -880,7 +936,11 @@ impl TypeChecker {
 
                 let return_type = self.infer_expr(body, &new_env);
 
-                Type::closure(param_types, return_type)
+                // 存储Lambda类型到映射中
+                let lambda_type = Type::closure(param_types.clone(), return_type.clone());
+                self.lambda_types.insert(expr as *const Expr, lambda_type.clone());
+
+                lambda_type
             }
 
             Expr::FunctionCall {
@@ -1838,6 +1898,16 @@ impl TypeChecker {
                 params,
                 return_type,
             } => Type::Function {
+                params: params
+                    .into_iter()
+                    .map(|p| self.apply_substitution(p))
+                    .collect(),
+                return_type: Box::new(self.apply_substitution(*return_type)),
+            },
+            Type::Closure {
+                params,
+                return_type,
+            } => Type::Closure {
                 params: params
                     .into_iter()
                     .map(|p| self.apply_substitution(p))

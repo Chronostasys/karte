@@ -39,7 +39,7 @@ pub(crate) fn lower_expression(
         Expr::Number { value, .. } => {
             ctx.add_statement(Statement::Assign {
                 target: destination.clone(),
-                source: Value::Number { value: *value },
+                source: Value::Number { value: *value, ty: None },
                 span,
             });
         }
@@ -56,7 +56,7 @@ pub(crate) fn lower_expression(
             // 使用新的Boolean值表示，用于简化逻辑操作符处理
             ctx.add_statement(Statement::Assign {
                 target: destination.clone(),
-                source: Value::Boolean { value: *value },
+                source: Value::Boolean { value: *value, ty: None },
                 span,
             });
         }
@@ -66,7 +66,7 @@ pub(crate) fn lower_expression(
                 // 解析临时变量的实际值
                 let resolved_value = ctx.resolve_value(&binding.value);
                 match &resolved_value {
-                    Value::Reference { value: ref_target } => {
+                    Value::Reference { value: ref_target, .. } => {
                         ctx.add_statement(Statement::Dereference {
                             target: destination.clone(),
                             reference: *ref_target.clone(),
@@ -85,7 +85,7 @@ pub(crate) fn lower_expression(
                 // 如果是函数名，返回函数值
                 ctx.add_statement(Statement::Assign {
                     target: destination.clone(),
-                    source: Value::Function { name: name.clone() },
+                    source: Value::Function { name: name.clone(), ty: None },
                     span,
                 });
             } else {
@@ -102,7 +102,7 @@ pub(crate) fn lower_expression(
             let canonical = ctx.canonical_module_symbol(module_path, symbol);
             ctx.add_statement(Statement::Assign {
                 target: destination.clone(),
-                source: Value::Function { name: canonical },
+                source: Value::Function { name: canonical, ty: None },
                 span,
             });
         }
@@ -229,8 +229,8 @@ pub(crate) fn lower_expression(
             });
         }
 
-        Expr::Lambda { params, body, .. } => {
-            lower_lambda_expression(ctx, params, body, destination, span)?;
+        Expr::Lambda { .. } => {
+            lower_lambda_expression(ctx, expr, destination)?;
         }
 
         Expr::FunctionCall { function, args, .. } => {
@@ -292,12 +292,13 @@ pub(crate) fn lower_expression(
                 param.clone(),
                 Value::Variable {
                     name: param.clone(),
+                    ty: None,
                 },
                 None,
             );
 
             // handler 表达式不需要结果，因为它通常通过 resume 返回
-            let dummy_temp = Value::Temp { id: TempId(0) };
+            let dummy_temp = Value::Temp { id: TempId(0), ty: None };
             lower_expression(ctx, handler, &dummy_temp)?;
 
             // 处理器里通常通过 resume 返回；若未 resume，这里不强制添加跳转
@@ -356,11 +357,13 @@ pub(crate) fn lower_expression(
                 Value::Constructor {
                     name: name.clone(),
                     arg: Some(Box::new(arg_val)),
+                    ty: None,
                 }
             } else {
                 Value::Constructor {
                     name: name.clone(),
                     arg: None,
+                    ty: None,
                 }
             };
 
@@ -383,12 +386,14 @@ pub(crate) fn lower_expression(
                     type_name: type_name.clone(),
                     constructor_name: constructor_name.clone(),
                     arg: Some(Box::new(arg_val)),
+                    ty: None,
                 }
             } else {
                 Value::QualifiedConstructor {
                     type_name: type_name.clone(),
                     constructor_name: constructor_name.clone(),
                     arg: None,
+                    ty: None,
                 }
             };
 
@@ -466,6 +471,7 @@ pub(crate) fn lower_expression(
             let struct_value = Value::Struct {
                 name: name.clone(),
                 fields: mir_fields,
+                ty: None,
             };
 
             ctx.add_statement(Statement::Assign {
@@ -515,6 +521,7 @@ pub(crate) fn lower_expression(
                 target: array_ptr.clone(),
                 value: Value::Number {
                     value: elements.len() as i64,
+                    ty: None,
                 },
                 span: *span,
             });
@@ -528,6 +535,7 @@ pub(crate) fn lower_expression(
                     op: MirBinaryOp::Add,
                     right: Value::Number {
                         value: ((idx + 1) * 8) as i64,
+                        ty: None,
                     },
                     span: *span,
                 });
@@ -554,7 +562,7 @@ pub(crate) fn lower_expression(
                 target: scaled_index.clone(),
                 left: index_value,
                 op: MirBinaryOp::Multiply,
-                right: Value::Number { value: 8 },
+                right: Value::Number { value: 8, ty: None },
                 span: *span,
             });
 
@@ -563,7 +571,7 @@ pub(crate) fn lower_expression(
                 target: data_base.clone(),
                 left: array_value.clone(),
                 op: MirBinaryOp::Add,
-                right: Value::Number { value: 8 },
+                right: Value::Number { value: 8, ty: None },
                 span: *span,
             });
 
@@ -599,6 +607,7 @@ pub(crate) fn lower_expression(
             // 2. 创建引用值并赋值给目标
             let reference_value = Value::Reference {
                 value: Box::new(referenced_value),
+                ty: None,
             };
 
             ctx.add_statement(Statement::Assign {
@@ -713,11 +722,36 @@ pub(crate) fn lower_expression(
 /// 2. 独立的MIR函数（带有__env参数）
 fn lower_lambda_expression(
     ctx: &mut LoweringContext,
-    params: &[karte_hir::Parameter],
-    body: &Expr,
+    expr: &karte_hir::Expr,
     destination: &Value,
-    span: karte_diagnostics::Span,
 ) -> Result<(), Vec<String>> {
+    // 提取Lambda表达式的各个部分
+    let (params, body, span) = match expr {
+        karte_hir::Expr::Lambda {
+            params,
+            body,
+            span,
+            ..
+        } => (params, body, span),
+        _ => unreachable!(),
+    };
+    let span = *span;
+
+    // 获取Lambda的推断类型（如果存在）
+    let lambda_type = ctx.get_lambda_type(expr);
+
+    // 计算闭包结构体的类型
+    let closure_type = match lambda_type.as_ref() {
+        Some(karte_hir::Type::Function { params, return_type })
+        | Some(karte_hir::Type::Closure { params, return_type }) => {
+            Some(karte_hir::Type::Closure {
+                params: params.clone(),
+                return_type: return_type.clone(),
+            })
+        }
+        _ => None,
+    };
+
     // 1. 分析Lambda体中使用的自由变量（闭包捕获）
     let mut free_vars = Vec::new();
     let mut captured_var_locations = Vec::new();
@@ -750,6 +784,7 @@ fn lower_lambda_expression(
                     &var_name,
                     Value::Reference {
                         value: Box::new(shared_location.clone()),
+                        ty: None,
                     },
                     None,
                 );
@@ -771,15 +806,17 @@ fn lower_lambda_expression(
             "function_ptr".to_string(),
             Value::Function {
                 name: lambda_name.clone(),
+                ty: lambda_type.clone(),
             },
         );
-        closure_fields.insert("env_ptr".to_string(), Value::Number { value: 0 }); // 空环境
+        closure_fields.insert("env_ptr".to_string(), Value::Number { value: 0, ty: None }); // 空环境
 
         ctx.add_statement(Statement::Assign {
             target: destination.clone(),
             source: Value::Struct {
                 name: "Closure".to_string(),
                 fields: closure_fields,
+                ty: closure_type.clone(),
             },
             span,
         });
@@ -802,6 +839,7 @@ fn lower_lambda_expression(
                 op: crate::ir::BinaryOperator::Add,
                 right: Value::Number {
                     value: (i * 8) as i64,
+                    ty: None,
                 },
                 span,
             });
@@ -818,6 +856,7 @@ fn lower_lambda_expression(
             "function_ptr".to_string(),
             Value::Function {
                 name: lambda_name.clone(),
+                ty: lambda_type.clone(),
             },
         );
         closure_fields.insert("env_ptr".to_string(), env_temp);
@@ -827,6 +866,7 @@ fn lower_lambda_expression(
             source: Value::Struct {
                 name: "Closure".to_string(),
                 fields: closure_fields,
+                ty: closure_type.clone(),
             },
             span,
         });
@@ -844,6 +884,25 @@ fn lower_lambda_expression(
     // 5. 开始新函数
     ctx.start_function(lambda_name.clone(), all_params);
 
+    // 设置函数的类型信息（如果已知）
+    if let Some(lambda_type) = lambda_type {
+        let current_fn = ctx.current_function_mut();
+        match lambda_type {
+            karte_hir::Type::Function { params: param_types, return_type }
+            | karte_hir::Type::Closure { params: param_types, return_type } => {
+                // 注意：all_params 包含 __env 作为第一个参数，但 param_types 不包含 __env
+                // 因此我们只设置原始参数的类型，跳过 __env
+                if param_types.len() == params.len() {
+                    current_fn.param_types = param_types;
+                    current_fn.return_type = Some(*return_type);
+                }
+            }
+            _ => {
+                // 其他类型，如 Unknown、Var 等，不设置类型信息
+            }
+        }
+    }
+
     if !free_vars.is_empty() {
         if let Some(env_binding) = ctx.lookup_variable("__env").cloned() {
             let env_value = env_binding.value.clone();
@@ -855,6 +914,7 @@ fn lower_lambda_expression(
                     op: MirBinaryOp::Add,
                     right: Value::Number {
                         value: (index * 8) as i64,
+                        ty: None,
                     },
                     span,
                 });
@@ -870,6 +930,7 @@ fn lower_lambda_expression(
                     captured_name.clone(),
                     Value::Reference {
                         value: Box::new(shared_location),
+                        ty: None,
                     },
                     None,
                 );
@@ -969,7 +1030,7 @@ fn annotate_closure_return_value(
         ) || matches!(&resolved, Value::Struct { name, .. } if name == "Closure");
 
         if is_callable {
-            if let Value::Temp { id } = destination {
+            if let Value::Temp { id, .. } = destination {
                 ctx.temp_value_map.insert(*id, resolved);
             }
         }
@@ -987,7 +1048,7 @@ fn annotate_function_return_type(
     function_name: &str,
     destination: &Value,
 ) {
-    if let Value::Temp { id } = destination {
+    if let Value::Temp { id, .. } = destination {
         if let Some(return_type) = ctx.get_function_return_type(function_name) {
             if LoweringContext::is_callable_type(return_type) {
                 // 返回类型是函数或闭包，创建一个类型标注值
@@ -996,6 +1057,7 @@ fn annotate_function_return_type(
                         // 标记为函数类型（函数名未知，使用占位符）
                         Value::Function {
                             name: format!("__returned_function_{}", id),
+                            ty: None,
                         }
                     }
                     karte_hir::Type::Closure { .. } => {
@@ -1003,6 +1065,7 @@ fn annotate_function_return_type(
                         Value::Struct {
                             name: "Closure".to_string(),
                             fields: std::collections::BTreeMap::new(),
+                            ty: None,
                         }
                     }
                     _ => return,
@@ -1032,12 +1095,12 @@ fn lower_function_call(
         let resolved_value = if let Some(binding) = ctx.lookup_variable(name) {
             Some(ctx.resolve_value(&binding.value))
         } else if ctx.is_known_function(name) {
-            Some(Value::Function { name: name.clone() })
+            Some(Value::Function { name: name.clone(), ty: None })
         } else {
             None
         };
 
-        if let Some(Value::Function { name: func_name }) = resolved_value {
+        if let Some(Value::Function { name: func_name, .. }) = resolved_value {
             // 如果解析后的值是函数类型，直接调用
             let arg_vals: Vec<Value> = args
                 .iter()
@@ -1061,6 +1124,7 @@ fn lower_function_call(
                 target: Some(destination.clone()),
                 function: Value::Function {
                     name: func_name.clone(),
+                    ty: None,
                 },
                 args: arg_vals,
                 span,
@@ -1099,7 +1163,7 @@ fn lower_function_call(
 
         ctx.add_statement(Statement::Call {
             target: Some(destination.clone()),
-            function: Value::Function { name: canonical.clone() },
+            function: Value::Function { name: canonical.clone(), ty: None },
             args: arg_vals,
             span,
         });
@@ -1135,11 +1199,11 @@ fn lower_function_call(
     }
 
     match &func_val {
-        Value::Function { name } => {
+        Value::Function { name, .. } => {
             // 直接函数：无需 env
             ctx.add_statement(Statement::Call {
                 target: Some(destination.clone()),
-                function: Value::Function { name: name.clone() },
+                function: Value::Function { name: name.clone(), ty: None },
                 args: arg_vals,
                 span,
             });
@@ -1149,6 +1213,7 @@ fn lower_function_call(
         Value::Closure {
             captured_values,
             function_name,
+            ..
         } => {
             // 旧式 Closure 表示：captured_values 作为 env 展开到前面（保持兼容）。
             // 在消费arg_vals之前，先标注返回值类型
@@ -1160,6 +1225,7 @@ fn lower_function_call(
                 target: Some(destination.clone()),
                 function: Value::Function {
                     name: function_name.clone(),
+                    ty: None,
                 },
                 args: all_args,
                 span,
@@ -1194,11 +1260,12 @@ fn lower_function_call(
 
             // 解析function_ptr_temp获取实际函数名
             let resolved_func_ptr = ctx.resolve_value(&function_ptr_temp);
-            if let Value::Function { name: func_name } = &resolved_func_ptr {
+            if let Value::Function { name: func_name, .. } = &resolved_func_ptr {
                 ctx.add_statement(Statement::Call {
                     target: Some(destination.clone()),
                     function: Value::Function {
                         name: func_name.clone(),
+                        ty: None,
                     },
                     args: final_args,
                     span,

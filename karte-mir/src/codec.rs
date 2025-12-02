@@ -107,8 +107,8 @@ mod tests {
             Ok((rest, stmt)) => {
                 assert_eq!(rest, "");
                 let expected = Statement::FieldAccess {
-                    target: Value::Temp { id: TempId(4) },
-                    object: Value::Temp { id: TempId(2) },
+                    target: Value::Temp { id: TempId(4), ty: None },
+                    object: Value::Temp { id: TempId(2), ty: None },
                     field: "function_ptr".to_string(),
                     span: Default::default(),
                 };
@@ -135,8 +135,8 @@ mod tests {
                 assert_eq!(rest, "");
                 let expected = Statement::Call {
                     target: None,
-                    function: Value::Temp { id: TempId(4) },
-                    args: vec![Value::Temp { id: TempId(5) }, Value::Temp { id: TempId(3) }],
+                    function: Value::Temp { id: TempId(4), ty: None },
+                    args: vec![Value::Temp { id: TempId(5), ty: None }, Value::Temp { id: TempId(3), ty: None }],
                     span: Default::default(),
                 };
                 assert_eq!(stmt, expected, "Parsed Call did not match expected");
@@ -645,36 +645,36 @@ mod tests {
                 .expect("entry block should exist");
 
             block.statements.push(Statement::Assign {
-                target: Value::Temp { id: TempId(1) },
-                source: Value::Number { value: 2 },
+                target: Value::Temp { id: TempId(1), ty: None },
+                source: Value::Number { value: 2, ty: None },
                 span: Span::default(),
             });
             block.statements.push(Statement::Assign {
-                target: Value::Temp { id: TempId(2) },
-                source: Value::Temp { id: TempId(1) },
+                target: Value::Temp { id: TempId(2), ty: None },
+                source: Value::Temp { id: TempId(1), ty: None },
                 span: Span::default(),
             });
             block.statements.push(Statement::Assign {
-                target: Value::Temp { id: TempId(3) },
-                source: Value::Number { value: 3 },
+                target: Value::Temp { id: TempId(3), ty: None },
+                source: Value::Number { value: 3, ty: None },
                 span: Span::default(),
             });
             block.statements.push(Statement::BinaryOp {
-                target: Value::Temp { id: TempId(0) },
-                left: Value::Temp { id: TempId(2) },
+                target: Value::Temp { id: TempId(0), ty: None },
+                left: Value::Temp { id: TempId(2), ty: None },
                 op: crate::ir::BinaryOperator::Multiply,
-                right: Value::Temp { id: TempId(3) },
+                right: Value::Temp { id: TempId(3), ty: None },
                 span: Span::default(),
             });
             block.terminator = Some(Terminator::Return {
-                value: Some(Value::Temp { id: TempId(0) }),
+                value: Some(Value::Temp { id: TempId(0), ty: None }),
                 span: Span::default(),
             });
         }
 
         program.add_function(main_fn);
         program.set_main("main".to_string());
-        program.main_return_value = Some(Value::Temp { id: TempId(0) });
+        program.main_return_value = Some(Value::Temp { id: TempId(0), ty: None });
 
         let text = program.to_ir_string();
         println!("Rendered MirProgram:\n{}", text);

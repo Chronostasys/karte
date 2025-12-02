@@ -250,7 +250,7 @@ fn canonicalize_terminator(terminator: &mut Terminator, symbols: &HashMap<String
 
 fn canonicalize_value(value: &mut Value, symbols: &HashMap<String, String>) {
     match value {
-        Value::Function { name } => {
+        Value::Function { name, .. } => {
             if let Some(canonical) = symbols.get(name) {
                 *name = canonical.clone();
             }
@@ -258,6 +258,7 @@ fn canonicalize_value(value: &mut Value, symbols: &HashMap<String, String>) {
         Value::Closure {
             function_name,
             captured_values,
+            ..
         } => {
             if let Some(canonical) = symbols.get(function_name) {
                 *function_name = canonical.clone();

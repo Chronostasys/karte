@@ -26,6 +26,8 @@ impl<'a> LoweringContext<'a> {
             module_context: None,
             temp_value_map: std::collections::HashMap::new(),
             function_return_types: std::collections::HashMap::new(),
+            temp_types: std::collections::HashMap::new(),
+            expr_types: std::collections::HashMap::new(),
         };
         ctx.enter_scope();
         ctx
@@ -93,6 +95,7 @@ impl<'a> LoweringContext<'a> {
                 param.clone(),
                 Value::Variable {
                     name: param.clone(),
+                    ty: None,
                 },
                 None,
             );
@@ -139,7 +142,7 @@ impl<'a> LoweringContext<'a> {
     /// 创建新的临时变量
     pub(crate) fn new_temp(&mut self) -> Value {
         let id = self.current_function_mut().new_temp();
-        Value::Temp { id }
+        Value::Temp { id, ty: None }
     }
 
     /// 进入新的作用域
@@ -254,7 +257,7 @@ impl<'a> LoweringContext<'a> {
     pub(crate) fn add_statement(&mut self, stmt: Statement) {
         // 追踪函数值和闭包值的赋值
         if let Statement::Assign { target, source, .. } = &stmt {
-            if let Value::Temp { id } = target {
+            if let Value::Temp { id, .. } = target {
                 let should_track = match source {
                     Value::Function { .. } => true,
                     Value::Closure { .. } => true,
@@ -277,7 +280,7 @@ impl<'a> LoweringContext<'a> {
     ///
     /// 如果值是临时变量且映射到函数/闭包，返回实际的函数/闭包值
     pub(crate) fn resolve_value(&self, value: &Value) -> Value {
-        if let Value::Temp { id } = value {
+        if let Value::Temp { id, .. } = value {
             if let Some(actual_value) = self.temp_value_map.get(id) {
                 return actual_value.clone();
             }
@@ -352,5 +355,23 @@ impl<'a> LoweringContext<'a> {
             ty,
             karte_hir::Type::Function { .. } | karte_hir::Type::Closure { .. }
         )
+    }
+
+    /// 获取表达式的推断类型
+    ///
+    /// 从expr_types映射中查询表达式的类型，如果找不到返回None
+    pub(crate) fn get_expr_type(&self, expr: &karte_hir::Expr) -> karte_hir::Type {
+        let expr_ptr = expr as *const karte_hir::Expr;
+        let key = expr_ptr as usize;
+        self.expr_types.get(&key).cloned().unwrap_or(karte_hir::Type::Unknown)
+    }
+
+    /// 获取Lambda表达式的推断类型
+    ///
+    /// 专门用于Lambda表达式，返回函数或闭包类型
+    pub(crate) fn get_lambda_type(&self, expr: &karte_hir::Expr) -> Option<karte_hir::Type> {
+        let expr_ptr = expr as *const karte_hir::Expr;
+        let key = expr_ptr as usize;
+        self.expr_types.get(&key).cloned()
     }
 }
