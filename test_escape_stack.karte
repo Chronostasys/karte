@@ -1,0 +1,10 @@
+fn compute() -> number {
+    let temp1 = 10;
+    let temp2 = 20;
+    let temp3 = temp1 + temp2;
+    temp3
+}
+
+fn main() -> number {
+    compute()
+}

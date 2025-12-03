@@ -1,0 +1,8 @@
+fn escaping_param(x: number) -> number {
+    x + 1
+}
+
+fn main() -> number {
+    let result = escaping_param(42);
+    result
+}
