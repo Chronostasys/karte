@@ -279,7 +279,7 @@ pub fn compile_source_to_artifacts(
             .map(|binding| binding.alias.clone())
             .collect::<std::collections::HashSet<_>>(),
         module_context: Some(module_context.clone()),
-        expr_types: Default::default(),
+        expr_types: result.expr_types.clone(),
     };
 
     if verbose && filename == "input" {
@@ -292,6 +292,7 @@ pub fn compile_source_to_artifacts(
     if verbose {
         println!("\n--- Lowering to MIR ---");
     }
+    println!("[Project] expr_types size in lowering_options: {}", lowering_options.expr_types.len());
     let mut mir_program =
         match lower_expr_to_mir_with_options(&parsed_program.body, lowering_options) {
             Ok(prog) => prog,

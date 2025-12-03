@@ -1,0 +1,512 @@
+functions: {
+    lambda$0: 
+        LirFunction
+        name: lambda$0
+        body:
+        [
+        
+            Label(L10903932721424011425),
+        
+            sub dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Store64 { addr =
+                #p6, offset =
+                0, src =
+                #p7 },
+        
+            mov dst: #p7, src: #p6,
+        
+            sub dst: #p6, src1: #p6, src2: # value: 48,
+        
+            add dst: #p4, src1: #p7, src2: # value: -16,
+        
+            Label(L10941710709993059339),
+        
+            mov dst: #p4, src: #p2,
+        
+            Store64 { addr =
+                #p4, offset =
+                8, src =
+                # value: 0 },
+        
+            mov dst: #p0, src: #p4,
+        
+            Store64 { addr =
+                #p7, offset =
+                -24, src =
+                #p0 },
+        
+            Store64 { addr =
+                #p7, offset =
+                -32, src =
+                #p2 },
+        
+            Load64 { dst =
+                #p0, addr =
+                #p7, offset =
+                -24 },
+        
+            Load64 { dst =
+                #p2, addr =
+                #p0, offset =
+                0 },
+        
+            Store64 { addr =
+                #p7, offset =
+                -24, src =
+                #p2 },
+        
+            Load64 { dst =
+                #p2, addr =
+                #p7, offset =
+                -32 },
+        
+            add dst: #p0, src1: #p4, src2: # value: 8,
+        
+            Store64 { addr =
+                #p7, offset =
+                -40, src =
+                #p0 },
+        
+            Load64 { dst =
+                #p4, addr =
+                #p0, offset =
+                0 },
+        
+            mov dst: #p0, src: #p4,
+        
+            Store64 { addr =
+                #p7, offset =
+                -40, src =
+                #p0 },
+        
+            mov dst: #p4, src: #p3,
+        
+            Load64 { dst =
+                #p0, addr =
+                #p7, offset =
+                -40 },
+        
+            mov dst: #p3, src: #p0,
+        
+            mov dst: #p0, src: #p4,
+        
+            Store64 { addr =
+                #p7, offset =
+                -48, src =
+                #p0 },
+        
+            Load64 { dst =
+                #p0, addr =
+                #p7, offset =
+                -24 },
+        
+            mov dst: #p5, src: #p0,
+        
+            Store64 { addr =
+                #p7, offset =
+                -32, src =
+                #p2 },
+        
+            Load64 { dst =
+                #p0, addr =
+                #p7, offset =
+                -48 },
+        
+            Load64 { dst =
+                #p0, addr =
+                #p7, offset =
+                -40 },
+        
+            sub dst: #p6, src1: #p6, src2: # value: 8,
+        
+            sub dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Store64 { addr =
+                #p6, offset =
+                0, src =
+                #p1 },
+        
+            sub dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Store64 { addr =
+                #p6, offset =
+                0, src =
+                #p2 },
+        
+            sub dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Store64 { addr =
+                #p6, offset =
+                0, src =
+                #p3 },
+        
+            sub dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Store64 { addr =
+                #p6, offset =
+                0, src =
+                #p4 },
+        
+            mov dst: #p15, src: #p5,
+        
+            mov dst: #p1, src: #p0,
+        
+            mov dst: #p2, src: #p4,
+        
+            sub dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Store64 { addr =
+                #p6, offset =
+                0, src =
+                @ id: L100000 },
+        
+            JumpIndirect(#p15),
+        
+            Label(L100000),
+        
+            add dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Load64 { dst =
+                #p4, addr =
+                #p6, offset =
+                0 },
+        
+            add dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Load64 { dst =
+                #p3, addr =
+                #p6, offset =
+                0 },
+        
+            add dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Load64 { dst =
+                #p2, addr =
+                #p6, offset =
+                0 },
+        
+            add dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Load64 { dst =
+                #p1, addr =
+                #p6, offset =
+                0 },
+        
+            add dst: #p6, src1: #p6, src2: # value: 8,
+        
+            add dst: #p6, src1: #p6, src2: # value: 8,
+        
+            mov dst: #p2, src: #p0,
+        
+            Store64 { addr =
+                #p7, offset =
+                -24, src =
+                #p2 },
+        
+            Load64 { dst =
+                #p2, addr =
+                #p7, offset =
+                -32 },
+        
+            Load64 { dst =
+                #p0, addr =
+                #p7, offset =
+                -24 },
+        
+            add dst: #p6, src1: #p6, src2: # value: 48,
+        
+            mov dst: #p6, src: #p7,
+        
+            Load64 { dst =
+                #p7, addr =
+                #p6, offset =
+                0 },
+        
+            add dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Return(#p0)
+        ]
+        params: 3,
+
+    lambda$1: 
+        LirFunction
+        name: lambda$1
+        body:
+        [
+        
+            Label(L17171577600212541999),
+        
+            sub dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Store64 { addr =
+                #p6, offset =
+                0, src =
+                #p7 },
+        
+            mov dst: #p7, src: #p6,
+        
+            Label(L4594261027685087357),
+        
+            mov dst: #p3, src: #p2,
+        
+            mov dst: #p2, src: # value: 1,
+        
+            add dst: #p4, src1: #p3, src2: #p2,
+        
+            mov dst: #p0, src: #p4,
+        
+            mov dst: #p6, src: #p7,
+        
+            Load64 { dst =
+                #p7, addr =
+                #p6, offset =
+                0 },
+        
+            add dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Return(#p0)
+        ]
+        params: 2,
+
+    __script_entry__: 
+        LirFunction
+        name: __script_entry__
+        body:
+        [
+        
+            Label(L10544162617960538379),
+        
+            sub dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Store64 { addr =
+                #p6, offset =
+                0, src =
+                #p7 },
+        
+            mov dst: #p7, src: #p6,
+        
+            sub dst: #p6, src1: #p6, src2: # value: 72,
+        
+            add dst: #p2, src1: #p7, src2: # value: -40,
+        
+            add dst: #p3, src1: #p7, src2: # value: -16,
+        
+            Label(L1265943154625727711),
+        
+            Store64 { addr =
+                #p3, offset =
+                0, src =
+                @ id: L10903932721424011425 },
+        
+            Store64 { addr =
+                #p3, offset =
+                8, src =
+                # value: 0 },
+        
+            Store64 { addr =
+                #p7, offset =
+                -24, src =
+                #p3 },
+        
+            Store64 { addr =
+                #p2, offset =
+                0, src =
+                @ id: L17171577600212541999 },
+        
+            Store64 { addr =
+                #p2, offset =
+                8, src =
+                # value: 0 },
+        
+            Store64 { addr =
+                #p7, offset =
+                -24, src =
+                #p2 },
+        
+            mov dst: #p2, src: #p3,
+        
+            Load64 { dst =
+                #p4, addr =
+                #p2, offset =
+                0 },
+        
+            add dst: #p2, src1: #p3, src2: # value: 8,
+        
+            Load64 { dst =
+                #p3, addr =
+                #p2, offset =
+                0 },
+        
+            mov dst: #p2, src: #p3,
+        
+            Load64 { dst =
+                #p3, addr =
+                #p7, offset =
+                -24 },
+        
+            mov dst: #p0, src: # value: 5,
+        
+            Store64 { addr =
+                #p7, offset =
+                -24, src =
+                #p0 },
+        
+            mov dst: #p0, src: #p2,
+        
+            Store64 { addr =
+                #p7, offset =
+                -48, src =
+                #p0 },
+        
+            mov dst: #p0, src: #p3,
+        
+            Store64 { addr =
+                #p7, offset =
+                -56, src =
+                #p0 },
+        
+            Store64 { addr =
+                #p7, offset =
+                -64, src =
+                #p2 },
+        
+            Load64 { dst =
+                #p0, addr =
+                #p7, offset =
+                -24 },
+        
+            mov dst: #p2, src: #p0,
+        
+            Store64 { addr =
+                #p7, offset =
+                -72, src =
+                #p2 },
+        
+            Load64 { dst =
+                #p2, addr =
+                #p7, offset =
+                -64 },
+        
+            mov dst: #p5, src: #p4,
+        
+            Load64 { dst =
+                #p4, addr =
+                #p7, offset =
+                -48 },
+        
+            Load64 { dst =
+                #p0, addr =
+                #p7, offset =
+                -56 },
+        
+            Load64 { dst =
+                #p4, addr =
+                #p7, offset =
+                -72 },
+        
+            Load64 { dst =
+                #p0, addr =
+                #p7, offset =
+                -24 },
+        
+            sub dst: #p6, src1: #p6, src2: # value: 8,
+        
+            sub dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Store64 { addr =
+                #p6, offset =
+                0, src =
+                #p1 },
+        
+            sub dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Store64 { addr =
+                #p6, offset =
+                0, src =
+                #p2 },
+        
+            sub dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Store64 { addr =
+                #p6, offset =
+                0, src =
+                #p3 },
+        
+            sub dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Store64 { addr =
+                #p6, offset =
+                0, src =
+                #p4 },
+        
+            mov dst: #p15, src: #p5,
+        
+            mov dst: #p1, src: #p2,
+        
+            mov dst: #p2, src: #p3,
+        
+            mov dst: #p3, src: #p0,
+        
+            sub dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Store64 { addr =
+                #p6, offset =
+                0, src =
+                @ id: L100001 },
+        
+            JumpIndirect(#p15),
+        
+            Label(L100001),
+        
+            add dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Load64 { dst =
+                #p4, addr =
+                #p6, offset =
+                0 },
+        
+            add dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Load64 { dst =
+                #p3, addr =
+                #p6, offset =
+                0 },
+        
+            add dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Load64 { dst =
+                #p2, addr =
+                #p6, offset =
+                0 },
+        
+            add dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Load64 { dst =
+                #p1, addr =
+                #p6, offset =
+                0 },
+        
+            add dst: #p6, src1: #p6, src2: # value: 8,
+        
+            add dst: #p6, src1: #p6, src2: # value: 8,
+        
+            mov dst: #p4, src: #p0,
+        
+            mov dst: #p0, src: #p4,
+        
+            add dst: #p6, src1: #p6, src2: # value: 72,
+        
+            mov dst: #p6, src: #p7,
+        
+            Load64 { dst =
+                #p7, addr =
+                #p6, offset =
+                0 },
+        
+            add dst: #p6, src1: #p6, src2: # value: 8,
+        
+            Return(#p0)
+        ]
+        params: 0
+    }, main_function: __script_entry__, global_struct_types: {}, global_variables: {}

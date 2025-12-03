@@ -1,0 +1,33 @@
+functions: {
+    add_one:
+        LirFunction
+        name: add_one
+        body:
+        [
+
+            Label(L100),
+
+            mov dst: #p2, src: # value: 1,
+
+            add dst: #p0, src1: #p1, src2: #p2,
+
+            Return(#p0)
+        ]
+        params: 1,
+
+    main:
+        LirFunction
+        name: main
+        body:
+        [
+
+            Label(L200),
+
+            mov dst: #p1, src: # value: 5,
+
+            Call(@ id: L100),
+
+            Return(#p0)
+        ]
+        params: 0
+    }, main_function: main, global_struct_types: {}, global_variables: {}

@@ -1,0 +1,3 @@
+let apply = |f, x| { f(x) };
+let add_one = |n| { n + 1 };
+apply(add_one, 5)

@@ -91,8 +91,10 @@ pub struct TypeChecker {
     custom_types: HashMap<String, Type>, // 存储自定义类型
     module_context: ModuleContext,
     function_signatures: HashMap<String, FunctionSignature>, // 缓存函数签名，避免重复解析
-    /// 存储Lambda表达式的推断类型
+    /// 存储Lambda表达式的推断类型（保持向后兼容）
     lambda_types: HashMap<*const Expr, Type>,
+    /// 存储所有表达式的推断类型（用于传递给MIR lowering）
+    expr_types: HashMap<*const Expr, Type>,
 }
 
 /// 函数签名，包含参数类型和返回类型
@@ -119,7 +121,17 @@ impl TypeChecker {
             module_context: ModuleContext::default(),
             function_signatures: HashMap::new(),
             lambda_types: HashMap::new(),
+            expr_types: HashMap::new(),
         }
+    }
+
+    /// 获取所有表达式的类型映射，转换为usize键
+    /// 注意：方法名保持为get_lambda_types以保持向后兼容，但实际返回所有表达式类型
+    pub fn get_lambda_types(&self) -> HashMap<usize, Type> {
+        self.expr_types
+            .iter()
+            .map(|(expr_ptr, ty)| (*expr_ptr as usize, ty.clone()))
+            .collect()
     }
 
     /// 生成新的类型变量
@@ -826,7 +838,7 @@ impl TypeChecker {
 
     /// 推断表达式的类型
     fn infer_expr(&mut self, expr: &Expr, env: &TypeEnvironment) -> Type {
-        match expr {
+        let inferred_type = match expr {
             Expr::Number { .. } => Type::Number,
 
             Expr::Unit { .. } => Type::Unit,
@@ -1565,7 +1577,12 @@ impl TypeChecker {
                 // body 在原环境中检查，作为整体类型
                 self.infer_expr(body, env)
             }
-        }
+        };
+
+        // 存储所有表达式的类型信息（用于传递给MIR lowering）
+        self.expr_types.insert(expr as *const Expr, inferred_type.clone());
+
+        inferred_type
     }
 
     /// 推断语句并更新环境
@@ -2204,6 +2221,14 @@ pub fn type_check_with_context(expr: &Expr, context: ModuleContext) -> (Type, Di
     let mut checker = TypeChecker::new();
     let result_type = checker.check_program_with_context(expr, &context);
     (result_type, checker.into_diagnostics())
+}
+
+/// 带lambda_types的类型检查
+pub fn type_check_with_context_and_maps(expr: &Expr, context: ModuleContext) -> (Type, HashMap<usize, Type>, DiagnosticBag) {
+    let mut checker = TypeChecker::new();
+    let result_type = checker.check_program_with_context(expr, &context);
+    let expr_types = checker.get_lambda_types();  // 方法名保持不变以保持兼容性
+    (result_type, expr_types, checker.into_diagnostics())
 }
 
 #[cfg(test)]

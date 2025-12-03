@@ -82,10 +82,101 @@ pub(crate) fn lower_expression(
                     }
                 }
             } else if ctx.is_known_function(name) {
-                // 如果是函数名，返回函数值
+                // 如果是函数名，需要包装成闭包结构体以统一表示形式
+                // 但普通函数和闭包的调用约定不同：
+                // - 闭包: function_ptr(env_ptr, ...args)
+                // - 普通函数: function(...args)
+                //
+                // 解决方案：创建一个wrapper lambda，它接收(env_ptr, ...args)并调用原函数(...args)
+
+                // 获取原函数的类型信息
+                let function_type = ctx.get_expr_type(expr);
+                let (param_types, return_type) = match &function_type {
+                    karte_hir::Type::Function { params, return_type } => {
+                        (params.clone(), return_type.clone())
+                    }
+                    _ => {
+                        // 如果类型未知，创建简单的wrapper
+                        (vec![], Box::new(karte_hir::Type::Unknown))
+                    }
+                };
+
+                // 创建wrapper lambda函数
+                let wrapper_name = format!("{}$wrapper", name);
+                let param_count = param_types.len();
+
+                // wrapper的参数：__env + 原函数的参数（用通用名称）
+                let mut wrapper_params = vec!["__env".to_string()];
+                for i in 0..param_count {
+                    wrapper_params.push(format!("__arg{}", i));
+                }
+
+                // 暂存当前函数上下文
+                let original_function_name = ctx.current_function_name.clone();
+                let original_block = ctx.current_block;
+                let original_scopes = ctx.clone_scopes();
+
+                // 创建wrapper函数
+                ctx.start_function(wrapper_name.clone(), wrapper_params.clone());
+
+                // 在wrapper中调用原函数，传递所有参数（除了__env）
+                let wrapper_entry = ctx.current_block();
+                let result_temp = ctx.new_temp();
+
+                // 准备原函数调用的参数（跳过__env）
+                let mut call_args = Vec::new();
+                for i in 0..param_count {
+                    let arg_name = format!("__arg{}", i);
+                    if let Some(binding) = ctx.lookup_variable(&arg_name) {
+                        call_args.push(binding.value.clone());
+                    }
+                }
+
+                // 调用原函数
+                ctx.add_statement(Statement::Call {
+                    target: Some(result_temp.clone()),
+                    function: Value::Function {
+                        name: name.clone(),
+                        ty: Some(function_type.clone()),
+                    },
+                    args: call_args,
+                    span,
+                });
+
+                // 返回结果
+                ctx.set_terminator(Terminator::Return {
+                    value: Some(result_temp),
+                    span,
+                });
+
+                ctx.finish_function();
+
+                // 恢复原函数上下文
+                ctx.current_function_name = original_function_name;
+                ctx.current_block = original_block;
+                ctx.restore_scopes(original_scopes);
+
+                // 现在创建闭包结构体，指向wrapper而不是原函数
+                let mut closure_fields = std::collections::BTreeMap::new();
+                closure_fields.insert(
+                    "function_ptr".to_string(),
+                    Value::Function {
+                        name: wrapper_name,
+                        ty: Some(function_type.clone()),
+                    },
+                );
+                closure_fields.insert(
+                    "env_ptr".to_string(),
+                    Value::Number { value: 0, ty: None },
+                );
+
                 ctx.add_statement(Statement::Assign {
                     target: destination.clone(),
-                    source: Value::Function { name: name.clone(), ty: None },
+                    source: Value::Struct {
+                        name: "Closure".to_string(),
+                        fields: closure_fields,
+                        ty: Some(function_type),
+                    },
                     span,
                 });
             } else {
@@ -1093,7 +1184,8 @@ fn lower_function_call(
     if let Expr::Identifier { name, .. } = function {
         // 首先检查变量环境中的绑定，并解析实际值
         let resolved_value = if let Some(binding) = ctx.lookup_variable(name) {
-            Some(ctx.resolve_value(&binding.value))
+            let resolved = ctx.resolve_value(&binding.value);
+            Some(resolved)
         } else if ctx.is_known_function(name) {
             Some(Value::Function { name: name.clone(), ty: None })
         } else {
@@ -1178,8 +1270,29 @@ fn lower_function_call(
     // 3. 如果是直接函数（Value::Function），直接调用（与之前一致）
     // 4. 否则一律视为 Closure 结构体：提取 function_ptr 与 env_ptr，生成 call，参数序列为 (env_ptr, 原始参数...)
     //    即使 env_ptr == 0 也不做分支；保持统一 ABI，便于后端优化。
+
+    // 🔧 关键修复：检查function是否是闭包类型的参数
+    // 如果是参数且在当前函数的参数列表中，直接使用该参数值
+    let is_closure_parameter = if let Expr::Identifier { name, .. } = function {
+        // 检查是否是当前函数的参数
+        if let Some(current_func_name) = &ctx.current_function_name {
+            if let Some(func) = ctx.program.functions.get(current_func_name) {
+                func.params.contains(name) && name != "__env"  // __env不算闭包参数
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
     let func_temp = lower_expression_to_temp(ctx, function)?;
     let func_val = ctx.resolve_value(&func_temp);
+    // 移除了之前的类型变量特殊处理
+    // 现在所有可调用对象（函数和闭包）都统一表示为闭包结构体
+    // 所以不需要区分处理
     let arg_vals: Vec<Value> = args
         .iter()
         .map(|a| lower_expression_to_temp(ctx, a))
@@ -1200,7 +1313,7 @@ fn lower_function_call(
 
     match &func_val {
         Value::Function { name, .. } => {
-            // 直接函数：无需 env
+            // 直接函数调用（不是闭包参数的情况）
             ctx.add_statement(Statement::Call {
                 target: Some(destination.clone()),
                 function: Value::Function { name: name.clone(), ty: None },
@@ -1235,17 +1348,24 @@ fn lower_function_call(
         }
         _ => {
             // 视为标准 Closure 结构体：必须含有 function_ptr / env_ptr 字段。
+            // 🔧 关键修复：如果是闭包参数，使用func_temp（临时变量）而不是func_val（类型标记）
+            let object_for_field_access = if is_closure_parameter {
+                func_temp.clone()
+            } else {
+                func_val.clone()
+            };
+
             let function_ptr_temp = ctx.new_temp();
             ctx.add_statement(Statement::FieldAccess {
                 target: function_ptr_temp.clone(),
-                object: func_val.clone(),
+                object: object_for_field_access.clone(),
                 field: "function_ptr".to_string(),
                 span,
             });
             let env_ptr_temp = ctx.new_temp();
             ctx.add_statement(Statement::FieldAccess {
                 target: env_ptr_temp.clone(),
-                object: func_val.clone(),
+                object: object_for_field_access.clone(),
                 field: "env_ptr".to_string(),
                 span,
             });
