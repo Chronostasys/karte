@@ -1,0 +1,8 @@
+fn add_one(x:number) -> number { x + 1 }
+
+fn main() -> number {
+    let apply = |f, x| { f(x) };
+    let result1 = apply(add_one, 5);
+    let result2 = apply(add_one, 10);
+    result1 + result2
+}

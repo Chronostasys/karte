@@ -1,0 +1,7 @@
+fn main() -> number {
+    let a = || {
+        let d = 1;
+        d
+    };
+    a()
+}

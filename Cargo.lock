@@ -1183,6 +1183,7 @@ dependencies = [
  "karte-codegen",
  "karte-common",
  "karte-diagnostics",
+ "karte-escape-analysis",
  "karte-hir",
  "karte-ir-codec",
  "karte-ir-derive",

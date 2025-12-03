@@ -708,17 +708,9 @@ impl InstructionLowerer {
                     span: *span,
                 });
 
-                // 从栈上弹出返回地址（丢弃）
-                // 🔧 修复：compile_return 已经负责弹出返回地址，这里不需要再次弹出
-                // 否则会导致栈不平衡，进而导致 caller-saved 寄存器恢复错误
-                // new_instructions.push(Instruction::Add {
-                //     dst: self.stack_pointer_reg,
-                //     src1: Operand::Register {
-                //         id: self.stack_pointer_reg,
-                //     },
-                //     src2: Operand::Immediate { value: 8 },
-                //     span: *span,
-                // });
+                // ⚠️ Call 指令：compile_return 已经弹出返回地址
+                // 栈顶现在是最后保存的 caller-saved 寄存器（或padding）
+                // 不需要额外的 +8 操作
 
                 // 恢复caller-saved寄存器 (逆序)
                 for reg in caller_saved.iter().rev() {
@@ -792,6 +784,9 @@ impl InstructionLowerer {
                 caller_saved.sort();
 
                 // 计算栈对齐
+                // ⚠️ 重要：compile_return 会弹出返回地址
+                // 当执行流返回到 return_label 时，栈上只有 caller-saved 寄存器
+                // 所以对齐计算应该只基于 caller_saved 寄存器数量，不包括返回地址
                 let total_pushed = caller_saved.len() + 1;
                 let need_padding = total_pushed % 2 != 0;
 

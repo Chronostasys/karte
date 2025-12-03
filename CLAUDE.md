@@ -409,3 +409,96 @@ Recent work includes:
 **Performance Considerations**:
 - Wrapper functions add one level of indirection (~<5% overhead)
 - Future optimization: inline simple wrappers in LIR stage
+
+### Case Study: CallIndirect Register Restore Bug (2025-12-03)
+
+**Problem**: After calling lambda functions through indirect calls, heap-allocated variables were being dereferenced with incorrect addresses, causing wrong return values or crashes.
+
+**Symptoms**:
+- `test_debug_heap.karte`: Returns wrong value but doesn't crash
+- `test_closure_escape_ub.karte`: Crashes with SIGSEGV (exit code 139)
+- Pattern: Two closure calls followed by dereference operation
+
+**Root Cause**: In `karte-lir/src/lower_instructions.rs:882-889`, the `CallIndirect` instruction implementation was incorrectly popping the return address from stack before restoring caller-saved registers, causing stack misalignment.
+
+**Analysis**:
+```
+Correct stack layout after function call:
+  [return address] ← SP should be here
+  [saved #p4]
+  [saved #p3]      ← Contains heap address
+  [saved #p2]
+  [saved #p1]
+
+Wrong restore sequence (with extra pop):
+  SP += 8          ← Incorrectly pop return address first
+  Load #p4 from [SP]   ← Actually loading #p3's slot!
+  Load #p3 from [SP+8] ← Actually loading #p2's slot!
+  ...
+  Result: #p3 gets wrong value, heap address lost
+```
+
+**Fix**: Comment out the premature return address pop in `CallIndirect` instruction lowering, matching the `Call` instruction behavior where `compile_return` already handles the return address.
+
+```rust
+// 从栈上弹出返回地址（丢弃）
+// 🔧 修复：compile_return 已经负责弹出返回地址，这里不需要再次弹出
+// 否则会导致栈不平衡，进而导致 caller-saved 寄存器恢复错误
+// new_instructions.push(Instruction::Add { ... });
+```
+
+**Files Modified**:
+- `karte-lir/src/lower_instructions.rs:881-891`: Fixed register restore logic
+
+**Lesson Learned**:
+- ✅ **Verify stack operations carefully**: Stack pointer manipulations must be symmetric
+- ✅ **Check both Call and CallIndirect**: Indirect calls should match direct call conventions
+- ✅ **Test with multiple call patterns**: Single calls may pass but multiple calls expose bugs
+
+## Escape Analysis and Heap Allocation
+
+Karte implements compile-time escape analysis to optimize memory allocation:
+
+### Escape Analysis
+
+**Location**: `karte-escape-analysis` crate
+
+**Features**:
+- **Escape point detection**: Detects when variables escape their scope (return, address-of, closure capture)
+- **Heap allocation insertion**: Automatically inserts heap allocation at escape points
+- **Stack optimization**: Non-escaping variables remain on stack
+
+**Enabling Escape Analysis**:
+```bash
+KARTE_ENABLE_ESCAPE_ANALYSIS=1 ./target/release/karte run test.karte
+KARTE_ENABLE_ESCAPE_ANALYSIS=1 ./target/release/karte build --emit-mir test.karte
+```
+
+**Example**:
+```karte
+fn main() -> number {
+    let a = || {
+        let d = 1;
+        &d      // 🔍 Escape point: address-of operator
+    };
+    let ptr = a();
+    *ptr        // ✅ Safe: d is heap-allocated
+}
+```
+
+**Generated MIR**:
+```mir
+HeapAlloc { target = %10000, size = 8, object_type = escaped_value }
+Store { target = %10000, value = %2 }
+%0 = & value: %10000
+```
+
+**Key Implementation Details**:
+- Escape point detection: `karte-escape-analysis/src/escape_point_detector.rs`
+- Heap allocation transformation: `karte-escape-analysis/src/escape_point_transformer.rs`
+- MIR to LIR lowering: `karte-lir/src/lower/memory.rs:314-335` handles `Value::Reference` with ID >= 10000
+
+**Important Notes**:
+- karte目前不支持注释，不要在karte源代码中加入任何注释
+- bin不一定是最新的，执行命令之前一定先重新编译一下bin
+- 如果想看逃逸分析的日志，请用类似 `karte --verbose <subcommand>` 这种格式

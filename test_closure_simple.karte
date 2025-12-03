@@ -1,0 +1,5 @@
+fn main() -> number {
+    let d = 1;
+    let a = || { &d };
+    0
+}
