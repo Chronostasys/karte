@@ -16,8 +16,8 @@ pub use types::{
 
 // 重新导出HIR中的类型，保持向后兼容性
 pub use karte_hir::{
-    type_check, type_check_with_context, BinaryOperator, Expr, ModuleContext, Statement, Type,
-    UnaryOperator,
+    type_check, type_check_with_context, type_check_with_context_and_maps, BinaryOperator, Expr,
+    ModuleContext, Statement, Type, UnaryOperator,
 };
 
 /// 语法分析器
@@ -212,6 +212,8 @@ pub struct ParseResult {
     pub program: ParsedProgram,
     pub result_type: Type,
     pub module_context: ModuleContext,
+    /// 表达式类型映射，用于从HIR传递类型信息到MIR
+    pub expr_types: HashMap<usize, Type>,
 }
 
 impl ParseResult {
@@ -264,9 +266,9 @@ pub fn parse_with_type_check(
         if let Some(interfaces) = dependency_interfaces {
             module_context.set_dependency_interfaces(interfaces.clone());
         }
-        // 进行类型检查
-        let (result_type, type_diagnostics) =
-            type_check_with_context(&program.body, module_context.clone());
+        // 进行类型检查，获取lambda_types映射
+        let (result_type, expr_types, type_diagnostics) =
+            type_check_with_context_and_maps(&program.body, module_context.clone());
 
         // 合并诊断信息
         for error in &type_diagnostics.diagnostics {
@@ -278,6 +280,7 @@ pub fn parse_with_type_check(
                 program,
                 result_type,
                 module_context,
+                expr_types,
             }),
             diagnostics,
         )

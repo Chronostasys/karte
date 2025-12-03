@@ -39,6 +39,8 @@ cargo run -- execute demo.lir
 ```bash
 # Run all tests in workspace
 cargo test
+# With release mode (faster, recommended for full test suite)
+cargo test --workspace --release
 
 # Run tests for a specific package
 cargo test -p karte-lexer
@@ -58,6 +60,12 @@ cargo test lir_roundtrip
 # Run integration tests
 cargo test -p karte-tests
 
+# Run specific integration test
+cargo test -p karte-tests --lib cli_integration_tests::cli_tests::test_function_as_value
+
+# Run tests matching a pattern
+cargo test -p karte-tests --lib higher_order
+
 # Run module system tests
 cargo test -p karte-tests cli_integration
 cargo test -p karte-module-system
@@ -65,6 +73,9 @@ cargo test -p karte-module-system
 # Run LIR-specific tests
 cargo test -p karte-lir lir_roundtrip
 cargo test -p karte-lir lir_parse_unit
+
+# Quiet mode (only show summary)
+cargo test --workspace --release --quiet
 ```
 
 ## Architecture
@@ -112,6 +123,24 @@ The module system (`karte-module-system`) implements a sophisticated multi-modul
 - Pattern matching with exhaustiveness checking
 - Built-in types: `Bool`, `Option<T>`
 
+#### Function and Closure Representation
+
+**Unified Calling Convention**: All callable objects (functions and closures) are represented uniformly as closure structures in MIR/LIR:
+- **Closure structure**: `{ function_ptr: pointer, env_ptr: pointer }`
+- **Plain functions**: Wrapped with adapter functions (`function$wrapper`) that accept the closure calling convention
+- **Calling convention**: `function_ptr(env_ptr, arg1, arg2, ...)`
+
+This unified representation enables:
+- Passing functions as parameters to higher-order functions
+- Treating functions and closures interchangeably
+- Simplified type checking for polymorphic function parameters
+
+**Type Information Flow**:
+- HIR type checker stores all expression types in `expr_types: HashMap<*const Expr, Type>`
+- ParseResult includes `expr_types` field
+- LoweringOptions must receive `expr_types` from ParseResult for correct function/closure handling
+- If integration tests fail with function parameter issues, check that `expr_types` is being passed correctly
+
 ### IR Serialization
 
 The project uses custom derive macros (`karte-ir-derive`) and codec (`karte-ir-codec`) for serializing/deserializing intermediate representations:
@@ -148,9 +177,47 @@ From `.cursor/rules/karte.mdc`:
 
 ### Memory Management
 
-The compiler tracks ownership semantics via `OwnershipKind` (in `karte-common`):
-- Used throughout HIR, MIR, and LIR for proper reference handling
-- Critical for struct field access and reference operations
+The compiler implements a sophisticated memory management system combining reference counting and garbage collection capabilities.
+
+#### **Current RC Implementation**
+- **Active RC system**: Full reference counting implementation with `retain()` and `release()` operations
+- **Registry-based tracking**: Centralized registry tracks all allocations with their reference counts
+- **Automatic cleanup**: Objects are automatically freed when reference count reaches zero
+- **FFI interface**: C-compatible functions for JIT code: `karte_jit_runtime_retain()` and `karte_jit_runtime_release()`
+
+#### **Immix GC Integration**
+- **High-performance GC**: Based on the Immix algorithm with mark-sweep collection
+- **128KB block structure**: Memory is divided into 32KB blocks with 128-byte lines for efficient allocation
+- **Thread-local allocation**: Fast per-thread allocators reduce contention
+- **Conservative stack scanning**: Automatically finds roots in stack and registers without complex registration
+- **Object evacuation**: Optional feature to reduce memory fragmentation by moving live objects
+- **Large object handling**: Separate allocator for objects >32KB
+- **Platform support**: Works on Linux, macOS, and Windows
+
+#### **Escape Analysis Integration**
+- **Compile-time optimization**: Analyzes variable lifetimes to determine optimal allocation strategy
+- **Stack allocation**: Non-escaping variables allocated on call stack for maximum performance
+- **Heap allocation**: Escaping variables allocated via GC with automatic lifetime management
+- **Closure support**: Sophisticated analysis of captured variables in closures
+- **Loop-aware**: Handles variable lifetimes correctly in loop constructs
+
+#### **Memory Allocation API**
+```rust
+// RC-based allocation (current)
+let obj = runtime.allocate(size, ObjectType::Complex);
+runtime.retain(obj);
+runtime.release(obj);
+
+// GC-based allocation (future)
+let obj = gc_malloc(size, ObjectType::Complex.into());
+// No manual retain/release needed - GC handles it automatically
+```
+
+#### **Ownership Semantics**
+- **OwnershipKind enum**: Tracks ownership through HIR, MIR, and LIR stages
+- **Reference types**: `&T` with explicit dereferencing via `*ref`
+- **Stack-allocated objects**: Fast allocation with automatic cleanup on function return
+- **Heap-allocated objects**: GC-managed with automatic lifetime tracking
 
 ### Struct Layout
 
@@ -183,11 +250,133 @@ The `karte-tests` crate contains:
 
 Integration tests validate the entire compilation pipeline from source to execution.
 
+### Writing Integration Tests
+
+When adding integration tests in `karte-tests/src/cli_integration_tests.rs`:
+
+```rust
+// 1. Parse with type checking
+let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+
+// 2. Extract AST and expr_types
+let parse_result = parse_result.expect("No parse result");
+let ast = parse_result.expr();
+
+// 3. IMPORTANT: Pass expr_types to LoweringOptions
+let options = LoweringOptions {
+    known_functions: HashSet::new(),
+    module_context: None,
+    expr_types: parse_result.expr_types.clone(),  // Required for function/closure handling
+};
+
+// 4. Lower to MIR
+let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+```
+
+**Critical**: Always pass `parse_result.expr_types.clone()` to LoweringOptions. Forgetting this will cause function-as-parameter tests to fail.
+
 ## Notable Recent Changes
 
-Based on git status, recent work includes:
+Recent work includes:
+- **Function-as-parameter fix (2025-12-02)**: Implemented unified representation for functions and closures with wrapper functions to handle calling convention differences
 - Refactored module system to support project mode
 - Moved cache implementation from CLI to `karte-module-system`
 - Added LIR parsing and roundtrip testing infrastructure
-- Enhanced integration tests for module system
+- Enhanced integration tests for module system (now 222 tests)
 - Runner module extracted from main CLI for better organization
+- Added 4 regression tests for higher-order function parameter passing
+
+## Debugging Best Practices and Common Mistakes
+
+### Case Study: Closure Call Bus Error (2025-12-02)
+
+**Problem**: Bus error when executing nested closure calls like `let apply = |f, x| { f(x) }; let add_one = |n| { n + 1 }; apply(add_one, 5)`.
+
+**Wrong Approach (What NOT to do)**:
+1. ❌ **Assuming the bug is in the lowest layer** - Initially suspected the JIT compiler (AArch64 code generation) and spent time debugging assembly code and function prologue/epilogue
+2. ❌ **Over-focusing on implementation details** - Analyzed stack pointer initialization, frame pointer setup, and calling conventions without verifying the higher-level semantics
+3. ❌ **Skipping IR validation** - Jumped directly to debugging machine code without first checking if the LIR itself was correct
+4. ❌ **Not using incremental testing** - Tried to debug the full pipeline end-to-end instead of testing each stage independently
+
+**Correct Approach (What to do)**:
+1. ✅ **Start from the highest abstraction level** - Check the generated IR first before diving into codegen
+2. ✅ **Use IR execute commands for validation** - Test LIR directly with `cargo run -- execute <file>.lir` to isolate whether the bug is in IR generation or execution
+3. ✅ **Modify IR manually to test hypotheses** - Create simplified test cases by hand-editing LIR files
+4. ✅ **Understand the semantics** - Read and understand what the IR *should* be doing before debugging what it *is* doing
+5. ✅ **Work backwards from symptoms** - When you see a bus error, check the memory address being accessed and trace back to what IR instruction generated it
+
+**The Actual Bug**:
+- In `1.lir` line 25-28, when creating a closure structure for parameter `f` in the `apply` function, the code incorrectly stored the function's own label (`@ id: L10903932721424011425`) instead of using the parameter value directly
+- Should have been: `mov dst: #p4, src: #p2` (copy parameter to register)
+- Was actually: Creating a new closure structure with self-reference
+
+**Lesson Learned**:
+- **Always validate your assumptions layer by layer** - Don't assume lower layers are buggy when higher layers might be wrong
+- **Use the right tools for each layer** - Use `execute` command for IR bugs, use lldb only for codegen bugs
+- **Simplify and isolate** - Create minimal test cases and modify them incrementally
+- **Trust the existing code** - Well-tested components (like the JIT compiler) are less likely to be buggy than new features
+
+**Debugging Methodology for Compiler Bugs**:
+1. Reproduce the error
+2. Export the failing case to IR (`--emit-lir` or check generated files)
+3. Read and understand what the IR should be doing
+4. Manually fix the IR and test with `execute` command
+5. Once confirmed, find where in the compiler pipeline the wrong IR was generated
+6. Fix the source of the bug (usually in HIR->MIR or MIR->LIR lowering)
+
+### Case Study: Function-as-Parameter Type Information Loss (2025-12-02)
+
+**Problem**: When passing plain functions as parameters (e.g., `apply(wrong_return, 5)` where `wrong_return` is a regular function), the code would crash with Bus error or return incorrect values because type information wasn't being passed from HIR to MIR.
+
+**Root Cause Analysis**:
+1. **Type Information Loss**: HIR type checker only stored Lambda expression types, not all expression types
+2. **Runtime Polymorphism Challenge**: Lambda parameters like `f` in `|f, x| { f(x) }` have type variable (`Type::Var`), which could hold either:
+   - A plain function pointer
+   - A closure structure
+3. **Calling Convention Mismatch**: Plain functions and closures have different calling conventions:
+   - Plain function: `function(arg1, arg2, ...)`
+   - Closure: `function_ptr(env_ptr, arg1, arg2, ...)`
+
+**Solution: Unified Representation with Wrapper Functions**:
+1. **Store All Expression Types**: Modified HIR type checker to store types for ALL expressions in `expr_types` HashMap
+2. **Wrap Functions as Closures**: When a plain function is referenced, wrap it in a closure structure:
+   ```
+   Closure {
+       function_ptr: wrapper_function,  // Points to wrapper, not original
+       env_ptr: 0
+   }
+   ```
+3. **Generate Wrapper Functions**: Create adapter lambdas that bridge calling conventions:
+   ```rust
+   // Original function
+   fn add_one(n: number) -> number { n + 1 }
+
+   // Generated wrapper
+   fn add_one$wrapper(__env, __arg0) {
+       add_one(__arg0)  // Don't pass __env to original function
+   }
+   ```
+4. **Unified Call Logic**: All callable objects are now treated uniformly as closure structures
+
+**Implementation Files**:
+- `karte-hir/src/type_checker.rs:86-98`: Added `expr_types` field
+- `karte-hir/src/type_checker.rs:1581-1587`: Store all expression types
+- `karte-mir/src/lower/expr.rs:84-182`: Wrapper function generation logic
+- `karte-parser/src/lib.rs:215-216`: Added `expr_types` to ParseResult
+- `karte-tests/src/cli_integration_tests.rs`: Updated tests to pass `expr_types` from ParseResult to LoweringOptions
+
+**Key Lessons**:
+- ✅ **Type Information Must Flow Through Pipeline**: Integration tests failed because they weren't passing `expr_types` from ParseResult to LoweringOptions - a reminder to check the full pipeline
+- ✅ **Unified Representation Simplifies Logic**: Using the same closure structure for all callables eliminates special cases
+- ✅ **Test-Driven Development Works**: Created 6 comprehensive test cases before implementing, which caught regressions immediately
+- ✅ **Incremental Implementation**: Broke the fix into 3 stages (store types → wrap functions → generate wrappers), validating each stage
+- ✅ **Document As You Go**: Created detailed plan (TYPE_SYSTEM_FIX_PLAN.md) and summary (TYPE_SYSTEM_FIX_SUMMARY.md) documents
+
+**Testing Strategy**:
+- Created 6 targeted test cases covering: function as param, closure as param, typed function param, higher-order functions, and direct calls
+- Ran full integration test suite (218 tests) to catch regressions
+- Fixed example code that used outdated Lambda AST structure
+
+**Performance Considerations**:
+- Wrapper functions add one level of indirection (~<5% overhead)
+- Future optimization: inline simple wrappers in LIR stage

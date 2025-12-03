@@ -9,7 +9,7 @@
             "request": "launch",
             "name": "Debug Function Compile",
             "program": "${workspaceFolder}/target/debug/karte",
-            "args": ["build", "test_project/src/main.karte"],
+            "args": ["run", "let apply = |f, x| { f(x) }; let add_one = |n| { n + 1 }; apply(add_one, 5)"],
             "cwd": "${workspaceFolder}"
         },
         {

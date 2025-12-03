@@ -406,6 +406,91 @@ fn lower_call(
 - **批量修复**：使用代理工具批量修复编译错误，提高了效率
 - **测试复用**：现有测试覆盖良好，无需大量新增测试
 
+## 最新进展（2025-12-02）
+
+### Step 7: Function和Closure类型统一 ✅ 已完成
+
+**问题诊断**：
+- 测试发现高阶函数 `let apply = |f, x| { f(x) }` 产生类型错误
+- 错误信息：`Type mismatch: expected fn(t1) -> t2, found closure(fn(t3) -> number)`
+- 根本原因：`Type::Function` 和 `Type::Closure` 被视为不兼容类型
+
+**解决方案**：
+1. 在 `unify_recursive` 中添加 Function/Closure 互相统一的逻辑
+2. 支持三种组合：Function+Closure、Closure+Function、Closure+Closure
+3. 在 `apply_substitution` 中添加对 Closure 类型的处理
+4. 更新特殊处理逻辑，支持非函数类型与 Closure 的统一
+
+**实现细节**：
+```rust
+// karte-hir/src/type_checker.rs
+// 添加 Function 和 Closure 可以统一的分支
+(Type::Function { params: p1, return_type: r1 },
+ Type::Closure { params: p2, return_type: r2 })
+| (Type::Closure { params: p1, return_type: r1 },
+   Type::Function { params: p2, return_type: r2 })
+| (Type::Closure { params: p1, return_type: r1 },
+   Type::Closure { params: p2, return_type: r2 }) => {
+    // 统一参数和返回类型
+}
+```
+
+**测试结果**：
+- ✅ 所有现有测试通过（218个集成测试 + 10个HIR测试）
+- ✅ 类型检查：`let apply = |f, x| { f(x) }; let add_one = |n| { n + 1 }; apply(add_one, 5)` 通过类型检查
+- ⚠️ 运行时：高阶函数调用产生 bus error（代码生成问题，非类型系统问题）
+
+**影响范围**：
+- 修改文件：`karte-hir/src/type_checker.rs`
+- 新增代码：约60行
+- 无破坏性变更，所有测试保持通过
+
+### Step 8: Lambda类型信息传递到MIR ✅ 部分完成
+
+**已实现功能**：
+1. 在 `LoweringContext` 中添加 `get_lambda_type()` 辅助方法
+2. 在 `lower_lambda_expression` 中：
+   - 从 HIR 获取 Lambda 的推断类型
+   - 为 Function 和 Closure Value 设置类型字段
+   - 为 MirFunction 设置 `param_types` 和 `return_type`
+3. 类型信息传播：HIR → LoweringOptions → LoweringContext → MIR
+
+**关键代码**：
+```rust
+// karte-mir/src/lower/expr.rs
+let lambda_type = ctx.get_lambda_type(expr);
+let closure_type = match lambda_type.as_ref() {
+    Some(Type::Function { params, return_type })
+    | Some(Type::Closure { params, return_type }) => {
+        Some(Type::Closure { params: params.clone(), return_type: return_type.clone() })
+    }
+    _ => None,
+};
+```
+
+**已知问题**：
+- ⚠️ 高阶函数的运行时错误（bus error）
+- 问题不在类型系统，而在代码生成阶段
+- LIR 显示 `lambda$0`（apply函数）内部重新创建了闭包结构，这是错误的
+
+### 当前状态总结
+
+✅ **已完成**：
+1. Lambda类型推断和存储（Step 1）
+2. MIR数据结构扩展（Step 2）
+3. Lowering逻辑基础架构（Step 3）
+4. 编译错误修复（Step 4）
+5. 测试验证（Step 5）
+6. Function/Closure类型统一（Step 7）
+7. Lambda类型信息传递架构（Step 8）
+
+⚠️ **部分完成**：
+- Lambda类型信息在MIR中传递成功，但代码生成有问题
+
+🔄 **待修复**：
+- 高阶函数的运行时代码生成错误
+- 需要诊断为什么闭包作为参数传递时，生成的LIR代码错误地重新创建闭包
+
 ## 后续工作计划
 
 ### 近期任务（核心功能）
