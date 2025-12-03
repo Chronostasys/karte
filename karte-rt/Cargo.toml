@@ -7,6 +7,7 @@ description = "Runtime support (allocator, FFI helpers) for the Karte compiler"
 
 [dependencies]
 log = { workspace = true }
+karte-gc = { path = "../karte-gc" }
 
 [dev-dependencies]
 serial_test = "3.2.0"

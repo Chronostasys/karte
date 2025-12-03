@@ -316,8 +316,22 @@ impl LirLoweringContext {
                 value: referenced_value,
                 ..
             } => {
-                // 引用表达式的R-Value就是被引用值的L-Value（地址）
-                self.lower_to_lvalue(referenced_value)
+                // 🔧 关键修复：区分两种情况
+                // 1. & x (x 是栈变量) -> 返回 x 的地址（L-Value）
+                // 2. & %10000 (堆分配的临时变量) -> 返回 %10000 存储的值（R-Value），即堆地址本身
+
+                // 检查是否是逃逸分析插入的堆地址临时变量（ID >= 10000）
+                match referenced_value.as_ref() {
+                    Value::Temp { id, .. } if id.0 >= 10000 => {
+                        // 这是逃逸分析插入的堆地址临时变量
+                        // 应该返回它的值（堆地址），而不是它的栈位置
+                        self.lower_to_rvalue(referenced_value)
+                    }
+                    _ => {
+                        // 普通引用：返回被引用值的地址
+                        self.lower_to_lvalue(referenced_value)
+                    }
+                }
             }
 
             // 🔧 修复：正确处理结构体值

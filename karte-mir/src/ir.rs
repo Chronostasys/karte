@@ -369,6 +369,20 @@ pub enum Statement {
         object_type: String,
         span: Span,
     },
+    /// 栈分配语句 - 基于逃逸分析的栈上分配
+    #[ir_codec(token = "stackalloc")]
+    StackAllocate {
+        #[ir_codec(args, target)]
+        target: Value,
+        #[ir_codec(args)]
+        size: usize,
+        #[ir_codec(args)]
+        alignment: usize,
+        #[ir_codec(skip)]
+        offset: Option<isize>, // 栈偏移（由后端计算）
+        #[ir_codec(skip)]
+        span: Span,
+    },
     /// Phi 节点 - SSA 形式中的值选择
     Phi {
         target: Value,

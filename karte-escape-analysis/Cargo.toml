@@ -1,0 +1,17 @@
+[package]
+name = "karte-escape-analysis"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Karte 内部依赖
+karte-hir = { path = "../karte-hir" }
+karte-mir = { path = "../karte-mir" }
+karte-diagnostics = { path = "../karte-diagnostics" }
+
+# 基础依赖
+log = "0.4"
+thiserror = "2.0"
+
+[dev-dependencies]
+env_logger = "0.11"

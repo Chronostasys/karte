@@ -87,6 +87,7 @@ impl<'a> LoweringContext<'a> {
         let entry_block = function.entry_block;
 
         self.scopes.clear();
+        self.temp_value_map.clear();  // 清空临时变量映射，避免不同函数间的TempId冲突
         self.enter_scope();
 
         // 将参数添加到变量作用域

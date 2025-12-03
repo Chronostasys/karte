@@ -4,11 +4,13 @@
 
 pub mod allocator;
 pub mod ffi;
+pub mod gc_allocator;
 pub mod stats;
 
 pub use allocator::{
     set_allocator, AllocError, Allocator, AllocatorHandle, LayoutRequest, SystemAllocator,
 };
+pub use gc_allocator::GcAllocator;
 pub use stats::{AllocationEvent, HeapStats};
 
 #[cfg(test)]
@@ -19,65 +21,86 @@ mod tests {
     #[test]
     #[serial]
     fn alloc_and_free_through_ffi() {
+        // 初始化 GC
+        unsafe {
+            karte_gc::initialize_gc();
+        }
+
         let ptr = ffi::karte_jit_runtime_alloc_aligned(32, 16);
         assert_ne!(ptr, 0);
+
+        // free 在 GC 模式下是 no-op，但不应崩溃
         ffi::karte_jit_runtime_free(ptr);
+
+        // 验证指针仍然有效（GC 还未回收）
+        unsafe {
+            let byte_ptr = ptr as *mut u8;
+            assert_eq!(*byte_ptr, 0); // 应该是已清零的内存
+        }
     }
 
     #[test]
     #[serial]
-    fn heap_stats_updates() {
-        let mut stats = HeapStats::default();
-        ffi::karte_jit_runtime_heap_stats(&mut stats as *mut _);
-        let before_total = stats.total_allocations;
+    fn gc_alloc_basic() {
+        unsafe {
+            karte_gc::initialize_gc();
+        }
 
-        let ptr = ffi::karte_jit_runtime_alloc(64);
+        // 测试多次分配都成功
+        for i in 0..10 {
+            let size = 64 + i * 8;
+            let ptr = ffi::karte_jit_runtime_alloc(size);
+            assert_ne!(ptr, 0, "分配 {} 字节失败", size);
+
+            // 验证内存可写
+            unsafe {
+                let byte_ptr = ptr as *mut u8;
+                *byte_ptr = (i as u8);
+                assert_eq!(*byte_ptr, i as u8);
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn gc_alloc_zeroed() {
+        unsafe {
+            karte_gc::initialize_gc();
+        }
+
+        let ptr = ffi::karte_jit_runtime_alloc(128);
         assert_ne!(ptr, 0);
-        ffi::karte_jit_runtime_free(ptr);
 
-        ffi::karte_jit_runtime_heap_stats(&mut stats as *mut _);
-        assert!(stats.total_allocations >= before_total + 1);
+        // 验证内存已清零
+        unsafe {
+            let byte_ptr = ptr as *mut u8;
+            for i in 0..128 {
+                assert_eq!(*byte_ptr.add(i), 0, "字节 {} 应该为 0", i);
+            }
+        }
     }
 
     #[test]
     #[serial]
-    fn retain_and_release_drive_counts() {
-        // Reset stats or capture baseline?
-        // Since we are serial, we expect clean state if other tests clean up.
-        // But let's capture baseline to be safe against previous tests.
-        let mut initial_stats = HeapStats::default();
-        ffi::karte_jit_runtime_heap_stats(&mut initial_stats as *mut _);
+    fn retain_and_release_are_noop() {
+        unsafe {
+            karte_gc::initialize_gc();
+        }
 
         let ptr = ffi::karte_jit_runtime_alloc(8);
         assert_ne!(ptr, 0);
 
-        // 第一次 retain：计数从 1 -> 2
+        // retain 和 release 在 GC 模式下是 no-op
+        // 它们不应崩溃
         ffi::karte_jit_runtime_retain(ptr);
-        let mut stats = HeapStats::default();
-        ffi::karte_jit_runtime_heap_stats(&mut stats as *mut _);
-
-        // Check relative changes
-        assert_eq!(stats.total_retain_ops, initial_stats.total_retain_ops + 1);
-        assert_eq!(
-            stats.rc_tracked_objects,
-            initial_stats.rc_tracked_objects + 1
-        );
-
-        // 第一次 release：计数回到 1，不会释放
         ffi::karte_jit_runtime_release(ptr);
-        ffi::karte_jit_runtime_heap_stats(&mut stats as *mut _);
-        assert_eq!(stats.total_release_ops, initial_stats.total_release_ops + 1);
-        assert_eq!(
-            stats.active_allocations,
-            initial_stats.active_allocations + 1
-        );
-        assert_eq!(stats.rc_zero_releases, initial_stats.rc_zero_releases);
-
-        // 第二次 release：计数降为 0，自动释放
         ffi::karte_jit_runtime_release(ptr);
-        ffi::karte_jit_runtime_heap_stats(&mut stats as *mut _);
-        assert_eq!(stats.active_allocations, initial_stats.active_allocations);
-        assert_eq!(stats.rc_zero_releases, initial_stats.rc_zero_releases + 1);
-        assert_eq!(stats.rc_tracked_objects, initial_stats.rc_tracked_objects);
+
+        // 指针仍然有效（GC 管理）
+        unsafe {
+            let byte_ptr = ptr as *mut u8;
+            *byte_ptr = 42;
+            assert_eq!(*byte_ptr, 42);
+        }
     }
 }

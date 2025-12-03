@@ -146,6 +146,7 @@ impl DeadCodeElimination {
             Instruction::Phi { .. } => false,
             Instruction::JumpIndirect { .. } => true,
             Instruction::JumpRegister { .. } => true,
+            Instruction::Safepoint { .. } => false,
         }
     }
 

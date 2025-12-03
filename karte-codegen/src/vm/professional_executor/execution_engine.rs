@@ -11,6 +11,9 @@ use std::collections::HashMap;
 // JIT相关imports
 use super::jit::{AArch64Compiler, JitCompiler, JitMemoryManager, X86Compiler};
 
+// GC相关imports
+use karte_gc::{initialize_gc, register_virtual_stack_range};
+
 /// 调用栈帧
 #[derive(Debug, Clone)]
 pub struct CallFrame {
@@ -67,6 +70,25 @@ impl ExecutionEngine {
 
     /// 初始化执行环境
     pub fn initialize(&mut self, _program_manager: &ProgramManager) -> Result<(), String> {
+        // 🔧 GC初始化：在执行环境初始化时初始化GC
+        unsafe {
+            initialize_gc();
+            info!("GC已初始化");
+        }
+
+        // 🔧 注册虚拟栈区间作为GC根
+        // Karte使用自分配的虚拟栈（Vec<i64>），需要将其注册为GC根
+        let stack_start = self.virtual_stack.as_ptr() as *const u8;
+        let stack_end = unsafe { stack_start.add(self.virtual_stack.len() * 8) };
+
+        unsafe {
+            register_virtual_stack_range(stack_start, stack_end);
+        }
+
+        if self.debug_mode {
+            println!("虚拟栈已注册为GC根: {:p} - {:p}", stack_start, stack_end);
+        }
+
         // 重置虚拟机状态
         self.vm.reset();
         self.memory.reset();
