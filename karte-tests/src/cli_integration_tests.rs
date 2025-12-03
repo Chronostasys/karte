@@ -160,7 +160,7 @@ mod cli_tests {
                 .map(|binding| binding.alias.clone())
                 .collect::<HashSet<_>>(),
             module_context: Some(module_context),
-            expr_types: Default::default(),
+            expr_types: result.expr_types.clone(),
         };
 
         let mut mir_program = lower_expr_to_mir_with_options(result.expr(), lowering_options)
@@ -267,7 +267,7 @@ fn main() -> number {
         let options = LoweringOptions {
             known_functions: HashSet::new(),
             module_context: None,
-            expr_types: Default::default(),
+            expr_types: parse_result.expr_types.clone(),
         };
 
         let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
@@ -323,7 +323,7 @@ fn main() -> number {
         let options = LoweringOptions {
             known_functions: HashSet::new(),
             module_context: None,
-            expr_types: Default::default(),
+            expr_types: parse_result.expr_types.clone(),
         };
 
         let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
@@ -379,7 +379,7 @@ fn main() -> number {
         let options = LoweringOptions {
             known_functions: HashSet::new(),
             module_context: None,
-            expr_types: Default::default(),
+            expr_types: parse_result.expr_types.clone(),
         };
 
         let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
@@ -444,7 +444,7 @@ fn main() -> number {
         let options = LoweringOptions {
             known_functions: HashSet::new(),
             module_context: None,
-            expr_types: Default::default(),
+            expr_types: parse_result.expr_types.clone(),
         };
 
         let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
@@ -468,6 +468,230 @@ fn main() -> number {
         assert_eq!(
             exit_code, 36,
             "Expected exit code 36 (8 + 28), got {}",
+            exit_code
+        );
+    }
+
+    /// 测试普通函数作为高阶函数参数（Type Information Passing Fix）
+    /// 这个测试确保普通函数可以作为参数传递给lambda，并正确调用
+    /// Regression test for: Function-as-Parameter Type Information Loss
+    #[test]
+    fn test_plain_function_as_higher_order_param() {
+        let code = r#"
+fn add_one(n:number) -> number { n + 1 }
+
+fn main() -> number {
+    let apply = |f, x| { f(x) };
+    apply(add_one, 5)
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) =
+            parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing failed: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        karte_lir::lower_program_instructions(&mut lir)
+            .expect("Instruction lowering failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        assert_eq!(
+            exit_code, 6,
+            "Expected exit code 6 (5 + 1), got {}",
+            exit_code
+        );
+    }
+
+    /// 测试闭包作为高阶函数参数
+    /// 确保闭包和普通函数在作为参数时行为一致
+    /// Regression test for: Function-as-Parameter Type Information Loss
+    #[test]
+    fn test_closure_as_higher_order_param() {
+        let code = r#"
+fn main() -> number {
+    let apply = |f, x| { f(x) };
+    let add_one = |n| { n + 1 };
+    apply(add_one, 5)
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) =
+            parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing failed: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        karte_lir::lower_program_instructions(&mut lir)
+            .expect("Instruction lowering failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        assert_eq!(
+            exit_code, 6,
+            "Expected exit code 6 (5 + 1), got {}",
+            exit_code
+        );
+    }
+
+    /// 测试混合使用函数和闭包作为参数
+    /// 确保在同一个程序中函数和闭包可以互换使用
+    /// Regression test for: Function-as-Parameter Type Information Loss
+    #[test]
+    fn test_mixed_function_and_closure_params() {
+        let code = r#"
+fn double(x:number) -> number { x * 2 }
+
+fn main() -> number {
+    let apply = |f, x| { f(x) };
+    let triple = |n| { n * 3 };
+
+    let result1 = apply(double, 5);
+    let result2 = apply(triple, 4);
+
+    result1 + result2
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) =
+            parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing failed: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        karte_lir::lower_program_instructions(&mut lir)
+            .expect("Instruction lowering failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        assert_eq!(
+            exit_code, 22,
+            "Expected exit code 22 (10 + 12), got {}",
+            exit_code
+        );
+    }
+
+    /// 测试带类型标注的函数参数
+    /// 确保类型标注不会影响函数作为参数的传递
+    /// Regression test for: Function-as-Parameter Type Information Loss
+    #[test]
+    fn test_typed_function_param() {
+        let code = r#"
+fn wrong_return(n:number) -> number { n + 1 }
+
+fn main() -> number {
+    let apply = |f, x| { f(x) };
+    apply(wrong_return, 5)
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) =
+            parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing failed: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        karte_lir::lower_program_instructions(&mut lir)
+            .expect("Instruction lowering failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        assert_eq!(
+            exit_code, 6,
+            "Expected exit code 6 (5 + 1), got {}",
             exit_code
         );
     }

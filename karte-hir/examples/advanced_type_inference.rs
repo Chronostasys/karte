@@ -14,6 +14,7 @@ fn main() {
             name: "x".to_string(),
             span,
         }),
+        inferred_type: None,
         span,
     };
 
@@ -47,10 +48,13 @@ fn main() {
                     }],
                     span,
                 }),
+                inferred_type: None,
                 span,
             }),
+            inferred_type: None,
             span,
         }),
+        inferred_type: None,
         span,
     };
 
@@ -74,6 +78,7 @@ fn main() {
                         right: Box::new(Expr::Number { value: 1, span }),
                         span,
                     }),
+                    inferred_type: None,
                     span,
                 },
                 span,
@@ -91,6 +96,7 @@ fn main() {
                         right: Box::new(Expr::Number { value: 2, span }),
                         span,
                     }),
+                    inferred_type: None,
                     span,
                 },
                 span,
@@ -116,6 +122,7 @@ fn main() {
                 }],
                 span,
             }),
+            inferred_type: None,
             span,
         })),
         span,

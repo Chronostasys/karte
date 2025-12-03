@@ -1,9 +1,7 @@
-fn wrong_return() -> number {
-    1
+fn wrong_return(n:number) -> number {
+    n + 1
 }
 
-fn main() -> number {
-    let a = |d| {d};
-    let f = a(wrong_return);
-    f()
-}
+let apply = |f, x| { f(x) };
+let add_one = |n| { n + 1 };
+apply(wrong_return, 5)

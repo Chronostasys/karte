@@ -19,5 +19,5 @@ pub use ast::Parameter;
 
 // 重新导出常用类型，保持API兼容性
 pub use ast::*;
-pub use type_checker::{type_check, type_check_with_context, ModuleContext, TypeChecker};
+pub use type_checker::{type_check, type_check_with_context, type_check_with_context_and_maps, ModuleContext, TypeChecker};
 pub use types::{Type, TypeVar};

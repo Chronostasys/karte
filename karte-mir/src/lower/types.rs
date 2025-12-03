@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 pub const SCRIPT_ENTRY_POINT: &str = "__script_entry__";
 
 /// 变量绑定信息
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct VariableBinding {
     /// 变量对应的MIR值
     pub(crate) value: Value,
