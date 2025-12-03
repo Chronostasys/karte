@@ -318,6 +318,16 @@ pub enum Instruction {
     /// ARC/GC release 调用占位
     Release { value: Register, span: Span },
 
+    /// GC 安全点
+    ///
+    /// 在循环回边、长时间运行的函数等位置插入，允许 GC 暂停程序执行。
+    /// 在安全点时，虚拟栈的状态必须是已知的，所有 GC 对象的引用都应该是可见的。
+    #[ir_codec(token = "safepoint")]
+    Safepoint {
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
     /// 加载内存值（8字节）
     Load64 {
         dst: Register,

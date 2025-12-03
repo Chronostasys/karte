@@ -1,0 +1,32 @@
+[package]
+name = "karte-gc"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Karte 专用的垃圾收集器集成层，基于 Immix GC"
+license.workspace = true
+
+[dependencies]
+# Immix GC 核心实现
+# 使用默认特性，包括 conservative_stack_scan 和 llvm_stackmap
+immix = { path = "./immix" }
+
+# 类型系统和 HIR（用于逃逸分析集成）
+karte-hir = { path = "../karte-hir" }
+karte-common = { path = "../karte-common" }
+
+# 错误处理
+thiserror.workspace = true
+anyhow.workspace = true
+
+# 日志
+log.workspace = true
+
+# 多线程和同步
+parking_lot = "0.12"
+
+[dev-dependencies]
+env_logger = "0.10"
+
+[lib]
+name = "karte_gc"

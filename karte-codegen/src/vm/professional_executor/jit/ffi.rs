@@ -8,6 +8,7 @@ pub enum RuntimeIntrinsic {
     Free,
     Retain,
     Release,
+    GcSafepoint,
 }
 
 impl RuntimeIntrinsic {
@@ -17,6 +18,7 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::Free => runtime::karte_jit_runtime_free as *const (),
             RuntimeIntrinsic::Retain => runtime::karte_jit_runtime_retain as *const (),
             RuntimeIntrinsic::Release => runtime::karte_jit_runtime_release as *const (),
+            RuntimeIntrinsic::GcSafepoint => runtime::karte_jit_runtime_gc_safepoint as *const (),
         }
     }
 
@@ -26,6 +28,7 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::Free => "karte_jit_runtime_free",
             RuntimeIntrinsic::Retain => "karte_jit_runtime_retain",
             RuntimeIntrinsic::Release => "karte_jit_runtime_release",
+            RuntimeIntrinsic::GcSafepoint => "karte_jit_runtime_gc_safepoint",
         }
     }
 
@@ -77,6 +80,13 @@ impl RuntimeCall {
         Self {
             intrinsic: RuntimeIntrinsic::Release,
             args: vec![RuntimeArg::Register(ptr)],
+        }
+    }
+
+    pub fn gc_safepoint() -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::GcSafepoint,
+            args: vec![],
         }
     }
 

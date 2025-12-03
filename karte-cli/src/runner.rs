@@ -228,6 +228,9 @@ fn canonicalize_statement(statement: &mut Statement, symbols: &HashMap<String, S
             canonicalize_value(tag, symbols);
         }
         Statement::EffectHandlerPop { .. } => {}
+        Statement::StackAllocate { target, .. } => {
+            canonicalize_value(target, symbols);
+        }
     }
 }
 

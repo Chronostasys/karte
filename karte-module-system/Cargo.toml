@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 indicatif = "0.17"
 karte-diagnostics = { path = "../karte-diagnostics" }
+karte-escape-analysis = { path = "../karte-escape-analysis" }
 karte-hir = { path = "../karte-hir" }
 karte-ir-codec = { path = "../karte-ir-codec" }
 karte-lir = { path = "../karte-lir" }

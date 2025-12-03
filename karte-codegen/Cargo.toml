@@ -18,6 +18,7 @@ karte-common = { path = "../karte-common" }
 karte-lexer = { path = "../karte-lexer" }
 karte-parser = { path = "../karte-parser" }
 karte-rt = { path = "../karte-rt" }
+karte-gc = { path = "../karte-gc" }
 log.workspace = true
 
 # Windows系统API
