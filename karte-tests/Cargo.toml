@@ -21,6 +21,7 @@ karte-ir-derive = { path = "../karte-ir-derive" }
 karte-ir-codec = { path = "../karte-ir-codec" }
 karte-common = { path = "../karte-common" }
 karte-module-system = { path = "../karte-module-system" }
+karte-escape-analysis = { path = "../karte-escape-analysis" }
 log.workspace = true
 env_logger = "0.11"
 

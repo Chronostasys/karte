@@ -512,8 +512,10 @@ impl AArch64Compiler {
     ) -> Result<(), String> {
         let function_reg = self.get_physical_register(function_register)?;
 
-        // 🔧 优化：在连续内存架构中，间接跳转可以更简单
-        // 如果函数地址是相对偏移，可以直接使用BLR指令
+        // 🔧 修复：使用 BR 而不是 BLR
+        // 因为我们在 LIR 降级阶段已经手动将返回地址压入栈
+        // BLR 会将返回地址保存到 LR (X30)，导致返回地址重复
+        // 使用 BR 进行纯跳转，不保存返回地址
 
         // 使用X16作为跳转目标寄存器
         let target_reg = AArch64Register::X16 as u8;
@@ -523,10 +525,10 @@ impl AArch64Compiler {
             self.emit_mov_reg_reg(code_builder, target_reg, function_reg);
         }
 
-        // BLR X16 - 间接函数调用
+        // BR X16 - 间接跳转（不保存返回地址）
         // 31|30|29|28 27 26 25 24 23 22 21|20 16|15 10|9 5|4 0
-        // 1 |1 |0 |1  0  1  1  0  0  0  0 |0    |0     |Rn |0
-        let instruction = 0xD63F0000u32 | ((target_reg as u32) << 5);
+        // 1 |1 |0 |1  0  1  1  0  0  0  0 |1    |1     |Rn |0
+        let instruction = 0xD61F0000u32 | ((target_reg as u32) << 5);
         code_builder.emit_u32(instruction);
 
         Ok(())
