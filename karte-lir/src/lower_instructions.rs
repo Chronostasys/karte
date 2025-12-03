@@ -879,14 +879,16 @@ impl InstructionLowerer {
                 });
 
                 // 从栈上弹出返回地址（丢弃）
-                new_instructions.push(Instruction::Add {
-                    dst: self.stack_pointer_reg,
-                    src1: Operand::Register {
-                        id: self.stack_pointer_reg,
-                    },
-                    src2: Operand::Immediate { value: 8 },
-                    span: *span,
-                });
+                // 🔧 修复：compile_return 已经负责弹出返回地址，这里不需要再次弹出
+                // 否则会导致栈不平衡，进而导致 caller-saved 寄存器恢复错误
+                // new_instructions.push(Instruction::Add {
+                //     dst: self.stack_pointer_reg,
+                //     src1: Operand::Register {
+                //         id: self.stack_pointer_reg,
+                //     },
+                //     src2: Operand::Immediate { value: 8 },
+                //     span: *span,
+                // });
 
                 // 恢复caller-saved寄存器 (逆序)
                 for reg in caller_saved.iter().rev() {

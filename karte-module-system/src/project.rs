@@ -5,7 +5,8 @@ use crate::{
     ModuleInterfaceSummary, ModuleMetadata, ModulePlan,
 };
 use indicatif::ProgressBar;
-use karte_diagnostics::DiagnosticBag;
+use karte_diagnostics::{DiagnosticBag, Span};
+use karte_escape_analysis::{EscapeAnalyzer, EscapePointDetector, EscapePointTransformer};
 use karte_hir::type_checker::{
     ExternalFunctionSignature, ExternalModuleInterface, ExternalStructField,
     ExternalStructSignature,
@@ -21,7 +22,7 @@ use karte_mir::{
     MirProgram, Statement, Value,
 };
 use karte_parser::{parse_with_type_check, ImportDecl, ParsedProgram, ParserMode};
-use log::{error, warn};
+use log::{error, info, warn};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs;
@@ -333,6 +334,21 @@ pub fn compile_source_to_artifacts(
     if verbose {
         println!("{}", mir_program.to_ir_string());
     }
+
+    // 【Phase 6】运行逃逸分析优化MIR（可选，通过环境变量控制）
+    if std::env::var("KARTE_ENABLE_ESCAPE_ANALYSIS").is_ok() {
+        if verbose {
+            println!("\n--- 运行逃逸分析 ---");
+        }
+        optimize_mir_with_escape_analysis(&mut mir_program, verbose)
+            .map_err(|e| format!("逃逸分析失败: {}", e))?;
+
+        if verbose {
+            println!("\n--- 优化后的 MIR ---");
+            println!("{}", mir_program.to_ir_string());
+        }
+    }
+
     let lir_program = lower_mir_to_final_lir(&mir_program, optimization_level, verbose)?;
 
     if let Some(ctx) = cache_key {
@@ -756,4 +772,69 @@ fn ensure_module_decl(
             module_id.as_str()
         )),
     }
+}
+
+/// 对MIR程序运行逃逸分析并插入优化的分配指令
+///
+/// 该函数会：
+/// 1. 对每个MIR函数运行逃逸分析
+/// 2. 基于逃逸分析结果生成分配策略（栈、堆、内联、寄存器）
+/// 3. 在函数入口基本块插入分配指令（StackAllocate等）
+///
+/// # 参数
+/// - `mir_program`: 要优化的MIR程序
+/// - `verbose`: 是否输出详细日志
+///
+/// # 返回
+/// 优化后的MIR程序（会修改原始程序）
+pub fn optimize_mir_with_escape_analysis(
+    mir_program: &mut MirProgram,
+    verbose: bool,
+) -> Result<(), String> {
+    if verbose {
+        println!("\n=== 开始逃逸点插入优化 ===");
+        println!("程序包含 {} 个函数", mir_program.functions.len());
+        info!("开始逃逸点插入优化...");
+    }
+
+    // 步骤1: 运行逃逸分析
+    let mut analyzer = EscapeAnalyzer::new();
+    analyzer
+        .analyze_program(mir_program)
+        .map_err(|e| format!("逃逸分析失败: {}", e))?;
+
+    if verbose {
+        println!("逃逸分析完成");
+        analyzer.print_results();
+    }
+
+    // 步骤2: 获取逃逸分析结果
+    let escape_info = analyzer.get_all_escape_info().clone();
+    let variable_names = analyzer.get_variable_name_mapping().clone();
+
+    if verbose {
+        println!("\n=== 构建逃逸点检测器 ===");
+        println!("找到 {} 个变量", escape_info.len());
+    }
+
+    // 步骤3: 构建逃逸点检测器
+    let detector = EscapePointDetector::new(
+        escape_info.clone(),
+        variable_names.clone(),
+    );
+
+    if verbose {
+        println!("\n=== 开始逃逸点转换 ===");
+    }
+
+    // 步骤4: 应用逃逸点转换
+    let mut transformer = EscapePointTransformer::new(detector);
+    transformer.transform_program(mir_program);
+
+    if verbose {
+        println!("逃逸点转换完成");
+        info!("逃逸点转换完成");
+    }
+
+    Ok(())
 }

@@ -179,6 +179,35 @@ From `.cursor/rules/karte.mdc`:
 
 The compiler implements a sophisticated memory management system combining reference counting and garbage collection capabilities.
 
+#### **Karte 虚拟栈架构** ⚠️ **重要**
+
+Karte 使用**自定义调用约定**和**自分配虚拟栈**，这与传统的 C 语言系统栈有本质区别：
+
+**虚拟栈实现**：
+- `ExecutionEngine.virtual_stack`: `Vec<i64>` (64KB, 8192个8字节元素)
+- 栈在**堆上分配**，不是系统栈
+- 通过 `StackManager` 管理栈帧、局部变量和调用链
+- 自定义的 `CallingConvention` 定义参数传递和寄存器保存规则
+
+**GC 集成的关键点**：
+1. **不能使用 C 栈遍历**：Karte 的调用约定与 C ABI 不兼容
+2. **不需要 LLVM stackmap**：stackmap 是为 C 调用约定设计的
+3. **直接扫描虚拟栈区间**：将整个 `virtual_stack` Vec 作为根区间
+4. **保守扫描**：检查栈中的每个字（word），识别可能的 GC 对象指针
+
+**正确的根扫描方式**：
+```rust
+// ✅ 正确：直接获取虚拟栈区间
+let stack_start = engine.virtual_stack.as_ptr() as *const u8;
+let stack_end = unsafe { stack_start.add(engine.virtual_stack.len() * 8) };
+gc_register_stack_range(stack_start, stack_end);
+
+// ❌ 错误：使用 C 栈遍历
+// gc_malloc_fast_unwind(size, obj_type, rsp)  // rsp 指向 C 系统栈，不是 Karte 虚拟栈
+```
+
+详见 `GC_AND_ESCAPE_ANALYSIS_DESIGN.md` 第 1.3 节。
+
 #### **Current RC Implementation**
 - **Active RC system**: Full reference counting implementation with `retain()` and `release()` operations
 - **Registry-based tracking**: Centralized registry tracks all allocations with their reference counts

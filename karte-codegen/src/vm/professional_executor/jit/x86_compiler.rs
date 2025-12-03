@@ -175,6 +175,7 @@ impl X86Compiler {
             Instruction::Free { addr, .. } => self.compile_free(addr, code_builder),
             Instruction::Retain { value, .. } => self.compile_retain(value, code_builder),
             Instruction::Release { value, .. } => self.compile_release(value, code_builder),
+            Instruction::Safepoint { .. } => self.compile_safepoint(code_builder),
             Instruction::Nop { .. } => {
                 // NOP指令
                 code_builder.emit_byte(0x90);
@@ -723,6 +724,12 @@ impl X86Compiler {
         code_builder: &mut CodeBuilder,
     ) -> Result<(), String> {
         let call = RuntimeCall::release(*value);
+        self.emit_runtime_call(code_builder, call, None)
+    }
+
+    fn compile_safepoint(&mut self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+        // GC 安全点：调用运行时函数
+        let call = RuntimeCall::gc_safepoint();
         self.emit_runtime_call(code_builder, call, None)
     }
 
