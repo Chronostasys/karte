@@ -5,7 +5,7 @@
 use super::code_buffer::{CodeBuilder, JumpType};
 use super::compiler_trait::*;
 use super::ffi::{RuntimeArg, RuntimeCall};
-use karte_common::calling_convention::{PhysicalRegister, REG_FRAME_POINTER, REG_RETURN_ADDRESS, REG_STACK_POINTER};
+use karte_common::calling_convention::{CallingConvention, PhysicalRegister, REG_FRAME_POINTER, REG_RETURN_ADDRESS, REG_STACK_POINTER};
 use karte_lir::{Instruction, LirFunction, LirProgram, Operand, Register};
 use std::collections::HashMap;
 
@@ -613,12 +613,12 @@ impl AArch64Compiler {
         let return_addr_reg =
             self.get_physical_register(&Register::Physical(REG_RETURN_ADDRESS))?;
 
-        // 加载返回地址到专用寄存器
+
+        if is_main_function {
+                    // 加载返回地址到专用寄存器
         self.emit_ldr_reg_mem(code_builder, return_addr_reg, vm_sp_reg, 0);
         // 弹出返回地址槽位
         self.emit_add_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 8);
-
-        if is_main_function {
             // main 函数负责从VM世界回退到宿主环境
             let host_return_label = self.next_label("jit_return_host");
             self.emit_cmp_reg_imm(code_builder, return_addr_reg, 0);
@@ -641,6 +641,13 @@ impl AArch64Compiler {
             self.emit_function_epilogue(code_builder)?;
             self.emit_ret(code_builder);
         } else {
+            // 🔧 修复：内部函数返回前需要恢复 callee-saved 寄存器
+            // 否则调用者的寄存器会被破坏
+            self.emit_internal_function_epilogue(code_builder)?;
+        // 加载返回地址到专用寄存器
+        self.emit_ldr_reg_mem(code_builder, return_addr_reg, vm_sp_reg, 0);
+        // 弹出返回地址槽位
+        self.emit_add_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 8);
             // 普通函数：直接跳向被调用者设置的继续执行位置
             let ret_reg = Register::Physical(REG_RETURN_ADDRESS);
             self.compile_jump_register(&ret_reg, code_builder)?;
@@ -1248,16 +1255,66 @@ impl AArch64Compiler {
         Ok(())
     }
 
-    /// 生成内部函数序言（简化版本，用于虚拟机内部函数调用）
+    /// 生成内部函数序言（用于虚拟机内部函数调用）
     fn emit_internal_function_prologue(
         &self,
-        _code_builder: &mut CodeBuilder,
+        code_builder: &mut CodeBuilder,
     ) -> Result<(), String> {
-        // 内部函数完全依赖VM栈和寄存器，不需要与宿主交换返回槽
+        // 🔧 修复：内部函数使用简化序言
+        // r6/r7 由调用约定管理， callee-saved 寄存器由 LIR 寄存器分配器处理
+        // 内部函数不需要特殊处理
+
+        if self.debug_mode {
+            log::debug!("生成内部函数序言：简化版本");
+        }
+
+        let mut callee_saved = CallingConvention::standard().callee_saved.iter().filter(|a| **a != 6 && **a !=7).cloned().collect::<Vec<u8>>();
+        callee_saved.sort();
+
+        // 获取虚拟栈指针寄存器
+        let vm_sp_reg = self.get_physical_register(&Register::Physical(REG_STACK_POINTER))?;
+
+        // 保存每个 callee-saved 寄存器到虚拟栈
+        for &reg in &callee_saved {
+            // 先压入虚拟栈
+            self.emit_sub_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 8);
+
+            // 存储寄存器值到虚拟栈
+            self.emit_str_reg_mem(code_builder, reg, vm_sp_reg, 0);
+        }
+
+            eprintln!("保存了 {} 个 callee-saved 寄存器到虚拟栈", callee_saved.len());
+
         Ok(())
     }
 
-    /// 生成函数尾声
+    /// 生成内部函数尾声（用于虚拟机内部函数调用）
+    fn emit_internal_function_epilogue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+        // 恢复 callee-saved 寄存器（逆序）
+
+        let mut callee_saved = CallingConvention::standard().callee_saved.iter().filter(|a| **a != 6 && **a !=7).cloned().collect::<Vec<u8>>();
+        callee_saved.sort();
+
+        // 获取虚拟栈指针寄存器
+        let vm_sp_reg = self.get_physical_register(&Register::Physical(REG_STACK_POINTER))?;
+
+        // 按逆序恢复寄存器（后进先出）
+        for &reg in callee_saved.iter().rev() {
+            // 从虚拟栈加载寄存器值
+            self.emit_ldr_reg_mem(code_builder, reg, vm_sp_reg, 0);
+
+            // 弹出虚拟栈
+            self.emit_add_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 8);
+        }
+
+        if self.debug_mode {
+            log::debug!("恢复了 {} 个 callee-saved 寄存器从虚拟栈", callee_saved.len());
+        }
+
+        Ok(())
+    }
+
+    /// 生成主函数尾声（用于与宿主环境交互的main函数）
     fn emit_function_epilogue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
         // AAPCS64 标准尾声：按照序言的逆序恢复寄存器
 
@@ -1265,13 +1322,13 @@ impl AArch64Compiler {
         // 注意：这会在 main 函数返回前由 compile_return 处理
         // 这里不需要处理
 
-        // 2. 恢复 VM 特殊寄存器（逆序）
+        // 2. 恢复 callee-saved 寄存器（逆序）
+        self.restore_callee_saved_registers(code_builder)?;
+
+        // 3. 恢复 VM 特殊寄存器（逆序）
         // LDP X6, X7, [SP], #16
         let ldp_x6_x7 = 0xA8C11FE6u32;
         code_builder.emit_bytes(&ldp_x6_x7.to_le_bytes());
-
-        // 3. 恢复 callee-saved 寄存器（逆序）
-        self.restore_callee_saved_registers(code_builder)?;
 
         // 4. 恢复帧指针和链接寄存器（标准 C 尾声）
         // LDP X29, X30, [SP], #16 (post-index load pair)
@@ -1531,6 +1588,12 @@ impl JitCompiler for AArch64Compiler {
         } else {
             return Err(format!("函数 '{}' 的第一个指令必须是label", function.name));
         }
+                if is_main_function {
+
+        } else {
+            // 简化序言：用于内部函数调用
+            self.emit_internal_function_prologue(&mut code_builder)?;
+        }
         // 编译所有指令
         for instruction in function.instructions.iter().skip(1) {
             self.compile_instruction(instruction, &mut code_builder, is_main_function)?;
@@ -1631,6 +1694,13 @@ impl JitCompiler for AArch64Compiler {
             code_builder.define_label(&format!("label_{}", id.0))?;
         } else {
             return Err(format!("函数 '{}' 的第一个指令必须是label", function.name));
+        }
+
+                        if is_main_function {
+
+        } else {
+            // 简化序言：用于内部函数调用
+            self.emit_internal_function_prologue(&mut code_builder)?;
         }
 
         // 编译函数体
