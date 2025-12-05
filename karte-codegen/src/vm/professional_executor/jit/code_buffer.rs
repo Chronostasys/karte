@@ -371,8 +371,18 @@ impl CodeBuilder {
             {
                 // AArch64跳转修补
                 let current_pos = exec_base + pending.patch_position; // 转换为可执行内存中的真实地址
-                                                                      // 计算相对偏移（以字为单位，4字节对齐）
-                let relative_offset = ((target_addr as i64) - (current_pos as i64)) >> 2;
+
+                // 🔧 修复：如果target_addr是相对偏移（本地标签），需要转换为绝对地址
+                let target_addr_absolute = if target_addr < 0x10000 {
+                    // 相对偏移（本地标签），转换为绝对地址
+                    exec_base + target_addr
+                } else {
+                    // 已经是绝对地址（全局标签）
+                    target_addr
+                };
+
+                // 计算相对偏移（以字为单位，4字节对齐）
+                let relative_offset = ((target_addr_absolute as i64) - (current_pos as i64)) >> 2;
 
                 log::debug!("🔧 修补跳转详情: {} -> 目标: 0x{:016X}, 当前位置: 0x{:016X}, 字节偏移: {}, 相对偏移(字): {}", 
                          pending.target_label, target_addr, current_pos,

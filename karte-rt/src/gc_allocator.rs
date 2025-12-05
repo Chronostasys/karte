@@ -22,20 +22,19 @@ impl GcAllocator {
     /// 根据布局大小判断对象类型
     fn object_type_from_layout(layout: &Layout) -> ObjectType {
         // 简单的启发式规则：
-        // - 小对象（< 64 字节）：可能是基本类型，标记为 Atomic
-        // - 中等对象（64-256 字节）：可能包含指针，标记为 Complex
-        // - 大对象（> 256 字节）：通常包含多个字段，标记为 Complex
+        // - 小对象（<= 8 字节）：可能是基本类型（number, bool），标记为 Conservative
+        // - 大对象（> 8 字节）：可能包含指针或复杂结构，使用 Conservative 保守扫描
+        //
+        // 注意：由于无法在分配时精确知道对象内部结构，我们默认使用 Conservative
+        // 类型。Conservative 类型会保守扫描对象的每个字段，确保不会漏掉任何指针。
         let size = layout.size();
 
         if size <= 8 {
-            // 单个数字或指针
-            ObjectType::Atomic
-        } else if size <= 64 {
-            // 可能是小结构体，保守地标记为 Complex
-            ObjectType::Complex
+            // 单个字段，可能是基本类型，但为了安全仍使用 Conservative
+            ObjectType::Conservative
         } else {
-            // 较大的对象，很可能包含指针
-            ObjectType::Complex
+            // 较大的对象，很可能包含多个字段或指针
+            ObjectType::Conservative
         }
     }
 }
@@ -133,22 +132,23 @@ mod tests {
     #[test]
     fn test_object_type_selection() {
         // 测试对象类型选择逻辑
+        // 所有大小的对象都使用 Conservative 类型进行保守扫描
         let small_layout = Layout::from_size_align(8, 8).unwrap();
         assert_eq!(
             GcAllocator::object_type_from_layout(&small_layout),
-            ObjectType::Atomic
+            ObjectType::Conservative
         );
 
         let medium_layout = Layout::from_size_align(64, 8).unwrap();
         assert_eq!(
             GcAllocator::object_type_from_layout(&medium_layout),
-            ObjectType::Complex
+            ObjectType::Conservative
         );
 
         let large_layout = Layout::from_size_align(512, 8).unwrap();
         assert_eq!(
             GcAllocator::object_type_from_layout(&large_layout),
-            ObjectType::Complex
+            ObjectType::Conservative
         );
     }
 }

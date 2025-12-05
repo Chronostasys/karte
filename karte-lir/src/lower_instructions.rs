@@ -669,12 +669,43 @@ impl InstructionLowerer {
                     });
                 }
 
-                // 参数传递
-                for (i, op) in arg_operands.iter().enumerate() {
+                // 参数传递 - 🔧 修复：避免寄存器覆盖
+                // 问题：如果直接将 arg_operands[i] 移动到参数寄存器，可能会出现：
+                //   mov #p2, #p4  (参数2 = #p4的值)
+                //   mov #p3, #p2  (参数3 = #p2的值，但#p2已被覆盖！)
+                //
+                // 解决方案：先将所有参数值保存到栈上，再从栈加载到参数寄存器
+                // 这样保证了参数值不会在传递过程中被覆盖，且不需要创建新的虚拟寄存器
+
+                // 第1步：将所有参数压栈
+                for op in arg_operands.iter() {
+                    new_instructions.push(Instruction::Sub {
+                        dst: self.stack_pointer_reg,
+                        src1: Operand::Register { id: self.stack_pointer_reg },
+                        src2: Operand::Immediate { value: 8 },
+                        span: *span,
+                    });
+                    new_instructions.push(Instruction::Store64 {
+                        addr: self.stack_pointer_reg,
+                        offset: 0,
+                        src: op.clone(),
+                        span: *span,
+                    });
+                }
+
+                // 第2步：从栈加载到参数寄存器（逆序，因为栈是LIFO）
+                for i in (0..arg_operands.len()).rev() {
                     if let Some(phys_reg) = self.calling_convention.argument_registers.get(i) {
-                        new_instructions.push(Instruction::Move {
+                        new_instructions.push(Instruction::Load64 {
                             dst: Register::Physical(*phys_reg),
-                            src: op.clone(),
+                            addr: self.stack_pointer_reg,
+                            offset: 0,
+                            span: *span,
+                        });
+                        new_instructions.push(Instruction::Add {
+                            dst: self.stack_pointer_reg,
+                            src1: Operand::Register { id: self.stack_pointer_reg },
+                            src2: Operand::Immediate { value: 8 },
                             span: *span,
                         });
                     }
@@ -834,12 +865,43 @@ impl InstructionLowerer {
                     span: *span,
                 });
 
-                // 参数传递
-                for (i, op) in arg_operands.iter().enumerate() {
+                // 参数传递 - 🔧 修复：避免寄存器覆盖
+                // 问题：如果直接将 arg_operands[i] 移动到参数寄存器，可能会出现：
+                //   mov #p2, #p4  (参数2 = #p4的值)
+                //   mov #p3, #p2  (参数3 = #p2的值，但#p2已被覆盖！)
+                //
+                // 解决方案：先将所有参数值保存到栈上，再从栈加载到参数寄存器
+                // 这样保证了参数值不会在传递过程中被覆盖，且不需要创建新的虚拟寄存器
+
+                // 第1步：将所有参数压栈
+                for op in arg_operands.iter() {
+                    new_instructions.push(Instruction::Sub {
+                        dst: self.stack_pointer_reg,
+                        src1: Operand::Register { id: self.stack_pointer_reg },
+                        src2: Operand::Immediate { value: 8 },
+                        span: *span,
+                    });
+                    new_instructions.push(Instruction::Store64 {
+                        addr: self.stack_pointer_reg,
+                        offset: 0,
+                        src: op.clone(),
+                        span: *span,
+                    });
+                }
+
+                // 第2步：从栈加载到参数寄存器（逆序，因为栈是LIFO）
+                for i in (0..arg_operands.len()).rev() {
                     if let Some(phys_reg) = self.calling_convention.argument_registers.get(i) {
-                        new_instructions.push(Instruction::Move {
+                        new_instructions.push(Instruction::Load64 {
                             dst: Register::Physical(*phys_reg),
-                            src: op.clone(),
+                            addr: self.stack_pointer_reg,
+                            offset: 0,
+                            span: *span,
+                        });
+                        new_instructions.push(Instruction::Add {
+                            dst: self.stack_pointer_reg,
+                            src1: Operand::Register { id: self.stack_pointer_reg },
+                            src2: Operand::Immediate { value: 8 },
                             span: *span,
                         });
                     }

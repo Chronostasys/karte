@@ -8,6 +8,16 @@ Karte is a functional programming language compiler implemented in Rust. It's a 
 
 The project uses a Rust workspace with 16 crates, implementing a complete compiler pipeline from lexing through type checking to code generation (JIT compilation).
 
+**Main Crates**:
+- `karte-lexer`, `karte-parser`, `karte-hir`, `karte-mir`, `karte-lir`, `karte-codegen` - Compilation pipeline
+- `karte-module-system` - Multi-module compilation and caching
+- `karte-escape-analysis` - Compile-time memory optimization
+- `karte-rt` - Runtime and JIT memory management
+- `karte-cli` - Command-line interface
+- `karte-tests` - Integration test suite
+- `karte-ir-codec`, `karte-ir-derive` - IR serialization infrastructure
+- `karte-diagnostics` - Error reporting
+
 ## Development Commands
 
 ### Building and Running
@@ -151,13 +161,21 @@ The project uses custom derive macros (`karte-ir-derive`) and codec (`karte-ir-c
 
 ### JIT Architecture
 
-The JIT compiler (`karte-rt`) uses a continuous memory allocation strategy:
+**Recent Update (2025)**: The JIT compiler (`karte-rt`) was redesigned with a continuous memory allocation strategy that significantly improves performance and simplifies code generation.
 
-- Pre-allocates 128MB of contiguous virtual address space on startup
-- On-demand physical memory commitment via `mprotect`
+**Continuous Memory Allocation**:
+- Pre-allocates 128MB of contiguous virtual address space on startup using `mmap(PROT_NONE)`
+- Virtual memory reservation doesn't consume physical memory until actually used
+- On-demand physical memory commitment via `mprotect` when functions are compiled
 - Functions are tightly packed in continuous memory for cache efficiency
 - Uses relative jumps (AArch64 `BL` instruction with ±128MB range)
 - 16-byte function alignment for optimal AArch64 instruction access
+
+**Performance Benefits**:
+- Eliminates complex address patching overhead for cross-function calls
+- Reduces TLB pressure with continuous memory layout
+- Improves I-Cache hit rate (adjacent functions are cache-friendly)
+- Simplifies AArch64 compiler logic significantly
 
 ## Code Organization Principles
 
@@ -455,6 +473,89 @@ Wrong restore sequence (with extra pop):
 - ✅ **Check both Call and CallIndirect**: Indirect calls should match direct call conventions
 - ✅ **Test with multiple call patterns**: Single calls may pass but multiple calls expose bugs
 
+### Case Study: Parameter Register Allocation Bug in Function Calls (2025-12-04)
+
+**Problem**: When passing multiple parameters to a function (both Call and CallIndirect), the parameter preparation code directly moved argument values to parameter registers sequentially. This caused register overwrites when later parameters referenced earlier parameter registers.
+
+**Symptoms**:
+- `test_debug_heap.karte`: Returns wrong value (pointer address instead of 22)
+- Only affects calls with 3+ parameters where parameter N references a register that will be overwritten by parameter N+1
+
+**Root Cause Analysis**:
+The bug was in `karte-lir/src/lower_instructions.rs` in the parameter passing logic:
+```rust
+// ❌ Wrong approach - direct sequential moves cause register conflicts
+for (i, op) in arg_operands.iter().enumerate() {
+    if let Some(phys_reg) = self.calling_convention.argument_registers.get(i) {
+        new_instructions.push(Instruction::Move {
+            dst: Register::Physical(*phys_reg),  // #p2, #p3, #p4...
+            src: op.clone(),  // May reference #p2, #p4, etc.
+            span: *span,
+        });
+    }
+}
+
+// Example causing the bug:
+// mov #p2, #p4  (param2 = value from #p4)
+// mov #p3, #p2  (param3 = value from #p2, but #p2 was just overwritten!)
+```
+
+**Solution**: Use stack as intermediate storage to avoid register conflicts:
+```rust
+// ✅ Correct approach - use stack to preserve all values
+// Step 1: Push all arguments onto stack
+for op in arg_operands.iter() {
+    new_instructions.push(Instruction::Sub {
+        dst: self.stack_pointer_reg,
+        src1: Operand::Register { id: self.stack_pointer_reg },
+        src2: Operand::Immediate { value: 8 },
+        span: *span,
+    });
+    new_instructions.push(Instruction::Store64 {
+        addr: self.stack_pointer_reg,
+        offset: 0,
+        src: op.clone(),
+        span: *span,
+    });
+}
+
+// Step 2: Pop from stack to parameter registers (reverse order due to LIFO)
+for i in (0..arg_operands.len()).rev() {
+    if let Some(phys_reg) = self.calling_convention.argument_registers.get(i) {
+        new_instructions.push(Instruction::Load64 {
+            dst: Register::Physical(*phys_reg),
+            addr: self.stack_pointer_reg,
+            offset: 0,
+            span: *span,
+        });
+        new_instructions.push(Instruction::Add {
+            dst: self.stack_pointer_reg,
+            src1: Operand::Register { id: self.stack_pointer_reg },
+            src2: Operand::Immediate { value: 8 },
+            span: *span,
+        });
+    }
+}
+```
+
+**Why Stack-Based Approach?**:
+- Cannot create new virtual registers at instruction lowering stage (register allocation already complete)
+- Stack provides reliable intermediate storage
+- Minimal performance overhead (a few extra stack operations)
+
+**Files Modified**:
+- `karte-lir/src/lower_instructions.rs:672-707`: Fixed Call parameter passing
+- `karte-lir/src/lower_instructions.rs:837-872`: Fixed CallIndirect parameter passing
+
+**Test Added**:
+- `karte-tests/src/cli_integration_tests.rs::test_register_allocation_bug_multiple_closure_calls`: Regression test with multiple closure calls
+
+**Lesson Learned**:
+- ✅ **Instruction lowering runs after register allocation**: Cannot create new virtual registers at this stage
+- ✅ **Stack is a reliable intermediate storage**: Use it when register conflicts are possible
+- ✅ **Test with parameter-heavy scenarios**: Simple 1-2 parameter calls may pass while 3+ parameter calls fail
+- ✅ **Always verify LIR output**: When debugging, check the generated LIR for correctness before blaming codegen
+
 ## Escape Analysis and Heap Allocation
 
 Karte implements compile-time escape analysis to optimize memory allocation:
@@ -502,3 +603,13 @@ Store { target = %10000, value = %2 }
 - karte目前不支持注释，不要在karte源代码中加入任何注释
 - bin不一定是最新的，执行命令之前一定先重新编译一下bin
 - 如果想看逃逸分析的日志，请用类似 `karte --verbose <subcommand>` 这种格式
+- build指令默认就会生成lir，用tail可以看到命令打印的lir位置
+- 测试的时候请确保exit code是对的，而不是只看输出内容似乎正确
+- 永远不要quit lldb的mcp，否则就需要我重新启动
+- 不要release模式测试，直接debug
+- 为了方便debug问题，我们故意添加了机制使得debug模式下gc会尽可能的触发回收并且每次都全量evacuation
+- 任何测试的时候不要build --release之后测试，这样只会掩盖问题，而且大大延长编译时长
+- 任何情况，除非我要求否则禁止build --release，release只会掩盖问题
+- 不要在不是问题的行为上浪费时间，比如debug每次都gc就是设计好的行为，并不少它导致了错误，它只是拒绝掩盖错误。不要为了快速掩盖问题解决提出问题的人
+- 禁止运行 `cargo build --release`命令，必须去掉--release
+- 不允许cargo命令使用 --release flag除非我要求

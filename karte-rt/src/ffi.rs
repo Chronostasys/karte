@@ -22,21 +22,52 @@ pub extern "C" fn karte_jit_runtime_alloc_aligned(size: u64, alignment: u64) -> 
         return 0;
     }
 
-    // 根据大小选择对象类型
-    let obj_type = if size <= 8 {
-        ObjectType::Atomic
-    } else if size <= 64 {
-        ObjectType::Complex
-    } else {
-        ObjectType::Complex
-    };
+    // 使用 Conservative 作为默认类型（保守但安全）
+    // 对于不确定内部结构的分配，保守扫描可以保证不会漏掉任何潜在的指针
+    let obj_type = ObjectType::Conservative;
+
+    unsafe {
+        let ptr = gc_alloc(size as usize, obj_type);
+        if ptr.is_null() {
+            log::warn!("karte_jit_runtime_alloc_aligned: allocation failed for size={}", size);
+            0
+        } else {
+            // 清零内存
+            ptr.write_bytes(0, size as usize);
+            log::info!("karte_jit_runtime_alloc_aligned: allocated {} bytes at {:p}, type={:?}", size, ptr, obj_type);
+            ptr as u64
+        }
+    }
+}
+
+/// JIT 调用的类型化分配函数
+///
+/// 允许 JIT 代码显式指定对象类型，以便 GC 能够更精确地扫描对象。
+///
+/// # 参数
+///
+/// * `size` - 要分配的字节数
+/// * `obj_type` - 对象类型 (u8 表示): Atomic=0, Trait=1, Pointer=3, Conservative=4
+///
+/// # 返回值
+///
+/// 返回分配的内存指针（64位地址），如果分配失败返回 0
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_alloc_typed(size: u64, obj_type: u8) -> u64 {
+    if size == 0 {
+        return 0;
+    }
+
+    // 解析对象类型，如果解析失败则默认使用 Conservative
+    // Conservative 类型使用保守扫描，能够安全处理所有对象
+    let obj_type = ObjectType::from_u8(obj_type).unwrap_or(ObjectType::Conservative);
 
     unsafe {
         let ptr = gc_alloc(size as usize, obj_type);
         if ptr.is_null() {
             0
         } else {
-            // 清零内存
+            // 清零内存，确保对象初始状态干净
             ptr.write_bytes(0, size as usize);
             ptr as u64
         }
@@ -95,4 +126,18 @@ pub extern "C" fn karte_jit_runtime_gc_safepoint() {
         gc_safepoint();
     }
     trace!("GC safepoint reached");
+}
+
+/// 更新虚拟栈顶指针（供JIT代码调用）
+///
+/// JIT代码在调用C FFI前调用此函数，传入当前的虚拟SP（x6寄存器的值）
+///
+/// # Safety
+///
+/// stack_top 必须是有效的虚拟栈指针
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_update_stack_top(stack_top: u64) {
+    unsafe {
+        karte_gc::update_virtual_stack_top(stack_top as *const u8);
+    }
 }

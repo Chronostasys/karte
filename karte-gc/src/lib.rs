@@ -10,6 +10,7 @@
 //! - **自动GC**: 当内存压力大时自动触发收集
 //! - **线程本地分配器**: 减少线程竞争，提升分配性能
 
+use std::cell::Cell;
 use std::ptr;
 
 // 重新导出 immix 的关键类型和函数
@@ -30,10 +31,25 @@ pub use root_scanner::*;
 pub enum ObjectType {
     /// 原子类型：不包含指针的基本类型（number, bool）
     Atomic = 0,
+    /// Trait 对象：包含单个堆指针（暂不使用）
+    Trait = 1,
     /// 指针类型：单个指针或引用
-    Pointer = 1,
-    /// 复杂类型：包含多个字段的结构体、数组、闭包等
-    Complex = 2,
+    Pointer = 3,
+    /// 保守类型：复杂对象，使用保守扫描（struct, closure, array, enum）
+    Conservative = 4,
+}
+
+impl ObjectType {
+    /// 从 u8 值创建 ObjectType
+    pub fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(ObjectType::Atomic),
+            1 => Some(ObjectType::Trait),
+            3 => Some(ObjectType::Pointer),
+            4 => Some(ObjectType::Conservative),
+            _ => None,
+        }
+    }
 }
 
 impl From<ObjectType> for u8 {
@@ -46,8 +62,9 @@ impl From<ObjectType> for ImmixObjectType {
     fn from(obj_type: ObjectType) -> ImmixObjectType {
         match obj_type {
             ObjectType::Atomic => ImmixObjectType::Atomic,
+            ObjectType::Trait => ImmixObjectType::Trait,
             ObjectType::Pointer => ImmixObjectType::Pointer,
-            ObjectType::Complex => ImmixObjectType::Complex,
+            ObjectType::Conservative => ImmixObjectType::Conservative,
         }
     }
 }
@@ -162,6 +179,113 @@ pub unsafe fn gc_safepoint() {
 /// - 区间必须在 GC 的整个生命周期内保持有效
 /// - 通常在 ExecutionEngine 初始化时调用一次
 ///
+/// Thread-local：当前虚拟栈顶指针（对应r6寄存器的值）
+///
+/// 用于优化GC扫描：只扫描实际使用的栈区域，而不是整个64KB虚拟栈
+thread_local! {
+    static CURRENT_VIRTUAL_STACK_TOP: Cell<*const u8> = Cell::new(ptr::null());
+}
+
+/// 更新当前虚拟栈顶指针
+///
+/// 在FFI函数入口处调用，传入当前的r6寄存器值（虚拟SP）
+///
+/// # Safety
+///
+/// stack_top 必须是有效的虚拟栈指针
+pub unsafe fn update_virtual_stack_top(stack_top: *const u8) {
+    CURRENT_VIRTUAL_STACK_TOP.with(|top| {
+        top.set(stack_top);
+        log::trace!("Virtual stack top updated to: {:p}", stack_top);
+    });
+}
+
+/// Karte 虚拟栈保守扫描器
+///
+/// 这个函数遍历虚拟栈区间中的所有 8 字节字，并使用启发式方法
+/// 识别可能的堆指针。
+///
+/// 🔧 优化：使用thread-local的栈顶指针，只扫描实际使用的区域
+///
+/// # Safety
+///
+/// 这是一个 unsafe 函数，因为它直接访问原始指针。
+unsafe fn karte_virtual_stack_scanner(
+    stack_start: *const u8,
+    stack_end: *const u8,
+) -> Vec<*mut u8> {
+    let mut roots = Vec::new();
+
+    // 获取当前栈顶（r6的值）
+    let current_top = CURRENT_VIRTUAL_STACK_TOP.with(|top| top.get());
+
+    // 如果栈顶有效且在合理范围内，使用它；否则使用整个栈区间（后备方案）
+    let scan_start = if !current_top.is_null()
+        && current_top >= stack_start
+        && current_top <= stack_end
+    {
+        log::debug!(
+            "Using dynamic stack top: {:p} (saving {} bytes scan)",
+            current_top,
+            current_top as usize - stack_start as usize
+        );
+        current_top
+    } else {
+        log::debug!("Using full stack range (stack top not set or invalid)");
+        stack_start
+    };
+
+    // 按 8 字节对齐遍历栈区间
+    let mut current = scan_start as *const u64;
+    let end = stack_end as *const u64;
+
+    log::debug!(
+        "=== Virtual Stack Scanner START: scanning {:p} - {:p} ({} bytes) ===",
+        scan_start,
+        stack_end,
+        stack_end as usize - scan_start as usize
+    );
+
+    while current < end {
+        let value = *current;
+
+        // 启发式检查：可能是指针吗？
+        if value != 0 && value % 8 == 0 {
+            // 检查是否在用户空间地址范围内
+            // 避免内核地址 (> 0x0000_7fff_ffff_ffff) 和明显无效地址 (< 0x1000)
+            if value > 0x1000 && value < 0x0000_7fff_ffff_ffff {
+                // 🔧 修复：返回栈位置的地址（指向对象指针的指针），而不是对象指针本身
+                // mark_ptr 期望接收指向对象指针的指针，它会解引用获取实际的对象指针
+                log::debug!(
+                    "  [ROOT] stack_loc={:p} -> heap_ptr=0x{:X}",
+                    current, value
+                );
+                roots.push(current as *mut u8);
+            }
+        }
+
+        current = current.add(1);
+    }
+
+    log::debug!(
+        "=== Virtual Stack Scanner END: found {} roots ===",
+        roots.len()
+    );
+
+    roots
+}
+
+/// 注册虚拟栈区间作为 GC 根
+///
+/// Karte 使用堆上分配的虚拟栈 (Vec<i64>)，不是 C 系统栈。
+/// 需要显式注册这个区间，以便 GC 能够扫描其中的根对象。
+///
+/// # Safety
+///
+/// - stack_start 和 stack_end 必须是有效的指针
+/// - stack_end 必须大于 stack_start
+/// - 调用者必须确保栈区间在 GC 期间保持有效
+///
 /// # Example
 ///
 /// ```rust,ignore
@@ -174,19 +298,19 @@ pub unsafe fn gc_safepoint() {
 /// ```
 pub unsafe fn register_virtual_stack_range(stack_start: *const u8, stack_end: *const u8) {
     log::info!(
-        "Registering virtual stack range as GC roots: {:p} - {:p} ({} bytes)",
+        "Registering Karte virtual stack as GC root: {:p} - {:p} ({} bytes)",
         stack_start,
         stack_end,
         stack_end as usize - stack_start as usize
     );
 
-    // Immix GC 的保守扫描会在 GC 时遍历这个区间
-    // 我们不需要显式注册区间，因为 Immix 会使用保守扫描
-    // 但是我们需要确保在 GC 触发时，虚拟栈的内容是可达的
-
-    // TODO: 当 Immix 支持显式栈区间注册时，在这里调用相应的 API
-    // 目前，Immix 的保守扫描会扫描线程栈，但由于我们使用虚拟栈，
-    // 可能需要在 GC 触发时手动扫描虚拟栈区间
+    // 调用 Immix 的自定义扫描器注册 API
+    // 这会在每次 GC mark 阶段调用我们的虚拟栈扫描器
+    immix::register_custom_stack_scanner(
+        karte_virtual_stack_scanner,
+        stack_start,
+        stack_end,
+    );
 }
 
 /// 注册全局根对象
@@ -208,7 +332,8 @@ mod tests {
     #[test]
     fn test_object_type_conversion() {
         assert_eq!(u8::from(ObjectType::Atomic), 0);
-        assert_eq!(u8::from(ObjectType::Pointer), 1);
-        assert_eq!(u8::from(ObjectType::Complex), 2);
+        assert_eq!(u8::from(ObjectType::Trait), 1);
+        assert_eq!(u8::from(ObjectType::Pointer), 3);
+        assert_eq!(u8::from(ObjectType::Conservative), 4);
     }
 }

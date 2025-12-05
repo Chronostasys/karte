@@ -1,4 +1,4 @@
-pub use karte_common::calling_convention::Register;
+pub use karte_common::calling_convention::{PhysicalRegister, Register};
 use karte_diagnostics::Span;
 use karte_ir_derive::IrCodec;
 use std::{collections::HashMap, sync::atomic::AtomicUsize};
@@ -971,6 +971,9 @@ pub struct LirFunction {
     pub parameter_count: usize,
     #[ir_codec(skip)]
     pub parameter_registers: Vec<Register>,
+    /// 实际使用的 callee-saved 寄存器列表（AArch64）
+    #[ir_codec(skip)]
+    pub used_callee_saved: Vec<PhysicalRegister>,
 }
 
 impl LirFunction {
@@ -983,6 +986,7 @@ impl LirFunction {
             stack_frame_size: 0,
             parameter_count: 0,
             parameter_registers: Vec::new(),
+            used_callee_saved: Vec::new(),
         }
     }
 
@@ -1000,6 +1004,16 @@ impl LirFunction {
         }
 
         function
+    }
+
+    /// 获取实际使用的 callee-saved 寄存器列表
+    pub fn get_used_callee_saved(&self) -> &[PhysicalRegister] {
+        &self.used_callee_saved
+    }
+
+    /// 设置使用的 callee-saved 寄存器
+    pub fn set_used_callee_saved(&mut self, regs: Vec<PhysicalRegister>) {
+        self.used_callee_saved = regs;
     }
 
     /// 分配一个新的寄存器，跳过栈指针寄存器(RegisterId(6))、帧指针寄存器(RegisterId(7))和函数参数寄存器
