@@ -1,6 +1,0 @@
-fn add_one(x:number) -> number { x + 1 }
-
-fn main() -> number {
-    let apply = |f, x| { f(x) };
-    apply(add_one, 5)
-}

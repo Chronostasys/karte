@@ -20,8 +20,10 @@ pub struct AllocationStats {
     pub atomic_allocations: AtomicUsize,
     /// 指针类型分配次数
     pub pointer_allocations: AtomicUsize,
-    /// 复杂类型分配次数
-    pub complex_allocations: AtomicUsize,
+    /// 保守扫描类型分配次数
+    pub conservative_allocations: AtomicUsize,
+    /// Trait 对象类型分配次数
+    pub trait_allocations: AtomicUsize,
 }
 
 impl AllocationStats {
@@ -43,8 +45,12 @@ impl AllocationStats {
             ObjectType::Pointer => {
                 self.pointer_allocations.fetch_add(1, Ordering::Relaxed);
             }
-            ObjectType::Complex => {
-                self.complex_allocations.fetch_add(1, Ordering::Relaxed);
+            ObjectType::Conservative => {
+                self.conservative_allocations
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            ObjectType::Trait => {
+                self.trait_allocations.fetch_add(1, Ordering::Relaxed);
             }
         }
     }
@@ -67,13 +73,15 @@ impl AllocationStats {
              - Total bytes: {} ({:.2} MB)\n\
              - Atomic: {}\n\
              - Pointer: {}\n\
-             - Complex: {}",
+             - Conservative: {}\n\
+             - Trait: {}",
             self.total_allocations(),
             self.total_bytes(),
             self.total_bytes() as f64 / 1024.0 / 1024.0,
             self.atomic_allocations.load(Ordering::Relaxed),
             self.pointer_allocations.load(Ordering::Relaxed),
-            self.complex_allocations.load(Ordering::Relaxed)
+            self.conservative_allocations.load(Ordering::Relaxed),
+            self.trait_allocations.load(Ordering::Relaxed)
         )
     }
 }
@@ -181,7 +189,7 @@ mod tests {
 
         stats.record_allocation(100, ObjectType::Atomic);
         stats.record_allocation(200, ObjectType::Pointer);
-        stats.record_allocation(300, ObjectType::Complex);
+        stats.record_allocation(300, ObjectType::Conservative);
 
         assert_eq!(stats.total_allocations(), 3);
         assert_eq!(stats.total_bytes(), 600);

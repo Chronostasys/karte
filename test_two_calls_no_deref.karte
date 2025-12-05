@@ -1,12 +1,11 @@
+fn escape() -> & &number {
+    let d = 1;
+    &(&d)
+}
+
 fn main() -> number {
-    let a = || {
-        let d = 1;
-        &d
-    };
-    let b = || {
-        999
-    };
-    let ptr = a();
-    let tmp = b();
-    tmp
+
+    let ptr = escape();
+
+    *(*ptr)
 }

@@ -5,13 +5,16 @@
 
 pub mod allocation_strategy;
 pub mod analyzer;
+pub mod call_graph;
 pub mod context;
 pub mod error;
+pub mod function_summary;
 pub mod graph;
 pub mod instruction_generator;
 pub mod types;
 pub mod escape_point_detector;
 pub mod escape_point_transformer;
+pub mod pointer_usage_analyzer;
 
 pub use allocation_strategy::{
     AllocationStatistics, AllocationStrategy, AllocationStrategySelector, StackFrameLayout,
@@ -28,3 +31,8 @@ pub use types::{
 };
 pub use escape_point_detector::EscapePointDetector;
 pub use escape_point_transformer::EscapePointTransformer;
+pub use pointer_usage_analyzer::{PointerUsageAnalyzer, PointerUsagePattern};
+pub use call_graph::{CallGraph, CallGraphStats};
+pub use function_summary::{
+    DatabaseStats, FunctionSummary, FunctionSummaryDatabase, ParameterTag, ReturnSource,
+};

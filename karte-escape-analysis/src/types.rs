@@ -148,6 +148,12 @@ pub enum EscapePoint {
         array_var: VariableId,
         store_site: Span,
     },
+
+    /// 取地址操作
+    AddressOf {
+        var_id: VariableId,
+        address_site: Span,
+    },
 }
 
 /// 生命周期约束

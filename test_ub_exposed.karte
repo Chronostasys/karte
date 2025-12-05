@@ -1,0 +1,21 @@
+fn escape() -> &number {
+    let d = 42;
+    (&d)
+}
+
+fn deep_stack_usage(n: number) -> number {
+    if n == 0 {
+        1
+    } else {
+        let x = n;
+        let y = n + 1;
+        let z = n + 2;
+        x + y + z + deep_stack_usage(n - 1)
+    }
+}
+
+fn main() -> number {
+    let ptr = escape();
+    deep_stack_usage(10);
+    *ptr
+}

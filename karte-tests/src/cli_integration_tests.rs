@@ -165,6 +165,11 @@ mod cli_tests {
 
         let mut mir_program = lower_expr_to_mir_with_options(result.expr(), lowering_options)
             .expect("MIR lowering failed");
+
+        // 应用逃逸分析优化
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir_program, false)
+            .expect("Escape analysis failed");
+
         promote_project_entry(&mut mir_program);
         mir_program.functions.remove(SCRIPT_ENTRY_POINT);
         mir_program
@@ -271,6 +276,11 @@ fn main() -> number {
         };
 
         let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        // 应用逃逸分析优化
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
         promote_project_entry(&mut mir);
         mir.functions.remove(SCRIPT_ENTRY_POINT);
 
@@ -327,6 +337,11 @@ fn main() -> number {
         };
 
         let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        // 应用逃逸分析优化
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
         promote_project_entry(&mut mir);
         mir.functions.remove(SCRIPT_ENTRY_POINT);
 
@@ -383,6 +398,11 @@ fn main() -> number {
         };
 
         let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        // 应用逃逸分析优化
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
         promote_project_entry(&mut mir);
         mir.functions.remove(SCRIPT_ENTRY_POINT);
 
@@ -448,6 +468,11 @@ fn main() -> number {
         };
 
         let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        // 应用逃逸分析优化
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
         promote_project_entry(&mut mir);
         mir.functions.remove(SCRIPT_ENTRY_POINT);
 
@@ -503,6 +528,11 @@ fn main() -> number {
         };
 
         let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        // 应用逃逸分析优化
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
         promote_project_entry(&mut mir);
         mir.functions.remove(SCRIPT_ENTRY_POINT);
 
@@ -557,6 +587,11 @@ fn main() -> number {
         };
 
         let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        // 应用逃逸分析优化
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
         promote_project_entry(&mut mir);
         mir.functions.remove(SCRIPT_ENTRY_POINT);
 
@@ -617,6 +652,11 @@ fn main() -> number {
         };
 
         let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        // 应用逃逸分析优化
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
         promote_project_entry(&mut mir);
         mir.functions.remove(SCRIPT_ENTRY_POINT);
 
@@ -672,6 +712,11 @@ fn main() -> number {
         };
 
         let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        // 应用逃逸分析优化
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
         promote_project_entry(&mut mir);
         mir.functions.remove(SCRIPT_ENTRY_POINT);
 
@@ -692,6 +737,71 @@ fn main() -> number {
         assert_eq!(
             exit_code, 6,
             "Expected exit code 6 (5 + 1), got {}",
+            exit_code
+        );
+    }
+
+    #[test]
+    fn test_register_allocation_bug_multiple_closure_calls() {
+        // 回归测试：多次闭包调用时参数寄存器覆盖的bug
+        // 这个bug出现在 lower_instructions.rs 中，参数传递时直接mov到参数寄存器
+        // 导致后面的参数覆盖了前面的参数值
+        let code = r#"
+fn double(x:number) -> number { x * 2 }
+
+fn main() -> number {
+    let apply = |f, x| { f(x) };
+    let triple = |n| { n * 3 };
+
+    let result1 = apply(double, 5);
+    let result2 = apply(triple, 4);
+
+    result1 + result2
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) =
+            parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing failed: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        // 应用逃逸分析优化
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        karte_lir::lower_program_instructions(&mut lir)
+            .expect("Instruction lowering failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        assert_eq!(
+            exit_code, 22,
+            "Expected exit code 22 (10 + 12), got {}. This indicates the register allocation bug.",
             exit_code
         );
     }

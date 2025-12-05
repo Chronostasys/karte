@@ -335,18 +335,16 @@ pub fn compile_source_to_artifacts(
         println!("{}", mir_program.to_ir_string());
     }
 
-    // 【Phase 6】运行逃逸分析优化MIR（可选，通过环境变量控制）
-    if std::env::var("KARTE_ENABLE_ESCAPE_ANALYSIS").is_ok() {
-        if verbose {
-            println!("\n--- 运行逃逸分析 ---");
-        }
-        optimize_mir_with_escape_analysis(&mut mir_program, verbose)
-            .map_err(|e| format!("逃逸分析失败: {}", e))?;
+    // 【Phase 6】运行逃逸分析优化MIR（永远启用）
+    if verbose {
+        println!("\n--- 运行逃逸分析 ---");
+    }
+    optimize_mir_with_escape_analysis(&mut mir_program, verbose)
+        .map_err(|e| format!("逃逸分析失败: {}", e))?;
 
-        if verbose {
-            println!("\n--- 优化后的 MIR ---");
-            println!("{}", mir_program.to_ir_string());
-        }
+    if verbose {
+        println!("\n--- 优化后的 MIR ---");
+        println!("{}", mir_program.to_ir_string());
     }
 
     let lir_program = lower_mir_to_final_lir(&mir_program, optimization_level, verbose)?;

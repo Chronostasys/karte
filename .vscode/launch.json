@@ -9,7 +9,7 @@
             "request": "launch",
             "name": "Debug Function Compile",
             "program": "${workspaceFolder}/target/debug/karte",
-            "args": ["run", "let apply = |f, x| { f(x) }; let add_one = |n| { n + 1 }; apply(add_one, 5)"],
+            "args": ["run", "/Users/bobli/src/karte/test_two_calls_no_deref.karte"],
             "cwd": "${workspaceFolder}"
         },
         {

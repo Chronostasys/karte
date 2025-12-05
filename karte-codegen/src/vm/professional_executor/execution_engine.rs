@@ -56,6 +56,34 @@ impl ExecutionEngine {
         let heap_start = 0x1000; // 4KB开始，避免NULL指针区域
         let heap_size = 512 * 1024; // 512KB堆空间
 
+        // 🔧 GC初始化：在创建执行引擎时初始化GC
+        unsafe {
+            initialize_gc();
+        }
+
+        // 创建虚拟栈
+        let virtual_stack = vec![0; 8192]; // 64KB虚拟栈空间 (8192 * 8字节)
+
+        // 🔧 注册虚拟栈区间作为GC根
+        // Karte使用自分配的虚拟栈（Vec<i64>），需要将其注册为GC根
+        // 必须在创建后立即注册，确保任何GC都能扫描到虚拟栈
+        let stack_start = virtual_stack.as_ptr() as *const u8;
+        let stack_end = unsafe { stack_start.add(virtual_stack.len() * 8) };
+
+        unsafe {
+            register_virtual_stack_range(stack_start, stack_end);
+        }
+
+        if debug_mode {
+            info!("ExecutionEngine: GC已初始化");
+            info!(
+                "ExecutionEngine: 虚拟栈已注册为GC根: {:p} - {:p} ({} bytes)",
+                stack_start,
+                stack_end,
+                virtual_stack.len() * 8
+            );
+        }
+
         Self {
             vm: VirtualMachine::new(),
             memory: MemoryManager::new(),
@@ -64,30 +92,14 @@ impl ExecutionEngine {
             debug_mode,
             call_stack: Vec::new(),
             heap_allocator: HeapAllocator::new(heap_start, heap_size),
-            virtual_stack: vec![0; 8192], // 64KB虚拟栈空间 (8192 * 8字节)
+            virtual_stack,
         }
     }
 
     /// 初始化执行环境
     pub fn initialize(&mut self, _program_manager: &ProgramManager) -> Result<(), String> {
-        // 🔧 GC初始化：在执行环境初始化时初始化GC
-        unsafe {
-            initialize_gc();
-            info!("GC已初始化");
-        }
-
-        // 🔧 注册虚拟栈区间作为GC根
-        // Karte使用自分配的虚拟栈（Vec<i64>），需要将其注册为GC根
-        let stack_start = self.virtual_stack.as_ptr() as *const u8;
-        let stack_end = unsafe { stack_start.add(self.virtual_stack.len() * 8) };
-
-        unsafe {
-            register_virtual_stack_range(stack_start, stack_end);
-        }
-
-        if self.debug_mode {
-            println!("虚拟栈已注册为GC根: {:p} - {:p}", stack_start, stack_end);
-        }
+        // 注意：GC初始化和虚拟栈注册已经在 new() 中完成
+        // 这里只需要重置虚拟机状态
 
         // 重置虚拟机状态
         self.vm.reset();

@@ -5,7 +5,7 @@
 use super::code_buffer::{CodeBuilder, JumpType};
 use super::compiler_trait::*;
 use super::ffi::{RuntimeArg, RuntimeCall};
-use karte_common::calling_convention::{REG_RETURN, REG_RETURN_ADDRESS, REG_STACK_POINTER};
+use karte_common::calling_convention::{PhysicalRegister, REG_FRAME_POINTER, REG_RETURN_ADDRESS, REG_STACK_POINTER};
 use karte_lir::{Instruction, LirFunction, LirProgram, Operand, Register};
 use std::collections::HashMap;
 
@@ -20,6 +20,10 @@ pub struct AArch64Compiler {
     debug_mode: bool,
     /// 唯一label计数器（用于在编译时生成跳转目标）
     unique_label_counter: usize,
+    /// 当前函数使用的 callee-saved 寄存器列表
+    current_function_callee_saved: Vec<PhysicalRegister>,
+    /// 当前编译的函数名（用于生成唯一label）
+    current_function_name: String,
 }
 
 /// AArch64寄存器枚举
@@ -70,6 +74,8 @@ impl AArch64Compiler {
             calling_convention: Self::create_calling_convention(),
             debug_mode: true, // 强制启用调试模式以便观察编译过程
             unique_label_counter: 0,
+            current_function_callee_saved: Vec::new(),
+            current_function_name: String::new(),
         };
 
         // 初始化寄存器映射
@@ -160,10 +166,41 @@ impl AArch64Compiler {
         // 物理寄存器直接映射
         for i in 0..32 {
             let physical_reg = Register::Physical(i);
-            // 简化映射，直接对应AArch64寄存器
+            // 映射到对应的 AArch64 寄存器
             let aarch64_reg = match i {
-                31 => AArch64Register::SP as u8, // Physical(31) -> SP
-                _ => i,                          // 其他物理寄存器直接映射
+                0 => AArch64Register::X0 as u8,   // r0 (返回值)
+                1 => AArch64Register::X1 as u8,   // r1 (参数1)
+                2 => AArch64Register::X2 as u8,   // r2 (参数2)
+                3 => AArch64Register::X3 as u8,   // r3 (参数3)
+                4 => AArch64Register::X4 as u8,   // r4 (参数4)
+                5 => AArch64Register::X5 as u8,   // r5 (返回地址)
+                6 => AArch64Register::X6 as u8,   // r6 (栈指针)
+                7 => AArch64Register::X7 as u8,   // r7 (帧指针)
+                8 => AArch64Register::X8 as u8,   // r8
+                9 => AArch64Register::X9 as u8,   // r9
+                10 => AArch64Register::X10 as u8, // r10
+                11 => AArch64Register::X11 as u8, // r11
+                12 => AArch64Register::X12 as u8, // r12 (effect栈指针)
+                13 => AArch64Register::X13 as u8, // r13
+                14 => AArch64Register::X14 as u8, // r14
+                15 => AArch64Register::X15 as u8, // r15
+                16 => AArch64Register::X16 as u8, // r16
+                17 => AArch64Register::X17 as u8, // r17
+                18 => AArch64Register::X18 as u8, // r18
+                19 => AArch64Register::X19 as u8, // r19
+                20 => AArch64Register::X20 as u8, // r20
+                21 => AArch64Register::X21 as u8, // r21
+                22 => AArch64Register::X22 as u8, // r22
+                23 => AArch64Register::X23 as u8, // r23
+                24 => AArch64Register::X24 as u8, // r24
+                25 => AArch64Register::X25 as u8, // r25
+                26 => AArch64Register::X26 as u8, // r26
+                27 => AArch64Register::X27 as u8, // r27
+                28 => AArch64Register::X28 as u8, // r28
+                29 => AArch64Register::X29 as u8, // r29 (帧指针)
+                30 => AArch64Register::X30 as u8, // r30 (链接寄存器)
+                31 => AArch64Register::SP as u8,  // 栈指针
+                _ => unreachable!(), // 由于循环范围是 0..32，这里不会执行
             };
             self.register_mapping.insert(physical_reg, aarch64_reg);
         }
@@ -878,36 +915,51 @@ impl AArch64Compiler {
         code_builder: &mut CodeBuilder,
         exclude: &[u8],
     ) -> (Vec<u8>, usize) {
-        let regs: Vec<u8> = self
-            .calling_convention
-            .caller_saved
-            .iter()
-            .copied()
-            .filter(|reg| !exclude.contains(reg))
-            .collect();
+        // 🔧 关键修复：
+        // 1. Karte caller-saved 寄存器 (r0-r4) 保存到虚拟栈
+        // 2. r6 (虚拟SP) 和 r7 (虚拟FP) 保存到系统栈（因为调用 C FFI 时它们会被破坏）
 
-        if regs.is_empty() {
-            return (regs, 0);
-        }
+        let karte_virtual_sp_reg = self
+            .get_physical_register(&Register::Physical(REG_STACK_POINTER))
+            .unwrap_or(6);
+        let _karte_virtual_fp_reg = self
+            .get_physical_register(&Register::Physical(REG_FRAME_POINTER))
+            .unwrap_or(7);
 
-        let stack_space = align_to(regs.len() * 8, 16);
-        self.emit_sub_reg_reg_imm(
-            code_builder,
-            AArch64Register::SP as u8,
-            AArch64Register::SP as u8,
-            stack_space as i32,
-        );
+        // Karte caller-saved: r0-r4，但调用 C FFI 时还需要保护 r5
+        // r6 r7 单独处理
+        let mut regs_to_virtual_stack: Vec<u8> = vec![0, 1, 2, 3, 4, 5]; // r0-r5
+        regs_to_virtual_stack.retain(|reg| !exclude.contains(reg));
 
-        for (idx, reg) in regs.iter().enumerate() {
-            self.emit_str_reg_mem(
+        let virtual_stack_space = regs_to_virtual_stack.len() * 8;
+
+        // 步骤1：保存 r0-r5 到虚拟栈
+        if !regs_to_virtual_stack.is_empty() {
+            // 一次性调整虚拟栈指针（向下增长）
+            self.emit_sub_reg_reg_imm(
                 code_builder,
-                *reg,
-                AArch64Register::SP as u8,
-                (idx * 8) as i32,
+                karte_virtual_sp_reg,
+                karte_virtual_sp_reg,
+                virtual_stack_space as i32,
             );
+
+            // 保存所有寄存器到调整后的虚拟栈上
+            for (idx, reg) in regs_to_virtual_stack.iter().enumerate() {
+                self.emit_str_reg_mem(
+                    code_builder,
+                    *reg,
+                    karte_virtual_sp_reg,
+                    (idx * 8) as i32,
+                );
+            }
         }
 
-        (regs, stack_space)
+        // 步骤2：保存 r6 r7 到系统栈
+        // STP x6, x7, [SP, #-16]! (pre-index, 同时递减 SP)
+        let stp_x6_x7 = 0xA9BF1FE6u32;
+        code_builder.emit_bytes(&stp_x6_x7.to_le_bytes());
+
+        (regs_to_virtual_stack, virtual_stack_space)
     }
 
     fn restore_call_clobbered_registers(
@@ -916,25 +968,39 @@ impl AArch64Compiler {
         regs: &[u8],
         stack_space: usize,
     ) {
-        if regs.is_empty() {
-            return;
-        }
+        // 🔧 关键修复：恢复顺序与保存顺序相反
+        // 1. 先从系统栈恢复 r6 r7
+        // 2. 再从虚拟栈恢复 r0-r5
 
-        for (idx, reg) in regs.iter().enumerate() {
-            self.emit_ldr_reg_mem(
+        // 步骤1：恢复 r6 r7 从系统栈
+        // LDP x6, x7, [SP], #16 (post-index, 同时增加 SP)
+        let ldp_x6_x7 = 0xA8C11FE6u32;
+        code_builder.emit_bytes(&ldp_x6_x7.to_le_bytes());
+
+        // 步骤2：恢复 r0-r5 从虚拟栈
+        if !regs.is_empty() {
+            let karte_virtual_sp_reg = self
+                .get_physical_register(&Register::Physical(REG_STACK_POINTER))
+                .unwrap_or(6);
+
+            // 先用偏移加载所有寄存器（保持虚拟SP不变）
+            for (idx, reg) in regs.iter().enumerate() {
+                self.emit_ldr_reg_mem(
+                    code_builder,
+                    *reg,
+                    karte_virtual_sp_reg,
+                    (idx * 8) as i32,
+                );
+            }
+
+            // 然后一次性恢复虚拟栈指针（向上增长）
+            self.emit_add_reg_reg_imm(
                 code_builder,
-                *reg,
-                AArch64Register::SP as u8,
-                (idx * 8) as i32,
+                karte_virtual_sp_reg,
+                karte_virtual_sp_reg,
+                stack_space as i32,
             );
         }
-
-        self.emit_add_reg_reg_imm(
-            code_builder,
-            AArch64Register::SP as u8,
-            AArch64Register::SP as u8,
-            stack_space as i32,
-        );
     }
 
     /// 生成ADD三寄存器指令
@@ -1136,38 +1202,48 @@ impl AArch64Compiler {
             .get_physical_register(&karte_lir::Register::Physical(7))
             .unwrap_or(7);
 
-        // 🔧 修复：保存 VM_SP (X6) 和 VM_FP (X7) 到栈
-        // 因为它们在 AAPCS64 中是 caller-saved，但 VM 期望它们是 callee-saved
-        // STP X6, X7, [SP, #-16]!
-        // 0xA9BF1FE6
-        let stp_x6_x7 = 0xA9BF1FE6u32;
-        code_builder.emit_bytes(&stp_x6_x7.to_le_bytes());
+        if self.debug_mode {
+            log::debug!("序言开始：生成符合 AAPCS64 的函数序言");
+        }
 
-        // 标准函数序言：保存帧指针和链接寄存器
+        // AAPCS64 标准序言：
+        // 1. 首先保存帧指针和链接寄存器（标准 C 序言）
         // STP X29, X30, [SP, #-16]!
-        let instruction = 0xA9BF7BFDu32;
-        code_builder.emit_bytes(&instruction.to_le_bytes());
+        let stp_x29_x30 = 0xA9BF7BFDu32;
+        code_builder.emit_bytes(&stp_x29_x30.to_le_bytes());
 
-        // MOV X29, SP (设置帧指针)
+        // 2. 设置新帧指针
+        // MOV X29, SP
         self.emit_mov_reg_reg(
             code_builder,
             AArch64Register::X29 as u8,
             AArch64Register::SP as u8,
         );
 
-        // 🔧 关键修复：将传入的虚拟栈(top/bottom)地址设置到 r6/r7（LIR使用r6/r7作为虚拟SP/FP基准）
+        // 3. 保存其他 callee-saved 寄存器（如果有的话）
+        self.save_callee_saved_registers(code_builder)?;
+
+        // 4. 保存 VM 特殊寄存器（VM 内部需要）
+        // STP X6, X7, [SP, #-16]!
+        let stp_x6_x7 = 0xA9BF1FE6u32;
+        code_builder.emit_bytes(&stp_x6_x7.to_le_bytes());
+
+        // 5. 设置 VM 寄存器
         self.emit_mov_reg_reg(code_builder, vm_sp, x0);
         self.emit_mov_reg_reg(code_builder, vm_fp, x1);
 
-        // 保存返回值槽指针，供Return阶段写回
+        // 6. 为返回值槽分配空间（16字节对齐）
         self.save_return_slot_pointer(code_builder);
 
-        // // 🔧 新增：保存参数寄存器到栈，防止被后续指令覆盖
-        // // STP X0, X1, [SP, #-16]! (保存参数寄存器)
-        // let stp_x0_x1 = 0xA9BF03E0u32;
-        // code_builder.emit_bytes(&stp_x0_x1.to_le_bytes());
-
-        // 此时r6和r7已经包含了虚拟栈的地址，LIR的栈帧管理指令会基于这些值工作
+        // AAPCS64 要求：栈必须在函数入口处16字节对齐
+        // 检查当前栈使用情况：
+        // - 每个 STP 指令分配 16 字节
+        // - callee-saved 寄存器数量决定栈使用量
+        let stack_usage = 16 * (2 + (self.current_function_callee_saved.len() + 1) / 2); // X29/X30 + X6/X7 + callee-saved
+        if self.debug_mode {
+            log::debug!("序言：栈使用量 = {} 字节", stack_usage);
+            log::debug!("序言：{} 个 callee-saved 寄存器", self.current_function_callee_saved.len());
+        }
 
         Ok(())
     }
@@ -1183,21 +1259,24 @@ impl AArch64Compiler {
 
     /// 生成函数尾声
     fn emit_function_epilogue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
-        // // 🔧 新增：恢复参数寄存器
-        // // LDP X0, X1, [SP], #16 (恢复参数寄存器)
-        // let ldp_x0_x1 = 0xA8C103E0u32;
-        // code_builder.emit_bytes(&ldp_x0_x1.to_le_bytes());
+        // AAPCS64 标准尾声：按照序言的逆序恢复寄存器
 
-        // LDP X29, X30, [SP], #16 (post-index load pair)
-        // 恢复帧指针和链接寄存器，并增加栈指针16字节
-        let instruction = 0xA8C17BFDu32; // ldp x29, x30, [sp], #16
-        code_builder.emit_bytes(&instruction.to_le_bytes());
+        // 1. 恢复返回值槽指针（如果有的话）
+        // 注意：这会在 main 函数返回前由 compile_return 处理
+        // 这里不需要处理
 
-        // 🔧 修复：恢复 VM_SP (X6) 和 VM_FP (X7)
+        // 2. 恢复 VM 特殊寄存器（逆序）
         // LDP X6, X7, [SP], #16
-        // 0xA8C11FE6
         let ldp_x6_x7 = 0xA8C11FE6u32;
         code_builder.emit_bytes(&ldp_x6_x7.to_le_bytes());
+
+        // 3. 恢复 callee-saved 寄存器（逆序）
+        self.restore_callee_saved_registers(code_builder)?;
+
+        // 4. 恢复帧指针和链接寄存器（标准 C 尾声）
+        // LDP X29, X30, [SP], #16 (post-index load pair)
+        let ldp_x29_x30 = 0xA8C17BFDu32;
+        code_builder.emit_bytes(&ldp_x29_x30.to_le_bytes());
 
         Ok(())
     }
@@ -1237,8 +1316,9 @@ impl AArch64Compiler {
     }
 
     /// 生成唯一label名称
+    /// 🔧 修复：包含函数名以确保跨函数唯一性
     fn next_label(&mut self, prefix: &str) -> String {
-        let label = format!("{}_{}", prefix, self.unique_label_counter);
+        let label = format!("{}_{}_{}", self.current_function_name, prefix, self.unique_label_counter);
         self.unique_label_counter += 1;
         label
     }
@@ -1252,6 +1332,161 @@ impl AArch64Compiler {
         }
 
         function_name == "main" || function_name == karte_mir::lower::SCRIPT_ENTRY_POINT
+    }
+
+    /// 保存 callee-saved 寄存器
+    fn save_callee_saved_registers(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+        if self.current_function_callee_saved.is_empty() {
+            return Ok(());
+        }
+
+        if self.debug_mode {
+            log::debug!("保存 callee-saved 寄存器: {:?}", self.current_function_callee_saved);
+        }
+
+        // 使用 STP 成对保存（确保 16 字节对齐）
+        let mut regs = self.current_function_callee_saved.clone();
+
+        // 🔧 修复：X29/X30 在标准序言中单独保存，这里排除
+        regs.retain(|&r| r != 29 && r != 30);
+
+        if regs.is_empty() {
+            return Ok(());
+        }
+
+        // 排序以确保确定性的输出
+        regs.sort_unstable();
+
+        if self.debug_mode {
+            log::debug!("准备保存的 callee-saved 寄存器（排序后）: {:?}", regs);
+        }
+
+        // AAPCS64 要求栈16字节对齐，STP指令总是操作16字节
+        // 成对保存寄存器，如果是奇数个需要额外填充
+        let pairs = regs.chunks_exact(2);
+        let remainder = pairs.remainder();
+
+        // 处理完整的寄存器对
+        for chunk in pairs {
+            let reg1 = chunk[0];
+            let reg2 = chunk[1];
+
+            // 将 Karte 物理寄存器映射到 AArch64 寄存器
+            let aarch64_reg1 = self.get_physical_register(&Register::Physical(reg1))?;
+            let aarch64_reg2 = self.get_physical_register(&Register::Physical(reg2))?;
+
+            // STP Xreg1, Xreg2, [SP, #-16]!
+            // 🔧 修复：正确的 STP 指令编码
+            // - 基址 0xA9BF03E0 包含 Rn = 31 (SP)
+            // - Rt  (reg1) 在 bits [4:0]，shift = 0
+            // - Rt2 (reg2) 在 bits [14:10]，shift = 10
+            let instruction = 0xA9BF03E0u32 |
+                            ((aarch64_reg1 as u32 & 0x1F) << 0) |
+                            ((aarch64_reg2 as u32 & 0x1F) << 10);
+
+            if self.debug_mode {
+                log::debug!("生成 STP 指令: p{} -> X{}, p{} -> X{}",
+                    reg1, aarch64_reg1, reg2, aarch64_reg2);
+            }
+
+            code_builder.emit_bytes(&instruction.to_le_bytes());
+        }
+
+        // 如果有奇数个寄存器，需要特殊处理
+        if !remainder.is_empty() {
+            let reg = remainder[0];
+            let aarch64_reg = self.get_physical_register(&Register::Physical(reg))?;
+
+            if self.debug_mode {
+                log::debug!("奇数个 callee-saved 寄存器，使用 STP 配合零寄存器保存 p{} -> X{}", reg, aarch64_reg);
+            }
+
+            // 使用 XZR (零寄存器) 作为配对
+            // STP Xreg, XZR, [SP, #-16]!
+            // 🔧 修复：正确的 STP 指令编码
+            // - 基址 0xA9BF7FE0 包含 Rn = 31 (SP) 和 Rt2 = 31 (XZR)
+            // - Rt (reg) 在 bits [4:0]
+            let instruction = 0xA9BF7FE0u32 | ((aarch64_reg as u32 & 0x1F) << 0);
+            code_builder.emit_bytes(&instruction.to_le_bytes());
+        }
+
+        Ok(())
+    }
+
+    /// 恢复 callee-saved 寄存器
+    fn restore_callee_saved_registers(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+        if self.current_function_callee_saved.is_empty() {
+            return Ok(());
+        }
+
+        if self.debug_mode {
+            log::debug!("恢复 callee-saved 寄存器: {:?}", self.current_function_callee_saved);
+        }
+
+        // 准备恢复列表（需要逆序）
+        let mut regs = self.current_function_callee_saved.clone();
+
+        // 排除 X29/X30（在标准尾声中单独恢复）
+        regs.retain(|&r| r != 29 && r != 30);
+
+        if regs.is_empty() {
+            return Ok(());
+        }
+
+        // 排序以确保确定性的输出（保存时排序了，恢复时也要排序以便逆序）
+        regs.sort_unstable();
+
+        if self.debug_mode {
+            log::debug!("准备恢复的 callee-saved 寄存器（排序后）: {:?}", regs);
+        }
+
+        // 成对和奇数处理
+        let pairs = regs.chunks_exact(2);
+        let remainder = pairs.remainder();
+
+        // 收集所有需要恢复的指令
+        // 🔧 修复：恢复顺序必须与保存顺序完全相反
+        // 保存时：pairs正序 + remainder = [19/20, 21/22, 23/24, 25/26] + [27/XZR]
+        // 栈布局（从栈顶到栈底）：[27/XZR, 25/26, 23/24, 21/22, 19/20]
+        // 恢复时：应该 [27/XZR, 25/26, 23/24, 21/22, 19/20]
+        let mut restore_instructions = Vec::new();
+
+        // 1. 先处理奇数寄存器（在栈顶，需要先恢复）
+        if !remainder.is_empty() {
+            let reg = remainder[0];
+            let aarch64_reg = self.get_physical_register(&Register::Physical(reg))?;
+
+            if self.debug_mode {
+                log::debug!("恢复奇数个 callee-saved 寄存器: p{} -> X{}", reg, aarch64_reg);
+            }
+
+            // LDP Xreg, XZR, [SP], #16
+            let instruction = 0xA8C17FE0u32 | ((aarch64_reg as u32 & 0x1F) << 0);
+            restore_instructions.push(instruction);
+        }
+
+        // 2. 然后逆序处理完整的寄存器对
+        for chunk in pairs.rev() {
+            let reg1 = chunk[0];
+            let reg2 = chunk[1];
+
+            let aarch64_reg1 = self.get_physical_register(&Register::Physical(reg1))?;
+            let aarch64_reg2 = self.get_physical_register(&Register::Physical(reg2))?;
+
+            // LDP Xreg1, Xreg2, [SP], #16
+            let instruction = 0xA8C103E0u32 |
+                            ((aarch64_reg1 as u32 & 0x1F) << 0) |
+                            ((aarch64_reg2 as u32 & 0x1F) << 10);
+
+            restore_instructions.push(instruction);
+        }
+
+        // 3. 正序生成恢复指令（已经按照正确的恢复顺序收集了）
+        for instruction in restore_instructions {
+            code_builder.emit_bytes(&instruction.to_le_bytes());
+        }
+
+        Ok(())
     }
 }
 
@@ -1267,27 +1502,34 @@ impl JitCompiler for AArch64Compiler {
             log::debug!("AArch64: 开始编译函数 '{}'", function.name);
         }
 
+        // 🔧 修复：设置当前函数名，用于生成唯一label
+        self.current_function_name = function.name.clone();
+        self.unique_label_counter = 0; // 重置计数器
+
+        // 缓存当前函数的 callee-saved 信息
+        self.current_function_callee_saved = function.get_used_callee_saved().to_vec();
+
         // 创建代码构建器
         let mut code_builder = CodeBuilder::new();
 
-        // 生成函数标签
+        // 生成函数标签（这是函数的入口点）
         let function_label = format!("func_{}", function.name);
         code_builder.define_label(&function_label)?;
+
+        let is_main_function = self.is_entry_function(&function.name, program);
+        // 生成函数序言（在函数标签之后，但在实际代码之前）
+        if is_main_function {
+            self.emit_function_prologue(&mut code_builder)?;
+        } else {
+            // 简化序言：用于内部函数调用
+            self.emit_internal_function_prologue(&mut code_builder)?;
+        }
 
         // 检查第一个instruction是label，是则编译，不是则返回错误
         if let Some(Instruction::Label { id, .. }) = function.instructions.first() {
             code_builder.define_label(&format!("label_{}", id.0))?;
         } else {
             return Err(format!("函数 '{}' 的第一个指令必须是label", function.name));
-        }
-
-        let is_main_function = self.is_entry_function(&function.name, program);
-        // 生成函数序言
-        if is_main_function {
-            self.emit_function_prologue(&mut code_builder)?;
-        } else {
-            // 简化序言：用于内部函数调用
-            self.emit_internal_function_prologue(&mut code_builder)?;
         }
         // 编译所有指令
         for instruction in function.instructions.iter().skip(1) {
@@ -1348,6 +1590,10 @@ impl JitCompiler for AArch64Compiler {
             log::debug!("AArch64: 开始编译函数 '{}' (使用全局标签表)", function.name);
         }
 
+        // 🔧 修复：设置当前函数名，用于生成唯一label
+        self.current_function_name = function.name.clone();
+        self.unique_label_counter = 0; // 重置计数器
+
         let mut code_builder = if self.debug_mode {
             CodeBuilder::with_debug_info()
         } else {
@@ -1361,25 +1607,30 @@ impl JitCompiler for AArch64Compiler {
             .collect();
         code_builder.set_global_labels(global_labels_usize);
 
-        // 生成函数标签
+        // 🔧 修复：设置当前函数使用的 callee-saved 寄存器
+        self.current_function_callee_saved = function.get_used_callee_saved().to_vec();
+
+        // 生成函数标签（这是函数的入口点）
         let function_label = format!("func_{}", function.name);
         code_builder.define_label(&function_label)?;
 
         // 🔧 修复：只有main函数才需要C FFI序言尾声，其他函数使用简化版本
         let is_main_function = self.is_entry_function(&function.name, program);
-        // 检查第一个instruction是label，是则编译，不是则返回错误
-        if let Some(Instruction::Label { id, .. }) = function.instructions.first() {
-            code_builder.define_label(&format!("label_{}", id.0))?;
-        } else {
-            return Err(format!("函数 '{}' 的第一个指令必须是label", function.name));
-        }
 
+        // 生成函数序言（在函数标签之后，但在实际代码之前）
         if is_main_function {
             // C FFI序言：用于main函数的外部调用
             self.emit_function_prologue(&mut code_builder)?;
         } else {
             // 简化序言：用于内部函数调用
             self.emit_internal_function_prologue(&mut code_builder)?;
+        }
+
+        // 检查第一个instruction是label，是则编译，不是则返回错误
+        if let Some(Instruction::Label { id, .. }) = function.instructions.first() {
+            code_builder.define_label(&format!("label_{}", id.0))?;
+        } else {
+            return Err(format!("函数 '{}' 的第一个指令必须是label", function.name));
         }
 
         // 编译函数体

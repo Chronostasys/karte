@@ -32,6 +32,7 @@ fn parse_lir_file(content: &str) -> Result<LirFunction, String> {
         struct_types: HashMap::new(),
         stack_frame_size: 0,
         parameter_count: 0,
+        used_callee_saved: Vec::new(),
     };
 
     // 解析指令
@@ -262,15 +263,16 @@ L1:
     assert!(matches!(result, PassResult::Changed));
 
     // 验证所有寄存器都在物理寄存器范围内
+    // 🔧 修复：现在支持 callee-saved 寄存器，物理寄存器范围扩展到 0-31
     let uses_only_physical_regs = function.instructions.iter().all(|inst| {
         let used_regs = inst.get_used_registers();
         let def_reg = inst.get_def_register();
 
-        // 检查所有使用的寄存器都是物理寄存器 (r0-r7)
-        let used_ok = used_regs.iter().all(|reg| reg.id() <= 7);
+        // 检查所有使用的寄存器都是物理寄存器 (r0-r31)
+        let used_ok = used_regs.iter().all(|reg| reg.is_physical() && reg.id() <= 31);
         let def_ok = match def_reg {
             None => true,
-            Some(reg) => reg.id() <= 7,
+            Some(reg) => reg.is_physical() && reg.id() <= 31,
         };
 
         used_ok && def_ok
@@ -434,6 +436,7 @@ fn test_function_parameter_register_allocation() {
         struct_types: HashMap::new(),
         stack_frame_size: 0,
         parameter_count: 3,
+        used_callee_saved: Vec::new(),
     };
 
     info!("🧪 测试前的函数参数: {:?}", function.parameter_registers);
