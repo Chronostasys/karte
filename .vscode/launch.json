@@ -9,7 +9,7 @@
             "request": "launch",
             "name": "Debug Function Compile",
             "program": "${workspaceFolder}/target/debug/karte",
-            "args": ["run", "/Users/bobli/src/karte/test_two_calls_no_deref.karte"],
+            "args": ["run", "/tmp/test_gc_scan.karte"],
             "cwd": "${workspaceFolder}"
         },
         {
