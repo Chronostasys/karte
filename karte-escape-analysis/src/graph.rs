@@ -31,19 +31,95 @@ pub enum DependencyEdge {
     HeapStore,
 }
 
+/// 边权重：追踪指针"深度"变化
+/// 用于Go风格的逃逸分析，追踪取地址和解引用操作
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeWeight {
+    /// -1: 取地址操作（增加指针层级）
+    /// 例如: ptr = &value，从value到ptr的权重是AddressOf
+    AddressOf,
+
+    /// 0: 直接赋值，指针深度不变
+    /// 例如: y = x，权重是Identity
+    Identity,
+
+    /// +1: 解引用操作（减少指针层级）
+    /// 例如: value = *ptr，从ptr到value的权重是Dereference
+    Dereference,
+}
+
+/// 带权重的依赖边
+/// 结合边类型和权重，用于精确的逃逸分析
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WeightedEdge {
+    /// 边类型
+    pub edge_type: DependencyEdge,
+
+    /// 边权重
+    pub weight: EdgeWeight,
+}
+
+/// 节点元数据
+/// 存储变量节点的额外信息，用于更精确的逃逸分析
+#[derive(Debug, Clone)]
+pub struct NodeMetadata {
+    /// 指针深度（0=值，1=&value，-1=*ptr，2=&&value等）
+    pub pointer_depth: i32,
+
+    /// 是否是函数参数
+    pub is_parameter: bool,
+
+    /// 定义位置的基本块ID
+    pub definition_block: Option<karte_mir::BasicBlockId>,
+
+    /// 最后使用位置的基本块ID
+    pub last_use_block: Option<karte_mir::BasicBlockId>,
+}
+
+impl NodeMetadata {
+    /// 创建默认的节点元数据
+    pub fn new() -> Self {
+        Self {
+            pointer_depth: 0,
+            is_parameter: false,
+            definition_block: None,
+            last_use_block: None,
+        }
+    }
+
+    /// 创建参数节点的元数据
+    pub fn new_parameter() -> Self {
+        Self {
+            pointer_depth: 0,
+            is_parameter: true,
+            definition_block: None,
+            last_use_block: None,
+        }
+    }
+}
+
+impl Default for NodeMetadata {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// 变量依赖图
 #[derive(Debug, Default)]
 pub struct VariableGraph {
     /// 前向边: 变量 -> 依赖它的变量
     /// 例如: x = y, 则 y -> x (y 有一条边指向 x)
-    forward_edges: HashMap<VariableId, Vec<(VariableId, DependencyEdge)>>,
+    forward_edges: HashMap<VariableId, Vec<(VariableId, WeightedEdge)>>,
 
     /// 后向边: 变量 -> 它依赖的变量
     /// 例如: x = y, 则 x -> y (x 依赖 y)
-    backward_edges: HashMap<VariableId, Vec<(VariableId, DependencyEdge)>>,
+    backward_edges: HashMap<VariableId, Vec<(VariableId, WeightedEdge)>>,
 
     /// 变量的逃逸状态缓存
     escape_cache: HashMap<VariableId, EscapeState>,
+
+    /// 节点元数据：存储每个变量的额外信息
+    node_metadata: HashMap<VariableId, NodeMetadata>,
 }
 
 impl VariableGraph {
@@ -55,21 +131,54 @@ impl VariableGraph {
     /// 添加依赖边: from -> to
     /// 表示 `to` 依赖于 `from` (例如: to = from)
     pub fn add_edge(&mut self, from: VariableId, to: VariableId, edge_type: DependencyEdge) {
+        // 使用默认权重 Identity
+        let weighted_edge = WeightedEdge {
+            edge_type,
+            weight: EdgeWeight::Identity,
+        };
+        self.add_weighted_edge(from, to, weighted_edge);
+    }
+
+    /// 添加带权重的依赖边: from -> to
+    /// 这是新的核心方法，支持追踪指针深度变化
+    pub fn add_weighted_edge(&mut self, from: VariableId, to: VariableId, edge: WeightedEdge) {
         // 前向边: from -> to
         self.forward_edges
             .entry(from)
             .or_insert_with(Vec::new)
-            .push((to, edge_type));
+            .push((to, edge));
 
         // 后向边: to -> from
         self.backward_edges
             .entry(to)
             .or_insert_with(Vec::new)
-            .push((from, edge_type));
+            .push((from, edge));
 
         // 清除逃逸状态缓存
         self.escape_cache.remove(&from);
         self.escape_cache.remove(&to);
+
+        // 更新指针深度（如果元数据存在）
+        if let (Some(from_meta), Some(to_meta)) = (
+            self.node_metadata.get(&from).cloned(),
+            self.node_metadata.get_mut(&to),
+        ) {
+            // 根据边权重计算目标节点的指针深度
+            match edge.weight {
+                EdgeWeight::AddressOf => {
+                    // ptr = &value: ptr的深度 = value的深度 + 1
+                    to_meta.pointer_depth = from_meta.pointer_depth + 1;
+                }
+                EdgeWeight::Identity => {
+                    // y = x: y的深度 = x的深度
+                    to_meta.pointer_depth = from_meta.pointer_depth;
+                }
+                EdgeWeight::Dereference => {
+                    // value = *ptr: value的深度 = ptr的深度 - 1
+                    to_meta.pointer_depth = from_meta.pointer_depth - 1;
+                }
+            }
+        }
     }
 
     /// 添加简单赋值依赖: target = source
@@ -119,7 +228,7 @@ impl VariableGraph {
     }
 
     /// 获取变量的所有前向依赖（依赖该变量的其他变量）
-    pub fn get_dependents(&self, var_id: &VariableId) -> Vec<(VariableId, DependencyEdge)> {
+    pub fn get_dependents(&self, var_id: &VariableId) -> Vec<(VariableId, WeightedEdge)> {
         self.forward_edges
             .get(var_id)
             .cloned()
@@ -127,7 +236,7 @@ impl VariableGraph {
     }
 
     /// 获取变量的所有后向依赖（该变量依赖的其他变量）
-    pub fn get_dependencies(&self, var_id: &VariableId) -> Vec<(VariableId, DependencyEdge)> {
+    pub fn get_dependencies(&self, var_id: &VariableId) -> Vec<(VariableId, WeightedEdge)> {
         self.backward_edges
             .get(var_id)
             .cloned()
@@ -175,8 +284,8 @@ impl VariableGraph {
                 // 因为如果 y = x 且 y 逃逸，则 x 也应该逃逸
                 let dependencies = self.get_dependencies(&current_var);
                 log::debug!("  {:?} 的后向依赖（依赖的变量）: {:?}", current_var, dependencies);
-                for (dependency_var, edge_type) in dependencies {
-                    let propagated_state = self.compute_backward_propagated_state(new_state, edge_type);
+                for (dependency_var, edge) in dependencies {
+                    let propagated_state = self.compute_backward_propagated_state(new_state, edge);
                     log::debug!("    -> 反向传播到 {:?}: {:?}", dependency_var, propagated_state);
                     work_queue.push_back((dependency_var, propagated_state));
                 }
@@ -185,8 +294,8 @@ impl VariableGraph {
                 // 因为如果 x 逃逸且 y = x，则 y 也应该逃逸
                 let dependents = self.get_dependents(&current_var);
                 log::debug!("  {:?} 的前向依赖（被依赖的变量）: {:?}", current_var, dependents);
-                for (dependent_var, edge_type) in dependents {
-                    let propagated_state = self.compute_forward_propagated_state(new_state, edge_type);
+                for (dependent_var, edge) in dependents {
+                    let propagated_state = self.compute_forward_propagated_state(new_state, edge);
                     log::debug!("    -> 前向传播到 {:?}: {:?}", dependent_var, propagated_state);
                     work_queue.push_back((dependent_var, propagated_state));
                 }
@@ -199,6 +308,31 @@ impl VariableGraph {
     /// 计算反向传播后的逃逸状态（沿着依赖链向后传播）
     /// 例如：y = x, 如果 y 逃逸，x 也应该逃逸
     fn compute_backward_propagated_state(
+        &self,
+        source_state: EscapeState,
+        edge: WeightedEdge,
+    ) -> EscapeState {
+        // 根据边权重调整传播逻辑
+        match edge.weight {
+            EdgeWeight::AddressOf => {
+                // y = &x, 如果 y 逃逸，x 也逃逸
+                // 因为y持有x的地址，y逃逸意味着x的地址逃逸
+                source_state
+            }
+            EdgeWeight::Dereference => {
+                // y = *x, 如果 y 逃逸，x 不一定逃逸
+                // 因为只是读取x指向的值，不影响x本身
+                EscapeState::NoEscape
+            }
+            EdgeWeight::Identity => {
+                // 按边类型处理
+                self.compute_backward_propagated_state_by_edge_type(source_state, edge.edge_type)
+            }
+        }
+    }
+
+    /// 根据边类型计算反向传播状态
+    fn compute_backward_propagated_state_by_edge_type(
         &self,
         source_state: EscapeState,
         edge_type: DependencyEdge,
@@ -221,6 +355,30 @@ impl VariableGraph {
     /// 计算前向传播后的逃逸状态（沿着依赖链向前传播）
     /// 例如：y = x, 如果 x 逃逸，y 也应该逃逸
     fn compute_forward_propagated_state(
+        &self,
+        source_state: EscapeState,
+        edge: WeightedEdge,
+    ) -> EscapeState {
+        // 根据边权重调整传播逻辑
+        match edge.weight {
+            EdgeWeight::AddressOf => {
+                // ptr = &value, 如果 value 逃逸，ptr 也逃逸
+                source_state
+            }
+            EdgeWeight::Dereference => {
+                // val = *ptr, 如果 ptr 逃逸，val 不一定逃逸
+                // 因为只是读取指向的值
+                EscapeState::NoEscape
+            }
+            EdgeWeight::Identity => {
+                // 按边类型处理
+                self.compute_forward_propagated_state_by_edge_type(source_state, edge.edge_type)
+            }
+        }
+    }
+
+    /// 根据边类型计算前向传播状态
+    fn compute_forward_propagated_state_by_edge_type(
         &self,
         source_state: EscapeState,
         edge_type: DependencyEdge,
@@ -352,11 +510,27 @@ impl VariableGraph {
         }
     }
 
+    /// 获取节点元数据
+    pub fn get_node_metadata(&self, var_id: &VariableId) -> Option<&NodeMetadata> {
+        self.node_metadata.get(var_id)
+    }
+
+    /// 设置节点元数据
+    pub fn set_node_metadata(&mut self, var_id: VariableId, metadata: NodeMetadata) {
+        self.node_metadata.insert(var_id, metadata);
+    }
+
+    /// 获取或创建节点元数据
+    pub fn get_or_create_node_metadata(&mut self, var_id: VariableId) -> &mut NodeMetadata {
+        self.node_metadata.entry(var_id).or_insert_with(NodeMetadata::new)
+    }
+
     /// 清空图
     pub fn clear(&mut self) {
         self.forward_edges.clear();
         self.backward_edges.clear();
         self.escape_cache.clear();
+        self.node_metadata.clear();
     }
 }
 

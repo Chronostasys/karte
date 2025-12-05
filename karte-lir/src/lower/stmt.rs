@@ -46,12 +46,16 @@ pub(super) fn lower_statement(
 
             // 1. 获取源值的R-Value（值本身）
             let src_rvalue = ctx.lower_to_rvalue(source);
+            log::debug!("📝 Assign: target={:?}, source={:?}, src_rvalue={:?}",
+                target, source, src_rvalue);
 
             // 2. 获取目标的L-Value（存储位置）
             let target_lvalue = ctx.lower_to_lvalue(target);
 
             // 3. 执行赋值：将源值存储到目标位置
             if let Operand::Register { id: target_addr } = target_lvalue {
+                log::debug!("📝 Assign Store64: target_addr={:?}, src={:?}",
+                    target_addr, src_rvalue);
                 ctx.add_instruction(Instruction::Store64 {
                     addr: target_addr,
                     offset: 0,

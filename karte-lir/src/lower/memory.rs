@@ -94,15 +94,20 @@ impl LirLoweringContext {
 
         // 确保值已经有栈空间分配
         let stack_addr = if let Some(&existing_addr) = self.stack_allocations.get(&value_key) {
+            log::debug!("💾 store_value_to_stack: value={:?}, existing_addr={:?}, src={:?}",
+                value, existing_addr, src_operand);
             existing_addr
         } else {
             // 如果没有分配，现在分配
             let addr = self.allocate_stack_slot_for_value(value);
             self.stack_allocations.insert(value_key.clone(), addr);
+            log::debug!("💾 store_value_to_stack: value={:?}, NEW_addr={:?}, src={:?}",
+                value, addr, src_operand);
             addr
         };
 
         // 存储值到栈上
+        log::debug!("💾 Store64: stack_addr={:?}, src={:?}", stack_addr, src_operand);
         self.add_instruction(Instruction::Store64 {
             addr: stack_addr,
             offset: 0,
@@ -356,6 +361,8 @@ impl LirLoweringContext {
                         // 其他值：从地址加载内容
                         if let Operand::Register { id: addr_reg } = lvalue {
                             let temp_reg = self.current_function_mut().new_register();
+                            log::debug!("🔍 lower_to_rvalue: 为 {:?} 生成Load64指令: addr={:?}, dst={:?}",
+                                value, addr_reg, temp_reg);
                             self.add_instruction(Instruction::Load64 {
                                 dst: temp_reg,
                                 addr: addr_reg,
@@ -365,6 +372,8 @@ impl LirLoweringContext {
                             Operand::Register { id: temp_reg }
                         } else {
                             // 如果L-Value不是寄存器，直接返回
+                            log::warn!("⚠️ lower_to_rvalue: lvalue不是Register，直接返回地址！value={:?}, lvalue={:?}",
+                                value, lvalue);
                             lvalue
                         }
                     }

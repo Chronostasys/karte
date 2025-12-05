@@ -108,10 +108,16 @@ impl CallingConvention {
         caller_saved.insert(REG_ARG3); // 参数4
 
         let mut callee_saved = HashSet::new();
-        callee_saved.insert(REG_RETURN_ADDRESS); // 返回地址
-        callee_saved.insert(REG_STACK_POINTER); // 栈指针
-        callee_saved.insert(REG_FRAME_POINTER); // 帧指针
-        callee_saved.insert(REG_EFFECT_STACK_POINTER); // effect栈指针
+        callee_saved.insert(REG_RETURN_ADDRESS); // 返回地址 r5
+        callee_saved.insert(REG_STACK_POINTER); // 栈指针 r6
+        callee_saved.insert(REG_FRAME_POINTER); // 帧指针 r7
+        callee_saved.insert(REG_EFFECT_STACK_POINTER); // effect栈指针 r12
+
+        // 添加 r8-r31 作为 callee-saved 寄存器
+        // 注意：r11 (X11) 在 AAPCS64 中是临时寄存器，但我们在这里也将其作为 callee-saved
+        for reg in 8..32 {
+            callee_saved.insert(reg);
+        }
 
         Self {
             argument_registers: vec![REG_ARG0, REG_ARG1, REG_ARG2, REG_ARG3],
@@ -125,7 +131,19 @@ impl CallingConvention {
             effect_payload_register: REG_EFFECT_PAYLOAD,
             effect_tag_register: REG_EFFECT_TAG,
             effect_resume_temp: REG_EFFECT_RESUME_TMP,
-            temp_registers: vec![REG_RETURN, REG_ARG1, REG_ARG2, REG_ARG3], // 临时寄存器可重用参数和返回值寄存器
+            temp_registers: {
+                // 临时寄存器：除了特殊寄存器外的所有寄存器
+                let mut temps = Vec::new();
+                // 添加参数寄存器作为临时寄存器
+                temps.extend_from_slice(&[REG_RETURN, REG_ARG1, REG_ARG2, REG_ARG3]);
+                // 添加 callee-saved 寄存器 r8-r31 作为临时寄存器
+                for reg in 8..32 {
+                    if reg != REG_EFFECT_STACK_POINTER {
+                        temps.push(reg);
+                    }
+                }
+                temps
+            }, // 临时寄存器包括参数寄存器和callee-saved寄存器
         }
     }
 
@@ -179,9 +197,8 @@ impl CallingConvention {
 
     /// 获取可用于寄存器分配的通用寄存器
     pub fn get_allocatable_registers(&self) -> Vec<PhysicalRegister> {
-        // 现在溢出重写已经完善，可以安全地把 r1 留给 effect payload/resume。
-        // 这样做可以确保 effect ABI 中的 payload 寄存器不会被普通分配污染。
-        (0..8u8)
+        // 扩展寄存器池，包含 r8-r31 作为 callee-saved 寄存器使用
+        (0..32u8)
             .filter(|&reg| {
                 ![
                     self.return_register,
@@ -194,6 +211,28 @@ impl CallingConvention {
                 .contains(&reg)
             })
             .collect()
+    }
+
+    /// 获取 AArch64 callee-saved 寄存器列表
+    /// 根据 AAPCS64 标准，X19-X28、X29(FP)、X30(LR) 是 callee-saved
+    pub fn get_aarch64_callee_saved(&self) -> Vec<PhysicalRegister> {
+        vec![19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
+    }
+
+    /// 检查物理寄存器是否是 AArch64 callee-saved
+    pub fn is_aarch64_callee_saved(&self, reg: PhysicalRegister) -> bool {
+        matches!(reg, 19..=30)
+    }
+
+    /// 获取 AArch64 caller-saved 寄存器列表
+    /// 根据 AAPCS64 标准，X0-X18 是 caller-saved
+    pub fn get_aarch64_caller_saved(&self) -> Vec<PhysicalRegister> {
+        vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+    }
+
+    /// 检查物理寄存器是否是 AArch64 caller-saved
+    pub fn is_aarch64_caller_saved(&self, reg: PhysicalRegister) -> bool {
+        matches!(reg, 0..=18)
     }
 }
 
@@ -261,12 +300,19 @@ mod tests {
 
         // 测试可分配寄存器
         let allocatable = cc.get_allocatable_registers();
-        assert_eq!(allocatable, vec![REG_ARG1, REG_ARG2, REG_ARG3]);
+        // 验证保留寄存器不被分配
+        assert!(!allocatable.contains(&REG_RETURN)); // 返回值寄存器保留
         assert!(!allocatable.contains(&REG_STACK_POINTER)); // SP不应该被分配
         assert!(!allocatable.contains(&REG_FRAME_POINTER)); // FP不应该被分配
         assert!(!allocatable.contains(&REG_RETURN_ADDRESS)); // 返回地址保留
         assert!(!allocatable.contains(&REG_EFFECT_STACK_POINTER)); // effect 栈顶不可分配
         assert!(!allocatable.contains(&REG_EFFECT_PAYLOAD)); // effect payload 保留
+        // 验证参数寄存器应该可以被分配
+        assert!(allocatable.contains(&REG_ARG1));
+        assert!(allocatable.contains(&REG_ARG2));
+        assert!(allocatable.contains(&REG_ARG3));
+        // 验证allocatable_registers应该包含callee-saved寄存器
+        assert!(allocatable.len() > 3, "应该包含更多可分配寄存器（包括callee-saved）");
     }
 
     #[test]

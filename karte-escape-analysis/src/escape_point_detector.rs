@@ -180,7 +180,7 @@ impl EscapePointDetector {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use karte_escape_analysis::{AllocationSuggestion, EscapeState, VariableEscapeInfo, VariableId};
+    use crate::{AllocationSuggestion, EscapeState, VariableEscapeInfo, VariableId};
     use karte_diagnostics::Span;
 
     #[test]

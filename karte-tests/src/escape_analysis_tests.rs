@@ -351,7 +351,8 @@ fn main() -> number {
     let lambda0 = mir.functions.get("lambda$0").expect("lambda$0 not found");
     let bb0 = lambda0.basic_blocks.get(&lambda0.entry_block).expect("bb0 not found");
 
-    // 应该有 2 个 HeapAlloc（分别为 d 和 e）
+    // ✅ Phase 1优化：ptr1和ptr2只在本地使用，没有逃逸
+    // 因此 d 和 e 不需要堆分配，应该是 0 个 HeapAlloc
     let heap_alloc_count = bb0
         .statements
         .iter()
@@ -359,11 +360,11 @@ fn main() -> number {
         .count();
 
     assert_eq!(
-        heap_alloc_count, 2,
-        "Should have 2 HeapAlloc instructions for d and e"
+        heap_alloc_count, 0,
+        "Should have 0 HeapAlloc instructions because ptr1 and ptr2 don't escape"
     );
 
-    // 应该有 2 个 Store
+    // 相应地，应该没有 Store 指令
     let store_count = bb0
         .statements
         .iter()
@@ -371,7 +372,7 @@ fn main() -> number {
         .count();
 
     assert_eq!(
-        store_count, 2,
-        "Should have 2 Store instructions for d and e"
+        store_count, 0,
+        "Should have 0 Store instructions because d and e are stack-allocated"
     );
 }

@@ -49,7 +49,7 @@ fn test_multiple_allocations() {
             let obj_type = match i % 3 {
                 0 => ObjectType::Atomic,
                 1 => ObjectType::Pointer,
-                _ => ObjectType::Complex,
+                _ => ObjectType::Conservative,
             };
 
             let ptr = gc_alloc(size, obj_type);
@@ -72,7 +72,7 @@ fn test_gc_collection() {
 
         // 分配一些对象
         for i in 0..50 {
-            let ptr = gc_alloc(128, ObjectType::Complex);
+            let ptr = gc_alloc(128, ObjectType::Conservative);
             assert!(!ptr.is_null());
 
             // 写入数据
@@ -86,7 +86,7 @@ fn test_gc_collection() {
         println!("GC collection completed successfully");
 
         // 分配后测试，确保 GC 后仍然可以分配
-        let ptr = gc_alloc(256, ObjectType::Complex);
+        let ptr = gc_alloc(256, ObjectType::Conservative);
         assert!(!ptr.is_null(), "Post-GC allocation should succeed");
     }
 }
@@ -99,7 +99,7 @@ fn test_large_object_allocation() {
 
         // 分配一个大对象（1MB）
         let large_size = 1024 * 1024;
-        let ptr = gc_alloc(large_size, ObjectType::Complex);
+        let ptr = gc_alloc(large_size, ObjectType::Conservative);
 
         assert!(!ptr.is_null(), "Large object allocation should succeed");
 
@@ -134,10 +134,10 @@ fn test_object_types() {
         assert!(!pointer_ptr.is_null());
         println!("Allocated Pointer object at {:p}", pointer_ptr);
 
-        // Complex 类型
-        let complex_ptr = gc_alloc(128, ObjectType::Complex);
-        assert!(!complex_ptr.is_null());
-        println!("Allocated Complex object at {:p}", complex_ptr);
+        // Conservative 类型
+        let conservative_ptr = gc_alloc(128, ObjectType::Conservative);
+        assert!(!conservative_ptr.is_null());
+        println!("Allocated Conservative object at {:p}", conservative_ptr);
 
         // 所有类型都应该成功分配
     }
@@ -156,7 +156,7 @@ fn test_allocation_stress() {
             // 每轮分配1000个对象
             for _ in 0..1000 {
                 let size = 64 + (round * 16);
-                let ptr = gc_alloc(size, ObjectType::Complex);
+                let ptr = gc_alloc(size, ObjectType::Conservative);
                 assert!(!ptr.is_null());
             }
 

@@ -1170,6 +1170,7 @@ name = "karte-rt"
 version = "0.1.0"
 dependencies = [
  "karte-gc",
+ "libc",
  "log",
  "serial_test",
 ]
@@ -1184,6 +1185,7 @@ dependencies = [
  "karte-common",
  "karte-diagnostics",
  "karte-escape-analysis",
+ "karte-gc",
  "karte-hir",
  "karte-ir-codec",
  "karte-ir-derive",
