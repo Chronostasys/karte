@@ -5,7 +5,7 @@
 use super::code_buffer::{CodeBuilder, JumpType};
 use super::compiler_trait::*;
 use super::ffi::{RuntimeArg, RuntimeCall};
-use karte_common::calling_convention::{CallingConvention, PhysicalRegister, REG_FRAME_POINTER, REG_RETURN_ADDRESS, REG_STACK_POINTER};
+use karte_common::calling_convention::{CallingConvention, PhysicalRegister, CC};
 use karte_lir::{Instruction, LirFunction, LirProgram, Operand, Register};
 use std::collections::HashMap;
 
@@ -14,14 +14,16 @@ use std::collections::HashMap;
 pub struct AArch64Compiler {
     /// 寄存器映射 (虚拟寄存器 -> 物理寄存器)
     register_mapping: HashMap<Register, u8>,
-    /// 调用约定
-    calling_convention: CallingConventionInfo,
+    /// C FFI调用约定 (AAPCS64)
+    ffi_calling_convention: CallingConventionInfo,
+    /// Karte VM调用约定
+    vm_calling_convention: CallingConvention,
     /// 调试模式
     debug_mode: bool,
     /// 唯一label计数器（用于在编译时生成跳转目标）
     unique_label_counter: usize,
     /// 当前函数使用的 callee-saved 寄存器列表
-    current_function_callee_saved: Vec<PhysicalRegister>,
+    current_function_use_regs: Vec<PhysicalRegister>,
     /// 当前编译的函数名（用于生成唯一label）
     current_function_name: String,
 }
@@ -71,10 +73,11 @@ impl AArch64Compiler {
     pub fn new(debug_mode: bool) -> Result<Self, String> {
         let mut compiler = Self {
             register_mapping: HashMap::new(),
-            calling_convention: Self::create_calling_convention(),
+            ffi_calling_convention: Self::create_calling_convention(),
+            vm_calling_convention: CallingConvention::standard(),
             debug_mode: true, // 强制启用调试模式以便观察编译过程
             unique_label_counter: 0,
-            current_function_callee_saved: Vec::new(),
+            current_function_use_regs: Vec::new(),
             current_function_name: String::new(),
         };
 
@@ -200,7 +203,7 @@ impl AArch64Compiler {
                 29 => AArch64Register::X29 as u8, // r29 (帧指针)
                 30 => AArch64Register::X30 as u8, // r30 (链接寄存器)
                 31 => AArch64Register::SP as u8,  // 栈指针
-                _ => unreachable!(), // 由于循环范围是 0..32，这里不会执行
+                _ => unreachable!(),              // 由于循环范围是 0..32，这里不会执行
             };
             self.register_mapping.insert(physical_reg, aarch64_reg);
         }
@@ -609,16 +612,14 @@ impl AArch64Compiler {
         }
 
         // VM调用约定：返回时需要弹出虚拟返回地址并跳转
-        let vm_sp_reg = self.get_physical_register(&Register::Physical(REG_STACK_POINTER))?;
-        let return_addr_reg =
-            self.get_physical_register(&Register::Physical(REG_RETURN_ADDRESS))?;
-
+        let vm_sp_reg = self.vm_calling_convention.stack_pointer;
+        let return_addr_reg = self.vm_calling_convention.return_address;
 
         if is_main_function {
-                    // 加载返回地址到专用寄存器
-        self.emit_ldr_reg_mem(code_builder, return_addr_reg, vm_sp_reg, 0);
-        // 弹出返回地址槽位
-        self.emit_add_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 8);
+            // 加载返回地址到专用寄存器
+            self.emit_ldr_reg_mem(code_builder, return_addr_reg, vm_sp_reg, 0);
+            // 弹出返回地址槽位
+            self.emit_add_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 8);
             // main 函数负责从VM世界回退到宿主环境
             let host_return_label = self.next_label("jit_return_host");
             self.emit_cmp_reg_imm(code_builder, return_addr_reg, 0);
@@ -627,7 +628,7 @@ impl AArch64Compiler {
             // 非零返回地址：继续在JIT世界中执行
             // 🔧 修复：如果是JIT内部调用，不需要写回返回槽（因为调用者没传槽指针）
             // 直接返回X0中的值即可
-            let ret_reg = Register::Physical(REG_RETURN_ADDRESS);
+            let ret_reg = Register::Physical(return_addr_reg);
             self.compile_jump_register(&ret_reg, code_builder)?;
 
             // 零返回地址：回到宿主
@@ -644,12 +645,10 @@ impl AArch64Compiler {
             // 🔧 修复：内部函数返回前需要恢复 callee-saved 寄存器
             // 否则调用者的寄存器会被破坏
             self.emit_internal_function_epilogue(code_builder)?;
-        // 加载返回地址到专用寄存器
-        self.emit_ldr_reg_mem(code_builder, return_addr_reg, vm_sp_reg, 0);
-        // 弹出返回地址槽位
-        self.emit_add_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 8);
+            // 加载返回地址到专用寄存器
+            self.emit_ldr_reg_mem(code_builder, return_addr_reg, vm_sp_reg, 0);
             // 普通函数：直接跳向被调用者设置的继续执行位置
-            let ret_reg = Register::Physical(REG_RETURN_ADDRESS);
+            let ret_reg = Register::Physical(return_addr_reg);
             self.compile_jump_register(&ret_reg, code_builder)?;
         }
 
@@ -926,16 +925,11 @@ impl AArch64Compiler {
         // 1. Karte caller-saved 寄存器 (r0-r4) 保存到虚拟栈
         // 2. r6 (虚拟SP) 和 r7 (虚拟FP) 保存到系统栈（因为调用 C FFI 时它们会被破坏）
 
-        let karte_virtual_sp_reg = self
-            .get_physical_register(&Register::Physical(REG_STACK_POINTER))
-            .unwrap_or(6);
-        let _karte_virtual_fp_reg = self
-            .get_physical_register(&Register::Physical(REG_FRAME_POINTER))
-            .unwrap_or(7);
+        let karte_virtual_sp_reg = self.vm_calling_convention.stack_pointer;
 
-        // Karte caller-saved: r0-r4，但调用 C FFI 时还需要保护 r5
-        // r6 r7 单独处理
-        let mut regs_to_virtual_stack: Vec<u8> = vec![0, 1, 2, 3, 4, 5]; // r0-r5
+        // IMPORTANT: 将任何有可能包含堆指针的寄存器压stack，保证gc可以正确的扫描它们
+        // FIXME: 应该在这里用生命周期分析分析出具体哪些寄存器需要保存
+        let mut regs_to_virtual_stack: Vec<u8> = (0..=31).collect();
         regs_to_virtual_stack.retain(|reg| !exclude.contains(reg));
 
         let virtual_stack_space = regs_to_virtual_stack.len() * 8;
@@ -952,12 +946,7 @@ impl AArch64Compiler {
 
             // 保存所有寄存器到调整后的虚拟栈上
             for (idx, reg) in regs_to_virtual_stack.iter().enumerate() {
-                self.emit_str_reg_mem(
-                    code_builder,
-                    *reg,
-                    karte_virtual_sp_reg,
-                    (idx * 8) as i32,
-                );
+                self.emit_str_reg_mem(code_builder, *reg, karte_virtual_sp_reg, (idx * 8) as i32);
             }
         }
 
@@ -986,18 +975,11 @@ impl AArch64Compiler {
 
         // 步骤2：恢复 r0-r5 从虚拟栈
         if !regs.is_empty() {
-            let karte_virtual_sp_reg = self
-                .get_physical_register(&Register::Physical(REG_STACK_POINTER))
-                .unwrap_or(6);
+            let karte_virtual_sp_reg = self.vm_calling_convention.stack_pointer;
 
             // 先用偏移加载所有寄存器（保持虚拟SP不变）
             for (idx, reg) in regs.iter().enumerate() {
-                self.emit_ldr_reg_mem(
-                    code_builder,
-                    *reg,
-                    karte_virtual_sp_reg,
-                    (idx * 8) as i32,
-                );
+                self.emit_ldr_reg_mem(code_builder, *reg, karte_virtual_sp_reg, (idx * 8) as i32);
             }
 
             // 然后一次性恢复虚拟栈指针（向上增长）
@@ -1196,6 +1178,16 @@ impl AArch64Compiler {
         }
     }
 
+    fn get_c_ffi_callee_saved_registers(&self) -> Vec<u8> {
+        self.ffi_calling_convention
+            .get_callee_save_registers(&self.current_function_use_regs)
+    }
+
+    fn get_vm_callee_saved_registers(&self) -> Vec<u8> {
+        self.vm_calling_convention
+            .get_callee_save_registers(&self.current_function_use_regs)
+    }
+
     /// 生成函数序言
     fn emit_function_prologue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
         // AArch64 AAPCS64调用约定：X0和X1为前两个参数
@@ -1246,10 +1238,13 @@ impl AArch64Compiler {
         // 检查当前栈使用情况：
         // - 每个 STP 指令分配 16 字节
         // - callee-saved 寄存器数量决定栈使用量
-        let stack_usage = 16 * (2 + (self.current_function_callee_saved.len() + 1) / 2); // X29/X30 + X6/X7 + callee-saved
+        let stack_usage = 16 * (2 + (self.get_c_ffi_callee_saved_registers().len() + 1) / 2); // X29/X30 + X6/X7 + callee-saved
         if self.debug_mode {
             log::debug!("序言：栈使用量 = {} 字节", stack_usage);
-            log::debug!("序言：{} 个 callee-saved 寄存器", self.current_function_callee_saved.len());
+            log::debug!(
+                "序言：{} 个 callee-saved 寄存器",
+                self.get_c_ffi_callee_saved_registers().len()
+            );
         }
 
         Ok(())
@@ -1260,22 +1255,38 @@ impl AArch64Compiler {
         &self,
         code_builder: &mut CodeBuilder,
     ) -> Result<(), String> {
-        // 🔧 修复：内部函数使用简化序言
-        // r6/r7 由调用约定管理， callee-saved 寄存器由 LIR 寄存器分配器处理
-        // 内部函数不需要特殊处理
+        // 首先存fp sp，然后保存callee-saved寄存器
+        // 获取虚拟栈指针寄存器
+        let vm_sp_reg = self.vm_calling_convention.stack_pointer;
+        let vm_fp_reg = self.vm_calling_convention.frame_pointer;
+        // 保存fp sp到虚拟栈
+        self.emit_sub_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 16);
+        self.emit_str_reg_mem(code_builder, vm_fp_reg, vm_sp_reg, 8);
+        self.emit_str_reg_mem(code_builder, vm_sp_reg, vm_sp_reg, 0);
 
-        if self.debug_mode {
-            log::debug!("生成内部函数序言：简化版本");
+        // 使用LIR寄存器分配器计算的实际使用的callee-saved寄存器
+        let callee_saved = &self.get_vm_callee_saved_registers();
+
+        // 早期返回：如果没有需要保存的寄存器
+        if callee_saved.is_empty() {
+            if self.debug_mode {
+                log::debug!("生成内部函数序言：无需保存寄存器");
+            }
+            return Ok(());
         }
 
-        let mut callee_saved = CallingConvention::standard().callee_saved.iter().filter(|a| **a != 6 && **a !=7).cloned().collect::<Vec<u8>>();
-        callee_saved.sort();
+        if self.debug_mode {
+            log::debug!("生成内部函数序言：保存 {} 个寄存器", callee_saved.len());
+        }
 
-        // 获取虚拟栈指针寄存器
-        let vm_sp_reg = self.get_physical_register(&Register::Physical(REG_STACK_POINTER))?;
+        // Debug断言：验证r6/r7永远不会出现在列表中
+        debug_assert!(
+            !callee_saved.contains(&6) && !callee_saved.contains(&7),
+            "r6/r7 should never be in callee_saved list"
+        );
 
         // 保存每个 callee-saved 寄存器到虚拟栈
-        for &reg in &callee_saved {
+        for &reg in callee_saved {
             // 先压入虚拟栈
             self.emit_sub_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 8);
 
@@ -1283,20 +1294,26 @@ impl AArch64Compiler {
             self.emit_str_reg_mem(code_builder, reg, vm_sp_reg, 0);
         }
 
-            eprintln!("保存了 {} 个 callee-saved 寄存器到虚拟栈", callee_saved.len());
+        if self.debug_mode {
+            eprintln!(
+                "保存了 {} 个 callee-saved 寄存器到虚拟栈",
+                callee_saved.len()
+            );
+        }
 
         Ok(())
     }
 
     /// 生成内部函数尾声（用于虚拟机内部函数调用）
-    fn emit_internal_function_epilogue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
-        // 恢复 callee-saved 寄存器（逆序）
+    fn emit_internal_function_epilogue(
+        &self,
+        code_builder: &mut CodeBuilder,
+    ) -> Result<(), String> {
+        let vm_sp_reg = self.vm_calling_convention.stack_pointer;
+        let vm_fp_reg = self.vm_calling_convention.frame_pointer;
 
-        let mut callee_saved = CallingConvention::standard().callee_saved.iter().filter(|a| **a != 6 && **a !=7).cloned().collect::<Vec<u8>>();
-        callee_saved.sort();
-
-        // 获取虚拟栈指针寄存器
-        let vm_sp_reg = self.get_physical_register(&Register::Physical(REG_STACK_POINTER))?;
+        // 使用LIR寄存器分配器计算的实际使用的callee-saved寄存器
+        let callee_saved = &self.get_vm_callee_saved_registers();
 
         // 按逆序恢复寄存器（后进先出）
         for &reg in callee_saved.iter().rev() {
@@ -1308,8 +1325,16 @@ impl AArch64Compiler {
         }
 
         if self.debug_mode {
-            log::debug!("恢复了 {} 个 callee-saved 寄存器从虚拟栈", callee_saved.len());
+            log::debug!(
+                "恢复了 {} 个 callee-saved 寄存器从虚拟栈",
+                callee_saved.len()
+            );
         }
+
+        // 恢复fp sp从虚拟栈
+        self.emit_ldr_reg_mem(code_builder, vm_sp_reg, vm_sp_reg, 0);
+        self.emit_ldr_reg_mem(code_builder, vm_fp_reg, vm_sp_reg, 8);
+        self.emit_add_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 16);
 
         Ok(())
     }
@@ -1375,7 +1400,10 @@ impl AArch64Compiler {
     /// 生成唯一label名称
     /// 🔧 修复：包含函数名以确保跨函数唯一性
     fn next_label(&mut self, prefix: &str) -> String {
-        let label = format!("{}_{}_{}", self.current_function_name, prefix, self.unique_label_counter);
+        let label = format!(
+            "{}_{}_{}",
+            self.current_function_name, prefix, self.unique_label_counter
+        );
         self.unique_label_counter += 1;
         label
     }
@@ -1393,17 +1421,17 @@ impl AArch64Compiler {
 
     /// 保存 callee-saved 寄存器
     fn save_callee_saved_registers(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
-        if self.current_function_callee_saved.is_empty() {
+        let callee_saved = &self.get_c_ffi_callee_saved_registers();
+        if callee_saved.is_empty() {
             return Ok(());
         }
 
         if self.debug_mode {
-            log::debug!("保存 callee-saved 寄存器: {:?}", self.current_function_callee_saved);
+            log::debug!("保存 callee-saved 寄存器: {:?}", callee_saved);
         }
 
         // 使用 STP 成对保存（确保 16 字节对齐）
-        let mut regs = self.current_function_callee_saved.clone();
-
+        let mut regs = callee_saved.clone();
         // 🔧 修复：X29/X30 在标准序言中单独保存，这里排除
         regs.retain(|&r| r != 29 && r != 30);
 
@@ -1437,13 +1465,18 @@ impl AArch64Compiler {
             // - 基址 0xA9BF03E0 包含 Rn = 31 (SP)
             // - Rt  (reg1) 在 bits [4:0]，shift = 0
             // - Rt2 (reg2) 在 bits [14:10]，shift = 10
-            let instruction = 0xA9BF03E0u32 |
-                            ((aarch64_reg1 as u32 & 0x1F) << 0) |
-                            ((aarch64_reg2 as u32 & 0x1F) << 10);
+            let instruction = 0xA9BF03E0u32
+                | ((aarch64_reg1 as u32 & 0x1F) << 0)
+                | ((aarch64_reg2 as u32 & 0x1F) << 10);
 
             if self.debug_mode {
-                log::debug!("生成 STP 指令: p{} -> X{}, p{} -> X{}",
-                    reg1, aarch64_reg1, reg2, aarch64_reg2);
+                log::debug!(
+                    "生成 STP 指令: p{} -> X{}, p{} -> X{}",
+                    reg1,
+                    aarch64_reg1,
+                    reg2,
+                    aarch64_reg2
+                );
             }
 
             code_builder.emit_bytes(&instruction.to_le_bytes());
@@ -1455,7 +1488,11 @@ impl AArch64Compiler {
             let aarch64_reg = self.get_physical_register(&Register::Physical(reg))?;
 
             if self.debug_mode {
-                log::debug!("奇数个 callee-saved 寄存器，使用 STP 配合零寄存器保存 p{} -> X{}", reg, aarch64_reg);
+                log::debug!(
+                    "奇数个 callee-saved 寄存器，使用 STP 配合零寄存器保存 p{} -> X{}",
+                    reg,
+                    aarch64_reg
+                );
             }
 
             // 使用 XZR (零寄存器) 作为配对
@@ -1472,17 +1509,17 @@ impl AArch64Compiler {
 
     /// 恢复 callee-saved 寄存器
     fn restore_callee_saved_registers(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
-        if self.current_function_callee_saved.is_empty() {
+        let callee_saved = &self.get_c_ffi_callee_saved_registers();
+        if callee_saved.is_empty() {
             return Ok(());
         }
 
         if self.debug_mode {
-            log::debug!("恢复 callee-saved 寄存器: {:?}", self.current_function_callee_saved);
+            log::debug!("恢复 callee-saved 寄存器: {:?}", callee_saved);
         }
 
         // 准备恢复列表（需要逆序）
-        let mut regs = self.current_function_callee_saved.clone();
-
+        let mut regs = callee_saved.clone();
         // 排除 X29/X30（在标准尾声中单独恢复）
         regs.retain(|&r| r != 29 && r != 30);
 
@@ -1514,7 +1551,11 @@ impl AArch64Compiler {
             let aarch64_reg = self.get_physical_register(&Register::Physical(reg))?;
 
             if self.debug_mode {
-                log::debug!("恢复奇数个 callee-saved 寄存器: p{} -> X{}", reg, aarch64_reg);
+                log::debug!(
+                    "恢复奇数个 callee-saved 寄存器: p{} -> X{}",
+                    reg,
+                    aarch64_reg
+                );
             }
 
             // LDP Xreg, XZR, [SP], #16
@@ -1531,9 +1572,9 @@ impl AArch64Compiler {
             let aarch64_reg2 = self.get_physical_register(&Register::Physical(reg2))?;
 
             // LDP Xreg1, Xreg2, [SP], #16
-            let instruction = 0xA8C103E0u32 |
-                            ((aarch64_reg1 as u32 & 0x1F) << 0) |
-                            ((aarch64_reg2 as u32 & 0x1F) << 10);
+            let instruction = 0xA8C103E0u32
+                | ((aarch64_reg1 as u32 & 0x1F) << 0)
+                | ((aarch64_reg2 as u32 & 0x1F) << 10);
 
             restore_instructions.push(instruction);
         }
@@ -1564,7 +1605,7 @@ impl JitCompiler for AArch64Compiler {
         self.unique_label_counter = 0; // 重置计数器
 
         // 缓存当前函数的 callee-saved 信息
-        self.current_function_callee_saved = function.get_used_callee_saved().to_vec();
+        self.current_function_use_regs = function.get_used_regs().to_vec();
 
         // 创建代码构建器
         let mut code_builder = CodeBuilder::new();
@@ -1575,11 +1616,9 @@ impl JitCompiler for AArch64Compiler {
 
         let is_main_function = self.is_entry_function(&function.name, program);
         // 生成函数序言（在函数标签之后，但在实际代码之前）
+        // 注意：只有main函数在这里插入prologue，因为main是被外部C代码调用的
         if is_main_function {
             self.emit_function_prologue(&mut code_builder)?;
-        } else {
-            // 简化序言：用于内部函数调用
-            self.emit_internal_function_prologue(&mut code_builder)?;
         }
 
         // 检查第一个instruction是label，是则编译，不是则返回错误
@@ -1588,9 +1627,7 @@ impl JitCompiler for AArch64Compiler {
         } else {
             return Err(format!("函数 '{}' 的第一个指令必须是label", function.name));
         }
-                if is_main_function {
-
-        } else {
+        if !is_main_function {
             // 简化序言：用于内部函数调用
             self.emit_internal_function_prologue(&mut code_builder)?;
         }
@@ -1671,7 +1708,7 @@ impl JitCompiler for AArch64Compiler {
         code_builder.set_global_labels(global_labels_usize);
 
         // 🔧 修复：设置当前函数使用的 callee-saved 寄存器
-        self.current_function_callee_saved = function.get_used_callee_saved().to_vec();
+        self.current_function_use_regs = function.get_used_regs().to_vec();
 
         // 生成函数标签（这是函数的入口点）
         let function_label = format!("func_{}", function.name);
@@ -1681,13 +1718,12 @@ impl JitCompiler for AArch64Compiler {
         let is_main_function = self.is_entry_function(&function.name, program);
 
         // 生成函数序言（在函数标签之后，但在实际代码之前）
+        // 注意：只有main函数在这里插入prologue，因为main是被外部C代码调用的
         if is_main_function {
             // C FFI序言：用于main函数的外部调用
             self.emit_function_prologue(&mut code_builder)?;
-        } else {
-            // 简化序言：用于内部函数调用
-            self.emit_internal_function_prologue(&mut code_builder)?;
         }
+        // 内部函数的prologue在第一个label之后插入，因为内部调用会跳转到第一个label
 
         // 检查第一个instruction是label，是则编译，不是则返回错误
         if let Some(Instruction::Label { id, .. }) = function.instructions.first() {
@@ -1696,9 +1732,7 @@ impl JitCompiler for AArch64Compiler {
             return Err(format!("函数 '{}' 的第一个指令必须是label", function.name));
         }
 
-                        if is_main_function {
-
-        } else {
+        if !is_main_function {
             // 简化序言：用于内部函数调用
             self.emit_internal_function_prologue(&mut code_builder)?;
         }
@@ -1786,7 +1820,7 @@ impl JitCompiler for AArch64Compiler {
 
     /// 获取调用约定信息
     fn get_calling_convention(&self) -> CallingConventionInfo {
-        self.calling_convention.clone()
+        self.ffi_calling_convention.clone()
     }
 }
 
@@ -1978,9 +2012,6 @@ mod tests {
             .format(|buf, record| writeln!(buf, "{}: {}", record.level(), record.args()))
             .init();
 
-        // 强制启用JIT
-        env::set_var("KARTE_JIT", "1");
-
         log::debug!("\n=== 测试JIT编译和执行 ===");
         log::debug!("测试用例: 简单lambda函数");
 
@@ -2030,9 +2061,6 @@ mod tests {
             .filter_level(LevelFilter::Debug)
             .format(|buf, record| writeln!(buf, "{}: {}", record.level(), record.args()))
             .init();
-
-        // 强制启用JIT
-        env::set_var("KARTE_JIT", "1");
 
         log::debug!("\n=== 测试连续内存架构 ===");
         log::debug!("测试用例: 多函数程序的连续内存分配和相对跳转");
@@ -2166,9 +2194,6 @@ mod tests {
             .filter_level(LevelFilter::Debug)
             .format(|buf, record| writeln!(buf, "{}: {}", record.level(), record.args()))
             .init();
-
-        // 强制启用JIT
-        env::set_var("KARTE_JIT", "1");
 
         log::debug!("\n=== 测试所有比较指令 ===");
         log::debug!("测试用例: 验证所有6种比较指令都能正确编译和执行");

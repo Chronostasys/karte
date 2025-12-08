@@ -88,13 +88,12 @@ fn test_gc_with_multiple_allocations() {
     // 验证所有地址都不同
     for i in 0..addresses.len() {
         for j in (i + 1)..addresses.len() {
-            assert_ne!(
-                addresses[i], addresses[j],
-                "地址 {} 和 {} 不应该相同",
-                i, j
-            );
+            assert_ne!(addresses[i], addresses[j], "地址 {} 和 {} 不应该相同", i, j);
         }
     }
 
-    println!("✅ 多次堆分配测试通过：成功分配 {} 个不同的地址", addresses.len());
+    println!(
+        "✅ 多次堆分配测试通过：成功分配 {} 个不同的地址",
+        addresses.len()
+    );
 }

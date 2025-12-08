@@ -9,7 +9,10 @@ fn test_temp_id_display() {
 
 #[test]
 fn test_value_temp_display() {
-    let temp_value = Value::Temp { id: TempId(42), ty: None };
+    let temp_value = Value::Temp {
+        id: TempId(42),
+        ty: None,
+    };
     let output = temp_value.to_ir_string();
     println!("Value::Temp output: {}", output);
     // 期望: %42 或者 Temp { id: %42 } 或其他格式

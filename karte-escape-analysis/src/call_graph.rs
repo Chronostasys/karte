@@ -43,7 +43,10 @@ impl CallGraph {
             // 遍历所有基本块和语句
             for block in function.basic_blocks.values() {
                 for statement in &block.statements {
-                    if let Statement::Call { function: callee, .. } = statement {
+                    if let Statement::Call {
+                        function: callee, ..
+                    } = statement
+                    {
                         // 提取被调用函数的ID
                         if let Some(callee_id) = extract_function_id(callee) {
                             graph.add_edge(caller_id.clone(), callee_id);
@@ -146,12 +149,7 @@ impl CallGraph {
         // 对每个节点进行DFS
         for func_id in &self.nodes {
             if !visited.contains(func_id) {
-                self.topological_dfs(
-                    func_id,
-                    &mut visited,
-                    &mut in_progress,
-                    &mut result,
-                );
+                self.topological_dfs(func_id, &mut visited, &mut in_progress, &mut result);
             }
         }
 

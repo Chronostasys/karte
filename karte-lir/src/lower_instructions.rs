@@ -139,23 +139,23 @@ impl InstructionLowerer {
                 if !*prologue_emitted {
                     *prologue_emitted = true;
                     // 序言：保存旧fp
-                    new_instructions.push(Instruction::Sub {
-                        dst: self.stack_pointer_reg,
-                        src1: Operand::Register {
-                            id: self.stack_pointer_reg,
-                        },
-                        src2: Operand::Immediate { value: 8 },
-                        span: *span,
-                    });
-                    new_instructions.push(Instruction::Store64 {
-                        addr: self.stack_pointer_reg,
-                        offset: 0,
-                        src: Operand::Register {
-                            id: self.frame_pointer_reg,
-                        },
-                        span: Span::dummy(),
-                    });
-                    // fp = sp
+                    // new_instructions.push(Instruction::Sub {
+                    //     dst: self.stack_pointer_reg,
+                    //     src1: Operand::Register {
+                    //         id: self.stack_pointer_reg,
+                    //     },
+                    //     src2: Operand::Immediate { value: 8 },
+                    //     span: *span,
+                    // });
+                    // new_instructions.push(Instruction::Store64 {
+                    //     addr: self.stack_pointer_reg,
+                    //     offset: 0,
+                    //     src: Operand::Register {
+                    //         id: self.frame_pointer_reg,
+                    //     },
+                    //     span: Span::dummy(),
+                    // });
+                    // // fp = sp
                     new_instructions.push(Instruction::Move {
                         dst: self.frame_pointer_reg,
                         src: Operand::Register {
@@ -629,6 +629,7 @@ impl InstructionLowerer {
                     .collect();
                 caller_saved.sort();
 
+                // FIXME: 应该在这里用生命周期分析分析出具体哪些寄存器需要保存
                 // 计算栈对齐
                 // 我们压入 caller_saved 个寄存器 + 1 个返回地址
                 // AArch64 要求 SP 16字节对齐
@@ -681,7 +682,9 @@ impl InstructionLowerer {
                 for op in arg_operands.iter() {
                     new_instructions.push(Instruction::Sub {
                         dst: self.stack_pointer_reg,
-                        src1: Operand::Register { id: self.stack_pointer_reg },
+                        src1: Operand::Register {
+                            id: self.stack_pointer_reg,
+                        },
                         src2: Operand::Immediate { value: 8 },
                         span: *span,
                     });
@@ -704,7 +707,9 @@ impl InstructionLowerer {
                         });
                         new_instructions.push(Instruction::Add {
                             dst: self.stack_pointer_reg,
-                            src1: Operand::Register { id: self.stack_pointer_reg },
+                            src1: Operand::Register {
+                                id: self.stack_pointer_reg,
+                            },
                             src2: Operand::Immediate { value: 8 },
                             span: *span,
                         });
@@ -739,9 +744,15 @@ impl InstructionLowerer {
                     span: *span,
                 });
 
-                // ⚠️ Call 指令：compile_return 已经弹出返回地址
-                // 栈顶现在是最后保存的 caller-saved 寄存器（或padding）
-                // 不需要额外的 +8 操作
+                // sp +8
+                new_instructions.push(Instruction::Add {
+                    dst: self.stack_pointer_reg,
+                    src1: Operand::Register {
+                        id: self.stack_pointer_reg,
+                    },
+                    src2: Operand::Immediate { value: 8 },
+                    span: *span,
+                });
 
                 // 恢复caller-saved寄存器 (逆序)
                 for reg in caller_saved.iter().rev() {
@@ -877,7 +888,9 @@ impl InstructionLowerer {
                 for op in arg_operands.iter() {
                     new_instructions.push(Instruction::Sub {
                         dst: self.stack_pointer_reg,
-                        src1: Operand::Register { id: self.stack_pointer_reg },
+                        src1: Operand::Register {
+                            id: self.stack_pointer_reg,
+                        },
                         src2: Operand::Immediate { value: 8 },
                         span: *span,
                     });
@@ -900,7 +913,9 @@ impl InstructionLowerer {
                         });
                         new_instructions.push(Instruction::Add {
                             dst: self.stack_pointer_reg,
-                            src1: Operand::Register { id: self.stack_pointer_reg },
+                            src1: Operand::Register {
+                                id: self.stack_pointer_reg,
+                            },
                             src2: Operand::Immediate { value: 8 },
                             span: *span,
                         });
@@ -935,18 +950,15 @@ impl InstructionLowerer {
                     span: *span,
                 });
 
-                // 从栈上弹出返回地址（丢弃）
-                // 🔧 修复：compile_return 已经负责弹出返回地址，这里不需要再次弹出
-                // 否则会导致栈不平衡，进而导致 caller-saved 寄存器恢复错误
-                // new_instructions.push(Instruction::Add {
-                //     dst: self.stack_pointer_reg,
-                //     src1: Operand::Register {
-                //         id: self.stack_pointer_reg,
-                //     },
-                //     src2: Operand::Immediate { value: 8 },
-                //     span: *span,
-                // });
-
+                // sp +8 (弹出返回地址)
+                new_instructions.push(Instruction::Add {
+                    dst: self.stack_pointer_reg,
+                    src1: Operand::Register {
+                        id: self.stack_pointer_reg,
+                    },
+                    src2: Operand::Immediate { value: 8 },
+                    span: *span,
+                });
                 // 恢复caller-saved寄存器 (逆序)
                 for reg in caller_saved.iter().rev() {
                     new_instructions.push(Instruction::Load64 {
@@ -1011,27 +1023,27 @@ impl InstructionLowerer {
                             span: Span::dummy(),
                         });
                     }
-                    new_instructions.push(Instruction::Move {
-                        dst: self.stack_pointer_reg,
-                        src: Operand::Register {
-                            id: self.frame_pointer_reg,
-                        },
-                        span: Span::dummy(),
-                    });
-                    new_instructions.push(Instruction::Load64 {
-                        dst: self.frame_pointer_reg,
-                        addr: self.stack_pointer_reg,
-                        offset: 0,
-                        span: Span::dummy(),
-                    });
-                    new_instructions.push(Instruction::Add {
-                        dst: self.stack_pointer_reg,
-                        src1: Operand::Register {
-                            id: self.stack_pointer_reg,
-                        },
-                        src2: Operand::Immediate { value: 8 },
-                        span: Span::dummy(),
-                    });
+                    // new_instructions.push(Instruction::Move {
+                    //     dst: self.stack_pointer_reg,
+                    //     src: Operand::Register {
+                    //         id: self.frame_pointer_reg,
+                    //     },
+                    //     span: Span::dummy(),
+                    // });
+                    // new_instructions.push(Instruction::Load64 {
+                    //     dst: self.frame_pointer_reg,
+                    //     addr: self.stack_pointer_reg,
+                    //     offset: 0,
+                    //     span: Span::dummy(),
+                    // });
+                    // new_instructions.push(Instruction::Add {
+                    //     dst: self.stack_pointer_reg,
+                    //     src1: Operand::Register {
+                    //         id: self.stack_pointer_reg,
+                    //     },
+                    //     src2: Operand::Immediate { value: 8 },
+                    //     span: Span::dummy(),
+                    // });
                     new_instructions.push(instruction.clone());
                 }
             }

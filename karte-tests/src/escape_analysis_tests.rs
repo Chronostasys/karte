@@ -46,7 +46,10 @@ fn main() -> number {
 
     // 验证 lambda$0 包含 HeapAlloc 指令
     let lambda0 = mir.functions.get("lambda$0").expect("lambda$0 not found");
-    let bb0 = lambda0.basic_blocks.get(&lambda0.entry_block).expect("bb0 not found");
+    let bb0 = lambda0
+        .basic_blocks
+        .get(&lambda0.entry_block)
+        .expect("bb0 not found");
 
     let has_heap_alloc = bb0.statements.iter().any(|stmt| {
         matches!(
@@ -64,9 +67,10 @@ fn main() -> number {
     );
 
     // 验证包含 Store 指令
-    let has_store = bb0.statements.iter().any(|stmt| {
-        matches!(stmt, karte_mir::Statement::Store { .. })
-    });
+    let has_store = bb0
+        .statements
+        .iter()
+        .any(|stmt| matches!(stmt, karte_mir::Statement::Store { .. }));
 
     assert!(has_store, "lambda$0 should contain Store instruction");
 }
@@ -108,7 +112,10 @@ fn main() -> number {
 
     // lambda$0 应该有堆分配（因为 &d 逃逸）
     let lambda0 = mir.functions.get("lambda$0").expect("lambda$0 not found");
-    let bb0 = lambda0.basic_blocks.get(&lambda0.entry_block).expect("bb0 not found");
+    let bb0 = lambda0
+        .basic_blocks
+        .get(&lambda0.entry_block)
+        .expect("bb0 not found");
 
     let heap_alloc_count = bb0
         .statements
@@ -123,7 +130,10 @@ fn main() -> number {
 
     // lambda$1 不应该有堆分配（没有逃逸）
     let lambda1 = mir.functions.get("lambda$1").expect("lambda$1 not found");
-    let bb0 = lambda1.basic_blocks.get(&lambda1.entry_block).expect("bb0 not found");
+    let bb0 = lambda1
+        .basic_blocks
+        .get(&lambda1.entry_block)
+        .expect("bb0 not found");
 
     let heap_alloc_count = bb0
         .statements
@@ -174,7 +184,10 @@ fn main() -> number {
 
     // 即使不解引用，lambda$0 中的 &d 仍然逃逸
     let lambda0 = mir.functions.get("lambda$0").expect("lambda$0 not found");
-    let bb0 = lambda0.basic_blocks.get(&lambda0.entry_block).expect("bb0 not found");
+    let bb0 = lambda0
+        .basic_blocks
+        .get(&lambda0.entry_block)
+        .expect("bb0 not found");
 
     let has_heap_alloc = bb0
         .statements
@@ -219,7 +232,10 @@ fn main() -> number {
     optimize_mir_with_escape_analysis(&mut mir, false).expect("Escape analysis failed");
 
     let lambda0 = mir.functions.get("lambda$0").expect("lambda$0 not found");
-    let bb0 = lambda0.basic_blocks.get(&lambda0.entry_block).expect("bb0 not found");
+    let bb0 = lambda0
+        .basic_blocks
+        .get(&lambda0.entry_block)
+        .expect("bb0 not found");
 
     // 查找 HeapAlloc 的 target
     let heap_alloc_target = bb0.statements.iter().find_map(|stmt| {
@@ -279,7 +295,8 @@ fn main() -> number {
     optimize_mir_with_escape_analysis(&mut mir, false).expect("Escape analysis failed");
 
     // Lower to LIR
-    let lir = lower_mir_to_final_lir(&mir, OptimizationLevel::Balanced, false).expect("LIR lowering failed");
+    let lir = lower_mir_to_final_lir(&mir, OptimizationLevel::Balanced, false)
+        .expect("LIR lowering failed");
 
     // 验证 lambda$0 函数存在
     let lambda0 = lir
@@ -309,10 +326,7 @@ fn main() -> number {
         .iter()
         .any(|instr| matches!(instr, karte_lir::Instruction::Store64 { .. }));
 
-    assert!(
-        has_store,
-        "LIR lambda$0 should contain Store64 instruction"
-    );
+    assert!(has_store, "LIR lambda$0 should contain Store64 instruction");
 }
 
 #[test]
@@ -349,7 +363,10 @@ fn main() -> number {
     optimize_mir_with_escape_analysis(&mut mir, false).expect("Escape analysis failed");
 
     let lambda0 = mir.functions.get("lambda$0").expect("lambda$0 not found");
-    let bb0 = lambda0.basic_blocks.get(&lambda0.entry_block).expect("bb0 not found");
+    let bb0 = lambda0
+        .basic_blocks
+        .get(&lambda0.entry_block)
+        .expect("bb0 not found");
 
     // ✅ Phase 1优化：ptr1和ptr2只在本地使用，没有逃逸
     // 因此 d 和 e 不需要堆分配，应该是 0 个 HeapAlloc

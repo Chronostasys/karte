@@ -57,7 +57,11 @@ fn test_multiple_allocations() {
 
             // 写入并立即验证
             *ptr = i as u8;
-            assert_eq!(*ptr, i as u8, "Immediate verification failed for allocation {}", i);
+            assert_eq!(
+                *ptr, i as u8,
+                "Immediate verification failed for allocation {}",
+                i
+            );
         }
 
         println!("Successfully completed {} allocations", count);

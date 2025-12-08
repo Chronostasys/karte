@@ -293,7 +293,10 @@ pub fn compile_source_to_artifacts(
     if verbose {
         println!("\n--- Lowering to MIR ---");
     }
-    println!("[Project] expr_types size in lowering_options: {}", lowering_options.expr_types.len());
+    println!(
+        "[Project] expr_types size in lowering_options: {}",
+        lowering_options.expr_types.len()
+    );
     let mut mir_program =
         match lower_expr_to_mir_with_options(&parsed_program.body, lowering_options) {
             Ok(prog) => prog,
@@ -816,10 +819,7 @@ pub fn optimize_mir_with_escape_analysis(
     }
 
     // 步骤3: 构建逃逸点检测器
-    let detector = EscapePointDetector::new(
-        escape_info.clone(),
-        variable_names.clone(),
-    );
+    let detector = EscapePointDetector::new(escape_info.clone(), variable_names.clone());
 
     if verbose {
         println!("\n=== 开始逃逸点转换 ===");

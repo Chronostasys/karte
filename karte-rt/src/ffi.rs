@@ -29,12 +29,20 @@ pub extern "C" fn karte_jit_runtime_alloc_aligned(size: u64, alignment: u64) -> 
     unsafe {
         let ptr = gc_alloc(size as usize, obj_type);
         if ptr.is_null() {
-            log::warn!("karte_jit_runtime_alloc_aligned: allocation failed for size={}", size);
+            log::warn!(
+                "karte_jit_runtime_alloc_aligned: allocation failed for size={}",
+                size
+            );
             0
         } else {
             // 清零内存
             ptr.write_bytes(0, size as usize);
-            log::info!("karte_jit_runtime_alloc_aligned: allocated {} bytes at {:p}, type={:?}", size, ptr, obj_type);
+            log::info!(
+                "karte_jit_runtime_alloc_aligned: allocated {} bytes at {:p}, type={:?}",
+                size,
+                ptr,
+                obj_type
+            );
             ptr as u64
         }
     }

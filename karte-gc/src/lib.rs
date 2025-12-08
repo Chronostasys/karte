@@ -220,20 +220,18 @@ unsafe fn karte_virtual_stack_scanner(
     let current_top = CURRENT_VIRTUAL_STACK_TOP.with(|top| top.get());
 
     // 如果栈顶有效且在合理范围内，使用它；否则使用整个栈区间（后备方案）
-    let scan_start = if !current_top.is_null()
-        && current_top >= stack_start
-        && current_top <= stack_end
-    {
-        log::debug!(
-            "Using dynamic stack top: {:p} (saving {} bytes scan)",
-            current_top,
-            current_top as usize - stack_start as usize
-        );
-        current_top
-    } else {
-        log::debug!("Using full stack range (stack top not set or invalid)");
-        stack_start
-    };
+    let scan_start =
+        if !current_top.is_null() && current_top >= stack_start && current_top <= stack_end {
+            log::debug!(
+                "Using dynamic stack top: {:p} (saving {} bytes scan)",
+                current_top,
+                current_top as usize - stack_start as usize
+            );
+            current_top
+        } else {
+            log::debug!("Using full stack range (stack top not set or invalid)");
+            stack_start
+        };
 
     // 按 8 字节对齐遍历栈区间
     let mut current = scan_start as *const u64;
@@ -256,10 +254,7 @@ unsafe fn karte_virtual_stack_scanner(
             if value > 0x1000 && value < 0x0000_7fff_ffff_ffff {
                 // 🔧 修复：返回栈位置的地址（指向对象指针的指针），而不是对象指针本身
                 // mark_ptr 期望接收指向对象指针的指针，它会解引用获取实际的对象指针
-                log::debug!(
-                    "  [ROOT] stack_loc={:p} -> heap_ptr=0x{:X}",
-                    current, value
-                );
+                log::debug!("  [ROOT] stack_loc={:p} -> heap_ptr=0x{:X}", current, value);
                 roots.push(current as *mut u8);
             }
         }
@@ -306,11 +301,7 @@ pub unsafe fn register_virtual_stack_range(stack_start: *const u8, stack_end: *c
 
     // 调用 Immix 的自定义扫描器注册 API
     // 这会在每次 GC mark 阶段调用我们的虚拟栈扫描器
-    immix::register_custom_stack_scanner(
-        karte_virtual_stack_scanner,
-        stack_start,
-        stack_end,
-    );
+    immix::register_custom_stack_scanner(karte_virtual_stack_scanner, stack_start, stack_end);
 }
 
 /// 注册全局根对象

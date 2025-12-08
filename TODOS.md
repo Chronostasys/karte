@@ -38,3 +38,5 @@
 	 - 处理：在 `karte-hir` 中区分 `Type::Function` 与 `Type::Closure`；将 lambda 推断为 `Closure`，而 `ModuleSymbolAccess`/依赖接口解析仍产出 `Function`。
 	 - 同时在 `karte-mir` 的降级中为 `ModuleSymbolAccess` 增加 direct-call 分支（像 Identifier 一样直接生成 `Statement::Call` 使用 `Value::Function`），避免先写入临时再被误识别为闭包路径。
 	 - 验证：运行示例项目，JIT 完成并返回值（之前的 bus error 已解决）。
+- [x] 2025-12-08：新增 `test_allocate_many_stack_refs` CLI 集成测试，直接内联 `test_allocate_many.karte` 源码以验证多次返回双重引用时虚拟栈/GC 根保持稳定。
+- [x] 2025-12-08：新增 `test_escape_after_deep_stack_usage` CLI 集成测试，覆盖 `test_ub_exposed.karte` 的提前逃逸引用场景，确保深层栈回收后依然能正确解引用。

@@ -2,6 +2,7 @@
 //!
 //! 定义了所有JIT编译器必须实现的接口，支持不同目标架构
 
+use karte_common::calling_convention::CC;
 use karte_lir::{LirFunction, LirProgram, Register};
 use std::collections::HashMap;
 
@@ -279,6 +280,16 @@ pub struct CallingConventionInfo {
     pub caller_saved: Vec<u8>,
     /// 被调用者保存寄存器
     pub callee_saved: Vec<u8>,
+}
+
+impl CC for CallingConventionInfo {
+    fn is_caller_saved(&self, reg: u8) -> bool {
+        self.caller_saved.contains(&reg)
+    }
+
+    fn is_callee_saved(&self, reg: u8) -> bool {
+        self.callee_saved.contains(&reg)
+    }
 }
 
 /// 调试信息

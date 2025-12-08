@@ -64,18 +64,25 @@ impl EscapeAnalyzer {
     ///
     /// 使用自底向上的分析顺序，先分析被调用函数，再分析调用者
     pub fn analyze_program_interprocedural(&mut self, program: &MirProgram) -> Result<()> {
-        info!("开始过程间逃逸分析，程序包含 {} 个函数", program.functions.len());
+        info!(
+            "开始过程间逃逸分析，程序包含 {} 个函数",
+            program.functions.len()
+        );
 
         // 1. 构建调用图
         let call_graph = crate::call_graph::CallGraph::build_from_program(program);
         let stats = call_graph.stats();
-        info!("调用图统计: 函数={}, 边={}, 叶子={}, 入口={}",
-            stats.total_functions, stats.total_edges,
-            stats.leaf_functions, stats.entry_functions);
+        info!(
+            "调用图统计: 函数={}, 边={}, 叶子={}, 入口={}",
+            stats.total_functions, stats.total_edges, stats.leaf_functions, stats.entry_functions
+        );
 
         // 2. 拓扑排序：自底向上的分析顺序
         let analysis_order = call_graph.topological_order();
-        info!("分析顺序: {:?}", analysis_order.iter().map(|f| &f.0).collect::<Vec<_>>());
+        info!(
+            "分析顺序: {:?}",
+            analysis_order.iter().map(|f| &f.0).collect::<Vec<_>>()
+        );
 
         // 3. 按拓扑顺序分析每个函数
         for func_id in &analysis_order {
@@ -87,11 +94,13 @@ impl EscapeAnalyzer {
 
                 // 3.2 生成函数摘要
                 let summary = self.generate_function_summary(function);
-                info!("生成函数摘要: {} (参数数={}, 修改全局={}, 递归={})",
+                info!(
+                    "生成函数摘要: {} (参数数={}, 修改全局={}, 递归={})",
                     summary.function_id.0,
                     summary.parameter_tags.len(),
                     summary.modifies_global_state,
-                    summary.is_recursive);
+                    summary.is_recursive
+                );
 
                 // 3.3 保存摘要到数据库
                 self.summary_db.insert(summary);
@@ -124,7 +133,10 @@ impl EscapeAnalyzer {
     fn apply_summaries_in_function(&mut self, function: &MirFunction) -> Result<()> {
         for block in function.basic_blocks.values() {
             for statement in &block.statements {
-                if let Statement::Call { function: callee, .. } = statement {
+                if let Statement::Call {
+                    function: callee, ..
+                } = statement
+                {
                     let callee_id = self.extract_function_id(callee);
 
                     // 查找被调用函数的摘要
@@ -167,7 +179,11 @@ impl EscapeAnalyzer {
     fn build_variable_graph(&mut self, function: &MirFunction) -> Result<()> {
         debug!("构建变量依赖图，函数: {}", function.name);
         for (block_id, block) in &function.basic_blocks {
-            debug!("  分析基本块 {:?}, {} 条语句", block_id, block.statements.len());
+            debug!(
+                "  分析基本块 {:?}, {} 条语句",
+                block_id,
+                block.statements.len()
+            );
             for statement in &block.statements {
                 self.analyze_statement_dependencies(statement)?;
             }
@@ -190,25 +206,30 @@ impl EscapeAnalyzer {
                 if let Value::Reference { value, .. } = source {
                     // ✅ 新逻辑：添加带权重的边，不直接标记逃逸
                     // 只有当 target 逃逸时，value 才需要堆分配（在传播阶段处理）
-                    if let (Some(value_id), Some(target_id)) =
-                        (self.get_or_create_var_id(value), self.get_or_create_var_id(target))
-                    {
-                        use crate::graph::{WeightedEdge, EdgeWeight, DependencyEdge};
+                    if let (Some(value_id), Some(target_id)) = (
+                        self.get_or_create_var_id(value),
+                        self.get_or_create_var_id(target),
+                    ) {
+                        use crate::graph::{DependencyEdge, EdgeWeight, WeightedEdge};
 
                         self.graph.add_weighted_edge(
                             value_id,
                             target_id,
                             WeightedEdge {
                                 edge_type: DependencyEdge::DirectAssignment,
-                                weight: EdgeWeight::AddressOf,  // 权重 -1（增加指针层级）
-                            }
+                                weight: EdgeWeight::AddressOf, // 权重 -1（增加指针层级）
+                            },
                         );
 
-                        debug!("添加取地址依赖边: {:?} --AddressOf--> {:?} (target = &value)", value_id, target_id);
+                        debug!(
+                            "添加取地址依赖边: {:?} --AddressOf--> {:?} (target = &value)",
+                            value_id, target_id
+                        );
 
                         // 记录逃逸点，但不立即标记逃逸状态
                         // 逃逸状态将在传播阶段根据 target 的使用情况确定
-                        let info = self.escape_info
+                        let info = self
+                            .escape_info
                             .entry(value_id)
                             .or_insert_with(|| VariableEscapeInfo::new_no_escape(value_id));
                         info.escape_points.push(EscapePoint::AddressOf {
@@ -218,11 +239,15 @@ impl EscapeAnalyzer {
                     }
                 } else {
                     // 正常的赋值依赖
-                    if let (Some(target_id), Some(source_id)) =
-                        (self.get_or_create_var_id(target), self.get_or_create_var_id(source))
-                    {
+                    if let (Some(target_id), Some(source_id)) = (
+                        self.get_or_create_var_id(target),
+                        self.get_or_create_var_id(source),
+                    ) {
                         self.graph.add_assignment(source_id, target_id);
-                        debug!("添加赋值依赖: {:?} <- {:?} (target <- source)", target_id, source_id);
+                        debug!(
+                            "添加赋值依赖: {:?} <- {:?} (target <- source)",
+                            target_id, source_id
+                        );
                         debug!("  target: {:?}, source: {:?}", target, source);
                     }
                 }
@@ -235,32 +260,47 @@ impl EscapeAnalyzer {
                 field,
                 ..
             } => {
-                if let (Some(target_id), Some(object_id)) =
-                    (self.get_or_create_var_id(target), self.get_or_create_var_id(object))
-                {
+                if let (Some(target_id), Some(object_id)) = (
+                    self.get_or_create_var_id(target),
+                    self.get_or_create_var_id(object),
+                ) {
                     self.graph.add_field_access(object_id, target_id, field);
-                    trace!("添加字段访问依赖: {:?}.{} -> {:?}", object_id, field, target_id);
+                    trace!(
+                        "添加字段访问依赖: {:?}.{} -> {:?}",
+                        object_id,
+                        field,
+                        target_id
+                    );
                 }
             }
 
             // 字段赋值: object.field = value
             Statement::FieldAssign {
-                object, value, field, ..
+                object,
+                value,
+                field,
+                ..
             } => {
-                if let (Some(object_id), Some(value_id)) =
-                    (self.get_or_create_var_id(object), self.get_or_create_var_id(value))
-                {
+                if let (Some(object_id), Some(value_id)) = (
+                    self.get_or_create_var_id(object),
+                    self.get_or_create_var_id(value),
+                ) {
                     // ✅ Phase 3优化：检查对象是否明确在栈上
                     // 只有当对象明确被分析为NoEscape时，才认为值不逃逸
                     // 对于未分析的对象，保守地假设可能在堆上
-                    let object_is_definitely_stack = self.escape_info.get(&object_id)
+                    let object_is_definitely_stack = self
+                        .escape_info
+                        .get(&object_id)
                         .map(|info| info.escape_state == EscapeState::NoEscape)
                         .unwrap_or(false); // 未分析的对象默认假设可能在堆上
 
                     if object_is_definitely_stack {
                         // 对象明确在栈上，值也可以在栈上，只添加依赖关系
                         self.graph.add_assignment(value_id, object_id);
-                        debug!("对象明确在栈上，值不逃逸: {:?}.{} = {:?}", object_id, field, value_id);
+                        debug!(
+                            "对象明确在栈上，值不逃逸: {:?}.{} = {:?}",
+                            object_id, field, value_id
+                        );
                     } else {
                         // 对象可能在堆上（或未知），值存储到堆对象中，标记为逃逸
                         self.graph.add_heap_store(object_id, value_id);
@@ -273,7 +313,10 @@ impl EscapeAnalyzer {
                                 store_site: Span::default(),
                             },
                         )?;
-                        debug!("对象可能在堆上，值逃逸: {:?}.{} = {:?}", object_id, field, value_id);
+                        debug!(
+                            "对象可能在堆上，值逃逸: {:?}.{} = {:?}",
+                            object_id, field, value_id
+                        );
                     }
                 }
             }
@@ -296,11 +339,15 @@ impl EscapeAnalyzer {
                     debug!("添加二元运算依赖: {:?} <- {:?} (left)", target_id, left_id);
                 }
 
-                if let (Some(target_id), Some(right_id)) =
-                    (self.get_or_create_var_id(target), self.get_or_create_var_id(right))
-                {
+                if let (Some(target_id), Some(right_id)) = (
+                    self.get_or_create_var_id(target),
+                    self.get_or_create_var_id(right),
+                ) {
                     self.graph.add_assignment(right_id, target_id);
-                    debug!("添加二元运算依赖: {:?} <- {:?} (right)", target_id, right_id);
+                    debug!(
+                        "添加二元运算依赖: {:?} <- {:?} (right)",
+                        target_id, right_id
+                    );
                 }
             }
 
@@ -342,7 +389,9 @@ impl EscapeAnalyzer {
                     if let Some(target_val) = target {
                         if let Some(target_id) = self.get_or_create_var_id(target_val) {
                             match &summary.return_source {
-                                crate::function_summary::ReturnSource::FromParameter { param_index } => {
+                                crate::function_summary::ReturnSource::FromParameter {
+                                    param_index,
+                                } => {
                                     // 返回某个参数，检查该参数的逃逸状态
                                     if let Some(arg) = args.get(*param_index) {
                                         if let Some(arg_id) = self.get_or_create_var_id(arg) {
@@ -415,7 +464,9 @@ impl EscapeAnalyzer {
 
             // 闭包创建: 捕获的变量全部逃逸（Phase 3保守策略）
             Statement::Assign {
-                source: Value::Closure { captured_values, .. },
+                source: Value::Closure {
+                    captured_values, ..
+                },
                 ..
             } => {
                 // ✅ Phase 3: 闭包捕获的变量都标记为GlobalEscape
@@ -430,7 +481,10 @@ impl EscapeAnalyzer {
                                 capture_site: Span::default(),
                             },
                         )?;
-                        debug!("闭包捕获变量逃逸: {:?} (索引 {})", captured_id, capture_index);
+                        debug!(
+                            "闭包捕获变量逃逸: {:?} (索引 {})",
+                            captured_id, capture_index
+                        );
                     }
                 }
             }
@@ -449,7 +503,10 @@ impl EscapeAnalyzer {
             Terminator::Return { value, .. } => {
                 if let Some(return_val) = value {
                     // 特殊处理：如果返回的是引用，标记被引用的变量为逃逸
-                    if let Value::Reference { value: inner_val, .. } = return_val {
+                    if let Value::Reference {
+                        value: inner_val, ..
+                    } = return_val
+                    {
                         if let Some(value_id) = self.get_or_create_var_id(inner_val) {
                             // 被引用的变量通过返回值逃逸
                             self.mark_escape(
@@ -535,7 +592,10 @@ impl EscapeAnalyzer {
             .map(|(var_id, info)| (*var_id, info.escape_state))
             .collect();
 
-        debug!("开始传播逃逸状态，共 {} 个初始逃逸变量", escaping_vars.len());
+        debug!(
+            "开始传播逃逸状态，共 {} 个初始逃逸变量",
+            escaping_vars.len()
+        );
 
         // 传播逃逸状态
         for (var_id, escape_state) in escaping_vars {
@@ -564,7 +624,10 @@ impl EscapeAnalyzer {
         for (var_name, &var_id) in &self.variable_name_to_id.clone() {
             if !self.escape_info.contains_key(&var_id) {
                 // 没有逃逸信息的变量默认为不逃逸
-                debug!("变量 {} ({:?}) 没有逃逸信息，默认为不逃逸", var_name, var_id);
+                debug!(
+                    "变量 {} ({:?}) 没有逃逸信息，默认为不逃逸",
+                    var_name, var_id
+                );
                 let mut info = VariableEscapeInfo::new_no_escape(var_id);
                 info.escape_state = self.graph.get_escape_state(&var_id);
 
@@ -691,7 +754,10 @@ impl EscapeAnalyzer {
     /// 生成函数摘要（Phase 2）
     ///
     /// 分析函数的参数使用模式，生成函数签名级别的逃逸摘要
-    pub fn generate_function_summary(&self, function: &MirFunction) -> crate::function_summary::FunctionSummary {
+    pub fn generate_function_summary(
+        &self,
+        function: &MirFunction,
+    ) -> crate::function_summary::FunctionSummary {
         use crate::function_summary::{FunctionSummary, ParameterTag, ReturnSource};
 
         let func_id = FunctionId(function.name.clone());
@@ -736,7 +802,9 @@ impl EscapeAnalyzer {
         }
 
         // 检查参数是否传递给其他函数
-        if let Some((callee, callee_param_idx)) = self.is_parameter_passed_to_function(function, param_var_id) {
+        if let Some((callee, callee_param_idx)) =
+            self.is_parameter_passed_to_function(function, param_var_id)
+        {
             return ParameterTag::EscapeViaCall {
                 callee,
                 param_index: callee_param_idx,
@@ -751,7 +819,11 @@ impl EscapeAnalyzer {
     fn is_parameter_returned(&self, function: &MirFunction, param_var_id: VariableId) -> bool {
         // 检查所有基本块的返回语句
         for block in function.basic_blocks.values() {
-            if let Some(Terminator::Return { value: Some(return_val), .. }) = &block.terminator {
+            if let Some(Terminator::Return {
+                value: Some(return_val),
+                ..
+            }) = &block.terminator
+            {
                 if let Some(return_var_id) = self.get_var_id_from_value(return_val) {
                     // 检查返回值是否依赖于参数
                     if self.depends_on(return_var_id, param_var_id) {
@@ -764,7 +836,11 @@ impl EscapeAnalyzer {
     }
 
     /// 检查参数是否存储到堆对象
-    fn is_parameter_stored_to_heap(&self, function: &MirFunction, param_var_id: VariableId) -> bool {
+    fn is_parameter_stored_to_heap(
+        &self,
+        function: &MirFunction,
+        param_var_id: VariableId,
+    ) -> bool {
         for block in function.basic_blocks.values() {
             for statement in &block.statements {
                 if let Statement::FieldAssign { value, .. } = statement {
@@ -787,7 +863,12 @@ impl EscapeAnalyzer {
     ) -> Option<(FunctionId, usize)> {
         for block in function.basic_blocks.values() {
             for statement in &block.statements {
-                if let Statement::Call { function: callee, args, .. } = statement {
+                if let Statement::Call {
+                    function: callee,
+                    args,
+                    ..
+                } = statement
+                {
                     let callee_id = self.extract_function_id(callee);
                     for (arg_idx, arg) in args.iter().enumerate() {
                         if let Some(arg_var_id) = self.get_var_id_from_value(arg) {
@@ -803,12 +884,19 @@ impl EscapeAnalyzer {
     }
 
     /// 分析返回值来源
-    fn analyze_return_source(&self, function: &MirFunction) -> crate::function_summary::ReturnSource {
+    fn analyze_return_source(
+        &self,
+        function: &MirFunction,
+    ) -> crate::function_summary::ReturnSource {
         use crate::function_summary::ReturnSource;
 
         // 查找返回语句
         for block in function.basic_blocks.values() {
-            if let Some(Terminator::Return { value: Some(return_val), .. }) = &block.terminator {
+            if let Some(Terminator::Return {
+                value: Some(return_val),
+                ..
+            }) = &block.terminator
+            {
                 // 检查返回值是否是参数
                 if let Value::Variable { name, .. } = return_val {
                     if let Some(param_index) = function.params.iter().position(|p| p == name) {
@@ -925,7 +1013,8 @@ impl EscapeAnalyzer {
         println!("\n=== 逃逸分析结果 ===");
         println!("总变量数: {}", stats.total_variables);
         println!("总依赖边数: {}", stats.total_edges);
-        println!("不逃逸 (可栈分配): {} ({:.1}%)",
+        println!(
+            "不逃逸 (可栈分配): {} ({:.1}%)",
             stats.no_escape_count,
             stats.stack_allocatable_percentage()
         );
@@ -968,10 +1057,7 @@ mod tests {
                 name: "x".to_string(),
                 ty: None,
             },
-            source: Value::Number {
-                value: 5,
-                ty: None,
-            },
+            source: Value::Number { value: 5, ty: None },
             span: Span::default(),
         });
 
@@ -1007,7 +1093,10 @@ mod tests {
 
         // 调试：打印所有注册的变量
         println!("注册的变量: {:?}", analyzer.variable_name_to_id);
-        println!("逃逸信息: {:?}", analyzer.escape_info.keys().collect::<Vec<_>>());
+        println!(
+            "逃逸信息: {:?}",
+            analyzer.escape_info.keys().collect::<Vec<_>>()
+        );
 
         // y 应该被标记为返回逃逸
         let y_id = analyzer.variable_name_to_id.get("y").unwrap();
@@ -1024,7 +1113,11 @@ mod tests {
             let x_state = analyzer.graph.get_escape_state(x_id);
             println!("x 的图状态: {:?}", x_state);
             // 由于依赖传播可能没有正确工作，我们先检查基本功能
-            assert_eq!(x_state, EscapeState::ReturnEscape, "x 应该通过依赖传播获得返回逃逸状态");
+            assert_eq!(
+                x_state,
+                EscapeState::ReturnEscape,
+                "x 应该通过依赖传播获得返回逃逸状态"
+            );
             return; // 提前返回，后续再修复
         }
         let x_info = x_info.unwrap();
@@ -1052,10 +1145,7 @@ mod tests {
                 name: "x".to_string(),
                 ty: None,
             },
-            source: Value::Number {
-                value: 5,
-                ty: None,
-            },
+            source: Value::Number { value: 5, ty: None },
             span: Span::default(),
         });
 
@@ -1070,10 +1160,7 @@ mod tests {
                 ty: None,
             },
             op: karte_mir::BinaryOperator::Add,
-            right: Value::Number {
-                value: 1,
-                ty: None,
-            },
+            right: Value::Number { value: 1, ty: None },
             span: Span::default(),
         });
 
@@ -1097,7 +1184,10 @@ mod tests {
         let y_id = analyzer.variable_name_to_id.get("y").unwrap();
 
         println!("x_id = {:?}, y_id = {:?}", x_id, y_id);
-        println!("escape_info keys: {:?}", analyzer.escape_info.keys().collect::<Vec<_>>());
+        println!(
+            "escape_info keys: {:?}",
+            analyzer.escape_info.keys().collect::<Vec<_>>()
+        );
 
         let x_state = analyzer.graph.get_escape_state(x_id);
         let y_state = analyzer.graph.get_escape_state(y_id);
@@ -1107,14 +1197,22 @@ mod tests {
         // 检查 escape_info
         if let Some(x_info) = analyzer.get_escape_info(x_id) {
             println!("x escape_info: {:?}", x_info.escape_state);
-            assert_eq!(x_info.escape_state, EscapeState::NoEscape, "x should not escape");
+            assert_eq!(
+                x_info.escape_state,
+                EscapeState::NoEscape,
+                "x should not escape"
+            );
         } else {
             panic!("x has no escape info");
         }
 
         if let Some(y_info) = analyzer.get_escape_info(y_id) {
             println!("y escape_info: {:?}", y_info.escape_state);
-            assert_eq!(y_info.escape_state, EscapeState::NoEscape, "y should not escape");
+            assert_eq!(
+                y_info.escape_state,
+                EscapeState::NoEscape,
+                "y should not escape"
+            );
         } else {
             panic!("y has no escape info");
         }
@@ -1145,10 +1243,7 @@ mod tests {
                 name: "x".to_string(),
                 ty: None,
             },
-            source: Value::Number {
-                value: 5,
-                ty: None,
-            },
+            source: Value::Number { value: 5, ty: None },
             span: Span::default(),
         });
 
@@ -1206,10 +1301,7 @@ mod tests {
                 name: "x".to_string(),
                 ty: None,
             },
-            source: Value::Number {
-                value: 5,
-                ty: None,
-            },
+            source: Value::Number { value: 5, ty: None },
             span: Span::default(),
         });
 

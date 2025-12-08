@@ -229,18 +229,12 @@ impl VariableGraph {
 
     /// 获取变量的所有前向依赖（依赖该变量的其他变量）
     pub fn get_dependents(&self, var_id: &VariableId) -> Vec<(VariableId, WeightedEdge)> {
-        self.forward_edges
-            .get(var_id)
-            .cloned()
-            .unwrap_or_default()
+        self.forward_edges.get(var_id).cloned().unwrap_or_default()
     }
 
     /// 获取变量的所有后向依赖（该变量依赖的其他变量）
     pub fn get_dependencies(&self, var_id: &VariableId) -> Vec<(VariableId, WeightedEdge)> {
-        self.backward_edges
-            .get(var_id)
-            .cloned()
-            .unwrap_or_default()
+        self.backward_edges.get(var_id).cloned().unwrap_or_default()
     }
 
     /// 传播逃逸状态
@@ -283,20 +277,36 @@ impl VariableGraph {
                 // 反向传播：传播到该变量依赖的变量（后向边）
                 // 因为如果 y = x 且 y 逃逸，则 x 也应该逃逸
                 let dependencies = self.get_dependencies(&current_var);
-                log::debug!("  {:?} 的后向依赖（依赖的变量）: {:?}", current_var, dependencies);
+                log::debug!(
+                    "  {:?} 的后向依赖（依赖的变量）: {:?}",
+                    current_var,
+                    dependencies
+                );
                 for (dependency_var, edge) in dependencies {
                     let propagated_state = self.compute_backward_propagated_state(new_state, edge);
-                    log::debug!("    -> 反向传播到 {:?}: {:?}", dependency_var, propagated_state);
+                    log::debug!(
+                        "    -> 反向传播到 {:?}: {:?}",
+                        dependency_var,
+                        propagated_state
+                    );
                     work_queue.push_back((dependency_var, propagated_state));
                 }
 
                 // 前向传播：传播到依赖该变量的变量（前向边）
                 // 因为如果 x 逃逸且 y = x，则 y 也应该逃逸
                 let dependents = self.get_dependents(&current_var);
-                log::debug!("  {:?} 的前向依赖（被依赖的变量）: {:?}", current_var, dependents);
+                log::debug!(
+                    "  {:?} 的前向依赖（被依赖的变量）: {:?}",
+                    current_var,
+                    dependents
+                );
                 for (dependent_var, edge) in dependents {
                     let propagated_state = self.compute_forward_propagated_state(new_state, edge);
-                    log::debug!("    -> 前向传播到 {:?}: {:?}", dependent_var, propagated_state);
+                    log::debug!(
+                        "    -> 前向传播到 {:?}: {:?}",
+                        dependent_var,
+                        propagated_state
+                    );
                     work_queue.push_back((dependent_var, propagated_state));
                 }
             }
@@ -482,11 +492,7 @@ impl VariableGraph {
 
         GraphStats {
             total_variables: all_vars.len(),
-            total_edges: self
-                .forward_edges
-                .values()
-                .map(|edges| edges.len())
-                .sum(),
+            total_edges: self.forward_edges.values().map(|edges| edges.len()).sum(),
             no_escape_count: self
                 .escape_cache
                 .values()
@@ -522,7 +528,9 @@ impl VariableGraph {
 
     /// 获取或创建节点元数据
     pub fn get_or_create_node_metadata(&mut self, var_id: VariableId) -> &mut NodeMetadata {
-        self.node_metadata.entry(var_id).or_insert_with(NodeMetadata::new)
+        self.node_metadata
+            .entry(var_id)
+            .or_insert_with(NodeMetadata::new)
     }
 
     /// 清空图

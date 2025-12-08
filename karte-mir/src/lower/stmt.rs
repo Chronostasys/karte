@@ -144,7 +144,10 @@ pub(crate) fn handle_assignment(
     match target {
         Expr::Identifier { name, .. } => {
             if let Some(binding) = ctx.lookup_variable(name).cloned() {
-                if let Value::Reference { value: ref_target, .. } = binding.value {
+                if let Value::Reference {
+                    value: ref_target, ..
+                } = binding.value
+                {
                     ctx.add_statement(Statement::Store {
                         target: *ref_target,
                         value: value_temp,

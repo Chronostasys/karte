@@ -950,7 +950,8 @@ impl TypeChecker {
 
                 // 存储Lambda类型到映射中
                 let lambda_type = Type::closure(param_types.clone(), return_type.clone());
-                self.lambda_types.insert(expr as *const Expr, lambda_type.clone());
+                self.lambda_types
+                    .insert(expr as *const Expr, lambda_type.clone());
 
                 lambda_type
             }
@@ -1580,7 +1581,8 @@ impl TypeChecker {
         };
 
         // 存储所有表达式的类型信息（用于传递给MIR lowering）
-        self.expr_types.insert(expr as *const Expr, inferred_type.clone());
+        self.expr_types
+            .insert(expr as *const Expr, inferred_type.clone());
 
         inferred_type
     }
@@ -1960,12 +1962,22 @@ impl TypeChecker {
     /// # 返回
     /// - Ok(Type): 解析成功的类型
     /// - Err(TypeCheckError): 严格模式下遇到未定义类型
-    fn parse_type_annotation(&mut self, type_str: &str, span: karte_diagnostics::Span, strict: bool) -> Result<Type, TypeCheckError> {
+    fn parse_type_annotation(
+        &mut self,
+        type_str: &str,
+        span: karte_diagnostics::Span,
+        strict: bool,
+    ) -> Result<Type, TypeCheckError> {
         self.parse_generic_type_strict(type_str, span, strict)
     }
 
     /// 严格模式的泛型类型解析
-    fn parse_generic_type_strict(&mut self, type_str: &str, span: karte_diagnostics::Span, strict: bool) -> Result<Type, TypeCheckError> {
+    fn parse_generic_type_strict(
+        &mut self,
+        type_str: &str,
+        span: karte_diagnostics::Span,
+        strict: bool,
+    ) -> Result<Type, TypeCheckError> {
         // 检查是否是引用类型
         if let Some(inner_type_str) = type_str.strip_prefix('&') {
             let inner_type = self.parse_generic_type_strict(inner_type_str, span, strict)?;
@@ -2024,7 +2036,12 @@ impl TypeChecker {
     }
 
     /// 严格模式的泛型参数解析
-    fn parse_generic_args_strict(&mut self, args_str: &str, span: karte_diagnostics::Span, strict: bool) -> Result<Vec<Type>, TypeCheckError> {
+    fn parse_generic_args_strict(
+        &mut self,
+        args_str: &str,
+        span: karte_diagnostics::Span,
+        strict: bool,
+    ) -> Result<Vec<Type>, TypeCheckError> {
         if args_str.trim().is_empty() {
             return Ok(vec![]);
         }
@@ -2224,10 +2241,13 @@ pub fn type_check_with_context(expr: &Expr, context: ModuleContext) -> (Type, Di
 }
 
 /// 带lambda_types的类型检查
-pub fn type_check_with_context_and_maps(expr: &Expr, context: ModuleContext) -> (Type, HashMap<usize, Type>, DiagnosticBag) {
+pub fn type_check_with_context_and_maps(
+    expr: &Expr,
+    context: ModuleContext,
+) -> (Type, HashMap<usize, Type>, DiagnosticBag) {
     let mut checker = TypeChecker::new();
     let result_type = checker.check_program_with_context(expr, &context);
-    let expr_types = checker.get_lambda_types();  // 方法名保持不变以保持兼容性
+    let expr_types = checker.get_lambda_types(); // 方法名保持不变以保持兼容性
     (result_type, expr_types, checker.into_diagnostics())
 }
 

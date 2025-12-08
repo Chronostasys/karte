@@ -58,6 +58,34 @@ pub const REG_EFFECT_PAYLOAD: PhysicalRegister = REG_ARG0;
 pub const REG_EFFECT_TAG: PhysicalRegister = 10;
 pub const REG_EFFECT_RESUME_TMP: PhysicalRegister = 15;
 
+pub trait CC {
+    fn is_caller_saved(&self, reg: PhysicalRegister) -> bool;
+    fn is_callee_saved(&self, reg: PhysicalRegister) -> bool;
+    /// 获取函数调用需要保存的寄存器列表
+    fn get_caller_save_registers(
+        &self,
+        live_registers: &[PhysicalRegister],
+    ) -> Vec<PhysicalRegister> {
+        live_registers
+            .iter()
+            .filter(|&&reg| self.is_caller_saved(reg))
+            .copied()
+            .collect()
+    }
+
+    /// 获取函数需要保存的callee-saved寄存器
+    fn get_callee_save_registers(
+        &self,
+        used_registers: &[PhysicalRegister],
+    ) -> Vec<PhysicalRegister> {
+        used_registers
+            .iter()
+            .filter(|&&reg| self.is_callee_saved(reg))
+            .copied()
+            .collect()
+    }
+}
+
 /// 调用约定配置
 #[derive(Debug, Clone)]
 pub struct CallingConvention {
@@ -85,6 +113,18 @@ pub struct CallingConvention {
     pub effect_resume_temp: PhysicalRegister,
     /// 临时寄存器 (可以自由使用)
     pub temp_registers: Vec<PhysicalRegister>,
+}
+
+impl CC for CallingConvention {
+    /// 检查寄存器是否为 caller-saved
+    fn is_caller_saved(&self, reg: PhysicalRegister) -> bool {
+        self.caller_saved.contains(&reg)
+    }
+
+    /// 检查寄存器是否为 callee-saved
+    fn is_callee_saved(&self, reg: PhysicalRegister) -> bool {
+        self.callee_saved.contains(&reg)
+    }
 }
 
 impl CallingConvention {
@@ -135,7 +175,7 @@ impl CallingConvention {
                 // 临时寄存器：除了特殊寄存器外的所有寄存器
                 let mut temps = Vec::new();
                 // 添加参数寄存器作为临时寄存器
-                temps.extend_from_slice(&[REG_RETURN, REG_ARG1, REG_ARG2, REG_ARG3]);
+                temps.extend_from_slice(&[REG_RETURN, REG_ARG0, REG_ARG1, REG_ARG2, REG_ARG3]);
                 // 添加 callee-saved 寄存器 r8-r31 作为临时寄存器
                 for reg in 8..32 {
                     if reg != REG_EFFECT_STACK_POINTER {
@@ -145,40 +185,6 @@ impl CallingConvention {
                 temps
             }, // 临时寄存器包括参数寄存器和callee-saved寄存器
         }
-    }
-
-    /// 检查寄存器是否是 caller-saved
-    pub fn is_caller_saved(&self, reg: PhysicalRegister) -> bool {
-        self.caller_saved.contains(&reg)
-    }
-
-    /// 检查寄存器是否是 callee-saved
-    pub fn is_callee_saved(&self, reg: PhysicalRegister) -> bool {
-        self.callee_saved.contains(&reg)
-    }
-
-    /// 获取函数调用需要保存的寄存器列表
-    pub fn get_caller_save_registers(
-        &self,
-        live_registers: &[PhysicalRegister],
-    ) -> Vec<PhysicalRegister> {
-        live_registers
-            .iter()
-            .filter(|&&reg| self.is_caller_saved(reg))
-            .copied()
-            .collect()
-    }
-
-    /// 获取函数需要保存的callee-saved寄存器
-    pub fn get_callee_save_registers(
-        &self,
-        used_registers: &[PhysicalRegister],
-    ) -> Vec<PhysicalRegister> {
-        used_registers
-            .iter()
-            .filter(|&&reg| self.is_callee_saved(reg))
-            .copied()
-            .collect()
     }
 
     /// 获取指定数量的参数寄存器
@@ -211,28 +217,6 @@ impl CallingConvention {
                 .contains(&reg)
             })
             .collect()
-    }
-
-    /// 获取 AArch64 callee-saved 寄存器列表
-    /// 根据 AAPCS64 标准，X19-X28、X29(FP)、X30(LR) 是 callee-saved
-    pub fn get_aarch64_callee_saved(&self) -> Vec<PhysicalRegister> {
-        vec![19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
-    }
-
-    /// 检查物理寄存器是否是 AArch64 callee-saved
-    pub fn is_aarch64_callee_saved(&self, reg: PhysicalRegister) -> bool {
-        matches!(reg, 19..=30)
-    }
-
-    /// 获取 AArch64 caller-saved 寄存器列表
-    /// 根据 AAPCS64 标准，X0-X18 是 caller-saved
-    pub fn get_aarch64_caller_saved(&self) -> Vec<PhysicalRegister> {
-        vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
-    }
-
-    /// 检查物理寄存器是否是 AArch64 caller-saved
-    pub fn is_aarch64_caller_saved(&self, reg: PhysicalRegister) -> bool {
-        matches!(reg, 0..=18)
     }
 }
 
@@ -307,12 +291,15 @@ mod tests {
         assert!(!allocatable.contains(&REG_RETURN_ADDRESS)); // 返回地址保留
         assert!(!allocatable.contains(&REG_EFFECT_STACK_POINTER)); // effect 栈顶不可分配
         assert!(!allocatable.contains(&REG_EFFECT_PAYLOAD)); // effect payload 保留
-        // 验证参数寄存器应该可以被分配
+                                                             // 验证参数寄存器应该可以被分配
         assert!(allocatable.contains(&REG_ARG1));
         assert!(allocatable.contains(&REG_ARG2));
         assert!(allocatable.contains(&REG_ARG3));
         // 验证allocatable_registers应该包含callee-saved寄存器
-        assert!(allocatable.len() > 3, "应该包含更多可分配寄存器（包括callee-saved）");
+        assert!(
+            allocatable.len() > 3,
+            "应该包含更多可分配寄存器（包括callee-saved）"
+        );
     }
 
     #[test]
