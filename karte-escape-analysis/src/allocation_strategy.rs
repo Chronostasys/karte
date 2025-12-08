@@ -56,7 +56,10 @@ impl AllocationStrategy {
     pub fn needs_gc_tracking(&self) -> bool {
         matches!(
             self,
-            AllocationStrategy::Heap { gc_tracked: true, .. }
+            AllocationStrategy::Heap {
+                gc_tracked: true,
+                ..
+            }
         )
     }
 
@@ -201,10 +204,7 @@ impl AllocationStrategySelector {
 
     /// 获取变量对齐
     fn get_variable_alignment(&self, var_name: &str) -> usize {
-        self.variable_alignments
-            .get(var_name)
-            .copied()
-            .unwrap_or(8)
+        self.variable_alignments.get(var_name).copied().unwrap_or(8)
     }
 
     /// 获取栈帧布局
@@ -402,7 +402,11 @@ impl AllocationStatistics {
     pub fn print_summary(&self) {
         println!("=== 分配策略统计 ===");
         println!("总变量数: {}", self.total_variables);
-        println!("栈分配: {} ({:.1}%)", self.stack_allocated, self.stack_allocation_percentage());
+        println!(
+            "栈分配: {} ({:.1}%)",
+            self.stack_allocated,
+            self.stack_allocation_percentage()
+        );
         println!("堆分配: {}", self.heap_allocated);
         println!("参数逃逸: {}", self.arg_escape);
         println!("\n建议统计:");
@@ -482,7 +486,11 @@ mod tests {
         let strategy = selector.select_allocation_strategy(&var_id, "x");
 
         match strategy {
-            AllocationStrategy::Stack { offset, size, alignment } => {
+            AllocationStrategy::Stack {
+                offset,
+                size,
+                alignment,
+            } => {
                 assert_eq!(offset, -8);
                 assert_eq!(size, 8);
                 assert_eq!(alignment, 8);
@@ -515,7 +523,11 @@ mod tests {
         let strategy = selector.select_allocation_strategy(&var_id, "y");
 
         match strategy {
-            AllocationStrategy::Heap { object_type, size, gc_tracked } => {
+            AllocationStrategy::Heap {
+                object_type,
+                size,
+                gc_tracked,
+            } => {
                 assert_eq!(object_type, "test::y");
                 assert_eq!(size, 16);
                 assert!(gc_tracked);

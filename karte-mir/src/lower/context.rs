@@ -87,7 +87,7 @@ impl<'a> LoweringContext<'a> {
         let entry_block = function.entry_block;
 
         self.scopes.clear();
-        self.temp_value_map.clear();  // 清空临时变量映射，避免不同函数间的TempId冲突
+        self.temp_value_map.clear(); // 清空临时变量映射，避免不同函数间的TempId冲突
         self.enter_scope();
 
         // 将参数添加到变量作用域
@@ -337,7 +337,11 @@ impl<'a> LoweringContext<'a> {
     /// 注册函数的返回类型
     ///
     /// 从函数定义的返回类型注解中提取类型信息并存储
-    pub(crate) fn register_function_return_type(&mut self, func_name: String, return_type: karte_hir::Type) {
+    pub(crate) fn register_function_return_type(
+        &mut self,
+        func_name: String,
+        return_type: karte_hir::Type,
+    ) {
         self.function_return_types.insert(func_name, return_type);
     }
 
@@ -364,7 +368,10 @@ impl<'a> LoweringContext<'a> {
     pub(crate) fn get_expr_type(&self, expr: &karte_hir::Expr) -> karte_hir::Type {
         let expr_ptr = expr as *const karte_hir::Expr;
         let key = expr_ptr as usize;
-        self.expr_types.get(&key).cloned().unwrap_or(karte_hir::Type::Unknown)
+        self.expr_types
+            .get(&key)
+            .cloned()
+            .unwrap_or(karte_hir::Type::Unknown)
     }
 
     /// 获取Lambda表达式的推断类型

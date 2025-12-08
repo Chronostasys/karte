@@ -41,6 +41,8 @@ fn test_safepoint_instruction_compilation() {
         },
     ];
 
+    main_function.used_regs = vec![0];
+
     let mut functions = HashMap::new();
     functions.insert("main".to_string(), main_function);
 
@@ -56,9 +58,7 @@ fn test_safepoint_instruction_compilation() {
     let program_manager = ProgramManager::new();
 
     // 初始化
-    engine
-        .initialize(&program_manager)
-        .expect("初始化失败");
+    engine.initialize(&program_manager).expect("初始化失败");
 
     // 执行程序（包含安全点）
     let result = engine.compile_and_execute_with_jit(&program);
@@ -138,6 +138,8 @@ fn test_multiple_safepoints_in_loop() {
         },
     ];
 
+    main_function.used_regs = vec![0, 1];
+
     let mut functions = HashMap::new();
     functions.insert("main".to_string(), main_function);
 
@@ -153,9 +155,7 @@ fn test_multiple_safepoints_in_loop() {
     let program_manager = ProgramManager::new();
 
     // 初始化
-    engine
-        .initialize(&program_manager)
-        .expect("初始化失败");
+    engine.initialize(&program_manager).expect("初始化失败");
 
     // 执行程序（循环中包含安全点）
     let result = engine.compile_and_execute_with_jit(&program);

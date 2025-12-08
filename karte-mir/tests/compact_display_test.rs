@@ -6,7 +6,10 @@ fn test_compact_value_display() {
     // 测试简洁的值显示
 
     // Number(1) -> num 1
-    let val = Value::Number { value: 42, ty: None };
+    let val = Value::Number {
+        value: 42,
+        ty: None,
+    };
     let output = val.to_ir_string();
     println!("\n数字: {}", output);
     assert!(
@@ -31,7 +34,10 @@ fn test_compact_value_display() {
     assert!(output.contains("x"), "变量输出应包含变量名: {}", output);
 
     // Boolean(true) -> bool true
-    let val = Value::Boolean { value: true, ty: None };
+    let val = Value::Boolean {
+        value: true,
+        ty: None,
+    };
     let output = val.to_ir_string();
     println!("布尔: {}", output);
     assert!(
@@ -48,7 +54,10 @@ fn test_compact_value_display() {
     assert_eq!(output.trim(), "()");
 
     // Temp(TempId(5)) -> t TempId(5)
-    let val = Value::Temp { id: TempId(5), ty: None };
+    let val = Value::Temp {
+        id: TempId(5),
+        ty: None,
+    };
     let output = val.to_ir_string();
     println!("临时变量: {}", output);
     assert!(
@@ -100,7 +109,10 @@ fn test_compact_terminator_display() {
 
     // Return(n 42) -> ret n 42
     let term = Terminator::Return {
-        value: Some(Value::Number { value: 42, ty: None }),
+        value: Some(Value::Number {
+            value: 42,
+            ty: None,
+        }),
         span: Default::default(),
     };
     let output = term.to_ir_string();
@@ -133,7 +145,10 @@ fn test_format_comparison() {
 
     println!("\n优化前 vs 优化后:");
 
-    let val = Value::Number { value: 42, ty: None };
+    let val = Value::Number {
+        value: 42,
+        ty: None,
+    };
     println!("  Number(42) -> {}", val.to_ir_string());
 
     let val = Value::Variable {

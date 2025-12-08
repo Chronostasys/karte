@@ -259,8 +259,7 @@ fn main() -> number {
 }
 "#;
         let (tokens, _) = tokenize(code);
-        let (parse_result, diagnostics) =
-            parse_with_type_check(&tokens, ParserMode::Project, None);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
         assert!(
             !diagnostics.has_errors(),
             "Parsing failed: {:?}",
@@ -289,8 +288,7 @@ fn main() -> number {
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
         pipeline.optimize(&mut lir).expect("Optimization failed");
 
-        karte_lir::lower_program_instructions(&mut lir)
-            .expect("Instruction lowering failed");
+        karte_lir::lower_program_instructions(&mut lir).expect("Instruction lowering failed");
 
         let mut executor =
             ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
@@ -320,8 +318,7 @@ fn main() -> number {
 }
 "#;
         let (tokens, _) = tokenize(code);
-        let (parse_result, diagnostics) =
-            parse_with_type_check(&tokens, ParserMode::Project, None);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
         assert!(
             !diagnostics.has_errors(),
             "Parsing failed: {:?}",
@@ -350,8 +347,7 @@ fn main() -> number {
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
         pipeline.optimize(&mut lir).expect("Optimization failed");
 
-        karte_lir::lower_program_instructions(&mut lir)
-            .expect("Instruction lowering failed");
+        karte_lir::lower_program_instructions(&mut lir).expect("Instruction lowering failed");
 
         let mut executor =
             ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
@@ -381,8 +377,7 @@ fn main() -> number {
 }
 "#;
         let (tokens, _) = tokenize(code);
-        let (parse_result, diagnostics) =
-            parse_with_type_check(&tokens, ParserMode::Project, None);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
         assert!(
             !diagnostics.has_errors(),
             "Parsing failed: {:?}",
@@ -411,8 +406,7 @@ fn main() -> number {
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
         pipeline.optimize(&mut lir).expect("Optimization failed");
 
-        karte_lir::lower_program_instructions(&mut lir)
-            .expect("Instruction lowering failed");
+        karte_lir::lower_program_instructions(&mut lir).expect("Instruction lowering failed");
 
         let mut executor =
             ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
@@ -451,8 +445,7 @@ fn main() -> number {
 }
 "#;
         let (tokens, _) = tokenize(code);
-        let (parse_result, diagnostics) =
-            parse_with_type_check(&tokens, ParserMode::Project, None);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
         assert!(
             !diagnostics.has_errors(),
             "Parsing failed: {:?}",
@@ -481,8 +474,7 @@ fn main() -> number {
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
         pipeline.optimize(&mut lir).expect("Optimization failed");
 
-        karte_lir::lower_program_instructions(&mut lir)
-            .expect("Instruction lowering failed");
+        karte_lir::lower_program_instructions(&mut lir).expect("Instruction lowering failed");
 
         let mut executor =
             ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
@@ -511,8 +503,7 @@ fn main() -> number {
 }
 "#;
         let (tokens, _) = tokenize(code);
-        let (parse_result, diagnostics) =
-            parse_with_type_check(&tokens, ParserMode::Project, None);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
         assert!(
             !diagnostics.has_errors(),
             "Parsing failed: {:?}",
@@ -541,8 +532,7 @@ fn main() -> number {
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
         pipeline.optimize(&mut lir).expect("Optimization failed");
 
-        karte_lir::lower_program_instructions(&mut lir)
-            .expect("Instruction lowering failed");
+        karte_lir::lower_program_instructions(&mut lir).expect("Instruction lowering failed");
 
         let mut executor =
             ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
@@ -570,8 +560,7 @@ fn main() -> number {
 }
 "#;
         let (tokens, _) = tokenize(code);
-        let (parse_result, diagnostics) =
-            parse_with_type_check(&tokens, ParserMode::Project, None);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
         assert!(
             !diagnostics.has_errors(),
             "Parsing failed: {:?}",
@@ -600,8 +589,7 @@ fn main() -> number {
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
         pipeline.optimize(&mut lir).expect("Optimization failed");
 
-        karte_lir::lower_program_instructions(&mut lir)
-            .expect("Instruction lowering failed");
+        karte_lir::lower_program_instructions(&mut lir).expect("Instruction lowering failed");
 
         let mut executor =
             ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
@@ -635,8 +623,7 @@ fn main() -> number {
 }
 "#;
         let (tokens, _) = tokenize(code);
-        let (parse_result, diagnostics) =
-            parse_with_type_check(&tokens, ParserMode::Project, None);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
         assert!(
             !diagnostics.has_errors(),
             "Parsing failed: {:?}",
@@ -665,8 +652,7 @@ fn main() -> number {
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
         pipeline.optimize(&mut lir).expect("Optimization failed");
 
-        karte_lir::lower_program_instructions(&mut lir)
-            .expect("Instruction lowering failed");
+        karte_lir::lower_program_instructions(&mut lir).expect("Instruction lowering failed");
 
         let mut executor =
             ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
@@ -695,8 +681,7 @@ fn main() -> number {
 }
 "#;
         let (tokens, _) = tokenize(code);
-        let (parse_result, diagnostics) =
-            parse_with_type_check(&tokens, ParserMode::Project, None);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
         assert!(
             !diagnostics.has_errors(),
             "Parsing failed: {:?}",
@@ -725,8 +710,7 @@ fn main() -> number {
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
         pipeline.optimize(&mut lir).expect("Optimization failed");
 
-        karte_lir::lower_program_instructions(&mut lir)
-            .expect("Instruction lowering failed");
+        karte_lir::lower_program_instructions(&mut lir).expect("Instruction lowering failed");
 
         let mut executor =
             ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
@@ -737,6 +721,147 @@ fn main() -> number {
         assert_eq!(
             exit_code, 6,
             "Expected exit code 6 (5 + 1), got {}",
+            exit_code
+        );
+    }
+
+    /// 回归测试：`test_allocate_many.karte` 中的大量引用分配
+    /// 确保多次调用返回双重引用时不会破坏虚拟栈与GC根
+    #[test]
+    fn test_allocate_many_stack_refs() {
+        let code = r#"
+fn allocate_many() -> & &number {
+    let d = 1;
+    &(&d)
+}
+
+fn main() -> number {
+    let a = allocate_many();
+    let b = allocate_many();
+    let c = allocate_many();
+    let d = allocate_many();
+    let e = allocate_many();
+    let f = allocate_many();
+    let g = allocate_many();
+    let h = allocate_many();
+    let i = allocate_many();
+    let j = allocate_many();
+    *(*a) + *(*b) + *(*c) + *(*d) + *(*e) + *(*f) + *(*g) + *(*h) + *(*i) + *(*j)
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing failed: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        // 应用逃逸分析优化
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        karte_lir::lower_program_instructions(&mut lir).expect("Instruction lowering failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        assert_eq!(
+            exit_code, 10,
+            "Expected exit code 10 (sum of ten ones), got {}",
+            exit_code
+        );
+    }
+
+    /// 回归测试：深层栈计算后解引用提前逃逸的引用
+    /// 确保 GC 根注册覆盖整个虚拟栈，即使栈帧被频繁创建/销毁也能读取到旧引用
+    #[test]
+    fn test_escape_after_deep_stack_usage() {
+        let code = r#"
+fn escape() -> &number {
+    let d = 42;
+    (&d)
+}
+
+fn deep_stack_usage(n: number) -> number {
+    if n == 0 {
+        1
+    } else {
+        let x = n;
+        let y = n + 1;
+        let z = n + 2;
+        x + y + z + deep_stack_usage(n - 1)
+    }
+}
+
+fn main() -> number {
+    let ptr = escape();
+    deep_stack_usage(10);
+    *ptr
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing failed: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        // 应用逃逸分析优化
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        karte_lir::lower_program_instructions(&mut lir).expect("Instruction lowering failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        assert_eq!(
+            exit_code, 42,
+            "Expected exit code 42 (escaped reference value), got {}",
             exit_code
         );
     }
@@ -760,8 +885,7 @@ fn main() -> number {
 }
 "#;
         let (tokens, _) = tokenize(code);
-        let (parse_result, diagnostics) =
-            parse_with_type_check(&tokens, ParserMode::Project, None);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
         assert!(
             !diagnostics.has_errors(),
             "Parsing failed: {:?}",
@@ -790,8 +914,7 @@ fn main() -> number {
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
         pipeline.optimize(&mut lir).expect("Optimization failed");
 
-        karte_lir::lower_program_instructions(&mut lir)
-            .expect("Instruction lowering failed");
+        karte_lir::lower_program_instructions(&mut lir).expect("Instruction lowering failed");
 
         let mut executor =
             ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
@@ -805,5 +928,4 @@ fn main() -> number {
             exit_code
         );
     }
-
 }

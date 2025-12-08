@@ -68,14 +68,20 @@ fn test_allocate_statements_roundtrip() {
     };
 
     let alloc_stmt = Statement::Allocate {
-        target: Value::Temp { id: TempId(1), ty: None },
+        target: Value::Temp {
+            id: TempId(1),
+            ty: None,
+        },
         layout: layout.clone(),
         span: Default::default(),
     };
     roundtrip_statement(&alloc_stmt);
 
     let dealloc_stmt = Statement::Deallocate {
-        pointer: Value::Temp { id: TempId(1), ty: None },
+        pointer: Value::Temp {
+            id: TempId(1),
+            ty: None,
+        },
         layout,
         span: Default::default(),
     };
@@ -85,23 +91,38 @@ fn test_allocate_statements_roundtrip() {
 #[test]
 fn test_gc_barrier_statements_roundtrip() {
     let mark_stmt = Statement::MarkGcRoot {
-        value: Value::Temp { id: TempId(2), ty: None },
+        value: Value::Temp {
+            id: TempId(2),
+            ty: None,
+        },
         root: GcRootKind::StackSlot { slot: 0 },
         span: Default::default(),
     };
     roundtrip_statement(&mark_stmt);
 
     let write_barrier_stmt = Statement::WriteBarrier {
-        object: Value::Temp { id: TempId(3), ty: None },
+        object: Value::Temp {
+            id: TempId(3),
+            ty: None,
+        },
         slot: Some("env_ptr".to_string()),
-        value: Value::Temp { id: TempId(4), ty: None },
+        value: Value::Temp {
+            id: TempId(4),
+            ty: None,
+        },
         span: Default::default(),
     };
     roundtrip_statement(&write_barrier_stmt);
 
     let read_barrier_stmt = Statement::ReadBarrier {
-        target: Value::Temp { id: TempId(5), ty: None },
-        object: Value::Temp { id: TempId(3), ty: None },
+        target: Value::Temp {
+            id: TempId(5),
+            ty: None,
+        },
+        object: Value::Temp {
+            id: TempId(3),
+            ty: None,
+        },
         slot: Some("env_ptr".to_string()),
         span: Default::default(),
     };

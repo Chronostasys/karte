@@ -229,10 +229,7 @@ fn test_multiple_local_pointers() {
             name: "a".to_string(),
             ty: None,
         },
-        source: Value::Number {
-            value: 1,
-            ty: None,
-        },
+        source: Value::Number { value: 1, ty: None },
         span: Default::default(),
     });
 
@@ -242,10 +239,7 @@ fn test_multiple_local_pointers() {
             name: "b".to_string(),
             ty: None,
         },
-        source: Value::Number {
-            value: 2,
-            ty: None,
-        },
+        source: Value::Number { value: 2, ty: None },
         span: Default::default(),
     });
 

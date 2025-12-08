@@ -68,18 +68,9 @@ fn test_gc_virtual_stack_scanning() {
         let obj2_final = virtual_stack[20] as *mut u8;
         let obj3_final = virtual_stack[100] as *mut u8;
 
-        assert!(
-            !obj1_final.is_null(),
-            "obj1 在第二次 GC 后应该仍然有效"
-        );
-        assert!(
-            !obj2_final.is_null(),
-            "obj2 在第二次 GC 后应该仍然有效"
-        );
-        assert!(
-            !obj3_final.is_null(),
-            "obj3 在第二次 GC 后应该仍然有效"
-        );
+        assert!(!obj1_final.is_null(), "obj1 在第二次 GC 后应该仍然有效");
+        assert!(!obj2_final.is_null(), "obj2 在第二次 GC 后应该仍然有效");
+        assert!(!obj3_final.is_null(), "obj3 在第二次 GC 后应该仍然有效");
     }
 }
 
@@ -90,17 +81,11 @@ fn test_gc_object_types() {
     unsafe {
         // 测试 Atomic 类型分配
         let atomic_obj = gc_alloc(8, ObjectType::Atomic);
-        assert!(
-            !atomic_obj.is_null(),
-            "Atomic 类型对象分配应该成功"
-        );
+        assert!(!atomic_obj.is_null(), "Atomic 类型对象分配应该成功");
 
         // 测试 Pointer 类型分配
         let pointer_obj = gc_alloc(8, ObjectType::Pointer);
-        assert!(
-            !pointer_obj.is_null(),
-            "Pointer 类型对象分配应该成功"
-        );
+        assert!(!pointer_obj.is_null(), "Pointer 类型对象分配应该成功");
 
         // 测试 Conservative 类型分配
         let conservative_obj = gc_alloc(64, ObjectType::Conservative);
@@ -111,10 +96,7 @@ fn test_gc_object_types() {
 
         // 测试大对象分配 (Conservative)
         let large_obj = gc_alloc(4096, ObjectType::Conservative);
-        assert!(
-            !large_obj.is_null(),
-            "大对象 (Conservative) 分配应该成功"
-        );
+        assert!(!large_obj.is_null(), "大对象 (Conservative) 分配应该成功");
 
         // 验证可以写入和读取这些对象
         atomic_obj.cast::<i64>().write(42i64);
@@ -124,7 +106,9 @@ fn test_gc_object_types() {
             "Atomic 对象应该可以读写"
         );
 
-        pointer_obj.cast::<*mut u8>().write(0xDEADBEEFu64 as *mut u8);
+        pointer_obj
+            .cast::<*mut u8>()
+            .write(0xDEADBEEFu64 as *mut u8);
         assert_eq!(
             pointer_obj.cast::<*mut u8>().read() as u64,
             0xDEADBEEF,
@@ -183,11 +167,7 @@ fn test_gc_allocation_stress() {
         let mut object_count = 0;
         for i in 0..1000 {
             let obj = gc_alloc(64, ObjectType::Conservative);
-            assert!(
-                !obj.is_null(),
-                "第 {} 次分配应该成功",
-                i
-            );
+            assert!(!obj.is_null(), "第 {} 次分配应该成功", i);
             // 写入标记值（仅用于测试分配成功）
             obj.cast::<i64>().write(i as i64);
             object_count += 1;
@@ -201,11 +181,7 @@ fn test_gc_allocation_stress() {
         // 再分配一些对象，测试 GC 后的分配
         for i in 0..100 {
             let obj = gc_alloc(128, ObjectType::Conservative);
-            assert!(
-                !obj.is_null(),
-                "GC 后第 {} 次分配应该成功",
-                i
-            );
+            assert!(!obj.is_null(), "GC 后第 {} 次分配应该成功", i);
             // 写入数据验证对象可用
             obj.cast::<i64>().write((1000 + i) as i64);
             assert_eq!(

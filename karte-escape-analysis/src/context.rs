@@ -130,10 +130,7 @@ impl AnalysisContext {
     pub fn increase_depth(&mut self) -> Result<(), String> {
         self.analysis_depth += 1;
         if self.analysis_depth > self.max_depth {
-            Err(format!(
-                "分析深度超过最大限制: {}",
-                self.max_depth
-            ))
+            Err(format!("分析深度超过最大限制: {}", self.max_depth))
         } else {
             Ok(())
         }

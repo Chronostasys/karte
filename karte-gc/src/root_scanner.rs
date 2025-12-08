@@ -89,7 +89,11 @@ impl RootScanner {
     /// # Safety
     ///
     /// 调用者必须确保 stack_start 和 stack_end 指向有效的内存区间
-    pub unsafe fn scan_virtual_stack(&self, stack_start: *const u8, stack_end: *const u8) -> Vec<*mut u8> {
+    pub unsafe fn scan_virtual_stack(
+        &self,
+        stack_start: *const u8,
+        stack_end: *const u8,
+    ) -> Vec<*mut u8> {
         let mut roots = Vec::new();
 
         if self.verbose {
@@ -112,7 +116,11 @@ impl RootScanner {
             if self.looks_like_heap_pointer(potential_ptr) {
                 roots.push(potential_ptr as *mut u8);
                 if self.verbose {
-                    log::trace!("Found potential root at {:p} -> {:p}", current, potential_ptr);
+                    log::trace!(
+                        "Found potential root at {:p} -> {:p}",
+                        current,
+                        potential_ptr
+                    );
                 }
             }
 

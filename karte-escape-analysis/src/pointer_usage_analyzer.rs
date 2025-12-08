@@ -71,11 +71,7 @@ impl<'a> PointerUsageAnalyzer<'a> {
     /// 检查指针生命周期是否安全
     ///
     /// 验证指针的生命周期不超过被指向对象的生命周期
-    pub fn check_lifetime_safety(
-        &self,
-        pointer_var: VariableId,
-        pointee_var: VariableId,
-    ) -> bool {
+    pub fn check_lifetime_safety(&self, pointer_var: VariableId, pointee_var: VariableId) -> bool {
         // 获取指针和被指向对象的元数据
         let pointer_meta = self.graph.get_node_metadata(&pointer_var);
         let pointee_meta = self.graph.get_node_metadata(&pointee_var);

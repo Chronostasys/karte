@@ -415,11 +415,20 @@ impl Collector {
     fn mark_conservative(&self, ptr: *mut u8) {
         unsafe {
             let gc_cycle = CURRENT_GC_CYCLE.with(|c| c.get());
-            log::trace!("gc {} [Cycle {}]: mark_conservative called: ptr={:p}", self.id, gc_cycle, ptr);
+            log::trace!(
+                "gc {} [Cycle {}]: mark_conservative called: ptr={:p}",
+                self.id,
+                gc_cycle,
+                ptr
+            );
             if self.thread_local_allocator().in_heap(ptr) {
                 let obj = ImmixObject::from_unaligned_ptr(ptr);
                 if obj.is_none() {
-                    log::trace!("gc {} [Cycle {}]: mark_conservative - not a valid object", self.id, gc_cycle);
+                    log::trace!(
+                        "gc {} [Cycle {}]: mark_conservative - not a valid object",
+                        self.id,
+                        gc_cycle
+                    );
                     return;
                 }
                 let obj = obj.unwrap_unchecked();
@@ -444,7 +453,9 @@ impl Collector {
                     let forward_ptr = *(body_ptr as *const u64);
                     log::warn!(
                         "gc {} [Cycle {}]: ⚠️  Forward pointer value: 0x{:X}",
-                        self.id, gc_cycle, forward_ptr
+                        self.id,
+                        gc_cycle,
+                        forward_ptr
                     );
                 }
 
@@ -453,7 +464,11 @@ impl Collector {
                     let field_value = *(field_addr as *const u64);
                     log::debug!(
                         "gc {} [Cycle {}]: mark_conservative - field[{}]: addr={:p}, value=0x{:X}",
-                        self.id, gc_cycle, i, field_addr, field_value
+                        self.id,
+                        gc_cycle,
+                        i,
+                        field_addr,
+                        field_value
                     );
                     self.queue
                         .push(SendableMarkJob::Object((field_addr, ObjectType::Pointer)));
@@ -490,7 +505,12 @@ impl Collector {
         }
 
         let ptr = *(ptr as *mut *mut u8);
-        log::trace!("gc {}: mark_ptr called: father={:p} -> ptr={:p}", self.id, father, ptr);
+        log::trace!(
+            "gc {}: mark_ptr called: father={:p} -> ptr={:p}",
+            self.id,
+            father,
+            ptr
+        );
         // mark it if it is in heap
         // if (ptr as usize) % 8 != 0 {
         //     return;
@@ -520,7 +540,11 @@ impl Collector {
 
             log::trace!(
                 "gc {}: mark_ptr found heap object: ptr={:p}, body={:p}, size={}, type={:?}",
-                self.id, ptr, body, body_size, obj_ref.obj_type
+                self.id,
+                ptr,
+                body,
+                body_size,
+                obj_ref.obj_type
             );
 
             debug_assert!(offset_from_head >= 0);
@@ -565,7 +589,11 @@ impl Collector {
                 let gc_cycle = CURRENT_GC_CYCLE.with(|c| c.get());
                 log::debug!(
                     "gc {} [Cycle {}]: evacuation alloc: old_body={:p}, new_body={:p}, size={}",
-                    self.id, gc_cycle, body, new_ptr, body_size
+                    self.id,
+                    gc_cycle,
+                    body,
+                    new_ptr,
+                    body_size
                 );
                 if !new_ptr.is_null() {
                     let new_block = Block::from_obj_ptr(new_ptr);
@@ -573,7 +601,10 @@ impl Collector {
                     let is_eva_candidate = new_block.is_eva_candidate();
                     log::debug!(
                         "gc {} [Cycle {}]: evacuation target block: {:p}, is_eva_candidate={}",
-                        self.id, gc_cycle, new_block, is_eva_candidate
+                        self.id,
+                        gc_cycle,
+                        new_block,
+                        is_eva_candidate
                     );
                     if is_eva_candidate {
                         log::error!(
@@ -652,7 +683,9 @@ impl Collector {
             // let obj_type = line_header.get_obj_type();
             log::trace!(
                 "gc {}: processing object type: body={:p}, type={:?}",
-                self.id, body, obj_ref.obj_type
+                self.id,
+                body,
+                obj_ref.obj_type
             );
             match obj_ref.obj_type {
                 ObjectType::Atomic => {
@@ -665,7 +698,9 @@ impl Collector {
                 _ => {
                     log::trace!(
                         "gc {}: pushing job for type {:?} at {:p}",
-                        self.id, obj_ref.obj_type, body
+                        self.id,
+                        obj_ref.obj_type,
+                        body
                     );
                     self.push_job(body, obj_ref.obj_type);
                 }
@@ -1111,7 +1146,12 @@ impl Collector {
     }
 
     unsafe fn mark_obj(&self, obj_type: ObjectType, obj: *mut u8) {
-        log::trace!("gc {}: mark_obj called: obj={:p}, type={:?}", self.id, obj, obj_type);
+        log::trace!(
+            "gc {}: mark_obj called: obj={:p}, type={:?}",
+            self.id,
+            obj,
+            obj_type
+        );
         match obj_type {
             ObjectType::Atomic => {
                 log::trace!("gc {}: mark_obj - Atomic, no action", self.id);
@@ -1129,7 +1169,10 @@ impl Collector {
                 self.mark_ptr(obj);
             }
             ObjectType::Conservative => {
-                log::trace!("gc {}: mark_obj - Conservative, calling mark_conservative", self.id);
+                log::trace!(
+                    "gc {}: mark_obj - Conservative, calling mark_conservative",
+                    self.id
+                );
                 self.mark_conservative(obj);
             }
         }
@@ -1588,12 +1631,8 @@ impl Collector {
     /// 在 mark 阶段调用所有注册的自定义扫描器
     fn mark_custom_stacks(&self) {
         for scanner_info in &self.custom_stack_scanners {
-            let roots = unsafe {
-                (scanner_info.scanner)(
-                    scanner_info.stack_start,
-                    scanner_info.stack_end
-                )
-            };
+            let roots =
+                unsafe { (scanner_info.scanner)(scanner_info.stack_start, scanner_info.stack_end) };
 
             for root_ptr in roots {
                 unsafe {
@@ -1608,16 +1647,14 @@ impl Collector {
         let gc_cycle = CURRENT_GC_CYCLE.with(|c| c.get());
 
         for scanner_info in &self.custom_stack_scanners {
-            let roots = unsafe {
-                (scanner_info.scanner)(
-                    scanner_info.stack_start,
-                    scanner_info.stack_end
-                )
-            };
+            let roots =
+                unsafe { (scanner_info.scanner)(scanner_info.stack_start, scanner_info.stack_end) };
 
             log::debug!(
                 "gc {} [Cycle {}]: === POST-GC ROOT VERIFICATION ({} roots) ===",
-                self.id, gc_cycle, roots.len()
+                self.id,
+                gc_cycle,
+                roots.len()
             );
 
             for root_ptr in roots {
@@ -1647,7 +1684,10 @@ impl Collector {
                             } else {
                                 log::trace!(
                                     "gc {} [Cycle {}]: ✓ Root OK: stack_loc={:p} -> heap_ptr={:p}",
-                                    self.id, gc_cycle, root_ptr, heap_ptr
+                                    self.id,
+                                    gc_cycle,
+                                    root_ptr,
+                                    heap_ptr
                                 );
                             }
                         }

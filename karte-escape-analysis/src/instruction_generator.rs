@@ -85,11 +85,7 @@ impl InstructionGenerator {
 
         for (var_id, strategy) in strategies {
             // 查找变量名
-            if let Some((var_name, _)) = self
-                .var_name_to_id
-                .iter()
-                .find(|(_, id)| *id == var_id)
-            {
+            if let Some((var_name, _)) = self.var_name_to_id.iter().find(|(_, id)| *id == var_id) {
                 let instruction = self.generate_allocation_instruction(var_name, strategy);
                 instructions.push(instruction);
 
@@ -193,10 +189,7 @@ pub enum AllocationInstruction {
     },
 
     /// 内联分配指令
-    InlineAlloc {
-        var_name: String,
-        size: usize,
-    },
+    InlineAlloc { var_name: String, size: usize },
 
     /// 寄存器分配指令
     RegisterAlloc {

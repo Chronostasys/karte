@@ -42,7 +42,10 @@ pub fn lower_expr_to_mir_with_options(
     context.external_functions = known_functions;
     context.module_context = module_context.clone();
     context.expr_types = expr_types;
-    println!("[MIR] expr_types size in LoweringContext: {}", context.expr_types.len());
+    println!(
+        "[MIR] expr_types size in LoweringContext: {}",
+        context.expr_types.len()
+    );
 
     // 创建主函数
     context.start_function(SCRIPT_ENTRY_POINT.to_string(), vec![]);
