@@ -8,31 +8,31 @@ pub mod analyzer;
 pub mod call_graph;
 pub mod context;
 pub mod error;
+pub mod escape_point_detector;
+pub mod escape_point_transformer;
 pub mod function_summary;
 pub mod graph;
 pub mod instruction_generator;
-pub mod types;
-pub mod escape_point_detector;
-pub mod escape_point_transformer;
 pub mod pointer_usage_analyzer;
+pub mod types;
 
 pub use allocation_strategy::{
     AllocationStatistics, AllocationStrategy, AllocationStrategySelector, StackFrameLayout,
     StackSlot,
 };
 pub use analyzer::EscapeAnalyzer;
+pub use call_graph::{CallGraph, CallGraphStats};
 pub use context::AnalysisContext;
 pub use error::{EscapeAnalysisError, Result};
+pub use escape_point_detector::EscapePointDetector;
+pub use escape_point_transformer::EscapePointTransformer;
+pub use function_summary::{
+    DatabaseStats, FunctionSummary, FunctionSummaryDatabase, ParameterTag, ReturnSource,
+};
 pub use graph::VariableGraph;
 pub use instruction_generator::{AllocationInstruction, InstructionGenerator};
+pub use pointer_usage_analyzer::{PointerUsageAnalyzer, PointerUsagePattern};
 pub use types::{
     AllocationSuggestion, EscapePoint, EscapeState, FunctionId, LifetimeConstraint,
     VariableEscapeInfo, VariableId,
-};
-pub use escape_point_detector::EscapePointDetector;
-pub use escape_point_transformer::EscapePointTransformer;
-pub use pointer_usage_analyzer::{PointerUsageAnalyzer, PointerUsagePattern};
-pub use call_graph::{CallGraph, CallGraphStats};
-pub use function_summary::{
-    DatabaseStats, FunctionSummary, FunctionSummaryDatabase, ParameterTag, ReturnSource,
 };

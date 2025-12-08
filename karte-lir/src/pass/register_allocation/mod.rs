@@ -107,12 +107,12 @@ impl FunctionPass for SimpleStackRegisterAllocation {
         // 应用分配并处理溢出
         let result = self.apply_allocation_with_spilling(function, &allocation_map);
 
-        // 分析实际使用的 callee-saved 寄存器
+        // 分析实际使用的寄存器
         match result {
             PassResult::Unchanged | PassResult::Changed => {
-                let used_callee_saved = self.analyze_callee_saved_usage(function, &allocation_map);
-                function.set_used_callee_saved(used_callee_saved);
-                info!("🎯 使用的 callee-saved 寄存器: {:?}", function.get_used_callee_saved());
+                let used_registers = self.analyze_register_usage(function, &allocation_map);
+                function.set_used_regs(used_registers);
+                info!("🎯 使用的寄存器: {:?}", function.get_used_regs());
                 result
             }
             PassResult::Failed(_) => result,
@@ -1070,7 +1070,7 @@ impl SimpleStackRegisterAllocation {
     ///
     /// 这个方法在寄存器分配完成后调用，分析哪些虚拟寄存器被分配到了
     /// AArch64 的 callee-saved 物理寄存器（X19-X30）
-    fn analyze_callee_saved_usage(
+    fn analyze_register_usage(
         &self,
         function: &LirFunction,
         allocation_map: &HashMap<Register, AllocationTarget>,
@@ -1080,17 +1080,13 @@ impl SimpleStackRegisterAllocation {
         // 遍历所有虚拟寄存器的分配结果
         for (virtual_reg, target) in allocation_map {
             if let AllocationTarget::Register(phys_reg) = target {
-                // 检查是否是 AArch64 callee-saved 寄存器
-                if self.calling_convention.is_aarch64_callee_saved(*phys_reg) {
-                    used.insert(*phys_reg);
-                    trace!("  虚拟寄存器 {:?} 分配到 callee-saved 寄存器 r{}", virtual_reg, phys_reg);
-                }
+                used.insert(*phys_reg);
             }
         }
 
         // 排序并返回（便于生成优化的保存/恢复代码）
         let mut result: Vec<_> = used.into_iter().collect();
-        result.sort_unstable();  // 确定性输出
+        result.sort_unstable(); // 确定性输出
 
         result
     }

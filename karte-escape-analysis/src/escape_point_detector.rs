@@ -2,8 +2,8 @@
 //!
 //! 识别MIR中的逃逸点，即变量从栈语义转换到堆语义的临界点
 
-use crate::{VariableEscapeInfo, VariableId, EscapeState};
-use karte_mir::{Statement, Terminator, Value, TempId};
+use crate::{EscapeState, VariableEscapeInfo, VariableId};
+use karte_mir::{Statement, TempId, Terminator, Value};
 use log::{debug, trace};
 use std::collections::HashMap;
 
@@ -126,10 +126,9 @@ impl EscapePointDetector {
 
             // 类型2: 闭包捕获
             Statement::Assign {
-                source:
-                    Value::Closure {
-                        captured_values, ..
-                    },
+                source: Value::Closure {
+                    captured_values, ..
+                },
                 ..
             } => {
                 let mut points = Vec::new();
@@ -157,12 +156,12 @@ impl EscapePointDetector {
     pub fn find_escape_points_in_terminator(&self, terminator: &Terminator) -> Vec<EscapePoint> {
         match terminator {
             // 类型3: 返回语句
-            Terminator::Return { value: Some(val), .. } => {
+            Terminator::Return {
+                value: Some(val), ..
+            } => {
                 if self.needs_escape(val) {
                     trace!("发现逃逸点: Return {:?}", val);
-                    vec![EscapePoint::Return {
-                        value: val.clone(),
-                    }]
+                    vec![EscapePoint::Return { value: val.clone() }]
                 } else {
                     vec![]
                 }

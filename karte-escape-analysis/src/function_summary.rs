@@ -194,8 +194,7 @@ impl FunctionSummary {
     /// 标记参数逃逸
     pub fn mark_parameter_escape(&mut self, param_index: usize, tag: ParameterTag) {
         if param_index < self.parameter_tags.len() {
-            self.parameter_tags[param_index] =
-                self.parameter_tags[param_index].merge(&tag);
+            self.parameter_tags[param_index] = self.parameter_tags[param_index].merge(&tag);
         }
     }
 
@@ -383,7 +382,10 @@ mod tests {
         let heap_escape = ParameterTag::EscapeViaHeapStore;
 
         // NoEscape + ReturnEscape = ReturnEscape
-        assert_eq!(no_escape.merge(&return_escape), ParameterTag::EscapeViaReturn);
+        assert_eq!(
+            no_escape.merge(&return_escape),
+            ParameterTag::EscapeViaReturn
+        );
 
         // ReturnEscape + HeapStore = HeapStore
         assert_eq!(

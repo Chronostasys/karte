@@ -52,7 +52,7 @@ fn test_register_type_analysis() {
         struct_types: HashMap::new(),
         stack_frame_size: 0,
         parameter_count: 2,
-        used_callee_saved: Vec::new(),
+        used_regs: Vec::new(),
     };
 
     let calling_convention = types::CallingConvention::standard();
@@ -263,7 +263,7 @@ fn test_parameter_return_conflict() {
         stack_frame_size: 0,
         parameter_count: 1,
         parameter_registers: vec![Register::Virtual(100)],
-        used_callee_saved: Vec::new(),
+        used_regs: Vec::new(),
     };
 
     let mut pass = SimpleStackRegisterAllocation::new();

@@ -3,7 +3,7 @@
 //! 在逃逸点插入堆分配和复制代码，实现栈变量到堆的转换
 
 use crate::escape_point_detector::{EscapePoint, EscapePointDetector};
-use karte_mir::{BasicBlockId, MirFunction, MirProgram, Statement, Terminator, TempId, Value};
+use karte_mir::{BasicBlockId, MirFunction, MirProgram, Statement, TempId, Terminator, Value};
 use log::{debug, info, trace};
 
 /// 逃逸点转换器
@@ -71,11 +71,7 @@ impl EscapePointTransformer {
             } else {
                 // 是逃逸点，需要转换
                 for escape_point in escape_points {
-                    self.transform_escape_point(
-                        &escape_point,
-                        stmt,
-                        &mut new_statements,
-                    );
+                    self.transform_escape_point(&escape_point, stmt, &mut new_statements);
                 }
             }
         }
@@ -87,11 +83,7 @@ impl EscapePointTransformer {
                 Some(terminator.clone())
             } else {
                 // 需要转换返回语句
-                self.transform_return_terminator(
-                    terminator,
-                    &escape_points,
-                    &mut new_statements,
-                )
+                self.transform_return_terminator(terminator, &escape_points, &mut new_statements)
             }
         } else {
             None
@@ -196,11 +188,12 @@ impl EscapePointTransformer {
     ) {
         if let Statement::Assign {
             target,
-            source: Value::Closure {
-                function_name,
-                captured_values,
-                ty,
-            },
+            source:
+                Value::Closure {
+                    function_name,
+                    captured_values,
+                    ty,
+                },
             span,
         } = original_stmt
         {

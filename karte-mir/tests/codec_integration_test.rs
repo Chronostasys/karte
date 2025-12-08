@@ -321,10 +321,19 @@ fn test_complex_nested_value() {
 fn test_mir_statement_call_roundtrip() {
     let stmt = MirStatement::Call {
         target: None,
-        function: MirValue::Temp { id: MirTempId(4), ty: None },
+        function: MirValue::Temp {
+            id: MirTempId(4),
+            ty: None,
+        },
         args: vec![
-            MirValue::Temp { id: MirTempId(5), ty: None },
-            MirValue::Temp { id: MirTempId(3), ty: None },
+            MirValue::Temp {
+                id: MirTempId(5),
+                ty: None,
+            },
+            MirValue::Temp {
+                id: MirTempId(3),
+                ty: None,
+            },
         ],
         span: DiagSpan::default(),
     };
@@ -347,10 +356,19 @@ fn test_mir_statement_call_parse_from_text() {
 
     let expected = MirStatement::Call {
         target: None,
-        function: MirValue::Temp { id: MirTempId(4), ty: None },
+        function: MirValue::Temp {
+            id: MirTempId(4),
+            ty: None,
+        },
         args: vec![
-            MirValue::Temp { id: MirTempId(5), ty: None },
-            MirValue::Temp { id: MirTempId(3), ty: None },
+            MirValue::Temp {
+                id: MirTempId(5),
+                ty: None,
+            },
+            MirValue::Temp {
+                id: MirTempId(3),
+                ty: None,
+            },
         ],
         span: DiagSpan::default(),
     };
