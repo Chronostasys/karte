@@ -974,6 +974,12 @@ pub struct LirFunction {
     /// 实际使用的寄存器列表（AArch64）
     #[ir_codec(skip)]
     pub used_regs: Vec<PhysicalRegister>,
+    /// 降级后的指令的生命周期信息（用于JIT编译器优化寄存器保存）
+    #[ir_codec(skip)]
+    pub lowered_lifetimes: Option<Vec<crate::pass::register_allocation::RegisterLifetime>>,
+    /// 降级后的寄存器映射（虚拟寄存器 -> 物理寄存器）
+    #[ir_codec(skip)]
+    pub lowered_register_mapping: Option<HashMap<Register, u8>>,
 }
 
 impl LirFunction {
@@ -987,6 +993,8 @@ impl LirFunction {
             parameter_count: 0,
             parameter_registers: Vec::new(),
             used_regs: Vec::new(),
+            lowered_lifetimes: None,
+            lowered_register_mapping: None,
         }
     }
 

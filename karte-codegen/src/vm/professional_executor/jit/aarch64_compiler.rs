@@ -26,6 +26,10 @@ pub struct AArch64Compiler {
     current_function_use_regs: Vec<PhysicalRegister>,
     /// 当前编译的函数名（用于生成唯一label）
     current_function_name: String,
+    /// 当前函数的降级后生命周期信息（用于优化寄存器保存）
+    current_lowered_lifetimes: Option<Vec<karte_lir::pass::register_allocation::RegisterLifetime>>,
+    /// 当前函数的降级后寄存器映射
+    current_lowered_register_mapping: Option<HashMap<Register, u8>>,
 }
 
 /// AArch64寄存器枚举
@@ -79,6 +83,8 @@ impl AArch64Compiler {
             unique_label_counter: 0,
             current_function_use_regs: Vec::new(),
             current_function_name: String::new(),
+            current_lowered_lifetimes: None,
+            current_lowered_register_mapping: None,
         };
 
         // 初始化寄存器映射
@@ -223,6 +229,7 @@ impl AArch64Compiler {
         instruction: &Instruction,
         code_builder: &mut CodeBuilder,
         is_main_function: bool,
+        instruction_index: usize,
     ) -> Result<(), String> {
         if self.debug_mode {
             log::debug!("编译AArch64指令: {}", instruction);
@@ -293,11 +300,26 @@ impl AArch64Compiler {
                 alignment,
                 allocation_type,
                 ..
-            } => self.compile_alloc(dst, *size, *alignment, allocation_type, code_builder),
-            Instruction::Free { addr, .. } => self.compile_free(addr, code_builder),
-            Instruction::Retain { value, .. } => self.compile_retain(value, code_builder),
-            Instruction::Release { value, .. } => self.compile_release(value, code_builder),
-            Instruction::Safepoint { .. } => self.compile_safepoint(code_builder),
+            } => self.compile_alloc(
+                dst,
+                *size,
+                *alignment,
+                allocation_type,
+                code_builder,
+                instruction_index,
+            ),
+            Instruction::Free { addr, .. } => {
+                self.compile_free(addr, code_builder, instruction_index)
+            }
+            Instruction::Retain { value, .. } => {
+                self.compile_retain(value, code_builder, instruction_index)
+            }
+            Instruction::Release { value, .. } => {
+                self.compile_release(value, code_builder, instruction_index)
+            }
+            Instruction::Safepoint { .. } => {
+                self.compile_safepoint(code_builder, instruction_index)
+            }
             Instruction::Nop { .. } => {
                 // AArch64 NOP指令 (0xD503201F)
                 self.emit_nop(code_builder);
@@ -716,11 +738,12 @@ impl AArch64Compiler {
         alignment: usize,
         allocation_type: &karte_lir::AllocationType,
         code_builder: &mut CodeBuilder,
+        instruction_index: usize,
     ) -> Result<(), String> {
         match allocation_type {
             karte_lir::AllocationType::Heap => {
                 let call = RuntimeCall::alloc(size, alignment);
-                self.emit_runtime_call(code_builder, call, Some(dst))
+                self.emit_runtime_call(code_builder, call, Some(dst), instruction_index)
             }
             _ => Err(format!(
                 "Alloc instruction with unsupported allocation type: {:?}",
@@ -733,33 +756,40 @@ impl AArch64Compiler {
         &mut self,
         addr: &Register,
         code_builder: &mut CodeBuilder,
+        instruction_index: usize,
     ) -> Result<(), String> {
         let call = RuntimeCall::free(*addr);
-        self.emit_runtime_call(code_builder, call, None)
+        self.emit_runtime_call(code_builder, call, None, instruction_index)
     }
 
     fn compile_retain(
         &mut self,
         value: &Register,
         code_builder: &mut CodeBuilder,
+        instruction_index: usize,
     ) -> Result<(), String> {
         let call = RuntimeCall::retain(*value);
-        self.emit_runtime_call(code_builder, call, None)
+        self.emit_runtime_call(code_builder, call, None, instruction_index)
     }
 
     fn compile_release(
         &mut self,
         value: &Register,
         code_builder: &mut CodeBuilder,
+        instruction_index: usize,
     ) -> Result<(), String> {
         let call = RuntimeCall::release(*value);
-        self.emit_runtime_call(code_builder, call, None)
+        self.emit_runtime_call(code_builder, call, None, instruction_index)
     }
 
-    fn compile_safepoint(&mut self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+    fn compile_safepoint(
+        &mut self,
+        code_builder: &mut CodeBuilder,
+        instruction_index: usize,
+    ) -> Result<(), String> {
         // GC 安全点：调用运行时函数
         let call = RuntimeCall::gc_safepoint();
-        self.emit_runtime_call(code_builder, call, None)
+        self.emit_runtime_call(code_builder, call, None, instruction_index)
     }
 
     fn emit_runtime_call(
@@ -767,6 +797,7 @@ impl AArch64Compiler {
         code_builder: &mut CodeBuilder,
         call: RuntimeCall,
         result: Option<&Register>,
+        instruction_index: usize,
     ) -> Result<(), String> {
         let return_reg = AArch64Register::X0 as u8;
         let exclude: Vec<u8> = if result.is_some() && call.expects_result() {
@@ -774,7 +805,22 @@ impl AArch64Compiler {
         } else {
             Vec::new()
         };
-        let (saved_regs, stack_space) = self.save_call_clobbered_registers(code_builder, &exclude);
+
+        // 🔧 判断是否是 GC safepoint 相关调用
+        // GC safepoint 调用（AllocAligned, Free, GcSafepoint）需要保存所有活跃寄存器
+        // 普通 runtime call（Retain, Release）只需保存活跃的 caller-saved 寄存器
+        use super::ffi::RuntimeIntrinsic;
+        let is_gc_safepoint = matches!(
+            call.intrinsic,
+            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::Free | RuntimeIntrinsic::GcSafepoint
+        );
+
+        let (saved_regs, stack_space) = self.save_call_clobbered_registers(
+            code_builder,
+            &exclude,
+            instruction_index,
+            is_gc_safepoint,
+        );
 
         let arg_regs = [
             AArch64Register::X0 as u8,
@@ -920,16 +966,99 @@ impl AArch64Compiler {
         &self,
         code_builder: &mut CodeBuilder,
         exclude: &[u8],
+        instruction_index: usize,
+        is_gc_safepoint: bool,
     ) -> (Vec<u8>, usize) {
-        // 🔧 关键修复：
-        // 1. Karte caller-saved 寄存器 (r0-r4) 保存到虚拟栈
-        // 2. r6 (虚拟SP) 和 r7 (虚拟FP) 保存到系统栈（因为调用 C FFI 时它们会被破坏）
+        // 🔧 基于生命周期分析的优化寄存器保存
+        //
+        // 关键区别：
+        // 1. GC safepoint相关调用（alloc, free, gc_safepoint）：
+        //    需要保存**所有活跃寄存器**
+        //    和在函数开头未被保存的vm callee-saved寄存器（保证GC root都在stack中）
+        //
+        // 2. 普通runtime call（retain, release等）：
+        //    只需要保存**活跃的ffi caller-saved寄存器**
 
         let karte_virtual_sp_reg = self.vm_calling_convention.stack_pointer;
 
-        // IMPORTANT: 将任何有可能包含堆指针的寄存器压stack，保证gc可以正确的扫描它们
-        // FIXME: 应该在这里用生命周期分析分析出具体哪些寄存器需要保存
-        let mut regs_to_virtual_stack: Vec<u8> = (0..=31).collect();
+        // 获取需要保存的寄存器列表
+        let mut regs_to_virtual_stack: Vec<u8> = if let (Some(lifetimes), Some(register_mapping)) = (
+            &self.current_lowered_lifetimes,
+            &self.current_lowered_register_mapping,
+        ) {
+            // 使用生命周期分析确定需要保存的寄存器
+            let mut live_regs = Vec::new();
+
+            for lifetime in lifetimes {
+                // 检查该寄存器是否在当前指令位置活跃
+                if instruction_index >= lifetime.start && instruction_index <= lifetime.end {
+                    // 获取物理寄存器
+                    if let Some(&phys_reg) = register_mapping.get(&lifetime.register) {
+                        if is_gc_safepoint {
+                            // GC safepoint：保存所有活跃寄存器
+                            if !exclude.contains(&phys_reg) {
+                                live_regs.push(phys_reg);
+                            }
+                        } else {
+                            // 普通runtime call：只保存活跃的caller-saved寄存器
+                            if self.ffi_calling_convention.is_caller_saved(phys_reg) {
+                                if !exclude.contains(&phys_reg) {
+                                    live_regs.push(phys_reg);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // GC safepoint调用还需保存未被使用的callee-saved寄存器，保证root都在stack中
+            for i in self
+                .vm_calling_convention
+                .callee_saved
+                .iter()
+                .filter(|e| !self.current_function_use_regs.contains(*e))
+            {
+                live_regs.push(*i);
+            }
+
+            // 去重并排序
+            live_regs.sort();
+            live_regs.dedup();
+
+            if self.debug_mode {
+                if is_gc_safepoint {
+                    log::debug!(
+                        "🔧 GC Safepoint优化：指令 {} 位置需保存 {} 个活跃寄存器: {:?}",
+                        instruction_index,
+                        live_regs.len(),
+                        live_regs
+                    );
+                } else {
+                    log::debug!(
+                        "🔧 普通调用优化：指令 {} 位置只需保存 {} 个caller-saved寄存器: {:?}",
+                        instruction_index,
+                        live_regs.len(),
+                        live_regs
+                    );
+                }
+            }
+
+            live_regs
+        } else {
+            // 回退：如果没有生命周期信息，保守地保存所有caller-saved寄存器
+            let all_caller_saved: Vec<u8> = if is_gc_safepoint {
+                (0..=31).collect::<Vec<u8>>()
+            } else {
+                self.ffi_calling_convention.caller_saved.clone()
+            };
+
+            if self.debug_mode {
+                log::debug!(
+                    "⚠️  未找到生命周期信息，保守保存所有caller-saved寄存器: {:?}",
+                    all_caller_saved
+                );
+            }
+            all_caller_saved
+        };
         regs_to_virtual_stack.retain(|reg| !exclude.contains(reg));
 
         let virtual_stack_space = regs_to_virtual_stack.len() * 8;
@@ -1607,6 +1736,18 @@ impl JitCompiler for AArch64Compiler {
         // 缓存当前函数的 callee-saved 信息
         self.current_function_use_regs = function.get_used_regs().to_vec();
 
+        // 🔧 加载降级后的生命周期信息用于优化寄存器保存
+        self.current_lowered_lifetimes = function.lowered_lifetimes.clone();
+        self.current_lowered_register_mapping = function.lowered_register_mapping.clone();
+
+        if self.debug_mode {
+            if let Some(ref lifetimes) = self.current_lowered_lifetimes {
+                log::debug!("🔧 加载了降级后生命周期信息: {} 个寄存器", lifetimes.len());
+            } else {
+                log::debug!("⚠️  未找到降级后生命周期信息，将使用保守的寄存器保存策略");
+            }
+        }
+
         // 创建代码构建器
         let mut code_builder = CodeBuilder::new();
 
@@ -1632,8 +1773,9 @@ impl JitCompiler for AArch64Compiler {
             self.emit_internal_function_prologue(&mut code_builder)?;
         }
         // 编译所有指令
-        for instruction in function.instructions.iter().skip(1) {
-            self.compile_instruction(instruction, &mut code_builder, is_main_function)?;
+        for (index, instruction) in function.instructions.iter().skip(1).enumerate() {
+            // skip(1)后enumerate从0开始，所以实际指令索引是index+1
+            self.compile_instruction(instruction, &mut code_builder, is_main_function, index + 1)?;
         }
 
         // 获取label信息（在finalize之前）
@@ -1710,6 +1852,18 @@ impl JitCompiler for AArch64Compiler {
         // 🔧 修复：设置当前函数使用的 callee-saved 寄存器
         self.current_function_use_regs = function.get_used_regs().to_vec();
 
+        // 🔧 加载降级后的生命周期信息用于优化寄存器保存
+        self.current_lowered_lifetimes = function.lowered_lifetimes.clone();
+        self.current_lowered_register_mapping = function.lowered_register_mapping.clone();
+
+        if self.debug_mode {
+            if let Some(ref lifetimes) = self.current_lowered_lifetimes {
+                log::debug!("🔧 加载了降级后生命周期信息: {} 个寄存器", lifetimes.len());
+            } else {
+                log::debug!("⚠️  未找到降级后生命周期信息，将使用保守的寄存器保存策略");
+            }
+        }
+
         // 生成函数标签（这是函数的入口点）
         let function_label = format!("func_{}", function.name);
         code_builder.define_label(&function_label)?;
@@ -1743,7 +1897,8 @@ impl JitCompiler for AArch64Compiler {
                 code_builder.add_source_line(index);
             }
 
-            self.compile_instruction(instruction, &mut code_builder, is_main_function)?;
+            // skip(1)后enumerate从0开始，所以实际指令索引是index+1
+            self.compile_instruction(instruction, &mut code_builder, is_main_function, index + 1)?;
         }
 
         // 获取label信息（在finalize之前）

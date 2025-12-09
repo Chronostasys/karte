@@ -3,9 +3,11 @@
 //! 将高级LIR指令（如Alloc、Load64、Store64等）降级为更基础的指令组合
 //! 这样虚拟机只需要支持最基础的指令集
 
+use crate::pass::register_allocation::{LifetimeAnalyzer, RegisterLifetime, RegisterType};
 use crate::{AllocationType, Instruction, LirFunction, LirProgram, Operand, Register};
 use karte_common::calling_convention::CallingConvention;
 use karte_diagnostics::Span;
+use std::collections::{HashMap, HashSet};
 
 /// 指令降级器
 pub struct InstructionLowerer {
@@ -20,6 +22,14 @@ pub struct InstructionLowerer {
     /// 是否已插入提前返回（避免再次生成 Return 序言/尾声）
     inserted_early_return: bool,
     next_register: usize,
+    /// 生命周期分析器（用于优化寄存器保存）
+    lifetime_analyzer: LifetimeAnalyzer,
+    /// 缓存的生命周期分析结果（函数级别）
+    cached_lifetimes: Option<Vec<RegisterLifetime>>,
+    /// 缓存的寄存器类型映射（函数级别）
+    cached_register_types: Option<HashMap<Register, RegisterType>>,
+    /// 缓存的寄存器映射（虚拟寄存器到物理寄存器）
+    cached_register_mapping: Option<HashMap<Register, u8>>,
 }
 
 impl InstructionLowerer {
@@ -30,10 +40,14 @@ impl InstructionLowerer {
             // 使用调用约定内的寄存器定义，避免硬编码
             stack_pointer_reg: Register::Physical(calling_convention.stack_pointer),
             frame_pointer_reg: Register::Physical(calling_convention.frame_pointer),
-            calling_convention,
+            calling_convention: calling_convention.clone(),
             last_effect_perform_result: None,
             inserted_early_return: false,
             next_register: 40,
+            lifetime_analyzer: LifetimeAnalyzer::new(calling_convention),
+            cached_lifetimes: None,
+            cached_register_types: None,
+            cached_register_mapping: None,
         }
     }
 
@@ -45,6 +59,117 @@ impl InstructionLowerer {
     fn effect_payload_register(&self) -> Register {
         // payload 委托给调用约定指定的寄存器（当前为 r1），禁止在 pass 中硬编码
         Register::Physical(self.calling_convention.effect_payload_register)
+    }
+
+    /// 获取指定指令位置需要保存的调用者保存寄存器
+    ///
+    /// 使用缓存的生命周期分析结果，返回需要保存的调用者保存寄存器集合
+    fn get_live_caller_saved_registers_at(&self, instruction_index: usize) -> HashSet<u8> {
+        // 使用缓存的分析结果
+        let lifetimes = self
+            .cached_lifetimes
+            .as_ref()
+            .expect("生命周期分析结果未缓存 - 请先调用analyze_and_cache_lifetimes");
+        let register_mapping = self
+            .cached_register_mapping
+            .as_ref()
+            .expect("寄存器映射未缓存 - 请先调用analyze_and_cache_lifetimes");
+
+        // 使用生命周期分析获取活跃的调用者保存寄存器
+        self.lifetime_analyzer.get_live_physical_registers_at(
+            instruction_index,
+            &self.calling_convention,
+            register_mapping,
+            lifetimes,
+        )
+    }
+
+    /// 分析函数并缓存生命周期信息（在处理函数前调用一次）
+    fn analyze_and_cache_lifetimes(&mut self, function: &LirFunction) {
+        // 执行一次生命周期分析
+        let (lifetimes, register_types) = self.lifetime_analyzer.analyze_simple(function);
+
+        // 创建寄存器映射
+        let mut register_mapping = HashMap::new();
+
+        // 扫描指令，建立虚拟寄存器到物理寄存器的映射
+        for (_i, instruction) in function.instructions.iter().enumerate() {
+            let (defined_regs, used_regs) = instruction.get_defined_and_used_registers();
+
+            // 处理定义的寄存器
+            for reg in defined_regs {
+                if !register_mapping.contains_key(&reg) {
+                    match reg {
+                        Register::Physical(phys_reg) => {
+                            register_mapping.insert(reg, phys_reg);
+                        }
+                        Register::Virtual(_) => {
+                            let phys_reg = self.infer_physical_register(reg);
+                            register_mapping.insert(reg, phys_reg);
+                        }
+                    }
+                }
+            }
+
+            // 处理使用的寄存器
+            for reg in used_regs {
+                if !register_mapping.contains_key(&reg) {
+                    match reg {
+                        Register::Physical(phys_reg) => {
+                            register_mapping.insert(reg, phys_reg);
+                        }
+                        Register::Virtual(_) => {
+                            let phys_reg = self.infer_physical_register(reg);
+                            register_mapping.insert(reg, phys_reg);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 缓存结果
+        self.cached_lifetimes = Some(lifetimes);
+        self.cached_register_types = Some(register_types);
+        self.cached_register_mapping = Some(register_mapping);
+
+        log::debug!(
+            "生命周期分析完成并缓存，共分析 {} 个寄存器生命周期",
+            self.cached_lifetimes.as_ref().unwrap().len()
+        );
+    }
+
+    /// 清除缓存（在处理完函数后调用）
+    fn clear_lifetime_cache(&mut self) {
+        self.cached_lifetimes = None;
+        self.cached_register_types = None;
+        self.cached_register_mapping = None;
+    }
+
+    /// 推断虚拟寄存器对应的物理寄存器
+    ///
+    /// 由于在指令降级阶段寄存器分配已经完成，这里使用启发式方法推断物理寄存器
+    fn infer_physical_register(&self, virtual_reg: Register) -> u8 {
+        // 这是一个简化的实现
+        // 在实际情况下，寄存器分配的结果应该被保存下来
+        match virtual_reg {
+            Register::Physical(phys_reg) => phys_reg,
+            Register::Virtual(virt_id) => {
+                // 使用启发式方法：将虚拟寄存器ID映射到物理寄存器
+                // 这是一个临时解决方案，更好的方法是保存寄存器分配的结果
+                match virt_id {
+                    0 => self.calling_convention.return_register, // 返回值寄存器
+                    1 => self.calling_convention.argument_registers[0], // 参数1
+                    2 => self.calling_convention.argument_registers[1], // 参数2
+                    3 => self.calling_convention.argument_registers[2], // 参数3
+                    4 => self.calling_convention.argument_registers[3], // 参数4
+                    _ => {
+                        // 对于其他虚拟寄存器，使用callee-saved寄存器
+                        // 这里简化处理，使用r8开始的范围
+                        (8 + (virt_id % 24)) as u8
+                    }
+                }
+            }
+        }
     }
 
     fn return_value_register(&self) -> Register {
@@ -73,14 +198,20 @@ impl InstructionLowerer {
     pub fn lower_effect_instructions(&mut self, function: &mut LirFunction) -> Result<(), String> {
         let mut new_instructions = Vec::new();
         let instructions_to_process = function.instructions.clone();
-        for instruction in instructions_to_process {
+        for (index, instruction) in instructions_to_process.iter().enumerate() {
             // 只lower effect相关
             match instruction {
                 Instruction::EffectPushHandler { .. }
                 | Instruction::EffectPopHandler { .. }
                 | Instruction::EffectPerform { .. }
                 | Instruction::EffectResume { .. } => {
-                    self.lower_inst(function, &mut new_instructions, &mut false, &instruction)?;
+                    self.lower_inst(
+                        function,
+                        &mut new_instructions,
+                        &mut false,
+                        &instruction,
+                        index,
+                    )?;
                 }
                 _ => {
                     new_instructions.push(instruction.clone());
@@ -98,22 +229,63 @@ impl InstructionLowerer {
         self.last_effect_perform_result = None;
         self.inserted_early_return = false;
 
+        // 🔧 优化：在函数开始时执行一次生命周期分析并缓存结果
+        // 这样后续的 get_live_caller_saved_registers_at 调用就可以直接使用缓存
+        self.analyze_and_cache_lifetimes(function);
+
         // 克隆指令列表以避免借用检查问题
         let instructions_to_process = function.instructions.clone();
 
         // 在看到第一个 Label 后，立即发射函数序言与 r12 初始化
         let mut prologue_emitted = false;
 
-        for instruction in &instructions_to_process {
+        for (index, instruction) in instructions_to_process.iter().enumerate() {
             self.lower_inst(
                 function,
                 &mut new_instructions,
                 &mut prologue_emitted,
                 instruction,
+                index,
             )?;
         }
 
         function.instructions = new_instructions;
+
+        // 🔧 对降级后的指令重新分析生命周期，供JIT编译器使用
+        let (lowered_lifetimes, _register_types) = self.lifetime_analyzer.analyze_simple(function);
+
+        // 构建降级后的寄存器映射
+        let mut lowered_register_mapping = HashMap::new();
+        for (_i, instruction) in function.instructions.iter().enumerate() {
+            let (defined_regs, used_regs) = instruction.get_defined_and_used_registers();
+
+            for reg in defined_regs.iter().chain(used_regs.iter()) {
+                if !lowered_register_mapping.contains_key(reg) {
+                    match reg {
+                        Register::Physical(phys_reg) => {
+                            lowered_register_mapping.insert(*reg, *phys_reg);
+                        }
+                        Register::Virtual(_) => {
+                            let phys_reg = self.infer_physical_register(*reg);
+                            lowered_register_mapping.insert(*reg, phys_reg);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 存储降级后的生命周期信息到函数中
+        function.lowered_lifetimes = Some(lowered_lifetimes);
+        function.lowered_register_mapping = Some(lowered_register_mapping);
+
+        log::debug!(
+            "降级后生命周期分析完成，共分析 {} 个寄存器",
+            function.lowered_lifetimes.as_ref().unwrap().len()
+        );
+
+        // 🔧 清除缓存，为下一个函数做准备
+        self.clear_lifetime_cache();
+
         Ok(())
     }
 
@@ -128,6 +300,7 @@ impl InstructionLowerer {
         new_instructions: &mut Vec<Instruction>,
         prologue_emitted: &mut bool,
         instruction: &Instruction,
+        index: usize,
     ) -> Result<(), String> {
         Ok(match instruction {
             // Label：发射并在首次遇到时生成函数序言与 r12 初始化
@@ -617,19 +790,21 @@ impl InstructionLowerer {
                 // 生成唯一的返回标签
                 let return_label = function.new_label();
 
-                // 获取 caller-saved 寄存器并排序以保证确定性
-                // 排除返回值寄存器(r0)，因为它包含返回值，不应被恢复操作覆盖
-                let return_reg = self.calling_convention.return_register;
-                let mut caller_saved: Vec<_> = self
-                    .calling_convention
-                    .caller_saved
-                    .iter()
-                    .filter(|&&r| r != return_reg)
-                    .cloned()
-                    .collect();
+                // 🔧 优化：使用生命周期分析确定需要保存的精确寄存器集合
+                // 获取当前指令位置活跃的调用者保存寄存器
+                let live_caller_saved = self.get_live_caller_saved_registers_at(index);
+
+                // 排序以保证确定性
+                let mut caller_saved: Vec<_> = live_caller_saved.into_iter().collect();
                 caller_saved.sort();
 
-                // FIXME: 应该在这里用生命周期分析分析出具体哪些寄存器需要保存
+                println!(
+                    "函数调用优化：需要保存 {} 个调用者保存寄存器: {:?} f: {}",
+                    caller_saved.len(),
+                    caller_saved,
+                    function.name
+                );
+
                 // 计算栈对齐
                 // 我们压入 caller_saved 个寄存器 + 1 个返回地址
                 // AArch64 要求 SP 16字节对齐
@@ -789,7 +964,7 @@ impl InstructionLowerer {
                     new_instructions.push(Instruction::Move {
                         dst: *result_reg,
                         src: Operand::Register {
-                            id: Register::Physical(return_reg),
+                            id: Register::Physical(self.calling_convention.return_register),
                         },
                         span: *span,
                     });
@@ -813,17 +988,19 @@ impl InstructionLowerer {
                 // 生成唯一的返回标签
                 let return_label = function.new_label();
 
-                // 获取 caller-saved 寄存器并排序
-                // 排除返回值寄存器(r0)
-                let return_reg = self.calling_convention.return_register;
-                let mut caller_saved: Vec<_> = self
-                    .calling_convention
-                    .caller_saved
-                    .iter()
-                    .filter(|&&r| r != return_reg)
-                    .cloned()
-                    .collect();
+                // 🔧 优化：使用生命周期分析确定需要保存的精确寄存器集合
+                // 获取当前指令位置活跃的调用者保存寄存器
+                let live_caller_saved = self.get_live_caller_saved_registers_at(index);
+
+                // 排序以保证确定性
+                let mut caller_saved: Vec<_> = live_caller_saved.into_iter().collect();
                 caller_saved.sort();
+
+                log::debug!(
+                    "间接函数调用优化：需要保存 {} 个调用者保存寄存器: {:?}",
+                    caller_saved.len(),
+                    caller_saved
+                );
 
                 // 计算栈对齐
                 // ⚠️ 重要：compile_return 会弹出返回地址
@@ -994,7 +1171,7 @@ impl InstructionLowerer {
                     new_instructions.push(Instruction::Move {
                         dst: *result_reg,
                         src: Operand::Register {
-                            id: Register::Physical(return_reg),
+                            id: Register::Physical(self.calling_convention.return_register),
                         },
                         span: *span,
                     });
