@@ -53,6 +53,8 @@ fn test_register_type_analysis() {
         stack_frame_size: 0,
         parameter_count: 2,
         used_regs: Vec::new(),
+        lowered_lifetimes: None,
+        lowered_register_mapping: None,
     };
 
     let calling_convention = types::CallingConvention::standard();
@@ -264,6 +266,8 @@ fn test_parameter_return_conflict() {
         parameter_count: 1,
         parameter_registers: vec![Register::Virtual(100)],
         used_regs: Vec::new(),
+        lowered_lifetimes: None,
+        lowered_register_mapping: None,
     };
 
     let mut pass = SimpleStackRegisterAllocation::new();

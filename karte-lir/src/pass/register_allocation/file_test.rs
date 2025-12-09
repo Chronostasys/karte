@@ -33,6 +33,8 @@ fn parse_lir_file(content: &str) -> Result<LirFunction, String> {
         stack_frame_size: 0,
         parameter_count: 0,
         used_regs: Vec::new(),
+        lowered_lifetimes: None,
+        lowered_register_mapping: None,
     };
 
     // 解析指令
@@ -439,6 +441,8 @@ fn test_function_parameter_register_allocation() {
         stack_frame_size: 0,
         parameter_count: 3,
         used_regs: Vec::new(),
+        lowered_lifetimes: None,
+        lowered_register_mapping: None,
     };
 
     info!("🧪 测试前的函数参数: {:?}", function.parameter_registers);

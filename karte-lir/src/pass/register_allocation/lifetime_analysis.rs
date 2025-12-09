@@ -15,6 +15,7 @@
 use super::types::{CallingConvention, RegisterLifetime, RegisterType};
 use crate::pass::analysis::{ControlFlowGraph, DefUseChains};
 use crate::{Instruction, LirFunction, Operand, Register};
+use karte_common::calling_convention::CC;
 use std::collections::{HashMap, HashSet};
 
 /// 寄存器生命周期分析器
@@ -389,5 +390,52 @@ impl LifetimeAnalyzer {
             }
         }
         initial_end
+    }
+
+    /// 获取指定指令位置的活跃物理寄存器
+    ///
+    /// 这个方法用于优化函数调用时的寄存器保存，只保存真正包含活跃值的调用者保存寄存器。
+    ///
+    /// # 参数
+    /// * `instruction_index` - 指令索引位置
+    /// * `calling_convention` - 调用约定
+    /// * `register_mapping` - 虚拟寄存器到物理寄存器的映射（如果已分配）
+    /// * `lifetimes` - 寄存器生命周期列表（由analyze_simple或analyze_with_cfg生成）
+    ///
+    /// # 返回值
+    /// 需要保存的活跃调用者保存物理寄存器集合
+    pub fn get_live_physical_registers_at(
+        &self,
+        instruction_index: usize,
+        calling_convention: &CallingConvention,
+        register_mapping: &HashMap<Register, u8>,
+        lifetimes: &[RegisterLifetime],
+    ) -> HashSet<u8> {
+        let mut live_physical_regs = HashSet::new();
+
+        // 1. 找出在该指令位置活跃的所有虚拟寄存器
+        for lifetime in lifetimes {
+            // 检查虚拟寄存器是否在该指令位置活跃
+            if instruction_index >= lifetime.start && instruction_index <= lifetime.end {
+                // 2. 将活跃的虚拟寄存器映射到物理寄存器
+                if let Some(&physical_reg) = register_mapping.get(&lifetime.register) {
+                    // 3. 检查该物理寄存器是否是调用者保存寄存器
+                    if calling_convention.is_caller_saved(physical_reg) {
+                        // 4. 排除返回值寄存器，因为它会被调用覆盖
+                        if physical_reg != calling_convention.return_register {
+                            live_physical_regs.insert(physical_reg);
+                        }
+                    }
+                }
+            }
+        }
+
+        log::debug!(
+            "指令 {} 位置需要保存的调用者保存寄存器: {:?}",
+            instruction_index,
+            live_physical_regs
+        );
+
+        live_physical_regs
     }
 }
