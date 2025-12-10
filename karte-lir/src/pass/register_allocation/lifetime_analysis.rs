@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 /// 寄存器生命周期分析器
 ///
 /// 封装了所有与计算虚拟寄存器生命周期相关的逻辑。
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LifetimeAnalyzer {
     _calling_convention: CallingConvention,
 }

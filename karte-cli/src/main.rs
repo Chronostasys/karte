@@ -99,9 +99,9 @@ enum Commands {
         /// 输出中间 MIR 文件到 output_dir/mir
         #[arg(long)]
         emit_mir: bool,
-        /// 显示进度条
-        #[arg(long, default_value_t = true)]
-        progress: bool,
+        /// 安静模式，不显示进度条
+        #[arg(long)]
+        quiet: bool,
     },
 }
 
@@ -344,7 +344,7 @@ fn main() {
             output_dir,
             jobs,
             emit_mir,
-            progress,
+            quiet,
         }) => {
             if let Some(j) = jobs {
                 rayon::ThreadPoolBuilder::new()
@@ -361,7 +361,7 @@ fn main() {
                 optimization_level,
                 cli.verbose,
                 emit_mir,
-                progress,
+                !quiet,
             ) {
                 error!("Build failed: {}", e);
                 std::process::exit(1);
