@@ -24,7 +24,6 @@
 
 pub mod ir;
 pub mod lower;
-pub mod lower_instructions;
 pub mod optimization_pipeline;
 pub mod pass;
 pub mod struct_layout;
@@ -32,7 +31,6 @@ pub mod tagged_union;
 
 pub use ir::*;
 pub use lower::*;
-pub use lower_instructions::*;
 pub use optimization_pipeline::*;
 pub use pass::*;
 pub use struct_layout::*;

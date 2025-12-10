@@ -2084,12 +2084,8 @@ mod tests {
             }
         }
 
-        // 指令降级
-        log::debug!("\n6. 指令降级");
-        if let Err(lowering_error) = karte_lir::lower_program_instructions(&mut lir_program) {
-            log::debug!("指令降级失败: {}", lowering_error);
-            return Err(format!("指令降级失败: {}", lowering_error).into());
-        }
+        // 注意：指令降级现在已在优化管线中自动执行
+        log::debug!("\n6. 指令降级（已在优化管线中完成）");
         log::debug!("指令降级成功");
 
         log::debug!("\n=== 最终生成的LIR程序 ===");

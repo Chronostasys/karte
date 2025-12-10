@@ -1,5 +1,8 @@
 pub mod analysis;
+pub mod effect_lowering_pass;
+pub mod instruction_lowering_pass;
 pub mod instruction_transformer;
+pub mod lifetime_analysis_pass;
 pub mod memory2reg;
 pub mod pass_manager;
 pub mod phi_elimination;
@@ -9,7 +12,10 @@ pub mod stack_frame_layout;
 pub mod transformation;
 
 pub use analysis::*;
+pub use effect_lowering_pass::*;
+pub use instruction_lowering_pass::*;
 pub use instruction_transformer::*;
+pub use lifetime_analysis_pass::*;
 pub use memory2reg::*;
 pub use pass_manager::*;
 pub use register_allocation::*;

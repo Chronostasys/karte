@@ -41,18 +41,11 @@ pub fn execute_with_pipeline_debug(expr: &Expr, debug: bool) -> Result<i64, Stri
         .map_err(|e| format!("LIR lowering error: {:?}", e))?;
 
     if debug {
-        println!("=== 返回高级LIR 1 (包含Alloc指令，待优化) ===");
+        println!("=== 返回高级LIR (包含Alloc指令，待优化) ===");
         println!("{}", lir_program);
         println!("================================================");
     }
-    karte_lir::lower_effect_instructions(&mut lir_program)
-        .map_err(|e| format!("Effect lowering error: {:?}", e))?;
-
-    if debug {
-        println!("=== 返回高级LIR 2 (包含Alloc指令，待优化) ===");
-        println!("{}", lir_program);
-        println!("================================================");
-    }
+    // Effect lowering is now automatically handled in the optimization pipeline
 
     // 3. 优化管道（Memory2Reg等优化在这里处理）
     let mut pipeline = karte_lir::OptimizationPipeline::new(karte_lir::OptimizationLevel::Balanced);
@@ -73,9 +66,8 @@ pub fn execute_with_pipeline_debug(expr: &Expr, debug: bool) -> Result<i64, Stri
         }
         println!("================================================");
     }
+    // 注意：指令降级现在已在优化管线中自动执行
     // 4. 降级指令（将高级LIR转换为基础指令集）
-    karte_lir::lower_program_instructions(&mut lir_program)
-        .map_err(|e| format!("Instruction lowering error: {:?}", e))?;
 
     if debug {
         println!("=== 指令降级后的LIR (基础指令) ===");
