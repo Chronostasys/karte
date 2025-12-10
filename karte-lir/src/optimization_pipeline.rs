@@ -1,4 +1,7 @@
 use crate::pass::analysis::*;
+use crate::pass::effect_lowering_pass::*;
+use crate::pass::instruction_lowering_pass::*;
+use crate::pass::lifetime_analysis_pass::*;
 use crate::pass::memory2reg::*;
 use crate::pass::phi_elimination::*;
 use crate::pass::register_allocation::*;
@@ -150,6 +153,12 @@ impl OptimizationPipeline {
         pass_manager.add_analysis_pass(Box::new(ControlFlowAnalysis::new()));
         pass_manager.add_analysis_pass(Box::new(DefUseAnalysis::new()));
 
+        // === 第1.5阶段：Effect指令降级（早期执行） ===
+        // Effect指令需要在优化前期进行降级，确保后续优化看到正确的指令结构
+        pass_manager.add_analysis_pass(Box::new(LifetimeAnalysisPass::new()));
+        pass_manager.add_function_pass(Box::new(EffectLoweringPass::new()));
+        // 注意：EffectLoweringPass会失效所有分析，后续优化会重新运行必要的分析
+
         // === 第2阶段：早期优化 Pass ===
         // 常量折叠：在其他优化之前进行，为后续优化创造机会
         if self.config.enable_const_fold {
@@ -212,13 +221,23 @@ impl OptimizationPipeline {
 
         // 阶段 7.3: Final-RA - 最终寄存器分配（包括临时寄存器的分配）
 
+        // === 第8阶段：通用指令降级 ===
+        // 在所有优化完成后，将剩余高级LIR指令降级为基础指令集
+
+        // 8.1: 重新添加生命周期分析pass，为通用指令降级提供最新信息
+        pass_manager.add_analysis_pass(Box::new(LifetimeAnalysisPass::new()));
+
+        // 8.2: 通用指令降级（处理所有其他指令）
+        pass_manager.add_function_pass(Box::new(InstructionLoweringPass::new()));
+
         if self.config.debug {
-            println!("=== 专业Pass管道配置完成（两阶段分配架构）===");
+            println!("=== 专业Pass管道配置完成（包含指令降级）===");
             println!("优化级别: {}", self.config.optimization_level);
             println!("启用Memory2Reg: {}", self.config.enable_mem2reg);
             println!("启用死代码消除: {}", self.config.enable_dce);
             println!("启用常量折叠: {}", self.config.enable_const_fold);
             println!("寄存器分配架构: Pre-RA -> StackFrameLowering -> Final-RA");
+            println!("指令降级: 生命周期分析 -> Effect指令降级 -> 通用指令降级");
         }
     }
 

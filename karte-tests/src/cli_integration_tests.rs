@@ -37,9 +37,7 @@ mod cli_tests {
             .optimize(&mut lir_program)
             .expect("Optimization failed");
 
-        // 8. Lower Instructions (prepare for execution)
-        karte_lir::lower_program_instructions(&mut lir_program)
-            .expect("Instruction lowering failed");
+        // Instruction lowering is now automatically handled in the optimization pipeline
 
         // 9. Execute with JIT
         // Note: JIT might not be available on all platforms, but we assume it is for this test environment (macOS/AArch64 or x86_64)
@@ -288,7 +286,7 @@ fn main() -> number {
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
         pipeline.optimize(&mut lir).expect("Optimization failed");
 
-        karte_lir::lower_program_instructions(&mut lir).expect("Instruction lowering failed");
+        // Instruction lowering is now automatically handled in the optimization pipeline
 
         let mut executor =
             ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
@@ -347,7 +345,7 @@ fn main() -> number {
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
         pipeline.optimize(&mut lir).expect("Optimization failed");
 
-        karte_lir::lower_program_instructions(&mut lir).expect("Instruction lowering failed");
+        // Instruction lowering is now automatically handled in the optimization pipeline
 
         let mut executor =
             ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
@@ -406,7 +404,7 @@ fn main() -> number {
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
         pipeline.optimize(&mut lir).expect("Optimization failed");
 
-        karte_lir::lower_program_instructions(&mut lir).expect("Instruction lowering failed");
+        // Instruction lowering is now automatically handled in the optimization pipeline
 
         let mut executor =
             ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
@@ -474,7 +472,7 @@ fn main() -> number {
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
         pipeline.optimize(&mut lir).expect("Optimization failed");
 
-        karte_lir::lower_program_instructions(&mut lir).expect("Instruction lowering failed");
+        // Instruction lowering is now automatically handled in the optimization pipeline
 
         let mut executor =
             ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
@@ -532,7 +530,7 @@ fn main() -> number {
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
         pipeline.optimize(&mut lir).expect("Optimization failed");
 
-        karte_lir::lower_program_instructions(&mut lir).expect("Instruction lowering failed");
+        // Instruction lowering is now automatically handled in the optimization pipeline
 
         let mut executor =
             ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
@@ -589,7 +587,7 @@ fn main() -> number {
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
         pipeline.optimize(&mut lir).expect("Optimization failed");
 
-        karte_lir::lower_program_instructions(&mut lir).expect("Instruction lowering failed");
+        // Instruction lowering is now automatically handled in the optimization pipeline
 
         let mut executor =
             ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
@@ -652,7 +650,7 @@ fn main() -> number {
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
         pipeline.optimize(&mut lir).expect("Optimization failed");
 
-        karte_lir::lower_program_instructions(&mut lir).expect("Instruction lowering failed");
+        // Instruction lowering is now automatically handled in the optimization pipeline
 
         let mut executor =
             ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
@@ -710,7 +708,7 @@ fn main() -> number {
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
         pipeline.optimize(&mut lir).expect("Optimization failed");
 
-        karte_lir::lower_program_instructions(&mut lir).expect("Instruction lowering failed");
+        // Instruction lowering is now automatically handled in the optimization pipeline
 
         let mut executor =
             ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
@@ -779,7 +777,7 @@ fn main() -> number {
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
         pipeline.optimize(&mut lir).expect("Optimization failed");
 
-        karte_lir::lower_program_instructions(&mut lir).expect("Instruction lowering failed");
+        // Instruction lowering is now automatically handled in the optimization pipeline
 
         let mut executor =
             ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
@@ -851,7 +849,7 @@ fn main() -> number {
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
         pipeline.optimize(&mut lir).expect("Optimization failed");
 
-        karte_lir::lower_program_instructions(&mut lir).expect("Instruction lowering failed");
+        // Instruction lowering is now automatically handled in the optimization pipeline
 
         let mut executor =
             ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
@@ -914,7 +912,7 @@ fn main() -> number {
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
         pipeline.optimize(&mut lir).expect("Optimization failed");
 
-        karte_lir::lower_program_instructions(&mut lir).expect("Instruction lowering failed");
+        // Instruction lowering is now automatically handled in the optimization pipeline
 
         let mut executor =
             ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");

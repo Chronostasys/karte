@@ -14,7 +14,6 @@ use karte_hir::type_checker::{
 use karte_ir_codec::IrDisplay;
 use karte_lexer::tokenize;
 use karte_lir::lower::lower_mir_to_lir;
-use karte_lir::lower_program_instructions;
 use karte_lir::optimization_pipeline::{OptimizationLevel, OptimizationPipeline};
 use karte_lir::LirProgram;
 use karte_mir::{
@@ -526,12 +525,9 @@ pub fn lower_mir_to_final_lir(
         println!("{}", lir_program.to_ir_string());
     }
 
+    // 注意：指令降级现在已在优化管线中自动执行
     if verbose {
-        println!("\n--- 指令降级 ---");
-    }
-    if let Err(lowering_error) = lower_program_instructions(&mut lir_program) {
-        error!("指令降级错误: {}", lowering_error);
-        return Err("Instruction lowering failed".into());
+        println!("\n--- 指令降级（在优化管线中自动执行） ---");
     }
 
     if verbose {
