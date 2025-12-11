@@ -540,6 +540,10 @@ impl FunctionPass for SsaConstructionPass {
         "ssa-construction"
     }
 
+    fn description(&self) -> &str {
+        "SSA构造 - 将程序转换为静态单赋值形式"
+    }
+
     fn run_on_function(
         &mut self,
         function: &mut LirFunction,

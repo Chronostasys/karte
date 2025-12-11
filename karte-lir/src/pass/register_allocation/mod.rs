@@ -68,6 +68,10 @@ impl FunctionPass for SimpleStackRegisterAllocation {
         "simple-stack-register-allocation"
     }
 
+    fn description(&self) -> &str {
+        "简单栈寄存器分配 - 将虚拟寄存器映射到物理寄存器或栈位置"
+    }
+
     fn run_on_function(
         &mut self,
         function: &mut LirFunction,

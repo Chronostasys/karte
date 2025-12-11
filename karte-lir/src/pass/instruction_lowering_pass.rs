@@ -632,6 +632,10 @@ impl FunctionPass for InstructionLoweringPass {
         "instruction-lowering"
     }
 
+    fn description(&self) -> &str {
+        "指令降级 - 将高级LIR指令降级为基础指令集"
+    }
+
     fn required_analyses(&self) -> Vec<&'static str> {
         // 指令降级需要生命周期分析的结果来优化寄存器保存
         vec!["lifetime-analysis"]

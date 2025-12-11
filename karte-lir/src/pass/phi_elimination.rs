@@ -119,6 +119,10 @@ impl FunctionPass for PhiEliminationPass {
         "phi-elimination"
     }
 
+    fn description(&self) -> &str {
+        "Phi节点消除 - 将Phi指令替换为显式的Move指令"
+    }
+
     fn run_on_function(
         &mut self,
         function: &mut LirFunction,
