@@ -805,3 +805,60 @@ pub fn build_project(
 
     Ok(())
 }
+
+/// 使用自定义 Pass 管线优化代码
+pub fn optimize_with_pipeline(
+    input: &str,
+    pipeline: &str,
+    output: Option<&str>,
+    debug: bool,
+    verbose: bool,
+) -> Result<(), String> {
+    use karte_ir_codec::{IrDisplay, IrParse};
+    use karte_lir::{LirProgram, OptimizationPipeline};
+    use std::fs;
+
+    // 读取输入文件
+    let content = fs::read_to_string(input).map_err(|e| format!("读取文件失败: {}", e))?;
+
+    // 解析LIR
+    let mut program =
+        LirProgram::parse_ir(&content).map_err(|e| format!("解析LIR失败: {:?}", e))?;
+
+    if verbose {
+        println!("输入文件: {}", input);
+        println!("Pass管线: {}", pipeline);
+    }
+
+    // 使用自定义管线优化
+    let stats = OptimizationPipeline::optimize_with_custom_pipeline(&mut program, pipeline, debug)
+        .map_err(|errors| format!("优化失败: {}", errors.join(", ")))?;
+
+    // 打印统计信息
+    if verbose || debug {
+        println!("\n=== 优化统计 ===");
+        println!("优化前指令数: {}", stats.instructions_before);
+        println!("优化后指令数: {}", stats.instructions_after);
+        println!(
+            "指令减少: {}",
+            stats.instructions_before as i64 - stats.instructions_after as i64
+        );
+        println!("执行的Pass数: {}", stats.passes_executed);
+        println!("成功优化Pass数: {}", stats.changed_passes);
+        println!("总耗时: {}ms", stats.total_time_ms);
+    }
+
+    // 输出结果
+    let output_content = program.to_ir_string();
+
+    if let Some(output_path) = output {
+        write_content_creating_parent(output_path, &output_content)
+            .map_err(|e| format!("写入输出文件失败: {}", e))?;
+        println!("\n优化后的LIR已写入: {}", output_path);
+    } else {
+        println!("\n=== 优化后的LIR ===");
+        println!("{}", output_content);
+    }
+
+    Ok(())
+}

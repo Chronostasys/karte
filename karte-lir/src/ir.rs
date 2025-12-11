@@ -953,6 +953,25 @@ impl Instruction {
 
         (defined, used)
     }
+
+    /// 检测指令是否使用虚拟寄存器
+    pub fn uses_virtual_register(&self) -> bool {
+        // 检查定义的寄存器
+        if let Some(reg) = self.get_def_register() {
+            if matches!(reg, Register::Virtual(_)) {
+                return true;
+            }
+        }
+
+        // 检查使用的寄存器
+        for reg in self.get_used_registers() {
+            if matches!(reg, Register::Virtual(_)) {
+                return true;
+            }
+        }
+
+        false
+    }
 }
 
 /// LIR函数
@@ -1250,5 +1269,17 @@ impl LirProgram {
 
     pub fn add_global_variable(&mut self, name: String, memory_id: MemoryId) {
         self.global_variables.insert(name, memory_id);
+    }
+
+    /// 检测LIR是否包含虚拟寄存器（未优化）
+    pub fn contains_virtual_registers(&self) -> bool {
+        for function in self.functions.values() {
+            for instruction in &function.instructions {
+                if instruction.uses_virtual_register() {
+                    return true;
+                }
+            }
+        }
+        false
     }
 }

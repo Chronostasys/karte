@@ -1,12 +1,5 @@
-use crate::pass::analysis::*;
-use crate::pass::effect_lowering_pass::*;
-use crate::pass::instruction_lowering_pass::*;
-use crate::pass::lifetime_analysis_pass::*;
-use crate::pass::memory2reg::*;
-use crate::pass::phi_elimination::*;
-use crate::pass::register_allocation::*;
-use crate::pass::ssa_construction::SsaConstructionPass;
-use crate::pass::transformation::*;
+use crate::pass::pass_registry::PassRegistry;
+use crate::pass::PipelinePreset;
 use crate::pass::*;
 use crate::LirProgram;
 
@@ -34,35 +27,27 @@ impl OptimizationLevel {
     }
 }
 
-/// 优化流水线配置（按migration_to_ssa.md第5-6周计划增强）
+/// 优化流水线配置
+///
+/// 简化的配置接口，通过 optimization_level 控制优化程度
+/// 具体的 Pass 序列由 PipelinePreset 定义
 #[derive(Debug, Clone)]
 pub struct OptimizationConfig {
-    /// 是否启用 Memory2Reg 优化
-    pub enable_mem2reg: bool,
-    /// 是否启用死代码消除
-    pub enable_dce: bool,
-    /// 是否启用常量折叠
-    pub enable_const_fold: bool,
     /// 优化级别 (0-3)
+    /// - 0: Debug - 最小化优化
+    /// - 1: Fast - 快速编译
+    /// - 2: Balanced - 平衡优化
+    /// - 3: Performance - 激进优化
     pub optimization_level: u8,
     /// 是否启用调试输出
     pub debug: bool,
-    /// 是否启用SSA构造（新增）
-    pub enable_ssa_construction: bool,
-    /// 是否启用分析失效验证（新增）
-    pub enable_analysis_validation: bool,
 }
 
 impl Default for OptimizationConfig {
     fn default() -> Self {
         Self {
-            enable_mem2reg: true,
-            enable_dce: true,
-            enable_const_fold: true,
-            optimization_level: 2,
+            optimization_level: 2, // Balanced 模式
             debug: false,
-            enable_ssa_construction: true,    // 默认启用SSA构造
-            enable_analysis_validation: true, // 默认启用分析验证
         }
     }
 }
@@ -90,33 +75,92 @@ impl OptimizationPipeline {
         Self::new(OptimizationLevel::Balanced)
     }
 
-    /// 按照migration_to_ssa.md计划创建专业Pass管道
-    pub fn create_professional_pipeline() -> Self {
-        let config = OptimizationConfig {
-            enable_mem2reg: true,
-            enable_dce: true,
-            enable_const_fold: true,
-            optimization_level: 3,
-            debug: false,
-            enable_ssa_construction: true,
-            enable_analysis_validation: true,
-        };
-        Self::from_config(config)
+    /// 列出所有可用的Pass
+    pub fn list_available_passes() {
+        let registry = PassRegistry::default();
+        registry.print_available_passes();
+    }
+
+    /// 使用自定义Pass管线优化程序
+    ///
+    /// 格式: "pass1,pass2,pass3"
+    /// 例如: "cfg,def-use,dce,const-fold,print-ir"
+    ///
+    /// 可用的Pass名称可以通过 list_available_passes() 查看
+    pub fn optimize_with_custom_pipeline(
+        program: &mut LirProgram,
+        pipeline_str: &str,
+        debug: bool,
+    ) -> Result<OptimizationStats, Vec<String>> {
+        let registry = PassRegistry::default();
+        let mut pass_manager = registry
+            .build_pipeline_from_string(pipeline_str)
+            .map_err(|e| vec![e])?;
+
+        if debug {
+            println!("=== 使用自定义Pass管线 ===");
+            pass_manager.print_pipeline();
+        }
+
+        let instructions_before = program
+            .functions
+            .values()
+            .map(|func| func.instructions.len())
+            .sum();
+
+        let start_time = std::time::Instant::now();
+        pass_manager.run_on_program(program).map_err(|e| vec![e])?;
+        let total_time = start_time.elapsed();
+
+        let instructions_after = program
+            .functions
+            .values()
+            .map(|func| func.instructions.len())
+            .sum();
+
+        let pass_stats = pass_manager.get_statistics();
+        let mut changed_passes = 0;
+        let mut unchanged_passes = 0;
+        let mut failed_passes = 0;
+        let mut total_pass_time = 0u64;
+
+        for stat in pass_stats {
+            total_pass_time += stat.execution_time_ms;
+            match stat.result {
+                PassResult::Changed => changed_passes += 1,
+                PassResult::Unchanged => unchanged_passes += 1,
+                PassResult::Failed(_) => failed_passes += 1,
+            }
+        }
+
+        Ok(OptimizationStats {
+            total_time_ms: total_time.as_millis() as u64,
+            pass_time_ms: total_pass_time,
+            total_passes: pass_stats.len(),
+            passes_executed: pass_stats.len(),
+            changed_passes,
+            unchanged_passes,
+            failed_passes,
+            optimization_level: 0, // 自定义管线没有固定的优化级别
+            instructions_before,
+            instructions_after,
+        })
     }
 
     /// 运行优化
     pub fn optimize(&mut self, program: &mut LirProgram) -> Result<OptimizationStats, Vec<String>> {
-        let mut pass_manager = PassManager::new();
-
-        if self.config.debug {
-            pass_manager = pass_manager.with_debug();
-        }
-
         // 统计优化前的指令数
         let instructions_before = self.count_instructions(program);
 
-        // 根据配置添加 Pass
-        self.configure_professional_passes(&mut pass_manager);
+        // 使用 PassRegistry 的强类型 API 构建预设 pipeline
+        let registry = PassRegistry::default();
+        let preset = self.optimization_level_to_preset();
+        let mut pass_manager = registry.build_preset_pipeline(preset);
+
+        if self.config.debug {
+            pass_manager = pass_manager.with_debug();
+            pass_manager.print_pipeline();
+        }
 
         // 运行优化
         let start_time = std::time::Instant::now();
@@ -146,98 +190,14 @@ impl OptimizationPipeline {
             .sum()
     }
 
-    /// 按照migration_to_ssa.md第5-6周计划配置专业Pass序列
-    fn configure_professional_passes(&self, pass_manager: &mut PassManager) {
-        // === 第1阶段：基础分析 Pass ===
-        // 这些分析为后续优化提供必要信息
-        pass_manager.add_analysis_pass(Box::new(ControlFlowAnalysis::new()));
-        pass_manager.add_analysis_pass(Box::new(DefUseAnalysis::new()));
-
-        // === 第1.5阶段：Effect指令降级（早期执行） ===
-        // Effect指令需要在优化前期进行降级，确保后续优化看到正确的指令结构
-        pass_manager.add_analysis_pass(Box::new(LifetimeAnalysisPass::new()));
-        pass_manager.add_function_pass(Box::new(EffectLoweringPass::new()));
-        // 注意：EffectLoweringPass会失效所有分析，后续优化会重新运行必要的分析
-
-        // === 第2阶段：早期优化 Pass ===
-        // 常量折叠：在其他优化之前进行，为后续优化创造机会
-        if self.config.enable_const_fold {
-            pass_manager.add_function_pass(Box::new(ConstantFolding::new()));
-        }
-
-        // === 第3阶段：核心SSA优化 ===
-        // 先插入SSA构造，再Memory2Reg
-        pass_manager.add_function_pass(Box::new(SsaConstructionPass::new()));
-        pass_manager.add_function_pass(Box::new(Memory2RegPass::new()));
-        // pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::DecisionOnly)));
-        // pass_manager.add_function_pass(Box::new(LinearScanRegisterAllocation::new(RegisterAllocationMode::FinalRewrite)));
-        // 在φ指令消除之前重新运行CFG分析，因为Memory2Reg可能使CFG失效
-        if self.config.enable_dce {
-            // 重新运行CFG分析，为φ指令消除提供必要信息
-            pass_manager.add_analysis_pass(Box::new(ControlFlowAnalysis::new()));
-            pass_manager.add_function_pass(Box::new(PhiEliminationPass::new()));
-        }
-        pass_manager.add_function_pass(Box::new(SimpleStackRegisterAllocation::new()));
-        // 统一帧布局（复用不重叠栈槽，FP+offset 下沉）
-        pass_manager.add_function_pass(Box::new(
-            crate::pass::stack_frame_layout::StackFrameLayoutPass::new(),
-        ));
-        // 布局之后做局部窥孔优化，清理多余 push/pop 等模式
-        pass_manager.add_function_pass(Box::new(
-            crate::pass::transformation::PeepholeOptimizer::new(),
-        ));
-        // 收尾再来一次 DCE，移除窥孔可能产生的自赋值/死代码
-        pass_manager.add_function_pass(Box::new(DeadCodeElimination::new()));
-        // DCE 之后再跑一轮窥孔，消化 DCE 暴露的新邻接模式（近似固定点）
-        pass_manager.add_function_pass(Box::new(
-            crate::pass::transformation::PeepholeOptimizer::new(),
-        ));
-
-        // // === 第5阶段：死代码消除 ===
-        // // 在Memory2Reg之后运行，清理不需要的指令
-        // if self.config.enable_dce {
-        //     pass_manager.add_function_pass(Box::new(DeadCodeElimination::new()));
-        // }
-
-        // // === 第6阶段：多轮优化（高级别时） ===
-        // if self.config.optimization_level >= 3 {
-        //     // 再次运行常量折叠，处理新的机会
-        //     if self.config.enable_const_fold {
-        //         pass_manager.add_function_pass(Box::new(ConstantFolding::new()));
-        //     }
-
-        //     // 再次运行Memory2Reg，处理新暴露的优化机会
-        //     if self.config.enable_mem2reg {
-        //         pass_manager.add_function_pass(Box::new(Memory2RegPass::new()));
-        //     }
-        // }
-
-        // === 第7阶段：两阶段寄存器分配架构 ===
-        // 🔧 新架构：Pre-RA (决策) -> StackFrameLowering -> Final-RA (改写)
-
-        // 阶段 7.1: Pre-RA - 寄存器分配决策（不修改代码）
-        // // 阶段 7.2: StackFrameLowering - 栈帧管理和溢出代码生成（使用临时虚拟寄存器）
-        // pass_manager.add_function_pass(Box::new(StackFrameLowering::new()));
-
-        // 阶段 7.3: Final-RA - 最终寄存器分配（包括临时寄存器的分配）
-
-        // === 第8阶段：通用指令降级 ===
-        // 在所有优化完成后，将剩余高级LIR指令降级为基础指令集
-
-        // 8.1: 重新添加生命周期分析pass，为通用指令降级提供最新信息
-        pass_manager.add_analysis_pass(Box::new(LifetimeAnalysisPass::new()));
-
-        // 8.2: 通用指令降级（处理所有其他指令）
-        pass_manager.add_function_pass(Box::new(InstructionLoweringPass::new()));
-
-        if self.config.debug {
-            println!("=== 专业Pass管道配置完成（包含指令降级）===");
-            println!("优化级别: {}", self.config.optimization_level);
-            println!("启用Memory2Reg: {}", self.config.enable_mem2reg);
-            println!("启用死代码消除: {}", self.config.enable_dce);
-            println!("启用常量折叠: {}", self.config.enable_const_fold);
-            println!("寄存器分配架构: Pre-RA -> StackFrameLowering -> Final-RA");
-            println!("指令降级: 生命周期分析 -> Effect指令降级 -> 通用指令降级");
+    /// 根据配置的优化级别选择 Pipeline 预设
+    fn optimization_level_to_preset(&self) -> PipelinePreset {
+        match self.config.optimization_level {
+            0 => PipelinePreset::Debug,
+            1 => PipelinePreset::Fast,
+            2 => PipelinePreset::Balanced,
+            3 => PipelinePreset::Performance,
+            _ => PipelinePreset::Balanced, // 默认使用 Balanced
         }
     }
 
@@ -341,52 +301,32 @@ impl OptimizationPresets {
     /// 调试配置：无优化，保持代码原样
     pub fn debug() -> OptimizationConfig {
         OptimizationConfig {
-            enable_mem2reg: false,
-            enable_dce: false,
-            enable_const_fold: false,
             optimization_level: 0,
             debug: true,
-            enable_ssa_construction: false,
-            enable_analysis_validation: false,
         }
     }
 
     /// 快速配置：基本优化，编译速度优先
     pub fn fast() -> OptimizationConfig {
         OptimizationConfig {
-            enable_mem2reg: true,
-            enable_dce: false,
-            enable_const_fold: true,
             optimization_level: 1,
             debug: false,
-            enable_ssa_construction: false,
-            enable_analysis_validation: false,
         }
     }
 
     /// 平衡配置：标准优化，平衡编译速度和执行效率
     pub fn balanced() -> OptimizationConfig {
         OptimizationConfig {
-            enable_mem2reg: true,
-            enable_dce: true,
-            enable_const_fold: true,
             optimization_level: 2,
             debug: false,
-            enable_ssa_construction: false,
-            enable_analysis_validation: false,
         }
     }
 
     /// 高性能配置：激进优化，执行效率优先
     pub fn performance() -> OptimizationConfig {
         OptimizationConfig {
-            enable_mem2reg: true,
-            enable_dce: true,
-            enable_const_fold: true,
             optimization_level: 3,
             debug: false,
-            enable_ssa_construction: true,
-            enable_analysis_validation: true,
         }
     }
 }

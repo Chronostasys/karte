@@ -490,6 +490,10 @@ impl FunctionPass for EffectLoweringPass {
         "effect-lowering"
     }
 
+    fn description(&self) -> &str {
+        "Effect指令降级 - 将高级Effect指令降级为基础指令"
+    }
+
     fn required_analyses(&self) -> Vec<&'static str> {
         // Effect指令降级需要生命周期分析的结果来优化调用
         vec!["lifetime-analysis"]

@@ -18,3 +18,4 @@ karte-ir-codec = { path = "../karte-ir-codec" }
 karte-ir-derive = { path = "../karte-ir-derive" }
 log.workspace = true
 nom.workspace = true
+once_cell.workspace = true

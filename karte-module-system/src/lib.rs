@@ -21,9 +21,10 @@ pub use import_validation::validate_module_imports;
 pub mod project;
 pub use project::{
     compile_entry_file, compile_module_in_layer, compile_project_with_context,
-    compile_source_to_artifacts, compile_to_lir, lower_mir_to_final_lir, merge_lir_program,
-    merge_mir_program, merge_module_artifacts, optimize_mir_with_escape_analysis, CacheContext,
-    CompilationArtifacts, LayerCompilationResult, ProjectBuildContext, ProjectCompilationOutput,
+    compile_source_to_artifacts, compile_to_lir, lower_mir_to_final_lir,
+    lower_mir_to_unoptimized_lir, merge_lir_program, merge_mir_program, merge_module_artifacts,
+    optimize_mir_with_escape_analysis, CacheContext, CompilationArtifacts, LayerCompilationResult,
+    ProjectBuildContext, ProjectCompilationOutput,
 };
 
 const MANIFEST_NAME: &str = "karte.mod.toml";

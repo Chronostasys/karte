@@ -1102,6 +1102,7 @@ dependencies = [
  "karte-mir",
  "log",
  "nom",
+ "once_cell",
 ]
 
 [[package]]

@@ -296,6 +296,10 @@ impl FunctionPass for DeadCodeElimination {
         "dce"
     }
 
+    fn description(&self) -> &str {
+        "死代码消除 - 移除未使用的指令和寄存器定义"
+    }
+
     fn run_on_function(
         &mut self,
         function: &mut LirFunction,
@@ -466,6 +470,10 @@ impl ConstantFolding {
 impl FunctionPass for ConstantFolding {
     fn name(&self) -> &str {
         "const-fold"
+    }
+
+    fn description(&self) -> &str {
+        "常量折叠 - 计算编译时可确定的常量表达式"
     }
 
     fn run_on_function(
@@ -779,6 +787,10 @@ impl PeepholeOptimizer {
 impl FunctionPass for PeepholeOptimizer {
     fn name(&self) -> &str {
         "peephole"
+    }
+
+    fn description(&self) -> &str {
+        "窥孔优化 - 局部指令级优化(消除冗余mov/load/store等)"
     }
 
     fn run_on_function(
