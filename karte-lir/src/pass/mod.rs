@@ -5,11 +5,13 @@ pub mod instruction_transformer;
 pub mod lifetime_analysis_pass;
 pub mod memory2reg;
 pub mod pass_manager;
+pub mod pass_registry;
 pub mod phi_elimination;
 pub mod register_allocation;
 pub mod ssa_construction;
 pub mod stack_frame_layout;
 pub mod transformation;
+pub mod utils;
 
 pub use analysis::*;
 pub use effect_lowering_pass::*;
@@ -18,9 +20,13 @@ pub use instruction_transformer::*;
 pub use lifetime_analysis_pass::*;
 pub use memory2reg::*;
 pub use pass_manager::*;
+pub use pass_registry::{PassRegistry, PipelinePreset};
+pub use phi_elimination::*;
 pub use register_allocation::*;
+pub use ssa_construction::*;
 pub use stack_frame_layout::*;
 pub use transformation::*;
+pub use utils::*;
 
 use crate::{LirFunction, LirProgram};
 use std::any::Any;
@@ -47,6 +53,11 @@ pub trait FunctionPass: Send + Sync {
     /// Pass 名称
     fn name(&self) -> &str;
 
+    /// Pass 描述信息
+    fn description(&self) -> &str {
+        "无描述"
+    }
+
     /// 执行 Pass
     fn run_on_function(
         &mut self,
@@ -70,6 +81,11 @@ pub trait ProgramPass: Send + Sync {
     /// Pass 名称
     fn name(&self) -> &str;
 
+    /// Pass 描述信息
+    fn description(&self) -> &str {
+        "无描述"
+    }
+
     /// 执行 Pass
     fn run_on_program(
         &mut self,
@@ -92,6 +108,11 @@ pub trait ProgramPass: Send + Sync {
 pub trait AnalysisPass: Send + Sync {
     /// Pass 名称
     fn name(&self) -> &str;
+
+    /// Pass 描述信息
+    fn description(&self) -> &str {
+        "无描述"
+    }
 
     /// 在函数上运行分析
     fn analyze_function(

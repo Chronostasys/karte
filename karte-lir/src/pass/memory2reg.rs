@@ -1782,6 +1782,10 @@ impl FunctionPass for Memory2RegPass {
         "mem2reg"
     }
 
+    fn description(&self) -> &str {
+        "Memory2Reg优化 - 将内存操作提升为寄存器操作"
+    }
+
     fn run_on_function(
         &mut self,
         function: &mut LirFunction,

@@ -292,6 +292,10 @@ impl AnalysisPass for ControlFlowAnalysis {
         "cfg"
     }
 
+    fn description(&self) -> &str {
+        "控制流图分析 - 构建基本块和控制流信息"
+    }
+
     fn analyze_function(
         &mut self,
         function: &LirFunction,
@@ -499,6 +503,10 @@ impl DefUseAnalysis {
 impl AnalysisPass for DefUseAnalysis {
     fn name(&self) -> &str {
         "def-use"
+    }
+
+    fn description(&self) -> &str {
+        "定义-使用链分析 - 跟踪每个寄存器的定义和使用位置"
     }
 
     fn analyze_function(

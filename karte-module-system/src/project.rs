@@ -349,7 +349,7 @@ pub fn compile_source_to_artifacts(
         println!("{}", mir_program.to_ir_string());
     }
 
-    let lir_program = lower_mir_to_final_lir(&mir_program, optimization_level, verbose)?;
+    let lir_program = lower_mir_to_unoptimized_lir(&mir_program, verbose)?;
 
     if let Some(ctx) = cache_key {
         let cache = CompilationCache::new();
@@ -469,6 +469,32 @@ pub fn compile_entry_file(
         entry_result.ok_or_else(|| io::Error::new(io::ErrorKind::Other, "入口模块未被编译"))?;
     merge_module_artifacts(&plan, &compiled_artifacts_by_module, &mut entry_artifacts);
     Ok(entry_artifacts)
+}
+
+/// 将MIR降级到未优化的LIR（包含虚拟寄存器）
+pub fn lower_mir_to_unoptimized_lir(
+    mir_program: &MirProgram,
+    verbose: bool,
+) -> Result<LirProgram, Box<dyn std::error::Error>> {
+    if verbose {
+        println!("\n--- Lowering to Unoptimized LIR ---");
+    }
+
+    let lir_program = match lower_mir_to_lir(mir_program) {
+        Ok(prog) => prog,
+        Err(errors) => {
+            for err in errors {
+                error!("LIR Lowering Error: {}", err);
+            }
+            return Err("LIR lowering failed".into());
+        }
+    };
+
+    if verbose {
+        println!("未优化LIR生成完成（包含虚拟寄存器）");
+    }
+
+    Ok(lir_program)
 }
 
 pub fn lower_mir_to_final_lir(

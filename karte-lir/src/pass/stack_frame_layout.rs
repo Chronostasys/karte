@@ -298,6 +298,10 @@ impl FunctionPass for StackFrameLayoutPass {
         "stack-frame-layout"
     }
 
+    fn description(&self) -> &str {
+        "栈帧布局 - 统一栈帧管理和优化栈槽复用"
+    }
+
     fn run_on_function(
         &mut self,
         function: &mut LirFunction,

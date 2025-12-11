@@ -1,7 +1,31 @@
-use super::{AnalysisManager, AnalysisPass, FunctionPass, PassResult, PassStats, ProgramPass};
+use super::{
+    analysis::{ControlFlowAnalysis, DefUseAnalysis},
+    lifetime_analysis_pass::LifetimeAnalysisPass,
+    AnalysisManager, AnalysisPass, FunctionPass, PassResult, PassStats, ProgramPass,
+};
 use crate::{LirFunction, LirProgram};
 use log::{debug, info, trace};
+use once_cell::sync::Lazy;
 use std::time::Instant;
+
+/// 全局注册的标准 Analysis Passes
+///
+/// 这些 Analysis Pass 在编译时全局注册一次，所有 PassManager 实例都会自动包含。
+/// Analysis Pass 会根据 transformation passes 的 `required_analyses()` 自动按需执行。
+///
+/// 当前注册的 Analysis Passes：
+/// - Control Flow Analysis (CFG)
+/// - Definition-Use Analysis
+/// - Lifetime Analysis
+pub static STANDARD_ANALYSIS_PASSES: Lazy<
+    Vec<Box<dyn Fn() -> Box<dyn AnalysisPass> + Send + Sync>>,
+> = Lazy::new(|| {
+    vec![
+        Box::new(|| Box::new(ControlFlowAnalysis::new()) as Box<dyn AnalysisPass>),
+        Box::new(|| Box::new(DefUseAnalysis::new()) as Box<dyn AnalysisPass>),
+        Box::new(|| Box::new(LifetimeAnalysisPass::new()) as Box<dyn AnalysisPass>),
+    ]
+});
 
 /// Pass 管理器（按migration_to_ssa.md第5-6周计划增强）
 ///
@@ -15,8 +39,6 @@ pub struct PassManager {
     program_passes: Vec<Box<dyn ProgramPass>>,
     /// 函数级别的 Pass 列表
     function_passes: Vec<Box<dyn FunctionPass>>,
-    /// 分析 Pass 列表
-    analysis_passes: Vec<Box<dyn AnalysisPass>>,
     /// 分析管理器
     analysis_manager: AnalysisManager,
     /// 执行统计
@@ -35,7 +57,6 @@ impl PassManager {
         Self {
             program_passes: Vec::new(),
             function_passes: Vec::new(),
-            analysis_passes: Vec::new(),
             analysis_manager: AnalysisManager::new(),
             stats: Vec::new(),
             debug: false,
@@ -79,9 +100,21 @@ impl PassManager {
         self.function_passes.push(pass);
     }
 
-    /// 添加分析 Pass
-    pub fn add_analysis_pass(&mut self, pass: Box<dyn AnalysisPass>) {
-        self.analysis_passes.push(pass);
+    /// 批量添加函数级别的 Pass
+    ///
+    /// # 示例
+    /// ```
+    /// use karte_lir::pass::*;
+    ///
+    /// let mut manager = PassManager::new();
+    /// manager.add_function_passes(vec![
+    ///     Box::new(ConstantFolding::new()),
+    ///     Box::new(DeadCodeElimination::new()),
+    ///     Box::new(PeepholeOptimizer::new()),
+    /// ]);
+    /// ```
+    pub fn add_function_passes(&mut self, passes: Vec<Box<dyn FunctionPass>>) {
+        self.function_passes.extend(passes);
     }
 
     /// 在程序上运行所有 Pass（增强版本）
@@ -181,18 +214,23 @@ impl PassManager {
         Ok(())
     }
 
-    /// 为函数运行分析 Pass
+    /// 为函数运行分析 Pass（从全局注册表读取）
     fn run_analysis_passes_on_function(&mut self, function: &LirFunction) -> Result<(), String> {
-        let mut i = 0;
-        while i < self.analysis_passes.len() {
+        // 从全局注册表创建所有标准 Analysis Pass 实例
+        let analysis_passes: Vec<Box<dyn AnalysisPass>> = STANDARD_ANALYSIS_PASSES
+            .iter()
+            .map(|constructor| constructor())
+            .collect();
+
+        for mut analysis_pass in analysis_passes {
             let start_time = Instant::now();
 
             if self.debug {
-                info!("    执行分析 Pass: {}", self.analysis_passes[i].name());
+                info!("    执行分析 Pass: {}", analysis_pass.name());
             }
 
-            // 检查依赖（简化版本，避免借用冲突）
-            let required = self.analysis_passes[i].required_analyses();
+            // 检查依赖
+            let required = analysis_pass.required_analyses();
             for analysis_name in required {
                 if !self.analysis_manager.results.contains_key(analysis_name) {
                     return Err(format!("找不到所需的分析: {}", analysis_name));
@@ -200,17 +238,13 @@ impl PassManager {
             }
 
             // 运行分析
-            match self.analysis_passes[i].analyze_function(function, &self.analysis_manager) {
+            match analysis_pass.analyze_function(function, &self.analysis_manager) {
                 Ok(result) => {
                     self.analysis_manager
-                        .store_result(self.analysis_passes[i].name().to_string(), result);
+                        .store_result(analysis_pass.name().to_string(), result);
                 }
                 Err(msg) => {
-                    return Err(format!(
-                        "分析 Pass {} 失败: {}",
-                        self.analysis_passes[i].name(),
-                        msg
-                    ));
+                    return Err(format!("分析 Pass {} 失败: {}", analysis_pass.name(), msg));
                 }
             }
 
@@ -219,12 +253,10 @@ impl PassManager {
             if self.debug {
                 info!(
                     "    分析 Pass {} 完成 ({}ms)",
-                    self.analysis_passes[i].name(),
+                    analysis_pass.name(),
                     execution_time
                 );
             }
-
-            i += 1;
         }
 
         Ok(())
@@ -247,16 +279,21 @@ impl PassManager {
                 info!("    执行函数 Pass: {}", self.function_passes[i].name());
             }
 
-            // 自动补全所需分析
+            // 自动补全所需分析（从全局注册表读取）
             let required = self.function_passes[i].required_analyses();
             for analysis_name in required {
                 if !self.analysis_manager.results.contains_key(analysis_name) {
-                    // 找到对应的analysis pass并运行
-                    if let Some(analysis_pass) = self
-                        .analysis_passes
-                        .iter_mut()
-                        .find(|p| p.name() == analysis_name)
-                    {
+                    // 从全局注册表查找对应的 analysis pass
+                    let analysis_pass = STANDARD_ANALYSIS_PASSES.iter().find_map(|constructor| {
+                        let pass = constructor();
+                        if pass.name() == analysis_name {
+                            Some(pass)
+                        } else {
+                            None
+                        }
+                    });
+
+                    if let Some(mut analysis_pass) = analysis_pass {
                         let result = analysis_pass
                             .analyze_function(function, &self.analysis_manager)
                             .map_err(|msg| {
@@ -366,9 +403,44 @@ impl PassManager {
     pub fn clear(&mut self) {
         self.program_passes.clear();
         self.function_passes.clear();
-        self.analysis_passes.clear();
         self.analysis_manager.clear();
         self.stats.clear();
+    }
+
+    /// 打印当前管道中的所有 Pass
+    pub fn print_pipeline(&self) {
+        println!("=== Pass 管道 ===");
+
+        if !self.program_passes.is_empty() {
+            println!("\n程序级别 Pass:");
+            for (i, pass) in self.program_passes.iter().enumerate() {
+                println!("  {}. {}", i + 1, pass.name());
+            }
+        }
+
+        // 打印全局注册的分析 Passes
+        println!("\n分析 Pass (全局注册):");
+        for (i, constructor) in STANDARD_ANALYSIS_PASSES.iter().enumerate() {
+            let pass = constructor();
+            println!("  {}. {}", i + 1, pass.name());
+        }
+
+        if !self.function_passes.is_empty() {
+            println!("\n函数级别 Pass:");
+            for (i, pass) in self.function_passes.iter().enumerate() {
+                println!("  {}. {}", i + 1, pass.name());
+            }
+        }
+
+        let total_passes =
+            self.program_passes.len() + STANDARD_ANALYSIS_PASSES.len() + self.function_passes.len();
+        println!("\n总计: {} 个 Pass", total_passes);
+        println!("===================\n");
+    }
+
+    /// 获取管道中的 Pass 数量
+    pub fn pass_count(&self) -> usize {
+        self.program_passes.len() + STANDARD_ANALYSIS_PASSES.len() + self.function_passes.len()
     }
 }
 

@@ -1,12 +1,12 @@
 use clap::{Parser, Subcommand, ValueEnum};
 // runtime/execution and progress utilities moved to `runner` module
-use karte_ir_codec::{IrDisplay, IrParse};
+use karte_ir_codec::IrParse;
 use karte_lir::optimization_pipeline::OptimizationLevel;
 #[cfg(test)]
 use karte_lir::LirFunction;
 use karte_lir::LirProgram;
 use karte_mir::MirProgram;
-use karte_module_system::{compile_entry_file, lower_mir_to_final_lir};
+use karte_module_system::lower_mir_to_unoptimized_lir;
 use karte_parser::ParserMode;
 use log::error;
 use std::fs;
@@ -103,6 +103,27 @@ enum Commands {
         #[arg(long)]
         quiet: bool,
     },
+
+    /// 列出所有可用的优化 Pass
+    ListPasses,
+
+    /// 使用自定义 Pass 管线优化代码
+    Optimize {
+        /// 输入文件
+        input: String,
+
+        /// Pass 管线 (逗号分隔)，例如: "cfg,def-use,dce,print-ir"
+        #[arg(short, long)]
+        pipeline: String,
+
+        /// 输出文件
+        #[arg(short, long)]
+        output: Option<String>,
+
+        /// 启用调试模式（打印管线信息）
+        #[arg(long)]
+        debug: bool,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -180,12 +201,12 @@ fn load_ir_for_execution(
 
     let content = fs::read_to_string(filename)?;
 
-    match stage {
+    let mut lir_program = match stage {
         IrStage::Lir => {
             if verbose {
                 println!("解析 LIR...");
             }
-            parse_ir_content::<LirProgram>(&content, "LIR")
+            parse_ir_content::<LirProgram>(&content, "LIR")?
         }
         IrStage::Mir => {
             if verbose {
@@ -193,12 +214,33 @@ fn load_ir_for_execution(
             }
             let mir_program = parse_ir_content::<MirProgram>(&content, "MIR")?;
             if verbose {
-                println!("MIR 解析完成");
-                println!("{}", mir_program.to_ir_string());
+                println!("MIR 解析完成，降级到未优化LIR");
             }
-            lower_mir_to_final_lir(&mir_program, optimization_level, verbose)
+            lower_mir_to_unoptimized_lir(&mir_program, verbose)?
+        }
+    };
+
+    // 智能优化：检测是否需要优化
+    if lir_program.contains_virtual_registers() {
+        if verbose {
+            println!("检测到虚拟寄存器，应用优化管道...");
+        }
+        let mut pipeline = karte_lir::OptimizationPipeline::new(optimization_level);
+        pipeline
+            .optimize(&mut lir_program)
+            .map_err(|errors| -> Box<dyn std::error::Error> {
+                format!("LIR优化失败: {}", errors.join(", ")).into()
+            })?;
+        if verbose {
+            println!("优化完成");
+        }
+    } else {
+        if verbose {
+            println!("LIR已优化（仅包含物理寄存器），直接执行");
         }
     }
+
+    Ok(lir_program)
 }
 
 fn load_and_execute_ir(
@@ -214,7 +256,7 @@ fn load_and_execute_ir(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use karte_module_system::merge_lir_program;
+    use karte_module_system::{compile_entry_file, merge_lir_program};
     use std::path::PathBuf;
 
     #[test]
@@ -364,6 +406,27 @@ fn main() {
                 !quiet,
             ) {
                 error!("Build failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Some(Commands::ListPasses) => {
+            use karte_lir::OptimizationPipeline;
+            OptimizationPipeline::list_available_passes();
+        }
+        Some(Commands::Optimize {
+            input,
+            pipeline,
+            output,
+            debug,
+        }) => {
+            if let Err(e) = runner::optimize_with_pipeline(
+                &input,
+                &pipeline,
+                output.as_deref(),
+                debug,
+                cli.verbose,
+            ) {
+                error!("Optimization failed: {}", e);
                 std::process::exit(1);
             }
         }

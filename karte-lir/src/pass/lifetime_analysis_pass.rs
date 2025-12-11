@@ -147,6 +147,10 @@ impl AnalysisPass for LifetimeAnalysisPass {
         "lifetime-analysis"
     }
 
+    fn description(&self) -> &str {
+        "生命周期分析 - 分析变量和寄存器的生命周期范围"
+    }
+
     fn analyze_function(
         &mut self,
         function: &LirFunction,
