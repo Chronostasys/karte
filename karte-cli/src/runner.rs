@@ -646,7 +646,7 @@ pub fn process_file(
     )
     .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
-    let lir_program = build_product.into_lir_program();
+    let mut lir_program = build_product.into_lir_program();
     let before_stats = heap_stats.then_some(capture_heap_stats());
 
     if let Some(output_path) = output_file {
@@ -658,6 +658,11 @@ pub fn process_file(
     if emit_lir {
         println!("{}", lir_program.to_ir_string());
     } else {
+        let mut pipeline = karte_lir::OptimizationPipeline::new(optimization_level);
+        pipeline.optimize(&mut lir_program)
+                    .map_err(|errors| -> Box<dyn std::error::Error> {
+                format!("LIR优化失败: {}", errors.join(", ")).into()
+            })?;
         execute_lir(&lir_program, verbose)?;
     }
 
@@ -678,7 +683,7 @@ pub fn process_expression(
     heap_stats: bool,
     mode: ParserMode,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let lir_program = compile_to_lir(input, "input", optimization_level, verbose, mode)?;
+    let mut lir_program = compile_to_lir(input, "input", optimization_level, verbose, mode)?;
     let before_stats = heap_stats.then_some(capture_heap_stats());
 
     if let Some(output_path) = output_file {
@@ -690,6 +695,11 @@ pub fn process_expression(
     if emit_lir {
         println!("{}", lir_program.to_ir_string());
     } else {
+                let mut pipeline = karte_lir::OptimizationPipeline::new(optimization_level);
+        pipeline.optimize(&mut lir_program)
+                    .map_err(|errors| -> Box<dyn std::error::Error> {
+                format!("LIR优化失败: {}", errors.join(", ")).into()
+            })?;
         execute_lir(&lir_program, verbose)?;
     }
 
