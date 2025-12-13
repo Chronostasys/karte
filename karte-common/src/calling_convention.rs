@@ -45,18 +45,53 @@ impl Default for Register {
 /// 物理寄存器编号
 pub type PhysicalRegister = u8;
 
-pub const REG_RETURN: PhysicalRegister = 0;
-pub const REG_ARG0: PhysicalRegister = 1;
-pub const REG_ARG1: PhysicalRegister = 2;
-pub const REG_ARG2: PhysicalRegister = 3;
-pub const REG_ARG3: PhysicalRegister = 4;
-pub const REG_RETURN_ADDRESS: PhysicalRegister = 5;
-pub const REG_STACK_POINTER: PhysicalRegister = 6;
-pub const REG_FRAME_POINTER: PhysicalRegister = 7;
-pub const REG_EFFECT_STACK_POINTER: PhysicalRegister = 12;
-pub const REG_EFFECT_PAYLOAD: PhysicalRegister = REG_ARG0;
-pub const REG_EFFECT_TAG: PhysicalRegister = 10;
-pub const REG_EFFECT_RESUME_TMP: PhysicalRegister = 15;
+// ARM64 AAPCS64 寄存器命名约定
+pub const REG_X0: PhysicalRegister = 0;  // 返回值/参数1
+pub const REG_X1: PhysicalRegister = 1;  // 参数2/返回值2
+pub const REG_X2: PhysicalRegister = 2;  // 参数3
+pub const REG_X3: PhysicalRegister = 3;  // 参数4
+pub const REG_X4: PhysicalRegister = 4;  // 参数5
+pub const REG_X5: PhysicalRegister = 5;  // 参数6
+pub const REG_X6: PhysicalRegister = 6;  // 参数7
+pub const REG_X7: PhysicalRegister = 7;  // 参数8
+pub const REG_X8: PhysicalRegister = 8;  // 间接结果位置寄存器
+pub const REG_X9: PhysicalRegister = 9;  // 临时寄存器
+pub const REG_X10: PhysicalRegister = 10; // 临时寄存器
+pub const REG_X11: PhysicalRegister = 11; // 临时寄存器
+pub const REG_X12: PhysicalRegister = 12; // 临时寄存器
+pub const REG_X13: PhysicalRegister = 13; // 临时寄存器
+pub const REG_X14: PhysicalRegister = 14; // 临时寄存器
+pub const REG_X15: PhysicalRegister = 15; // 临时寄存器
+pub const REG_X16: PhysicalRegister = 16; // 过程内调用临时寄存器1
+pub const REG_X17: PhysicalRegister = 17; // 过程内调用临时寄存器2
+pub const REG_X18: PhysicalRegister = 18; // 平台寄存器
+pub const REG_X19: PhysicalRegister = 19; // Callee-saved
+pub const REG_X20: PhysicalRegister = 20; // Callee-saved
+pub const REG_X21: PhysicalRegister = 21; // Callee-saved
+pub const REG_X22: PhysicalRegister = 22; // Callee-saved
+pub const REG_X23: PhysicalRegister = 23; // Callee-saved
+pub const REG_X24: PhysicalRegister = 24; // Callee-saved
+pub const REG_X25: PhysicalRegister = 25; // Callee-saved
+pub const REG_X26: PhysicalRegister = 26; // Callee-saved
+pub const REG_X27: PhysicalRegister = 27; // Callee-saved
+pub const REG_X28: PhysicalRegister = 28; // Callee-saved
+pub const REG_X29: PhysicalRegister = 29; // 帧指针 (FP)
+pub const REG_X30: PhysicalRegister = 30; // 链接寄存器 (LR)
+pub const REG_SP: PhysicalRegister = 28;  // 栈指针 (SP) - 实际使用特殊编码
+
+// 保持向后兼容的别名
+pub const REG_RETURN: PhysicalRegister = REG_X0;
+pub const REG_ARG0: PhysicalRegister = REG_X0;
+pub const REG_ARG1: PhysicalRegister = REG_X1;
+pub const REG_ARG2: PhysicalRegister = REG_X2;
+pub const REG_ARG3: PhysicalRegister = REG_X3;
+pub const REG_RETURN_ADDRESS: PhysicalRegister = REG_X30;
+pub const REG_STACK_POINTER: PhysicalRegister = REG_SP;
+pub const REG_FRAME_POINTER: PhysicalRegister = REG_X29;
+pub const REG_EFFECT_STACK_POINTER: PhysicalRegister = REG_X12; // 使用临时寄存器
+pub const REG_EFFECT_PAYLOAD: PhysicalRegister = REG_X0;      // 使用返回值寄存器
+pub const REG_EFFECT_TAG: PhysicalRegister = REG_X10;         // 使用临时寄存器
+pub const REG_EFFECT_RESUME_TMP: PhysicalRegister = REG_X15;  // 使用临时寄存器
 
 pub trait CC {
     fn is_caller_saved(&self, reg: PhysicalRegister) -> bool;
@@ -127,63 +162,73 @@ impl CC for CallingConvention {
     }
 }
 
+impl Default for CallingConvention {
+    fn default() -> Self {
+        Self::standard()
+    }
+}
+
 impl CallingConvention {
-    /// 创建标准的调用约定
+    /// 创建标准的 ARM64 AAPCS64 调用约定
+    ///
+    /// 遵循 ARM Procedure Call Standard for the 64-bit Architecture (AAPCS64)
     ///
     /// 寄存器分配策略:
-    /// - r0: 返回值
-    /// - r1-r4: 参数传递 (最多4个参数)
-    /// - r5: 返回地址
-    /// - r6: 栈指针 (SP)
-    /// - r7: 帧指针 (FP)
+    /// - x0-x7: 参数传递 (最多8个参数) / 返回值 (x0-x1)
+    /// - x8: 间接结果位置寄存器
+    /// - x9-x15: 临时寄存器 (caller-saved)
+    /// - x16-x17: 过程内调用临时寄存器 (caller-saved)
+    /// - x18: 平台寄存器 (caller-saved)
+    /// - x19-x28: Callee-saved 寄存器
+    /// - x29 (FP): 帧指针 (callee-saved)
+    /// - x30 (LR): 链接寄存器 (callee-saved)
+    /// - sp (31): 栈指针 (特殊寄存器)
     ///
-    /// Caller-saved: r0-r4 (返回值和参数寄存器)
-    /// Callee-saved: r5-r7 (返回地址、SP、FP), r12 (effect栈指针)
+    /// Caller-saved: x0-x18 (易失寄存器，调用者负责保存)
+    /// Callee-saved: x19-x30 (非易失寄存器，被调用者负责保存)
     pub fn standard() -> Self {
         let mut caller_saved = HashSet::new();
-        caller_saved.insert(REG_RETURN); // 返回值
-        caller_saved.insert(REG_ARG0); // 参数1
-        caller_saved.insert(REG_ARG1); // 参数2
-        caller_saved.insert(REG_ARG2); // 参数3
-        caller_saved.insert(REG_ARG3); // 参数4
-
-        let mut callee_saved = HashSet::new();
-        callee_saved.insert(REG_RETURN_ADDRESS); // 返回地址 r5
-        callee_saved.insert(REG_STACK_POINTER); // 栈指针 r6
-        callee_saved.insert(REG_FRAME_POINTER); // 帧指针 r7
-        callee_saved.insert(REG_EFFECT_STACK_POINTER); // effect栈指针 r12
-
-        // 添加 r8-r31 作为 callee-saved 寄存器
-        // 注意：r11 (X11) 在 AAPCS64 中是临时寄存器，但我们在这里也将其作为 callee-saved
-        for reg in 8..32 {
-            callee_saved.insert(reg);
+        // x0-x18 都是 caller-saved (易失寄存器)
+        for reg in 0..=18 {
+            caller_saved.insert(reg as PhysicalRegister);
         }
 
+        let mut callee_saved = HashSet::new();
+        // x19-x28 是 callee-saved (非易失寄存器)
+        for reg in 19..=31 {
+            callee_saved.insert(reg as PhysicalRegister);
+        }
+        // // x29 (FP) 和 x30 (LR) 也是 callee-saved
+        // callee_saved.insert(REG_X29); // 帧指针
+        // callee_saved.insert(REG_X30); // 链接寄存器
+
         Self {
-            argument_registers: vec![REG_ARG0, REG_ARG1, REG_ARG2, REG_ARG3],
-            return_register: REG_RETURN,
+            // 支持 8 个参数寄存器 (x0-x7)，符合 AAPCS64
+            argument_registers: vec![REG_X0, REG_X1, REG_X2, REG_X3, REG_X4, REG_X5, REG_X6, REG_X7],
+            return_register: REG_X0, // 返回值在 x0
             caller_saved,
             callee_saved,
-            stack_pointer: REG_STACK_POINTER,
-            frame_pointer: REG_FRAME_POINTER,
-            return_address: REG_RETURN_ADDRESS,
-            effect_stack_pointer: REG_EFFECT_STACK_POINTER,
-            effect_payload_register: REG_EFFECT_PAYLOAD,
-            effect_tag_register: REG_EFFECT_TAG,
-            effect_resume_temp: REG_EFFECT_RESUME_TMP,
+            stack_pointer: REG_SP, // 栈指针使用特殊寄存器
+            frame_pointer: REG_X29, // x29 作为帧指针
+            return_address: REG_X30, // x30 作为链接寄存器
+            effect_stack_pointer: REG_X12, // 使用临时寄存器 x12
+            effect_payload_register: REG_X0, // 使用返回值寄存器 x0
+            effect_tag_register: REG_X10, // 使用临时寄存器 x10
+            effect_resume_temp: REG_X15, // 使用临时寄存器 x15
             temp_registers: {
-                // 临时寄存器：除了特殊寄存器外的所有寄存器
+                // 临时寄存器包括 caller-saved 寄存器 (除了特殊用途的)
                 let mut temps = Vec::new();
-                // 添加参数寄存器作为临时寄存器
-                temps.extend_from_slice(&[REG_RETURN, REG_ARG0, REG_ARG1, REG_ARG2, REG_ARG3]);
-                // 添加 callee-saved 寄存器 r8-r31 作为临时寄存器
-                for reg in 8..32 {
-                    if reg != REG_EFFECT_STACK_POINTER {
-                        temps.push(reg);
-                    }
+                // x0-x7 (参数寄存器) 和 x8-x15 (临时寄存器)
+                temps.extend_from_slice(&[REG_X0, REG_X1, REG_X2, REG_X3, REG_X4, REG_X5, REG_X6, REG_X7]);
+                temps.extend_from_slice(&[REG_X8, REG_X9, REG_X10, REG_X11, REG_X12, REG_X13, REG_X14, REG_X15]);
+                // x16-x18 也是临时寄存器
+                temps.extend_from_slice(&[REG_X16, REG_X17, REG_X18]);
+                // callee-saved 寄存器也可以用作临时寄存器（需要保存/恢复）
+                for reg in 19..=27 {
+                    temps.push(reg as PhysicalRegister);
                 }
                 temps
-            }, // 临时寄存器包括参数寄存器和callee-saved寄存器
+            },
         }
     }
 

@@ -1,6 +1,7 @@
 use super::instruction_transformer::IndexInstructionTransformer;
 use super::{AnalysisManager, FunctionPass, PassResult};
 use crate::{Instruction, LirFunction, Operand, Register};
+use karte_common::calling_convention::CallingConvention;
 use karte_diagnostics::Span;
 use log::{debug, info};
 use std::collections::{HashMap, HashSet};
@@ -500,7 +501,7 @@ impl FunctionPass for ConstantFolding {
 /// - `add dst, src, #0` => `mov dst, src`
 /// - 移除 `mov dst, dst`
 #[derive(Debug)]
-pub struct PeepholeOptimizer;
+pub struct PeepholeOptimizer(CallingConvention);
 
 impl Default for PeepholeOptimizer {
     fn default() -> Self {
@@ -510,14 +511,14 @@ impl Default for PeepholeOptimizer {
 
 impl PeepholeOptimizer {
     pub fn new() -> Self {
-        Self
+        Self(CallingConvention::default())
     }
 
     fn optimize_function(&self, function: &mut LirFunction) -> bool {
         let mut changed = false;
         let mut transformer = IndexInstructionTransformer::new();
 
-        let sp = Register::Physical(6); // 约定：r6 为 SP
+        let sp = Register::Physical(self.0.stack_pointer); // 约定的 SP
 
         // 小工具：判断操作数是否为指定寄存器
         let is_reg = |op: &Operand, reg: Register| -> bool {

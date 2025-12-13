@@ -7,6 +7,5 @@ fn main() -> i32 {
     let x = 10;
     let y = 20;
     let added = add(x, y);
-    let multiplied = utils.sub::multiply(x, y);
     added
 }
