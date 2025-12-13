@@ -1079,10 +1079,25 @@ impl AArch64Compiler {
             }
         }
 
-        // 步骤2：保存 r6 r7 到系统栈
-        // STP x6, x7, [SP, #-16]! (pre-index, 同时递减 SP)
-        let stp_x6_x7 = 0xA9BF1FE6u32;
-        code_builder.emit_bytes(&stp_x6_x7.to_le_bytes());
+        // 步骤2：只在系统栈保存 VM 帧指针，SP 依靠栈平衡自动恢复
+        let vm_fp_reg = self.vm_calling_convention.frame_pointer;
+        if self.debug_mode {
+            log::debug!("保存 VM 帧寄存器到系统栈: fp=p{}", vm_fp_reg);
+        }
+        // 依旧分配 16 字节，保持与原 STP 相同的栈平衡
+        self.emit_add_reg_reg_imm(
+            code_builder,
+            AArch64Register::SP as u8,
+            AArch64Register::SP as u8,
+            -16,
+        );
+        // 与之前 STP 的 second slot 对齐，写入 [SP, #8]
+        self.emit_str_reg_mem(
+            code_builder,
+            vm_fp_reg,
+            AArch64Register::SP as u8,
+            8,
+        );
 
         (regs_to_virtual_stack, virtual_stack_space)
     }
@@ -1094,13 +1109,23 @@ impl AArch64Compiler {
         stack_space: usize,
     ) {
         // 🔧 关键修复：恢复顺序与保存顺序相反
-        // 1. 先从系统栈恢复 r6 r7
+        // 1. 先从系统栈恢复 VM 栈/帧指针
         // 2. 再从虚拟栈恢复 r0-r5
 
-        // 步骤1：恢复 r6 r7 从系统栈
-        // LDP x6, x7, [SP], #16 (post-index, 同时增加 SP)
-        let ldp_x6_x7 = 0xA8C11FE6u32;
-        code_builder.emit_bytes(&ldp_x6_x7.to_le_bytes());
+        // 步骤1：恢复 VM 帧指针，并保持与保存步骤相同的栈调整
+        let vm_fp_reg = self.vm_calling_convention.frame_pointer;
+        self.emit_ldr_reg_mem(
+            code_builder,
+            vm_fp_reg,
+            AArch64Register::SP as u8,
+            8,
+        );
+        self.emit_add_reg_reg_imm(
+            code_builder,
+            AArch64Register::SP as u8,
+            AArch64Register::SP as u8,
+            16,
+        );
 
         // 步骤2：恢复 r0-r5 从虚拟栈
         if !regs.is_empty() {
@@ -1307,6 +1332,60 @@ impl AArch64Compiler {
         }
     }
 
+    /// 生成 STP (pre-index) 指令，通常用于将寄存器对压入系统栈
+    fn emit_stp_pre_index(
+        &self,
+        code_builder: &mut CodeBuilder,
+        first: u8,
+        second: u8,
+        base: u8,
+        offset: i32,
+    ) {
+        debug_assert!(offset % 8 == 0, "STP offset must be 8-byte aligned: {}", offset);
+        let scaled = offset / 8;
+        debug_assert!(
+            (-64..=63).contains(&scaled),
+            "STP offset out of encodable range: {}",
+            offset
+        );
+
+        let imm7 = ((scaled & 0x7F) as u32) << 15;
+        let instruction = 0xA9800000u32
+            | imm7
+            | (((second as u32) & 0x1F) << 10)
+            | (((base as u32) & 0x1F) << 5)
+            | ((first as u32) & 0x1F);
+
+        code_builder.emit_bytes(&instruction.to_le_bytes());
+    }
+
+    /// 生成 LDP (post-index) 指令，通常用于从系统栈恢复寄存器对
+    fn emit_ldp_post_index(
+        &self,
+        code_builder: &mut CodeBuilder,
+        first: u8,
+        second: u8,
+        base: u8,
+        offset: i32,
+    ) {
+        debug_assert!(offset % 8 == 0, "LDP offset must be 8-byte aligned: {}", offset);
+        let scaled = offset / 8;
+        debug_assert!(
+            (-64..=63).contains(&scaled),
+            "LDP offset out of encodable range: {}",
+            offset
+        );
+
+        let imm7 = ((scaled & 0x7F) as u32) << 15;
+        let instruction = 0xA8C00000u32
+            | imm7
+            | (((second as u32) & 0x1F) << 10)
+            | (((base as u32) & 0x1F) << 5)
+            | ((first as u32) & 0x1F);
+
+        code_builder.emit_bytes(&instruction.to_le_bytes());
+    }
+
     fn get_c_ffi_callee_saved_registers(&self) -> Vec<u8> {
         self.ffi_calling_convention
             .get_callee_save_registers(&self.current_function_use_regs)
@@ -1323,12 +1402,8 @@ impl AArch64Compiler {
         // 参考x86实现，将参数移动到虚拟机寄存器
         let x0 = AArch64Register::X0 as u8; // 第一个参数：虚拟栈顶地址
         let x1 = AArch64Register::X1 as u8; // 第二个参数：虚拟栈底地址
-        let vm_sp = self
-            .get_physical_register(&karte_lir::Register::Physical(6))
-            .unwrap_or(6);
-        let vm_fp = self
-            .get_physical_register(&karte_lir::Register::Physical(7))
-            .unwrap_or(7);
+        let vm_sp = self.vm_calling_convention.stack_pointer;
+        let vm_fp = self.vm_calling_convention.frame_pointer;
 
         if self.debug_mode {
             log::debug!("序言开始：生成符合 AAPCS64 的函数序言");
@@ -1351,10 +1426,19 @@ impl AArch64Compiler {
         // 3. 保存其他 callee-saved 寄存器（如果有的话）
         self.save_callee_saved_registers(code_builder)?;
 
-        // 4. 保存 VM 特殊寄存器（VM 内部需要）
-        // STP X6, X7, [SP, #-16]!
-        let stp_x6_x7 = 0xA9BF1FE6u32;
-        code_builder.emit_bytes(&stp_x6_x7.to_le_bytes());
+        // 4. 保存 VM 帧指针（继续保持 16 字节对齐的栈平衡）
+        self.emit_add_reg_reg_imm(
+            code_builder,
+            AArch64Register::SP as u8,
+            AArch64Register::SP as u8,
+            -16,
+        );
+        self.emit_str_reg_mem(
+            code_builder,
+            vm_fp,
+            AArch64Register::SP as u8,
+            8,
+        );
 
         // 5. 设置 VM 寄存器
         self.emit_mov_reg_reg(code_builder, vm_sp, x0);
@@ -1408,11 +1492,7 @@ impl AArch64Compiler {
             log::debug!("生成内部函数序言：保存 {} 个寄存器", callee_saved.len());
         }
 
-        // Debug断言：验证r6/r7永远不会出现在列表中
-        debug_assert!(
-            !callee_saved.contains(&6) && !callee_saved.contains(&7),
-            "r6/r7 should never be in callee_saved list"
-        );
+
 
         // 保存每个 callee-saved 寄存器到虚拟栈
         for &reg in callee_saved {
@@ -1479,10 +1559,19 @@ impl AArch64Compiler {
         // 2. 恢复 callee-saved 寄存器（逆序）
         self.restore_callee_saved_registers(code_builder)?;
 
-        // 3. 恢复 VM 特殊寄存器（逆序）
-        // LDP X6, X7, [SP], #16
-        let ldp_x6_x7 = 0xA8C11FE6u32;
-        code_builder.emit_bytes(&ldp_x6_x7.to_le_bytes());
+        // 3. 恢复 VM 帧指针并回收相同的栈空间
+        self.emit_ldr_reg_mem(
+            code_builder,
+            self.vm_calling_convention.frame_pointer,
+            AArch64Register::SP as u8,
+            8,
+        );
+        self.emit_add_reg_reg_imm(
+            code_builder,
+            AArch64Register::SP as u8,
+            AArch64Register::SP as u8,
+            16,
+        );
 
         // 4. 恢复帧指针和链接寄存器（标准 C 尾声）
         // LDP X29, X30, [SP], #16 (post-index load pair)
