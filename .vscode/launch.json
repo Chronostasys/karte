@@ -9,7 +9,7 @@
             "request": "launch",
             "name": "Debug Function Compile",
             "program": "${workspaceFolder}/target/debug/karte",
-            "args": ["build", "/Users/bobli/src/karte/test_project/src/main.karte"],
+            "args": ["execute", "/Users/bobli/src/karte/target/main.lir"],
             "cwd": "${workspaceFolder}"
         },
         {

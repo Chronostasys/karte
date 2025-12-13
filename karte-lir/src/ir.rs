@@ -1,3 +1,4 @@
+use karte_common::calling_convention::CallingConvention;
 pub use karte_common::calling_convention::{PhysicalRegister, Register};
 use karte_diagnostics::Span;
 use karte_ir_derive::IrCodec;
@@ -988,7 +989,7 @@ pub struct LirFunction {
     pub stack_frame_size: usize,
     #[ir_codec(label = "params")]
     pub parameter_count: usize,
-    #[ir_codec(skip)]
+    #[ir_codec(label = "param_regs")]
     pub parameter_registers: Vec<Register>,
     /// 实际使用的寄存器列表（AArch64）
     #[ir_codec(skip)]
@@ -1046,8 +1047,9 @@ impl LirFunction {
     /// 分配一个新的寄存器，跳过栈指针寄存器(RegisterId(6))、帧指针寄存器(RegisterId(7))和函数参数寄存器
     pub fn new_register(&mut self) -> Register {
         // 栈指针寄存器是RegisterId(6)，帧指针寄存器是RegisterId(7)
-        const STACK_POINTER_REG: usize = 6;
-        const FRAME_POINTER_REG: usize = 7;
+        let cc = CallingConvention::standard();
+        let stack_pointer_reg: usize = cc.stack_pointer as usize;
+        let frame_pointer_reg: usize = cc.frame_pointer as usize;
         // 🔧 修复：跳过已分配的函数参数寄存器
         let parameter_registers: Vec<usize> =
             self.parameter_registers.iter().map(|r| r.id()).collect();
@@ -1057,7 +1059,7 @@ impl LirFunction {
             self.next_register += 1;
 
             // 🔧 关键修复：跳过栈指针和帧指针寄存器
-            if id.id() == STACK_POINTER_REG || id.id() == FRAME_POINTER_REG {
+            if id.id() == stack_pointer_reg || id.id() == frame_pointer_reg {
                 continue; // 跳过这些特殊寄存器
             }
 
@@ -1070,17 +1072,17 @@ impl LirFunction {
 
     /// 专门用于栈操作的寄存器分配（只返回栈指针寄存器）
     pub fn get_stack_pointer_register(&self) -> Register {
-        Register::Physical(6) // 栈指针寄存器
+        Register::Physical(CallingConvention::standard().stack_pointer)
     }
 
     /// 检查一个寄存器是否是栈指针寄存器
-    pub fn is_stack_pointer_register(&self, reg: &Register) -> bool {
-        reg.id() == 6
+    pub fn is_stack_pointer_register(&self, reg: &Register) -> bool {   
+        reg.id() == CallingConvention::standard().stack_pointer as usize
     }
 
     /// 检查一个寄存器是否是帧指针寄存器
     pub fn is_frame_pointer_register(&self, reg: &Register) -> bool {
-        reg.id() == 7
+        reg.id() == CallingConvention::standard().frame_pointer as usize
     }
 
     /// 验证指令是否违反栈指针寄存器使用规则

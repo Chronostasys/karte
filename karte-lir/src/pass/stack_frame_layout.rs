@@ -1,5 +1,6 @@
 use super::{AnalysisManager, FunctionPass, PassResult};
 use crate::{Instruction, LirFunction, Operand, Register};
+use karte_common::calling_convention::CallingConvention;
 use log::{debug, info};
 use std::collections::HashMap;
 
@@ -22,6 +23,7 @@ struct LinearScanAllocator {
     free_list: Vec<(i64, usize, usize)>,
     // 当前最负的偏移（负数，向下增长）
     current_neg_offset: i64,
+    calling_convention: CallingConvention,
 }
 
 impl LinearScanAllocator {
@@ -67,7 +69,7 @@ impl LinearScanAllocator {
     }
 }
 
-pub struct StackFrameLayoutPass;
+pub struct StackFrameLayoutPass(CallingConvention);
 
 impl Default for StackFrameLayoutPass {
     fn default() -> Self {
@@ -77,7 +79,7 @@ impl Default for StackFrameLayoutPass {
 
 impl StackFrameLayoutPass {
     pub fn new() -> Self {
-        Self
+        Self(CallingConvention::default())
     }
 
     fn collect_stack_slots(&self, function: &LirFunction) -> Vec<StackSlotInfo> {
@@ -212,7 +214,7 @@ impl StackFrameLayoutPass {
                                 addr, offset: off, ..
                             } = &mut new
                             {
-                                *addr = Register::Physical(7); // FP
+                                *addr = Register::Physical(self.0.frame_pointer); // FP
                                 *off += *base_off;
                             }
                             transformer.replace(i, new);
@@ -227,7 +229,7 @@ impl StackFrameLayoutPass {
                                 addr, offset: off, ..
                             } = &mut new
                             {
-                                *addr = Register::Physical(7); // FP
+                                *addr = Register::Physical(self.0.frame_pointer); // FP
                                 *off += *base_off;
                             }
                             transformer.replace(i, new);
@@ -255,7 +257,7 @@ impl StackFrameLayoutPass {
                                 Instruction::Add {
                                     dst: *dst,
                                     src1: Operand::Register {
-                                        id: Register::Physical(7),
+                                        id: Register::Physical(self.0.frame_pointer),
                                     }, // FP
                                     src2: Operand::Immediate { value: *base_off },
                                     span: Span::dummy(),
