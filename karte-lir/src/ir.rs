@@ -46,6 +46,30 @@ pub enum AllocationType {
     Static,
 }
 
+/// 指令元数据
+///
+/// 包含与指令关联的额外信息，如调用位置活跃寄存器、调试信息等。
+/// 通过 LirFunction.instruction_metadata 侧表存储，避免修改 Instruction enum。
+#[derive(Debug, Clone, PartialEq)]
+pub struct InstructionMetadata {
+    /// 调用位置活跃寄存器信息
+    pub live_register_info: Option<LiveRegisterInfo>,
+}
+
+/// 调用位置活跃寄存器信息
+///
+/// 在调用指令位置（Call, CallIndirect, Alloc, Free, Retain, Release, Safepoint），
+/// 记录活跃的寄存器列表。这些信息由 CallsiteLiveRegisterPass 在编译时分析生成，
+/// 供 codegen 使用，用于确定在调用前需要保存哪些寄存器。
+#[derive(Debug, Clone, PartialEq)]
+pub struct LiveRegisterInfo {
+    /// 活跃寄存器列表
+    ///
+    /// 在此调用位置活跃的所有寄存器。
+    /// 由 lifetime analysis 计算得出。
+    pub live_registers: Vec<Register>,
+}
+
 /// LIR操作数
 #[derive(Debug, Clone, PartialEq, IrCodec)]
 pub enum Operand {
@@ -345,6 +369,36 @@ pub enum Instruction {
         span: Span,
     },
 
+    /// 存储寄存器对到内存（AArch64 STP指令的LIR表示）
+    #[ir_codec(token = "stp")]
+    StorePair {
+        #[ir_codec(args)]
+        addr: Register,
+        #[ir_codec(args)]
+        offset: i64,
+        #[ir_codec(args)]
+        src1: Register,
+        #[ir_codec(args)]
+        src2: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 从内存加载寄存器对（AArch64 LDP指令的LIR表示）
+    #[ir_codec(token = "ldp")]
+    LoadPair {
+        #[ir_codec(args)]
+        dst1: Register,
+        #[ir_codec(args)]
+        dst2: Register,
+        #[ir_codec(args)]
+        addr: Register,
+        #[ir_codec(args)]
+        offset: i64,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
     /// φ(Phi)节点 - SSA形式的控制流汇合
     /// 在控制流汇合点选择来自不同前驱块的值
     Phi {
@@ -388,6 +442,7 @@ impl Instruction {
             | Instruction::StructFieldAddr { dst, .. }
             | Instruction::Alloc { dst, .. }
             | Instruction::MemCopy { dst, .. } => Some(*dst),
+            Instruction::LoadPair { dst1, .. } => Some(*dst1),
             Instruction::Call { result, .. } | Instruction::CallIndirect { result, .. } => *result,
             Instruction::Phi { dst, .. } => Some(*dst),
             // EffectPerform 的 result 是定义寄存器（如果存在）
@@ -412,6 +467,14 @@ impl Instruction {
             | Instruction::MemCopy { dst, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
+                }
+            }
+            Instruction::LoadPair { dst1, dst2, .. } => {
+                if *dst1 == old_reg {
+                    *dst1 = new_reg;
+                }
+                if *dst2 == old_reg {
+                    *dst2 = new_reg;
                 }
             }
             Instruction::Call { result, .. } | Instruction::CallIndirect { result, .. } => {
@@ -463,6 +526,16 @@ impl Instruction {
             Instruction::Store64 { addr, src, .. } => {
                 used.push(*addr);
                 self.add_operand_registers(src, &mut used);
+            }
+            Instruction::StorePair {
+                addr, src1, src2, ..
+            } => {
+                used.push(*addr);
+                used.push(*src1);
+                used.push(*src2);
+            }
+            Instruction::LoadPair { addr, .. } => {
+                used.push(*addr);
             }
             Instruction::StructFieldLoad { struct_addr, .. } => {
                 used.push(*struct_addr);
@@ -601,6 +674,34 @@ impl Instruction {
                     *addr = new_reg;
                 }
                 Self::replace_operand_register(src, old_reg, new_reg);
+            }
+            Instruction::StorePair {
+                addr, src1, src2, ..
+            } => {
+                if *addr == old_reg {
+                    *addr = new_reg;
+                }
+                if *src1 == old_reg {
+                    *src1 = new_reg;
+                }
+                if *src2 == old_reg {
+                    *src2 = new_reg;
+                }
+            }
+            Instruction::LoadPair {
+                dst1, dst2, addr, ..
+            } => {
+                // 替换目标寄存器
+                if *dst1 == old_reg {
+                    *dst1 = new_reg;
+                }
+                if *dst2 == old_reg {
+                    *dst2 = new_reg;
+                }
+                // 替换地址寄存器
+                if *addr == old_reg {
+                    *addr = new_reg;
+                }
             }
             Instruction::StructFieldLoad {
                 dst, struct_addr, ..
@@ -1000,6 +1101,12 @@ pub struct LirFunction {
     /// 降级后的寄存器映射（虚拟寄存器 -> 物理寄存器）
     #[ir_codec(skip)]
     pub lowered_register_mapping: Option<HashMap<Register, u8>>,
+    /// 指令元数据侧表（指令索引 -> 元数据）
+    ///
+    /// 存储指令的额外信息（如 GC safepoint 的活跃寄存器）。
+    /// 使用侧表而非修改 Instruction enum，保持最小化修改。
+    #[ir_codec(skip)]
+    pub instruction_metadata: HashMap<usize, InstructionMetadata>,
 }
 
 impl LirFunction {
@@ -1015,6 +1122,7 @@ impl LirFunction {
             used_regs: Vec::new(),
             lowered_lifetimes: None,
             lowered_register_mapping: None,
+            instruction_metadata: HashMap::new(),
         }
     }
 
@@ -1076,7 +1184,7 @@ impl LirFunction {
     }
 
     /// 检查一个寄存器是否是栈指针寄存器
-    pub fn is_stack_pointer_register(&self, reg: &Register) -> bool {   
+    pub fn is_stack_pointer_register(&self, reg: &Register) -> bool {
         reg.id() == CallingConvention::standard().stack_pointer as usize
     }
 
@@ -1197,9 +1305,16 @@ impl LirFunction {
     }
 
     pub fn add_instruction(&mut self, instruction: Instruction) {
-        // 如果是alloc，放在开头
-        if let Instruction::Alloc { .. } = instruction {
-            self.instructions.insert(1, instruction);
+        // 如果是alloc且不是heap，放在开头
+        if let Instruction::Alloc {
+            allocation_type, ..
+        } = &instruction
+        {
+            if *allocation_type != AllocationType::Heap {
+                self.instructions.insert(1, instruction);
+            } else {
+                self.instructions.push(instruction);
+            }
         } else {
             self.instructions.push(instruction);
         }

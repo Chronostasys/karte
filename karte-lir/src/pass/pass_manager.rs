@@ -1,5 +1,5 @@
 use super::{
-    analysis::{ControlFlowAnalysis, DefUseAnalysis},
+    analysis::{ControlFlowAnalysis, DefUseAnalysis, LivenessAnalysisPass},
     lifetime_analysis_pass::LifetimeAnalysisPass,
     AnalysisManager, AnalysisPass, FunctionPass, PassResult, PassStats, ProgramPass,
 };
@@ -16,13 +16,15 @@ use std::time::Instant;
 /// 当前注册的 Analysis Passes：
 /// - Control Flow Analysis (CFG)
 /// - Definition-Use Analysis
-/// - Lifetime Analysis
+/// - Liveness Analysis (活跃度分析)
+/// - Lifetime Analysis (生命周期分析)
 pub static STANDARD_ANALYSIS_PASSES: Lazy<
     Vec<Box<dyn Fn() -> Box<dyn AnalysisPass> + Send + Sync>>,
 > = Lazy::new(|| {
     vec![
         Box::new(|| Box::new(ControlFlowAnalysis::new()) as Box<dyn AnalysisPass>),
         Box::new(|| Box::new(DefUseAnalysis::new()) as Box<dyn AnalysisPass>),
+        Box::new(|| Box::new(LivenessAnalysisPass::new()) as Box<dyn AnalysisPass>),
         Box::new(|| Box::new(LifetimeAnalysisPass::new()) as Box<dyn AnalysisPass>),
     ]
 });
@@ -214,26 +216,110 @@ impl PassManager {
         Ok(())
     }
 
+    /// 递归运行分析 Pass 及其所有依赖
+    ///
+    /// 该方法确保在运行目标分析之前，先运行其所有依赖的分析
+    fn run_analysis_with_dependencies(
+        &mut self,
+        function: &LirFunction,
+        analysis_name: &str,
+    ) -> Result<(), String> {
+        // 如果已经运行过，直接返回
+        if self.analysis_manager.results.contains_key(analysis_name) {
+            return Ok(());
+        }
+
+        // 从全局注册表查找对应的 analysis pass
+        let analysis_pass_opt = STANDARD_ANALYSIS_PASSES.iter().find_map(|constructor| {
+            let pass = constructor();
+            if pass.name() == analysis_name {
+                Some(pass)
+            } else {
+                None
+            }
+        });
+
+        let mut analysis_pass =
+            analysis_pass_opt.ok_or_else(|| format!("找不到所需的分析: {}", analysis_name))?;
+
+        if self.debug {
+            info!("    (按需运行分析: {})", analysis_name);
+        }
+
+        // 🔧 递归运行所有依赖的分析
+        let required = analysis_pass.required_analyses();
+        for dep_analysis_name in required {
+            if !self
+                .analysis_manager
+                .results
+                .contains_key(dep_analysis_name)
+            {
+                self.run_analysis_with_dependencies(function, dep_analysis_name)?;
+            }
+        }
+
+        // 运行当前分析
+        let result = analysis_pass
+            .analyze_function(function, &self.analysis_manager)
+            .map_err(|msg| format!("分析 Pass {} 失败: {}", analysis_name, msg))?;
+
+        self.analysis_manager
+            .store_result(analysis_name.to_string(), result);
+
+        Ok(())
+    }
+
     /// 为函数运行分析 Pass（从全局注册表读取）
     fn run_analysis_passes_on_function(&mut self, function: &LirFunction) -> Result<(), String> {
-        // 从全局注册表创建所有标准 Analysis Pass 实例
-        let analysis_passes: Vec<Box<dyn AnalysisPass>> = STANDARD_ANALYSIS_PASSES
-            .iter()
-            .map(|constructor| constructor())
-            .collect();
+        // 🔧 优化：递归运行所有必需的分析Pass
+        // 按照全局注册表的顺序运行所有分析，自动处理依赖关系
+        let analysis_pass_count = STANDARD_ANALYSIS_PASSES.len();
 
-        for mut analysis_pass in analysis_passes {
+        for i in 0..analysis_pass_count {
+            let mut analysis_pass = STANDARD_ANALYSIS_PASSES[i]();
+            let pass_name = analysis_pass.name().to_string();
+
+            // 如果已经运行过，跳过
+            if self.analysis_manager.results.contains_key(&pass_name) {
+                continue;
+            }
+
             let start_time = Instant::now();
 
             if self.debug {
-                info!("    执行分析 Pass: {}", analysis_pass.name());
+                info!("    执行分析 Pass: {}", pass_name);
             }
 
-            // 检查依赖
+            // 🔧 递归运行所需的依赖分析
             let required = analysis_pass.required_analyses();
             for analysis_name in required {
                 if !self.analysis_manager.results.contains_key(analysis_name) {
-                    return Err(format!("找不到所需的分析: {}", analysis_name));
+                    // 从全局注册表中查找并运行依赖的分析
+                    let dep_pass_opt = STANDARD_ANALYSIS_PASSES.iter().find_map(|constructor| {
+                        let pass = constructor();
+                        if pass.name() == analysis_name {
+                            Some(pass)
+                        } else {
+                            None
+                        }
+                    });
+
+                    if let Some(mut dep_pass) = dep_pass_opt {
+                        // 递归运行依赖的分析（注意：这里简化处理，假设不会有循环依赖）
+                        let dep_result = dep_pass
+                            .analyze_function(function, &self.analysis_manager)
+                            .map_err(|msg| {
+                                format!("依赖分析 Pass {} 失败: {}", analysis_name, msg)
+                            })?;
+                        self.analysis_manager
+                            .store_result(analysis_name.to_string(), dep_result);
+
+                        if self.debug {
+                            info!("    (自动运行依赖分析: {})", analysis_name);
+                        }
+                    } else {
+                        return Err(format!("找不到所需的分析: {}", analysis_name));
+                    }
                 }
             }
 
@@ -241,21 +327,17 @@ impl PassManager {
             match analysis_pass.analyze_function(function, &self.analysis_manager) {
                 Ok(result) => {
                     self.analysis_manager
-                        .store_result(analysis_pass.name().to_string(), result);
+                        .store_result(pass_name.clone(), result);
                 }
                 Err(msg) => {
-                    return Err(format!("分析 Pass {} 失败: {}", analysis_pass.name(), msg));
+                    return Err(format!("分析 Pass {} 失败: {}", pass_name, msg));
                 }
             }
 
             let execution_time = start_time.elapsed().as_millis() as u64;
 
             if self.debug {
-                info!(
-                    "    分析 Pass {} 完成 ({}ms)",
-                    analysis_pass.name(),
-                    execution_time
-                );
+                info!("    分析 Pass {} 完成 ({}ms)", pass_name, execution_time);
             }
         }
 
@@ -283,27 +365,8 @@ impl PassManager {
             let required = self.function_passes[i].required_analyses();
             for analysis_name in required {
                 if !self.analysis_manager.results.contains_key(analysis_name) {
-                    // 从全局注册表查找对应的 analysis pass
-                    let analysis_pass = STANDARD_ANALYSIS_PASSES.iter().find_map(|constructor| {
-                        let pass = constructor();
-                        if pass.name() == analysis_name {
-                            Some(pass)
-                        } else {
-                            None
-                        }
-                    });
-
-                    if let Some(mut analysis_pass) = analysis_pass {
-                        let result = analysis_pass
-                            .analyze_function(function, &self.analysis_manager)
-                            .map_err(|msg| {
-                                format!("分析 Pass {} 失败: {}", analysis_pass.name(), msg)
-                            })?;
-                        self.analysis_manager
-                            .store_result(analysis_pass.name().to_string(), result);
-                    } else {
-                        return Err(format!("找不到所需的分析: {}", analysis_name));
-                    }
+                    // 🔧 使用递归方法运行分析及其依赖
+                    self.run_analysis_with_dependencies(function, analysis_name)?;
                 }
             }
 
@@ -392,6 +455,47 @@ impl PassManager {
             unchanged_count,
             failed_count
         );
+    }
+
+    /// 保存生命周期分析结果到函数中
+    ///
+    /// 这个方法在所有优化Pass完成后调用，将生命周期分析和寄存器分配结果
+    /// 保存到LirFunction中，供JIT编译器使用
+    fn save_lifetime_analysis_to_function(&self, function: &mut LirFunction) {
+        use crate::pass::lifetime_analysis_pass::LifetimeAnalysisResult;
+        use crate::pass::register_allocation::RegisterAllocationResult;
+
+        // 尝试获取生命周期分析结果
+        if let Some(lifetime_result) = self
+            .analysis_manager
+            .get_result::<LifetimeAnalysisResult>("lifetime-analysis")
+        {
+            function.lowered_lifetimes = Some(lifetime_result.lifetimes.clone());
+
+            info!(
+                "💾 已保存生命周期分析结果到函数 {}: {} 个寄存器",
+                function.name,
+                lifetime_result.lifetimes.len()
+            );
+        } else {
+            info!("⚠️  函数 {} 没有生命周期分析结果", function.name);
+        }
+
+        // 尝试获取寄存器分配结果
+        if let Some(alloc_result) = self
+            .analysis_manager
+            .get_result::<RegisterAllocationResult>("register-allocation")
+        {
+            function.lowered_register_mapping = Some(alloc_result.register_mapping.clone());
+
+            info!(
+                "💾 已保存寄存器映射到函数 {}: {} 个映射",
+                function.name,
+                alloc_result.register_mapping.len()
+            );
+        } else {
+            info!("⚠️  函数 {} 没有寄存器分配结果", function.name);
+        }
     }
 
     /// 获取执行统计

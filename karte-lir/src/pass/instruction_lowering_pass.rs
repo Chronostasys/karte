@@ -9,9 +9,10 @@
 //! - Phi
 
 use crate::pass::lifetime_analysis_pass::LifetimeAnalysisResult;
+use crate::pass::register_allocation::RegisterAllocationResult;
 use crate::pass::{AnalysisManager, FunctionPass, PassResult};
 use crate::{AllocationType, Instruction, LirFunction, Operand, Register, StructTypeId};
-use karte_common::calling_convention::CallingConvention;
+use karte_common::calling_convention::{CallingConvention, CC};
 use karte_diagnostics::Span;
 use std::collections::HashSet;
 
@@ -42,6 +43,126 @@ impl InstructionLoweringPass {
         }
     }
 
+    /// 创建带有栈对齐配置的InstructionLoweringPass
+    pub fn new_with_alignment(stack_alignment: usize) -> Self {
+        let mut calling_convention = CallingConvention::standard();
+        calling_convention.stack_alignment = stack_alignment;
+
+        Self {
+            stack_pointer_reg: Register::Physical(calling_convention.stack_pointer),
+            frame_pointer_reg: Register::Physical(calling_convention.frame_pointer),
+            calling_convention,
+            inserted_early_return: false,
+            next_register: 40,
+        }
+    }
+
+    /// 将大小对齐到栈边界
+    fn align_stack_size(&self, size: usize) -> usize {
+        (size + self.calling_convention.stack_alignment - 1)
+            & !(self.calling_convention.stack_alignment - 1)
+    }
+
+    /// 使用StorePair优化保存寄存器到栈
+    fn save_registers_to_stack(
+        &self,
+        registers: &[u8],
+        span: &Span,
+        instructions: &mut Vec<Instruction>,
+    ) {
+        // 计算总大小并对齐
+        let total_size = registers.len() * 8;
+        let aligned_size = self.align_stack_size(total_size);
+
+        // 先使用StorePair优化连续的寄存器对
+        let mut i = 0;
+        while i + 1 < registers.len() {
+            let offset = -((i + 2) as i64 * 8);
+            instructions.push(Instruction::StorePair {
+                addr: self.stack_pointer_reg,
+                offset,
+                src1: Register::Physical(registers[i]),
+                src2: Register::Physical(registers[i + 1]),
+                span: *span,
+            });
+            i += 2;
+        }
+
+        // 处理剩余的单个寄存器
+        if registers.len() % 2 == 1 {
+            let last_reg = registers[registers.len() - 1];
+            let offset = -(((registers.len()) * 8) as i64);
+            instructions.push(Instruction::Store64 {
+                addr: self.stack_pointer_reg,
+                offset,
+                src: Operand::Register {
+                    id: Register::Physical(last_reg),
+                },
+                span: *span,
+            });
+        }
+        // 调整栈指针
+        instructions.push(Instruction::Sub {
+            dst: self.stack_pointer_reg,
+            src1: Operand::Register {
+                id: self.stack_pointer_reg,
+            },
+            src2: Operand::Immediate {
+                value: aligned_size as i64,
+            },
+            span: *span,
+        });
+    }
+
+    /// 使用LoadPair优化从栈恢复寄存器
+    fn restore_registers_from_stack(
+        &self,
+        registers: &[u8],
+        span: &Span,
+        instructions: &mut Vec<Instruction>,
+    ) {
+        // 计算总大小并对齐
+        let total_size = registers.len() * 8;
+        let aligned_size = self.align_stack_size(total_size);
+        let padding = aligned_size - total_size;
+        // 调整栈指针
+        instructions.push(Instruction::Add {
+            dst: self.stack_pointer_reg,
+            src1: Operand::Register {
+                id: self.stack_pointer_reg,
+            },
+            src2: Operand::Immediate {
+                value: aligned_size as i64,
+            },
+            span: *span,
+        });
+        // 使用LoadPair恢复寄存器对
+        let mut i = 0;
+        while i + 1 < registers.len() {
+            let offset = -((i + 2) as i64 * 8);
+            instructions.push(Instruction::LoadPair {
+                dst1: Register::Physical(registers[i]),
+                dst2: Register::Physical(registers[i + 1]),
+                addr: self.stack_pointer_reg,
+                offset,
+                span: *span,
+            });
+            i += 2;
+        }
+
+        // 处理剩余的单个寄存器
+        if registers.len() % 2 == 1 {
+            let last_reg = registers[registers.len() - 1];
+            let offset = -(((registers.len()) * 8) as i64);
+            instructions.push(Instruction::Load64 {
+                dst: Register::Physical(last_reg),
+                addr: self.stack_pointer_reg,
+                offset,
+                span: *span,
+            });
+        }
+    }
+
     /// 创建新的虚拟寄存器
     fn new_register(&mut self) -> Register {
         self.next_register += 1;
@@ -69,13 +190,67 @@ impl InstructionLoweringPass {
         instruction_index: usize,
         analyses: &AnalysisManager,
     ) -> HashSet<u8> {
-        if let Some(lifetime_result) =
-            analyses.get_result::<LifetimeAnalysisResult>("lifetime-analysis")
-        {
-            lifetime_result
-                .get_live_caller_saved_registers_at(instruction_index, &self.calling_convention)
+        // 尝试获取生命周期分析和寄存器分配结果
+        let lifetime_result = analyses.get_result::<LifetimeAnalysisResult>("lifetime-analysis");
+        let register_alloc_result =
+            analyses.get_result::<RegisterAllocationResult>("register-allocation");
+
+        if let (Some(lifetimes), Some(allocation)) = (lifetime_result, register_alloc_result) {
+            // 🔧 使用生命周期和寄存器分配信息计算活跃的调用者保存寄存器
+            let mut live_caller_saved = HashSet::new();
+
+            log::debug!("指令 {} 位置活跃寄存器分析:", instruction_index);
+
+            // 遍历所有寄存器生命周期，找出在当前指令位置活跃的寄存器
+            for lifetime in &lifetimes.lifetimes {
+                // 检查寄存器是否在当前指令位置活跃
+                if instruction_index >= lifetime.start && instruction_index <= lifetime.end {
+                    log::debug!(
+                        "  寄存器 {:?} 活跃 (生命周期 [{}, {}])",
+                        lifetime.register,
+                        lifetime.start,
+                        lifetime.end
+                    );
+
+                    // 🔧 关键修复：如果寄存器本身就是物理寄存器，直接使用它的编号
+                    // 否则从寄存器映射表中查找对应的物理寄存器
+                    let physical_reg_opt = match lifetime.register {
+                        Register::Physical(phys_reg) => {
+                            log::debug!("    已经是物理寄存器 #p{}", phys_reg);
+                            Some(phys_reg)
+                        }
+                        Register::Virtual(_) => {
+                            allocation.register_mapping.get(&lifetime.register).copied()
+                        }
+                    };
+
+                    if let Some(physical_reg) = physical_reg_opt {
+                        if let Register::Virtual(_) = lifetime.register {
+                            log::debug!("    映射到物理寄存器 #p{}", physical_reg);
+                        }
+
+                        // 检查该物理寄存器是否是调用者保存寄存器
+                        if self.calling_convention.is_caller_saved(physical_reg) {
+                            // 排除返回值寄存器，因为它会被调用覆盖
+                            if physical_reg != self.calling_convention.return_register {
+                                log::debug!("      ✓ 是caller-saved且非返回值，需要保存");
+                                live_caller_saved.insert(physical_reg);
+                            } else {
+                                log::debug!("      ✗ 是返回值寄存器，不保存");
+                            }
+                        } else {
+                            log::debug!("      ✗ 不是caller-saved寄存器");
+                        }
+                    } else {
+                        log::debug!("    虚拟寄存器未映射到物理寄存器");
+                    }
+                }
+            }
+
+            log::debug!("最终需要保存的caller-saved寄存器: {:?}", live_caller_saved);
+            live_caller_saved
         } else {
-            // 如果没有生命周期分析结果，保守地保存所有调用者保存寄存器
+            // 如果没有生命周期或寄存器分配结果，保守地保存所有调用者保存寄存器
             self.calling_convention
                 .caller_saved
                 .iter()
@@ -240,41 +415,8 @@ impl InstructionLoweringPass {
             function.name
         );
 
-        // 计算栈对齐
-        let total_pushed = caller_saved.len() + 1;
-        let need_padding = total_pushed % 2 != 0;
-
-        // 栈对齐填充
-        if need_padding {
-            instructions.push(Instruction::Sub {
-                dst: self.stack_pointer_reg,
-                src1: Operand::Register {
-                    id: self.stack_pointer_reg,
-                },
-                src2: Operand::Immediate { value: 8 },
-                span: *span,
-            });
-        }
-
-        // 保存caller-saved寄存器到栈
-        for reg in &caller_saved {
-            instructions.push(Instruction::Sub {
-                dst: self.stack_pointer_reg,
-                src1: Operand::Register {
-                    id: self.stack_pointer_reg,
-                },
-                src2: Operand::Immediate { value: 8 },
-                span: *span,
-            });
-            instructions.push(Instruction::Store64 {
-                addr: self.stack_pointer_reg,
-                offset: 0,
-                src: Operand::Register {
-                    id: Register::Physical(*reg),
-                },
-                span: *span,
-            });
-        }
+        // 保存caller-saved寄存器到栈，使用StorePair优化
+        self.save_registers_to_stack(&caller_saved, span, instructions);
 
         // 参数传递：使用栈作为中间存储避免寄存器覆盖
         for op in arg_operands.iter() {
@@ -283,7 +425,7 @@ impl InstructionLoweringPass {
                 src1: Operand::Register {
                     id: self.stack_pointer_reg,
                 },
-                src2: Operand::Immediate { value: 8 },
+                src2: Operand::Immediate { value: 16 },
                 span: *span,
             });
             instructions.push(Instruction::Store64 {
@@ -308,7 +450,7 @@ impl InstructionLoweringPass {
                     src1: Operand::Register {
                         id: self.stack_pointer_reg,
                     },
-                    src2: Operand::Immediate { value: 8 },
+                    src2: Operand::Immediate { value: 16 },
                     span: *span,
                 });
             }
@@ -320,7 +462,7 @@ impl InstructionLoweringPass {
             src1: Operand::Register {
                 id: self.stack_pointer_reg,
             },
-            src2: Operand::Immediate { value: 8 },
+            src2: Operand::Immediate { value: 16 },
             span: *span,
         });
         instructions.push(Instruction::Store64 {
@@ -348,39 +490,12 @@ impl InstructionLoweringPass {
             src1: Operand::Register {
                 id: self.stack_pointer_reg,
             },
-            src2: Operand::Immediate { value: 8 },
+            src2: Operand::Immediate { value: 16 },
             span: *span,
         });
 
-        // 恢复caller-saved寄存器（逆序）
-        for reg in caller_saved.iter().rev() {
-            instructions.push(Instruction::Load64 {
-                dst: Register::Physical(*reg),
-                addr: self.stack_pointer_reg,
-                offset: 0,
-                span: *span,
-            });
-            instructions.push(Instruction::Add {
-                dst: self.stack_pointer_reg,
-                src1: Operand::Register {
-                    id: self.stack_pointer_reg,
-                },
-                src2: Operand::Immediate { value: 8 },
-                span: *span,
-            });
-        }
-
-        // 移除对齐填充
-        if need_padding {
-            instructions.push(Instruction::Add {
-                dst: self.stack_pointer_reg,
-                src1: Operand::Register {
-                    id: self.stack_pointer_reg,
-                },
-                src2: Operand::Immediate { value: 8 },
-                span: *span,
-            });
-        }
+        // 恢复caller-saved寄存器，使用LoadPair优化
+        self.restore_registers_from_stack(&caller_saved, span, instructions);
 
         // 处理返回值
         if let Some(result_reg) = result {
@@ -422,41 +537,8 @@ impl InstructionLoweringPass {
             caller_saved
         );
 
-        // 计算栈对齐
-        let total_pushed = caller_saved.len() + 1;
-        let need_padding = total_pushed % 2 != 0;
-
-        // 栈对齐填充
-        if need_padding {
-            instructions.push(Instruction::Sub {
-                dst: self.stack_pointer_reg,
-                src1: Operand::Register {
-                    id: self.stack_pointer_reg,
-                },
-                src2: Operand::Immediate { value: 8 },
-                span: *span,
-            });
-        }
-
-        // 保存caller-saved寄存器到栈
-        for reg in &caller_saved {
-            instructions.push(Instruction::Sub {
-                dst: self.stack_pointer_reg,
-                src1: Operand::Register {
-                    id: self.stack_pointer_reg,
-                },
-                src2: Operand::Immediate { value: 8 },
-                span: *span,
-            });
-            instructions.push(Instruction::Store64 {
-                addr: self.stack_pointer_reg,
-                offset: 0,
-                src: Operand::Register {
-                    id: Register::Physical(*reg),
-                },
-                span: *span,
-            });
-        }
+        // 保存caller-saved寄存器到栈，使用StorePair优化
+        self.save_registers_to_stack(&caller_saved, span, instructions);
 
         // 将函数地址移动到临时寄存器
         let temp_func_reg = self.effect_resume_temp_register();
@@ -475,7 +557,7 @@ impl InstructionLoweringPass {
                 src1: Operand::Register {
                     id: self.stack_pointer_reg,
                 },
-                src2: Operand::Immediate { value: 8 },
+                src2: Operand::Immediate { value: 16 },
                 span: *span,
             });
             instructions.push(Instruction::Store64 {
@@ -500,7 +582,7 @@ impl InstructionLoweringPass {
                     src1: Operand::Register {
                         id: self.stack_pointer_reg,
                     },
-                    src2: Operand::Immediate { value: 8 },
+                    src2: Operand::Immediate { value: 16 },
                     span: *span,
                 });
             }
@@ -512,7 +594,7 @@ impl InstructionLoweringPass {
             src1: Operand::Register {
                 id: self.stack_pointer_reg,
             },
-            src2: Operand::Immediate { value: 8 },
+            src2: Operand::Immediate { value: 16 },
             span: *span,
         });
         instructions.push(Instruction::Store64 {
@@ -540,39 +622,12 @@ impl InstructionLoweringPass {
             src1: Operand::Register {
                 id: self.stack_pointer_reg,
             },
-            src2: Operand::Immediate { value: 8 },
+            src2: Operand::Immediate { value: 16 },
             span: *span,
         });
 
-        // 恢复caller-saved寄存器（逆序）
-        for reg in caller_saved.iter().rev() {
-            instructions.push(Instruction::Load64 {
-                dst: Register::Physical(*reg),
-                addr: self.stack_pointer_reg,
-                offset: 0,
-                span: *span,
-            });
-            instructions.push(Instruction::Add {
-                dst: self.stack_pointer_reg,
-                src1: Operand::Register {
-                    id: self.stack_pointer_reg,
-                },
-                src2: Operand::Immediate { value: 8 },
-                span: *span,
-            });
-        }
-
-        // 移除对齐填充
-        if need_padding {
-            instructions.push(Instruction::Add {
-                dst: self.stack_pointer_reg,
-                src1: Operand::Register {
-                    id: self.stack_pointer_reg,
-                },
-                src2: Operand::Immediate { value: 8 },
-                span: *span,
-            });
-        }
+        // 恢复caller-saved寄存器，使用LoadPair优化
+        self.restore_registers_from_stack(&caller_saved, span, instructions);
 
         // 处理返回值
         if let Some(result_reg) = result {
@@ -642,8 +697,9 @@ impl FunctionPass for InstructionLoweringPass {
     }
 
     fn invalidated_analyses(&self) -> Vec<&'static str> {
-        // 指令降级会改变指令序列，使所有分析失效
-        vec!["lifetime-analysis", "cfg-analysis", "def-use-analysis"]
+        // 指令降级会插入大量额外指令（序言、参数传递、寄存器保存等），
+        // 这会改变指令索引，使得基于指令索引的生命周期分析失效
+        vec!["lifetime-analysis", "cfg", "def-use", "liveness"]
     }
 
     fn run_on_function(
@@ -681,6 +737,7 @@ impl FunctionPass for InstructionLoweringPass {
                         });
 
                         // 预留栈帧
+                        debug_assert!(function.stack_frame_size % 16 == 0);
                         if function.stack_frame_size > 0 {
                             new_instructions.push(Instruction::Sub {
                                 dst: self.stack_pointer_reg,

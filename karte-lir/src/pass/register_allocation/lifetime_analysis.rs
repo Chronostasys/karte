@@ -13,7 +13,7 @@
 //!    包括栈地址寄存器、函数参数等。
 
 use super::types::{CallingConvention, RegisterLifetime, RegisterType};
-use crate::pass::analysis::{ControlFlowGraph, DefUseChains};
+use crate::pass::analysis::{ControlFlowGraph, DefUseChains, LivenessAnalysis};
 use crate::{Instruction, LirFunction, Operand, Register};
 use karte_common::calling_convention::CC;
 use std::collections::{HashMap, HashSet};
@@ -23,15 +23,13 @@ use std::collections::{HashMap, HashSet};
 /// 封装了所有与计算虚拟寄存器生命周期相关的逻辑。
 #[derive(Clone, Debug)]
 pub struct LifetimeAnalyzer {
-    _calling_convention: CallingConvention,
+    calling_convention: CallingConvention,
 }
 
 impl LifetimeAnalyzer {
     /// 创建新的生命周期分析器
     pub fn new(calling_convention: CallingConvention) -> Self {
-        Self {
-            _calling_convention: calling_convention,
-        }
+        Self { calling_convention }
     }
 
     /// 🔧 新增：分析寄存器类型
@@ -71,8 +69,8 @@ impl LifetimeAnalyzer {
                     dst, src1, src2, ..
                 } => {
                     if let Operand::Register { id: fp_reg } = src1 {
-                        // 检查是否是帧指针寄存器（r7）
-                        if fp_reg.id() == 7 {
+                        // 检查是否是帧指针寄存器 (ARM64: x29)
+                        if fp_reg.id() == self.calling_convention.frame_pointer as usize {
                             // 检查第二个操作数是否是立即数（偏移量）
                             if let Operand::Immediate { .. } = src2 {
                                 register_types.insert(*dst, RegisterType::StackAddress);
@@ -122,6 +120,7 @@ impl LifetimeAnalyzer {
                 is_function_parameter: true,
                 parameter_index: Some(param_idx),
                 register_type: RegisterType::FunctionParameter,
+                live_ranges: vec![], // 简单模式不计算精确范围
             };
             lifetimes.insert(param_reg, lifetime);
         }
@@ -146,6 +145,7 @@ impl LifetimeAnalyzer {
                     is_function_parameter: false,
                     parameter_index: None,
                     register_type: *register_type,
+                    live_ranges: vec![],
                 });
 
                 lifetime.end = i;
@@ -169,6 +169,7 @@ impl LifetimeAnalyzer {
                             is_function_parameter: false,
                             parameter_index: None,
                             register_type,
+                            live_ranges: vec![],
                         },
                     );
                 }
@@ -183,19 +184,19 @@ impl LifetimeAnalyzer {
 
     /// 使用CFG和Def-Use信息进行更精确的生命周期分析
     ///
-    /// 这是首选的分析方法，它利用数据流分析来获得最准确的生命周期。
+    /// 这是一个降级的分析方法，当 LivenessAnalysis 不可用时使用。
+    /// 它使用 Def-Use 链来计算生命周期，但不使用活跃度信息精确化结束点。
     ///
     /// @param function - 需要分析的LIR函数。
-    /// @param cfg - 函数的控制流图。
+    /// @param _cfg - 函数的控制流图（保留用于向后兼容，但不使用）。
     /// @param def_use - 函数的Def-Use链。
     /// @returns 一个元组，包含 (生命周期列表, 寄存器类型映射)。
     pub fn analyze_with_cfg(
         &self,
         function: &LirFunction,
-        cfg: &ControlFlowGraph,
+        _cfg: &ControlFlowGraph,
         def_use: &DefUseChains,
     ) -> (Vec<RegisterLifetime>, HashMap<Register, RegisterType>) {
-        let liveness = self.compute_liveness(cfg, def_use);
         let mut lifetimes = HashMap::new();
         let mut register_types = self.analyze_register_types(function);
 
@@ -208,6 +209,7 @@ impl LifetimeAnalyzer {
                 is_function_parameter: true,
                 parameter_index: Some(param_idx),
                 register_type: RegisterType::FunctionParameter,
+                live_ranges: vec![], // CFG模式不计算精确范围
             };
             lifetimes.insert(param_reg, lifetime);
         }
@@ -233,7 +235,8 @@ impl LifetimeAnalyzer {
                 }
             }
 
-            let refined_end = self.refine_lifetime_end(register, end, &liveness);
+            // 注意：这个版本不使用活跃度分析精确化结束点
+            // 如果需要更精确的分析，应使用 analyze_with_liveness 方法
 
             // 🔧 修复：确保所有寄存器都有类型信息
             register_types.entry(register).or_insert(RegisterType::Data);
@@ -244,11 +247,12 @@ impl LifetimeAnalyzer {
                 RegisterLifetime {
                     register,
                     start,
-                    end: refined_end,
+                    end, // 直接使用 def-use 计算的结束点
                     uses,
                     is_function_parameter: false,
                     parameter_index: None,
                     register_type: *register_type,
+                    live_ranges: vec![],
                 },
             );
         }
@@ -268,6 +272,7 @@ impl LifetimeAnalyzer {
                             is_function_parameter: false,
                             parameter_index: None,
                             register_type,
+                            live_ranges: vec![],
                         },
                     );
                 }
@@ -280,116 +285,228 @@ impl LifetimeAnalyzer {
         (lifetime_list, register_types)
     }
 
-    /// 计算活跃度分析 (Liveness Analysis)
+    /// 使用活跃度分析进行精确的生命周期计算
     ///
-    /// 实现标准的向后数据流分析算法来计算每个程序点的活跃变量集合。
-    /// 这是精确生命周期分析的基础。
-    fn compute_liveness(
+    /// 这是最精确的分析方法，它直接使用 LivenessAnalysisPass 的结果来计算生命周期。
+    /// 它会计算每个寄存器的精确活跃区间 (live_ranges)，正确处理钻石形 CFG 等
+    /// 复杂控制流场景。
+    ///
+    /// @param function - 需要分析的LIR函数。
+    /// @param cfg - 函数的控制流图。
+    /// @param def_use - 函数的Def-Use链。
+    /// @param liveness - 活跃度分析结果（由 LivenessAnalysisPass 提供）。
+    /// @returns 一个元组，包含 (生命周期列表, 寄存器类型映射)。
+    pub fn analyze_with_liveness(
         &self,
-        cfg: &ControlFlowGraph,
+        function: &LirFunction,
+        _cfg: &ControlFlowGraph,
         def_use: &DefUseChains,
-    ) -> HashMap<usize, HashSet<Register>> {
-        let mut block_use = HashMap::new();
-        let mut block_def = HashMap::new();
+        liveness: &LivenessAnalysis,
+    ) -> (Vec<RegisterLifetime>, HashMap<Register, RegisterType>) {
+        let mut lifetimes = HashMap::new();
+        let mut register_types = self.analyze_register_types(function);
 
-        for node in &cfg.nodes {
-            let mut use_set = HashSet::new();
-            let mut def_set = HashSet::new();
+        // 首先处理函数参数
+        for (param_idx, &param_reg) in function.parameter_registers.iter().enumerate() {
+            let lifetime = RegisterLifetime {
+                register: param_reg,
+                start: 0,
+                end: function.instructions.len().saturating_sub(1),
+                uses: Vec::new(),
+                is_function_parameter: true,
+                parameter_index: Some(param_idx),
+                register_type: RegisterType::FunctionParameter,
+                live_ranges: vec![(0, function.instructions.len().saturating_sub(1))],
+            };
+            lifetimes.insert(param_reg, lifetime);
+        }
 
-            let (start, end) = node.instruction_range;
-            for instr_idx in start..end {
-                if let Some(uses) = def_use.instruction_uses.get(&instr_idx) {
-                    for &reg in uses {
-                        if !def_set.contains(&reg) {
-                            use_set.insert(reg);
-                        }
-                    }
-                }
-                if let Some(defs) = def_use.instruction_defs.get(&instr_idx) {
-                    for &reg in defs {
-                        def_set.insert(reg);
-                    }
+        // 对每个寄存器计算精确的生命周期
+        for (&register, def_positions) in &def_use.definitions {
+            if lifetimes.contains_key(&register) {
+                continue; // 跳过函数参数
+            }
+
+            let mut start = usize::MAX;
+            let mut end = 0;
+            let mut uses = Vec::new();
+
+            // 计算第一次定义的位置
+            for &def_pos in def_positions {
+                start = start.min(def_pos);
+                end = end.max(def_pos);
+            }
+
+            // 收集所有使用位置
+            if let Some(use_positions) = def_use.uses.get(&register) {
+                for &use_pos in use_positions {
+                    uses.push(use_pos);
+                    end = end.max(use_pos);
                 }
             }
-            block_use.insert(node.block_id, use_set);
-            block_def.insert(node.block_id, def_set);
+
+            // 🔧 新增：计算精确的活跃区间
+            let live_ranges = self.compute_live_ranges(
+                register,
+                function.instructions.len(),
+                &liveness.live_at_instruction,
+                def_positions,
+                def_use.uses.get(&register),
+            );
+
+            // 如果有精确的 live_ranges，更新 start 和 end
+            let (refined_start, refined_end) = if !live_ranges.is_empty() {
+                let min_start = live_ranges.iter().map(|r| r.0).min().unwrap_or(start);
+                let max_end = live_ranges.iter().map(|r| r.1).max().unwrap_or(end);
+                (min_start, max_end)
+            } else {
+                (start, end)
+            };
+
+            // 🔧 修复：确保所有寄存器都有类型信息
+            register_types.entry(register).or_insert(RegisterType::Data);
+            let register_type = register_types.get(&register).unwrap();
+
+            lifetimes.insert(
+                register,
+                RegisterLifetime {
+                    register,
+                    start: refined_start,
+                    end: refined_end,
+                    uses,
+                    is_function_parameter: false,
+                    parameter_index: None,
+                    register_type: *register_type,
+                    live_ranges,
+                },
+            );
         }
 
-        let mut live_in: HashMap<usize, HashSet<Register>> = HashMap::new();
-        let mut live_out: HashMap<usize, HashSet<Register>> = HashMap::new();
-
-        for node in &cfg.nodes {
-            live_in.insert(node.block_id, HashSet::new());
-            live_out.insert(node.block_id, HashSet::new());
-        }
-
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for node in cfg.nodes.iter().rev() {
-                let block_id = node.block_id;
-
-                let mut new_live_out = HashSet::new();
-                for &successor in &node.successors {
-                    if let Some(succ_live_in) = live_in.get(&successor) {
-                        new_live_out.extend(succ_live_in.iter().copied());
-                    }
-                }
-
-                let mut new_live_in = block_use.get(&block_id).cloned().unwrap_or_default();
-                let def_set = block_def.get(&block_id).cloned().unwrap_or_default();
-                let live_out_minus_def: HashSet<_> =
-                    new_live_out.difference(&def_set).copied().collect();
-                new_live_in.extend(live_out_minus_def);
-
-                if live_out.get(&block_id) != Some(&new_live_out) {
-                    live_out.insert(block_id, new_live_out);
-                    changed = true;
-                }
-                if live_in.get(&block_id) != Some(&new_live_in) {
-                    live_in.insert(block_id, new_live_in);
-                    changed = true;
+        // 🔥 新增：补全所有指令中出现但未被分析的虚拟寄存器
+        for (i, instruction) in function.instructions.iter().enumerate() {
+            let (defined_regs, used_regs) = instruction.get_defined_and_used_registers();
+            for reg in defined_regs.iter().chain(used_regs.iter()) {
+                if !lifetimes.contains_key(reg) {
+                    let register_type = *register_types.get(reg).unwrap_or(&RegisterType::Data);
+                    lifetimes.insert(
+                        *reg,
+                        RegisterLifetime {
+                            register: *reg,
+                            start: i,
+                            end: i,
+                            uses: vec![i],
+                            is_function_parameter: false,
+                            parameter_index: None,
+                            register_type,
+                            live_ranges: vec![(i, i)],
+                        },
+                    );
                 }
             }
         }
 
-        let mut live_at_instruction = HashMap::new();
-        for node in &cfg.nodes {
-            let (start, end) = node.instruction_range;
-            let mut current_live = live_out.get(&node.block_id).cloned().unwrap_or_default();
+        // 🔧 修复：确保生命周期列表的确定性顺序
+        let mut lifetime_list: Vec<_> = lifetimes.into_values().collect();
+        lifetime_list.sort_by_key(|lt| (lt.register.id(), lt.start, lt.end));
+        (lifetime_list, register_types)
+    }
 
-            for instr_idx in (start..end).rev() {
-                live_at_instruction.insert(instr_idx, current_live.clone());
-                if let Some(defs) = def_use.instruction_defs.get(&instr_idx) {
-                    for &reg in defs {
-                        current_live.remove(&reg);
-                    }
-                }
-                if let Some(uses) = def_use.instruction_uses.get(&instr_idx) {
-                    for &reg in uses {
-                        current_live.insert(reg);
-                    }
+    /// 计算寄存器的精确活跃区间
+    ///
+    /// 通过分析活跃度信息，将连续活跃的指令合并成区间。
+    /// 这样可以正确处理钻石形 CFG 等复杂控制流场景。
+    ///
+    /// 注意：`live_at_instruction` 记录的是"指令后"的活跃状态，
+    /// 所以我们需要同时考虑定义位置和使用位置。
+    fn compute_live_ranges(
+        &self,
+        register: Register,
+        num_instructions: usize,
+        live_at_instruction: &HashMap<usize, HashSet<Register>>,
+        def_positions: &[usize],
+        use_positions: Option<&Vec<usize>>,
+    ) -> Vec<(usize, usize)> {
+        // 收集所有该寄存器活跃的指令索引
+        let mut live_indices: Vec<usize> = Vec::new();
+
+        // 定义点算活跃
+        for &def_pos in def_positions {
+            live_indices.push(def_pos);
+        }
+
+        // 使用点也算活跃（因为 live_at_instruction 是"指令后"状态，
+        // 可能不包含最后一次使用的指令）
+        if let Some(uses) = use_positions {
+            for &use_pos in uses {
+                live_indices.push(use_pos);
+            }
+        }
+
+        // 从活跃度分析中收集（"指令后"状态）
+        for instr_idx in 0..num_instructions {
+            if let Some(live_set) = live_at_instruction.get(&instr_idx) {
+                if live_set.contains(&register) {
+                    // 如果寄存器在指令后活跃，那么它在该指令和下一条指令都需要值
+                    live_indices.push(instr_idx);
                 }
             }
         }
-        live_at_instruction
+
+        // 去重并排序
+        live_indices.sort();
+        live_indices.dedup();
+
+        if live_indices.is_empty() {
+            return vec![];
+        }
+
+        // 将连续的索引合并成区间
+        let mut ranges = Vec::new();
+        let mut range_start = live_indices[0];
+        let mut range_end = live_indices[0];
+
+        for &idx in live_indices.iter().skip(1) {
+            if idx == range_end + 1 {
+                // 连续，扩展当前区间
+                range_end = idx;
+            } else {
+                // 不连续，保存当前区间并开始新区间
+                ranges.push((range_start, range_end));
+                range_start = idx;
+                range_end = idx;
+            }
+        }
+
+        // 保存最后一个区间
+        ranges.push((range_start, range_end));
+
+        ranges
     }
 
     /// 使用活跃度信息精确化生命周期结束点
-    fn refine_lifetime_end(
+    ///
+    /// 找到寄存器最后一次出现在活跃集合中的位置。
+    fn refine_end_with_liveness(
         &self,
         register: Register,
         initial_end: usize,
-        liveness: &HashMap<usize, HashSet<Register>>,
+        live_at_instruction: &HashMap<usize, HashSet<Register>>,
     ) -> usize {
-        for instr_idx in (0..=initial_end).rev() {
-            if let Some(live_set) = liveness.get(&instr_idx) {
-                if !live_set.contains(&register) {
-                    return instr_idx;
-                }
+        // 🔧 修复：找到寄存器最后一次活跃的位置（最大的指令索引）
+        // 遍历所有指令，找到包含该寄存器的活跃集合的最大索引
+        let mut max_live_idx = None;
+
+        for (&instr_idx, live_set) in live_at_instruction {
+            if live_set.contains(&register) {
+                max_live_idx = match max_live_idx {
+                    None => Some(instr_idx),
+                    Some(current_max) => Some(current_max.max(instr_idx)),
+                };
             }
         }
-        initial_end
+
+        // 如果找到了活跃位置，使用最大索引；否则使用初始结束位置
+        max_live_idx.unwrap_or(initial_end)
     }
 
     /// 获取指定指令位置的活跃物理寄存器
