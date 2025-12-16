@@ -104,45 +104,48 @@ mod parse_unit_tests {
     fn test_parse_program_with_namespaced_functions() {
         let lir_text = r#"
 functions: {
-    main::main: 
+    main::main:
         LirFunction
         name: main::main
         body:
         [
-        
+
             Label(L1),
-        
+
             Jump(L1),
-        
+
             Return(#p0)
         ]
-        params: 0,
+        params: 0
+        param_regs: [],
 
-    utils::__script_entry__: 
+    utils::__script_entry__:
         LirFunction
         name: utils::__script_entry__
         body:
         [
-        
+
             Label(L2),
-        
+
             Return(#p0)
         ]
-        params: 0,
+        params: 0
+        param_regs: [],
 
-    utils.sub::multiply: 
+    utils.sub::multiply:
         LirFunction
         name: utils.sub::multiply
         body:
         [
-        
+
             Label(L3),
-        
+
             mul dst: #p2, src1: #p3, src2: #p4,
-        
+
             Return(#p2)
         ]
         params: 2
+        param_regs: []
     }, main_function: none, global_struct_types: {}, global_variables: {}
 "#;
 

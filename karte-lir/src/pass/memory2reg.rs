@@ -408,7 +408,12 @@ impl Memory2RegPass {
                     );
                 } else {
                     info!("🚀 处理栈槽 {:?}", slot_id);
-                    self.collect_simple_transform_operations(function, slot, &mut transformer);
+                    self.collect_simple_transform_operations(
+                        function,
+                        slot,
+                        &analysis.basic_blocks,
+                        &mut transformer,
+                    );
                     // panic!("🚀 处理栈槽 {:?}", slot_id);
                 }
             }
@@ -632,14 +637,14 @@ impl Memory2RegPass {
                         found_loads += 1;
                     } else {
                         // 尝试使用块中以及前序block的最后一个 目标为原地址的 store的 src
+                        // 🔧 修复：使用 load_to_block 映射查找当前 load 所在的块
                         let mut last_store = None;
-                        for (block_id, block) in basic_blocks {
-                            if i >= block.start && i < block.end {
-                                let mut new_bbs = vec![];
-                                let mut bbs = vec![*block_id];
-                                while !bbs.is_empty() {
-                                    for bb in &bbs {
-                                        let block = &basic_blocks[bb];
+                        if let Some(&current_block_id) = slot.load_to_block.get(&i) {
+                            let mut new_bbs = vec![];
+                            let mut bbs = vec![current_block_id];
+                            while !bbs.is_empty() {
+                                for bb in &bbs {
+                                    if let Some(block) = basic_blocks.get(bb) {
                                         if let Some((_, src)) = block_last_store.get(bb) {
                                             info!(
                                                 "🎯   - 使用块 {} 中最后一个store的值",
@@ -651,10 +656,10 @@ impl Memory2RegPass {
                                             new_bbs.extend_from_slice(&block.predecessors);
                                         }
                                     }
-                                    bbs.clear();
-                                    bbs.extend_from_slice(&new_bbs);
-                                    new_bbs.clear();
                                 }
+                                bbs.clear();
+                                bbs.extend_from_slice(&new_bbs);
+                                new_bbs.clear();
                             }
                         }
                         if let Some(src) = last_store {
@@ -702,15 +707,8 @@ impl Memory2RegPass {
         dominance_info: &Option<DominanceInfo>,
     ) -> Register {
         // 1. 找到load指令所在的基本块
-        let mut current_block_id = None;
-
-        // 修复：使用basic_blocks来正确识别基本块
-        for (block_id, block) in basic_blocks {
-            if load_pos >= block.start && load_pos < block.end {
-                current_block_id = Some(*block_id);
-                break;
-            }
-        }
+        // 🔧 修复：使用预计算的 load_to_block 映射，而不是遍历所有块检查范围
+        let current_block_id = slot.load_to_block.get(&load_pos).copied();
 
         let Some(block_id) = current_block_id else {
             error!("❌ 无法找到load指令所在的基本块，load_pos: {}", load_pos);
@@ -843,6 +841,7 @@ impl Memory2RegPass {
         &self,
         function: &LirFunction,
         slot: &StackSlot,
+        basic_blocks: &HashMap<usize, BasicBlock>,
         transformer: &mut IndexInstructionTransformer,
     ) {
         // 🔧 重大改进：处理更多情况，包括寄存器存储和跨栈槽值传播
@@ -862,7 +861,7 @@ impl Memory2RegPass {
         // }
 
         // 🔧 关键修复：检查是否是控制流敏感的栈槽
-        if self.is_control_flow_sensitive_slot(function, slot) {
+        if self.is_control_flow_sensitive_slot(function, slot, basic_blocks) {
             info!(
                 "⚠️ 栈槽 {:?} 是控制流敏感的，需要φ节点支持",
                 slot.address_register
@@ -1114,7 +1113,12 @@ impl Memory2RegPass {
     }
 
     /// 检查栈槽是否是控制流敏感的
-    fn is_control_flow_sensitive_slot(&self, function: &LirFunction, slot: &StackSlot) -> bool {
+    fn is_control_flow_sensitive_slot(
+        &self,
+        function: &LirFunction,
+        slot: &StackSlot,
+        basic_blocks: &HashMap<usize, BasicBlock>,
+    ) -> bool {
         // 🔧 关键修复：如果栈槽有多个存储，并且它们在不同的基本块中，则是控制流敏感的
         if slot.stores.len() > 1 {
             let store_blocks: HashSet<usize> = slot.store_to_block.values().cloned().collect();
@@ -1148,19 +1152,15 @@ impl Memory2RegPass {
                 // 如果有多个定义，并且它们在不同的基本块中，则是控制流敏感的
                 if definitions.len() > 1 {
                     debug!("🔍 寄存器 {:?} 有 {} 个定义", id, definitions.len());
-                    // 检查这些定义是否在不同的基本块中
+                    // 🔧 修复：使用 basic_blocks 查找定义所在的块，而不是扫描 Label 指令
                     let mut definition_blocks = HashSet::new();
                     for &def_pos in &definitions {
-                        // 查找定义所在的基本块
-                        let mut current_block = None;
-                        for i in (0..=def_pos).rev() {
-                            if let Instruction::Label { id, .. } = &function.instructions[i] {
-                                current_block = Some(id);
+                        // 使用 basic_blocks 的 instruction_range 查找定义所在的块
+                        for (block_id, block) in basic_blocks {
+                            if def_pos >= block.start && def_pos < block.end {
+                                definition_blocks.insert(*block_id);
                                 break;
                             }
-                        }
-                        if let Some(block) = current_block {
-                            definition_blocks.insert(block);
                         }
                     }
 
@@ -1180,22 +1180,19 @@ impl Memory2RegPass {
         false
     }
 
-    /// 查找寄存器的所有定义
+    /// 查找寄存器的所有定义（扫描整个函数，不仅是 before_pos 之前）
+    /// 🔧 修复：BlockLayoutPass 重排后，定义可能在指令序列中位于使用之后
+    /// 因此需要扫描整个函数来找到所有定义
     fn find_all_definitions(
         &self,
         register: Register,
-        before_pos: usize,
+        _before_pos: usize,
         function: &LirFunction,
     ) -> Vec<usize> {
         let mut definitions = Vec::new();
 
-        // 向前扫描，找到所有对该寄存器的定义
-        for i in 0..before_pos {
-            if i >= function.instructions.len() {
-                continue;
-            }
-
-            let instruction = &function.instructions[i];
+        // 扫描整个函数，找到所有对该寄存器的定义
+        for (i, instruction) in function.instructions.iter().enumerate() {
             match instruction {
                 Instruction::Move { dst, .. } if *dst == register => {
                     definitions.push(i);
@@ -1436,6 +1433,7 @@ impl Memory2RegPass {
                 }
 
                 // 递归判断该块或其后继（不含自身）是否有load指令
+                // 🔧 修复：使用预计算的 load_to_block 映射，而不是检查指令范围
                 fn block_or_successors_have_load(
                     block_id: usize,
                     basic_blocks: &HashMap<usize, BasicBlock>,
@@ -1445,17 +1443,19 @@ impl Memory2RegPass {
                     if !visited.insert(block_id) {
                         return false;
                     }
-                    let block = &basic_blocks[&block_id];
+                    // 使用 load_to_block 映射检查该块是否有 load
                     let has_load = slot
-                        .loads
-                        .iter()
-                        .any(|&load_pos| load_pos >= block.start && load_pos < block.end);
+                        .load_to_block
+                        .values()
+                        .any(|&load_block| load_block == block_id);
                     if has_load {
                         return true;
                     }
-                    for &succ in &block.successors {
-                        if block_or_successors_have_load(succ, basic_blocks, slot, visited) {
-                            return true;
+                    if let Some(block) = basic_blocks.get(&block_id) {
+                        for &succ in &block.successors {
+                            if block_or_successors_have_load(succ, basic_blocks, slot, visited) {
+                                return true;
+                            }
                         }
                     }
                     false
@@ -1463,7 +1463,6 @@ impl Memory2RegPass {
 
                 // 2. 对于每个合流点，检查是否需要插入phi节点
                 for &block_id in &confluence_blocks {
-                    let block = &analysis.basic_blocks[&block_id];
                     let mut visited = HashSet::new();
                     let has_relevant_use = block_or_successors_have_load(
                         block_id,
@@ -1472,28 +1471,44 @@ impl Memory2RegPass {
                         &mut visited,
                     );
 
-                    // 🔧 修复：检查该块本身是否有store指令
-                    let block_has_store = slot
-                        .stores
-                        .iter()
-                        .any(|&store_pos| store_pos >= block.start && store_pos < block.end);
+                    // 🔧 修复：检查前驱块是否有不同的 store 值
+                    // 只有当多个前驱块可能提供不同的值时才需要 phi
+                    let mut predecessors_with_stores = HashSet::new();
+                    if let Some(block) = analysis.basic_blocks.get(&block_id) {
+                        for &pred_id in &block.predecessors {
+                            // 检查该前驱块或其支配链上是否有 store
+                            if slot
+                                .store_to_block
+                                .values()
+                                .any(|&store_block| store_block == pred_id)
+                            {
+                                predecessors_with_stores.insert(pred_id);
+                            }
+                        }
+                    }
+
+                    // 需要 phi 的条件：
+                    // 1. 有相关使用（load）
+                    // 2. 多个前驱块可能提供不同的值（有不同的 store 路径）
+                    let needs_phi = has_relevant_use && predecessors_with_stores.len() > 0;
 
                     info!(
-                        "🎯 分析块{}: 递归自身及后继有load={}, 块本身有store={}, 相关使用={}",
+                        "🎯 分析块{}: 有load={}, 前驱有store数={}, 需要phi={}",
                         block_id,
                         has_relevant_use,
-                        block_has_store,
-                        has_relevant_use && !block_has_store
+                        predecessors_with_stores.len(),
+                        needs_phi
                     );
 
-                    // 🔧 修复：只有在有相关使用且该块本身没有store时才插入phi节点
-                    if has_relevant_use && !block_has_store {
+                    if needs_phi {
                         phi_blocks.insert(block_id);
-                        debug!("🎯 块{} 需要phi节点: 有相关使用且无store", block_id);
+                        debug!("🎯 块{} 需要phi节点: 有相关使用且前驱有store", block_id);
                     } else {
                         info!(
-                            "🎯 块{} 不需要phi节点: 有相关使用={}, 块本身有store={}",
-                            block_id, has_relevant_use, block_has_store
+                            "🎯 块{} 不需要phi节点: 有load={}, 前驱有store数={}",
+                            block_id,
+                            has_relevant_use,
+                            predecessors_with_stores.len()
                         );
                     }
                 }
@@ -1690,62 +1705,58 @@ impl Memory2RegPass {
     }
 
     /// 🔧 修复：在指定块中查找最后一次store指令
-    /// 直接遍历块区间，而不是依赖slot.stores
+    /// 使用预计算的 store_to_block 映射，而不是重新扫描指令范围
+    /// 这样可以确保在 block 重排后仍然正确工作
     fn find_last_store_in_block(
         &self,
         block_id: usize,
         slot: &StackSlot,
         function: &LirFunction,
-        basic_blocks: &HashMap<usize, BasicBlock>,
+        _basic_blocks: &HashMap<usize, BasicBlock>,
     ) -> Option<Operand> {
-        let mut last_store = None;
-        let mut last_store_pos = 0;
+        info!(
+            "🔍 在块{}中查找store指令，栈槽{:?}，使用store_to_block映射",
+            block_id, slot.address_register
+        );
 
-        // 获取块的范围
-        if let Some(block) = basic_blocks.get(&block_id) {
-            info!(
-                "🔍 在块{}中查找store指令，栈槽{:?}，范围[{}, {})",
-                block_id, slot.address_register, block.start, block.end
-            );
+        // 使用预计算的 store_to_block 映射查找该块中的 stores
+        // 这个映射在 analyze_stack_slots() 中构建，与 CFG 保持一致
+        let mut last_store_idx: Option<usize> = None;
 
-            // 直接遍历块区间内的指令
-            for i in block.start..block.end {
-                if i >= function.instructions.len() {
-                    continue;
-                }
-                let instr = &function.instructions[i];
-                info!("🔍   指令{}: {:?}", i, instr);
-                match instr {
-                    Instruction::Store64 { addr, src, .. } => {
-                        info!("🔍   是Store64, addr={:?}, src={:?}", addr, src);
-                        if *addr == slot.address_register && i > last_store_pos {
-                            last_store = Some(src.clone());
-                            last_store_pos = i;
-                            info!("🔍   命中Store64: 块{} 指令[{}] src={:?}", block_id, i, src);
-                        }
-                    }
-                    _ => {
-                        info!("🔍   不是Store64");
-                    }
+        for (&store_idx, &store_block) in &slot.store_to_block {
+            if store_block == block_id {
+                info!("🔍   找到store指令在块{}: 指令索引{}", block_id, store_idx);
+                match last_store_idx {
+                    None => last_store_idx = Some(store_idx),
+                    Some(last) if store_idx > last => last_store_idx = Some(store_idx),
+                    _ => {}
                 }
             }
         }
 
-        if last_store.is_none() {
-            info!("🔍 在块{}中没有找到任何store指令", block_id);
+        if let Some(idx) = last_store_idx {
+            if let Some(Instruction::Store64 { src, .. }) = function.instructions.get(idx) {
+                info!(
+                    "🔍   命中Store64: 块{} 指令[{}] src={:?}",
+                    block_id, idx, src
+                );
+                return Some(src.clone());
+            }
         }
 
-        last_store
+        info!("🔍 在块{}中没有找到任何store指令", block_id);
+        None
     }
 
-    /// 🔧 新增：正确查找前驱块对应的标签
+    /// 🔧 查找前驱块对应的标签
+    /// 使用 BasicBlock.label 字段，该字段来自 CFG 分析，不依赖指令范围
     fn find_label_for_predecessor_block(
         &self,
         pred_block_id: usize,
         basic_blocks: &HashMap<usize, BasicBlock>,
-        function: &LirFunction,
+        _function: &LirFunction,
     ) -> LabelId {
-        // 首先检查前驱块是否有标签
+        // 使用预计算的 label 字段
         if let Some(pred_block) = basic_blocks.get(&pred_block_id) {
             if let Some(label) = pred_block.label {
                 info!("🔧 前驱块 {} 有标签: {:?}", pred_block_id, label);
@@ -1753,23 +1764,8 @@ impl Memory2RegPass {
             }
         }
 
-        // 如果前驱块没有标签，需要找到从该块跳转到目标块的跳转指令
-        // 遍历函数指令，找到从该块跳转的指令
-        for (i, instruction) in function.instructions.iter().enumerate() {
-            if let Instruction::Label { id, .. } = instruction {
-                // 检查这个标签是否对应前驱块
-                if let Some(block) = basic_blocks.get(&pred_block_id) {
-                    if block.start <= i && i < block.end {
-                        // 找到了前驱块的标签
-                        info!("🔧 前驱块 {} 对应标签: {:?}", pred_block_id, id);
-                        return *id;
-                    }
-                }
-            }
-        }
-
-        // 如果找不到，使用一个虚拟标签（这种情况不应该发生）
-        info!(
+        // 如果找不到，使用 block_id 作为虚拟标签（这种情况不应该发生）
+        warn!(
             "⚠️ 警告：找不到前驱块 {} 的标签，使用虚拟标签",
             pred_block_id
         );

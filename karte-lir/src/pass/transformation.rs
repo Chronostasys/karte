@@ -112,6 +112,7 @@ impl DeadCodeElimination {
     fn has_side_effects(&self, instruction: &Instruction) -> bool {
         match instruction {
             Instruction::Store64 { .. } => true,
+            Instruction::StorePair { .. } => true,
             Instruction::Alloc { .. } => true,
             Instruction::StructAlloc { .. } => true,
             Instruction::StructFieldStore { .. } => true,
@@ -141,6 +142,7 @@ impl DeadCodeElimination {
             Instruction::Mul { .. } => false,
             Instruction::Div { .. } => false,
             Instruction::Load64 { .. } => false,
+            Instruction::LoadPair { .. } => false,
             Instruction::StructFieldLoad { .. } => false,
             Instruction::StructFieldAddr { .. } => false,
             Instruction::Nop { .. } => false,
@@ -176,6 +178,16 @@ impl DeadCodeElimination {
             Instruction::Store64 { addr, src, .. } => {
                 used.push(*addr);
                 self.add_operand_registers(src, &mut used);
+            }
+            Instruction::StorePair {
+                addr, src1, src2, ..
+            } => {
+                used.push(*addr);
+                used.push(*src1);
+                used.push(*src2);
+            }
+            Instruction::LoadPair { addr, .. } => {
+                used.push(*addr);
             }
             Instruction::Call {
                 args, arg_operands, ..
@@ -277,6 +289,7 @@ impl DeadCodeElimination {
             | Instruction::StructAlloc { dst, .. }
             | Instruction::StructFieldLoad { dst, .. }
             | Instruction::StructFieldAddr { dst, .. } => Some(*dst),
+            Instruction::LoadPair { dst1, .. } => Some(*dst1),
             Instruction::Call {
                 result: Some(dst), ..
             }
@@ -456,6 +469,7 @@ impl ConstantFolding {
             | Instruction::StructAlloc { dst, .. }
             | Instruction::StructFieldLoad { dst, .. }
             | Instruction::StructFieldAddr { dst, .. } => Some(*dst),
+            Instruction::LoadPair { dst1, .. } => Some(*dst1),
             Instruction::Call {
                 result: Some(dst), ..
             }

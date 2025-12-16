@@ -9,6 +9,7 @@ use log::{info, warn};
 use std::collections::HashMap;
 
 // JIT相关imports
+use super::jit::code_buffer::patch_executable_memory;
 use super::jit::{AArch64Compiler, JitCompiler, JitMemoryManager, X86Compiler};
 
 // GC相关imports
@@ -470,84 +471,41 @@ impl ExecutionEngine {
             );
         }
 
-        info!("JIT编译: 第二轮重新编译函数并修补跳转地址");
+        info!("JIT编译: 第二轮原地修补跳转地址（不重新编译）");
 
-        // 第二轮：重新编译函数并修补跳转地址
-        for (function_name, function) in &program.functions {
-            info!("重新编译函数并修补跳转: {}", function_name);
+        // 🔧 优化：将全局标签地址转换为 usize 类型，供 patch_executable_memory 使用
+        let global_labels_usize: HashMap<String, usize> = global_label_map
+            .iter()
+            .map(|(k, v)| (k.clone(), *v as usize))
+            .collect();
 
-            // 获取已分配的内存地址
-            let (old_compiled_function, executable_memory) =
-                compiled_functions.get(function_name).unwrap();
+        // 第二轮：原地修补跳转地址（不重新编译！）
+        for (function_name, (compiled_function, executable_memory)) in &compiled_functions {
+            info!("原地修补函数跳转: {}", function_name);
 
-            // 使用全局标签表重新编译
-            let compiled_function_with_patches = if cfg!(target_arch = "aarch64") {
-                let mut compiler = AArch64Compiler::new(self.debug_mode)?;
-                compiler.compile_function_with_global_labels(
-                    function,
-                    program,
-                    &global_label_map,
-                )?
-            } else if cfg!(target_arch = "x86_64") {
-                let mut compiler = X86Compiler::new(self.debug_mode)?;
-                compiler.compile_function_with_global_labels(
-                    function,
-                    program,
-                    &global_label_map,
-                )?
-            } else {
-                return Err("不支持的目标架构".to_string());
-            };
+            // 确保内存可写
+            memory_manager.temporarily_make_writable(function_name)?;
 
-            let src_bytes = compiled_function_with_patches.machine_code();
+            // 🔧 关键优化：使用 patch_executable_memory 进行原地修补
+            // 不再重新编译整个函数，只修补跳转指令中的地址
+            patch_executable_memory(
+                executable_memory.address() as *mut u8,
+                executable_memory.address() as usize,
+                &compiled_function.labels,
+                &global_labels_usize,
+                &compiled_function.pending_jumps,
+                &compiled_function.pending_adrs,
+                &compiled_function.pending_label_addresses,
+            )?;
 
-            // 检查修补后的代码大小是否超出预分配内存
-            if src_bytes.len() > executable_memory.size() {
-                // 如果超出，重新分配更大的内存块
-                warn!(
-                    "函数 '{}' 修补后代码大小({})超出原分配({}), 重新分配内存",
-                    function_name,
-                    src_bytes.len(),
-                    executable_memory.size()
-                );
+            // 恢复为可执行
+            memory_manager.make_executable_again(function_name)?;
 
-                let new_executable_memory = memory_manager
-                    .allocate_function_memory(&format!("{}_patched", function_name), src_bytes)?;
-
-                info!(
-                    "函数 '{}' 重新分配内存: 地址=0x{:016X}, 大小={}",
-                    function_name,
-                    new_executable_memory.address() as usize,
-                    new_executable_memory.size()
-                );
-
-                // 更新编译函数映射
-                compiled_functions.insert(
-                    function_name.clone(),
-                    (compiled_function_with_patches, new_executable_memory),
-                );
-            } else {
-                // 将修补后的机器码写入已分配的内存
-                unsafe {
-                    let dest_ptr = executable_memory.address() as *mut u8;
-
-                    // 确保内存可写
-                    memory_manager.temporarily_make_writable(function_name)?;
-
-                    // 复制修补后的机器码
-                    std::ptr::copy_nonoverlapping(src_bytes.as_ptr(), dest_ptr, src_bytes.len());
-
-                    // 恢复为可执行
-                    memory_manager.make_executable_again(function_name)?;
-
-                    info!(
-                        "函数 '{}' 跳转修补完成: 地址=0x{:016X}, 大小={}",
-                        function_name,
-                        executable_memory.address() as usize,
-                        src_bytes.len()
-                    );
-                }
-            }
+            info!(
+                "函数 '{}' 跳转修补完成: 地址=0x{:016X}",
+                function_name,
+                executable_memory.address() as usize
+            );
         }
 
         // 🔧 新架构：所有函数现在都在连续地址空间中，已完成跳转修补
@@ -580,6 +538,9 @@ impl ExecutionEngine {
                     .add(self.virtual_stack.len() - 1)
                     .write(0);
             }
+
+            // 确保initial_sp是16字节对齐的（AArch64 ABI要求）
+            let initial_sp = initial_sp & !15; // 向下对齐到16字节
 
             // 创建函数指针并调用
             unsafe {

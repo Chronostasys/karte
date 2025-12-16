@@ -112,6 +112,8 @@ pub unsafe fn initialize_gc() {
 ///
 /// 返回的指针必须正确使用，不能在 GC 回收后继续访问
 pub unsafe fn gc_alloc(size: usize, obj_type: ObjectType) -> *mut u8 {
+    let sp = immix::current_sp();
+    update_virtual_stack_top(sp);
     log::trace!("GC alloc: size={}, type={:?}", size, obj_type);
 
     // 传递 null 指针作为栈指针
@@ -142,6 +144,8 @@ pub unsafe fn gc_alloc_no_collect(size: usize, obj_type: ObjectType) -> *mut u8 
 /// GC 收集期间会暂停所有线程（STW），确保在安全的时机调用
 pub unsafe fn gc_trigger_collect() {
     log::info!("Manual GC collection triggered");
+    let sp = immix::current_sp();
+    update_virtual_stack_top(sp);
     gc_collect();
 }
 
@@ -161,6 +165,8 @@ pub unsafe fn gc_safepoint() {
 
     // 如果 Immix 要求栈指针，我们传递一个占位符
     // 但实际的根扫描应该使用注册的虚拟栈区间
+    let sp = immix::current_sp();
+    update_virtual_stack_top(sp);
     safepoint_fast_unwind(ptr::null_mut());
 }
 

@@ -49,7 +49,8 @@ impl PhiEliminationPass {
                 for (source_label, operand) in incoming {
                     // 使用CFG分析结果找到对应的基本块
                     if let Some(&source_block_id) = cfg.label_to_block.get(source_label) {
-                        if let Some(source_block) = cfg.nodes.get(source_block_id) {
+                        // 注意：使用 get_node_by_id 而不是 nodes.get()，因为 block_id 可能不等于数组索引
+                        if let Some(source_block) = cfg.get_node_by_id(source_block_id) {
                             // 在源基本块的末尾插入mov指令
                             let insert_position = self.find_insertion_point(function, source_block);
                             let move_instruction = Instruction::Move {

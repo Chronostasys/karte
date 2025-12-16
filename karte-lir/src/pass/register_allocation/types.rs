@@ -98,13 +98,29 @@ pub struct AllocationStats {
 /// 寄存器生命周期
 ///
 /// 表示一个虚拟寄存器从定义到最后一次使用的指令区间。
+///
+/// ## 精确生命周期 (live_ranges)
+///
+/// 对于复杂的控制流（如钻石形 CFG），一个寄存器的实际活跃范围可能是
+/// 不连续的多个区间。`live_ranges` 字段提供了这种精确的活跃区间信息。
+///
+/// 例如，对于以下 CFG：
+/// ```text
+///      A (def reg1)
+///     / \
+///    B   C (use reg1)
+///     \ /
+///      D
+/// ```
+///
+/// reg1 ��� `live_ranges` 应该只包含 A 和 C 块的指令，不包含 B 块。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegisterLifetime {
     /// 虚拟寄存器ID
     pub register: Register,
-    /// 生命周期起始指令索引
+    /// 生命周期起始指令索引（保守估计：最小的活跃位置）
     pub start: usize,
-    /// 生命周期结束指令索引
+    /// 生命周期结束指令索引（保守估计：最大的活跃位置）
     pub end: usize,
     /// 所有使用该寄存器的指令索引列表
     pub uses: Vec<usize>,
@@ -114,6 +130,12 @@ pub struct RegisterLifetime {
     pub parameter_index: Option<usize>,
     /// 🔧 新增：寄存器类型
     pub register_type: RegisterType,
+    /// 🔧 新增：精确的活跃区间列表
+    ///
+    /// 每个元素是一个 (start, end) 对，表示一个连续的活跃区间。
+    /// 这些区间按起始位置排序，且不重叠。
+    /// 如果为空，则使用 (self.start, self.end) 作为保守估计。
+    pub live_ranges: Vec<(usize, usize)>,
 }
 
 impl RegisterLifetime {
@@ -128,12 +150,49 @@ impl RegisterLifetime {
             is_function_parameter: false,
             parameter_index: None,
             register_type: RegisterType::Data,
+            live_ranges: vec![],
         }
     }
 
     /// 检查两个生命周期是否重叠
+    ///
+    /// 如果两个生命周期都有精确的 live_ranges，则使用精确比较；
+    /// 否则使用保守的 [start, end] 区间比较。
     pub fn overlaps(&self, other: &Self) -> bool {
+        // 如果两者都有精确的 live_ranges，使用精确比较
+        if !self.live_ranges.is_empty() && !other.live_ranges.is_empty() {
+            return self.overlaps_precise(other);
+        }
+
+        // 否则使用保守的区间比较
         self.start <= other.end && self.end >= other.start
+    }
+
+    /// 使用精确的 live_ranges 检查重叠
+    fn overlaps_precise(&self, other: &Self) -> bool {
+        // 检查任意两个区间是否重叠
+        for &(s1, e1) in &self.live_ranges {
+            for &(s2, e2) in &other.live_ranges {
+                if s1 <= e2 && e1 >= s2 {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// 检查是否在指定的指令位置活跃
+    pub fn is_live_at(&self, instruction_index: usize) -> bool {
+        // 如果有精确的 live_ranges，使用它
+        if !self.live_ranges.is_empty() {
+            return self
+                .live_ranges
+                .iter()
+                .any(|&(s, e)| s <= instruction_index && instruction_index <= e);
+        }
+
+        // 否则使用保守的区间
+        self.start <= instruction_index && instruction_index <= self.end
     }
 
     /// 计算生命周期的长度

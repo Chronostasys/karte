@@ -11,22 +11,14 @@ use std::collections::HashMap;
 /// 所有目标架构的编译器都必须实现此trait
 pub trait JitCompiler: std::fmt::Debug {
     /// 编译单个函数
+    ///
+    /// 🔧 优化：现在只需调用此方法一次，然后使用 patch_executable_memory 进行原地修补
+    /// compile_function_with_global_labels 已被移除以消除二次编译开销
     fn compile_function(
         &mut self,
         function: &LirFunction,
         program: &LirProgram,
     ) -> Result<CompiledFunction, String>;
-
-    /// 编译单个函数（使用全局标签表）
-    fn compile_function_with_global_labels(
-        &mut self,
-        function: &LirFunction,
-        program: &LirProgram,
-        global_labels: &std::collections::HashMap<String, *const u8>,
-    ) -> Result<CompiledFunction, String> {
-        // 默认实现：忽略全局标签表，使用普通编译
-        self.compile_function(function, program)
-    }
 
     /// 获取目标架构名称
     fn target_architecture(&self) -> &'static str;

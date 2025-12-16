@@ -68,6 +68,10 @@ impl PassRegistry {
         registry.register_function_pass(Box::new(|| Box::new(Memory2RegPass::new())));
         registry.register_function_pass(Box::new(|| Box::new(PhiEliminationPass::new())));
 
+        // Codegen前准备 - 显式化跳转和基本块布局优化（必须在寄存器分配前）
+        registry.register_function_pass(Box::new(|| Box::new(ExplicitJumpPass::new())));
+        registry.register_function_pass(Box::new(|| Box::new(BlockLayoutPass::new())));
+
         // Codegen
         registry
             .register_function_pass(Box::new(|| Box::new(SimpleStackRegisterAllocation::new())));
@@ -81,6 +85,10 @@ impl PassRegistry {
 
         // 最终降级
         registry.register_function_pass(Box::new(|| Box::new(InstructionLoweringPass::new())));
+
+        // StorePair/LoadPair �窺孔优化（在指令降级之后）
+        // 🔧 暂时禁用，因为16字节对齐问题
+        // registry.register_function_pass(Box::new(|| Box::new(PeepholeOptimizationPass::new(16))));
 
         // === 注册额外的工具 Pass（用于字符串 pipeline 的灵活性）===
         registry.register_function_pass(Box::new(|| Box::new(PrintIRPass::new())));
@@ -209,6 +217,7 @@ impl PassRegistry {
     /// - 寄存器分配
     /// - 栈帧布局
     /// - 指令降级
+    /// - 调用位置活跃寄存器标注（必需）
     /// - IR 打印（用于调试）
     ///
     /// Analysis passes 从全局注册表自动加载。
@@ -217,9 +226,15 @@ impl PassRegistry {
 
         // 必要的 codegen passes（无优化，但需要生成机器码）
         manager.add_function_passes(vec![
+            // 显式化跳转 - 必须在基本块布局优化前，避免重排破坏隐式fall-through
+            Box::new(ExplicitJumpPass::new()),
+            // 基本块布局优化 - 即使是Debug模式也需要，确保生命周期分析正确
+            Box::new(BlockLayoutPass::new()),
             Box::new(SimpleStackRegisterAllocation::new()),
             Box::new(crate::pass::stack_frame_layout::StackFrameLayoutPass::new()),
             Box::new(InstructionLoweringPass::new()),
+            // 🔧 调用位置活跃寄存器标注 - 必须在 InstructionLowering 之后运行
+            Box::new(CallsiteLiveRegisterPass::new()),
             Box::new(PrintIRPass::new()), // 打印最终的 IR
         ]);
 
@@ -233,6 +248,7 @@ impl PassRegistry {
     /// - 寄存器分配
     /// - 栈帧布局
     /// - 指令降级
+    /// - 调用位置活跃寄存器标注（必需）
     ///
     /// Analysis passes 从全局注册表自动加载。
     pub fn build_fast_pipeline(&self) -> PassManager {
@@ -241,9 +257,15 @@ impl PassRegistry {
         // 基本优化（批量添加）
         manager.add_function_passes(vec![
             Box::new(ConstantFolding::new()),
+            // 显式化跳转 - 必须在基本块布局优化前
+            Box::new(ExplicitJumpPass::new()),
+            // 基本块布局优化 - 必须在寄存器分配前
+            Box::new(BlockLayoutPass::new()),
             Box::new(SimpleStackRegisterAllocation::new()),
             Box::new(crate::pass::stack_frame_layout::StackFrameLayoutPass::new()),
             Box::new(InstructionLoweringPass::new()),
+            // 🔧 调用位置活跃寄存器标注 - 必须在 InstructionLowering 之后运行
+            Box::new(CallsiteLiveRegisterPass::new()),
         ]);
 
         manager
@@ -256,6 +278,7 @@ impl PassRegistry {
     /// - 常量折叠
     /// - SSA 构造和 Memory2Reg
     /// - Phi 节点消除
+    /// - 基本块布局优化
     /// - 寄存器分配和栈帧布局
     /// - 窥孔优化和死代码消除
     /// - 指令降级
@@ -267,17 +290,27 @@ impl PassRegistry {
 
         // 只添加 transformation passes，analysis 会自动执行（批量添加）
         manager.add_function_passes(vec![
+            // 🔧 2025-12: Effect指令降级必须在CFG相关pass之前运行
+            // 因为CFG分析不理解effect指令，会错误地认为handler块不可达
             Box::new(EffectLoweringPass::new()),
             Box::new(ConstantFolding::new()),
             Box::new(SsaConstructionPass::new()),
             Box::new(Memory2RegPass::new()),
             Box::new(PhiEliminationPass::new()),
+            // 🔧 显式化跳转 - 必须在基本块布局优化前，避免重排破坏隐式fall-through
+            Box::new(ExplicitJumpPass::new()),
+            // 🔧 基本块布局优化 - 必须在寄存器分配前运行
+            Box::new(BlockLayoutPass::new()),
             Box::new(SimpleStackRegisterAllocation::new()),
             Box::new(crate::pass::stack_frame_layout::StackFrameLayoutPass::new()),
             Box::new(PeepholeOptimizer::new()),
             Box::new(DeadCodeElimination::new()),
             Box::new(PeepholeOptimizer::new()),
             Box::new(InstructionLoweringPass::new()),
+            // 🔧 调用位置活跃寄存器标注 - 必须在 InstructionLowering 之后运行
+            // 标注调用位置的活跃寄存器信息到 instruction_metadata
+            // 此时指令序列已稳定，寄存器已分配为物理寄存器
+            Box::new(CallsiteLiveRegisterPass::new()),
         ]);
 
         manager
@@ -287,6 +320,7 @@ impl PassRegistry {
     ///
     /// 激进优化，在 Balanced 基础上增加：
     /// - 额外的常量折叠和死代码消除轮次
+    /// - 调用位置活跃寄存器标注（必需）
     /// - 最终的验证 Pass
     ///
     /// Analysis passes 从全局注册表自动加载。
@@ -295,11 +329,16 @@ impl PassRegistry {
 
         // 激进优化（批量添加）
         manager.add_function_passes(vec![
+            // 🔧 2025-12: Effect指令降级必须在CFG相关pass之前运行
             Box::new(EffectLoweringPass::new()),
             Box::new(ConstantFolding::new()),
             Box::new(SsaConstructionPass::new()),
             Box::new(Memory2RegPass::new()),
             Box::new(PhiEliminationPass::new()),
+            // 🔧 显式化跳转 - 必须在基本块布局优化前
+            Box::new(ExplicitJumpPass::new()),
+            // 🔧 基本块布局优化 - 必须在寄存器分配前
+            Box::new(BlockLayoutPass::new()),
             Box::new(SimpleStackRegisterAllocation::new()),
             Box::new(crate::pass::stack_frame_layout::StackFrameLayoutPass::new()),
             Box::new(PeepholeOptimizer::new()),
@@ -309,6 +348,8 @@ impl PassRegistry {
             Box::new(ConstantFolding::new()),
             Box::new(DeadCodeElimination::new()),
             Box::new(InstructionLoweringPass::new()),
+            // 🔧 调用位置活跃寄存器标注 - 必须在 InstructionLowering 之后运行
+            Box::new(CallsiteLiveRegisterPass::new()),
             Box::new(VerifyPass::new()),
         ]);
 

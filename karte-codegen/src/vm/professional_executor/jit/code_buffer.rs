@@ -931,3 +931,288 @@ impl DebugInfoBuilder {
         self.labels.insert(label.to_string(), position);
     }
 }
+
+// ============= 独立的修补函数 =============
+
+/// 在可执行内存上直接进行跳转修补（避免二次编译）
+///
+/// 从 finalize_with_global_addresses_and_exec_base 提取的核心修补逻辑，
+/// 可以直接在已分配的可执行内存上进行修补，无需重新编译整个函数。
+///
+/// # 参数
+/// - `memory_ptr`: 可执行内存的起始地址
+/// - `exec_base`: 执行时的基地址（用于计算相对偏移）
+/// - `labels`: 本函数内的 label 偏移表（相对于函数起始的偏移）
+/// - `global_labels`: 全局 label 地址表（绝对地址）
+/// - `pending_jumps`: 待修补的跳转列表
+/// - `pending_adrs`: 待修补的 ADR 指令列表
+/// - `pending_label_addresses`: 待修补的标签地址列表
+pub fn patch_executable_memory(
+    memory_ptr: *mut u8,
+    exec_base: usize,
+    labels: &std::collections::HashMap<String, usize>,
+    global_labels: &std::collections::HashMap<String, usize>,
+    pending_jumps: &[PendingJump],
+    pending_adrs: &[PendingAdr],
+    pending_label_addresses: &[PendingLabelAddress],
+) -> Result<(), String> {
+    log::debug!("🔧 开始原地修补，exec_base: 0x{:016X}", exec_base);
+
+    // 辅助函数：查找 label 地址
+    let find_label_address = |label_name: &str| -> Result<usize, String> {
+        // 优先查找全局标签表（绝对地址）
+        if let Some(&addr) = global_labels.get(label_name) {
+            return Ok(addr);
+        }
+        // 回退到本地标签表（相对偏移，需要加上 exec_base）
+        if let Some(&offset) = labels.get(label_name) {
+            return Ok(exec_base + offset);
+        }
+        Err(format!("未定义的标签: {}", label_name))
+    };
+
+    // 1. 修补所有待处理的跳转
+    for pending in pending_jumps {
+        let target_addr = find_label_address(&pending.target_label)?;
+
+        log::debug!(
+            "🔧 修补跳转 '{}': 目标地址=0x{:016X}, patch_position={}, 跳转类型={:?}",
+            pending.target_label,
+            target_addr,
+            pending.patch_position,
+            pending.jump_type
+        );
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            let current_pos = exec_base + pending.patch_position;
+
+            // 计算相对偏移（以字为单位，4字节对齐）
+            let relative_offset = ((target_addr as i64) - (current_pos as i64)) >> 2;
+
+            // 读取原始指令
+            let original_instruction = unsafe { read_u32_at(memory_ptr, pending.patch_position) };
+
+            log::debug!(
+                "🔧 修补跳转详情: {} -> 目标: 0x{:016X}, 当前位置: 0x{:016X}, 相对偏移(字): {}",
+                pending.target_label,
+                target_addr,
+                current_pos,
+                relative_offset
+            );
+
+            match pending.jump_type {
+                JumpType::Unconditional | JumpType::Call => {
+                    // B/BL指令：26位偏移
+                    if !(-(1 << 25)..(1 << 25)).contains(&relative_offset) {
+                        return Err(format!("跳转距离太远: {} 字节", relative_offset << 2));
+                    }
+
+                    let mut instruction = original_instruction;
+                    instruction &= 0xFC000000; // 清除低26位
+                    instruction |= (relative_offset as u32) & 0x03FFFFFF; // 设置新偏移
+
+                    log::debug!(
+                        "🔧 修补无条件跳转: 原始: 0x{:08X}, 修补后: 0x{:08X}",
+                        original_instruction,
+                        instruction
+                    );
+
+                    unsafe { write_u32_at(memory_ptr, pending.patch_position, instruction) };
+                }
+                _ => {
+                    // 条件跳转指令：19位偏移
+                    if !(-(1 << 18)..(1 << 18)).contains(&relative_offset) {
+                        return Err(format!("条件跳转距离太远: {} 字节", relative_offset << 2));
+                    }
+
+                    let mut instruction = original_instruction;
+                    instruction &= 0xFF00001F; // 保留条件码和指令格式
+                    instruction |= ((relative_offset as u32) & 0x7FFFF) << 5; // 设置新偏移
+
+                    log::debug!(
+                        "🔧 修补条件跳转: 原始: 0x{:08X}, 修补后: 0x{:08X}",
+                        original_instruction,
+                        instruction
+                    );
+
+                    unsafe { write_u32_at(memory_ptr, pending.patch_position, instruction) };
+                }
+            }
+        }
+
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            // x86/x64跳转修补
+            let patch_pos = pending.patch_position + pending.jump_type.instruction_size() - 4;
+            let current_pos = exec_base + patch_pos + 4;
+            let relative_offset = (target_addr as i64) - (current_pos as i64);
+
+            if relative_offset < i32::MIN as i64 || relative_offset > i32::MAX as i64 {
+                return Err(format!("跳转距离太远: {}", relative_offset));
+            }
+
+            let offset_bytes = (relative_offset as i32).to_le_bytes();
+            unsafe {
+                for (i, &byte) in offset_bytes.iter().enumerate() {
+                    *memory_ptr.add(patch_pos + i) = byte;
+                }
+            }
+        }
+    }
+
+    log::debug!("🔧 跳转修补完成，继续修补标签地址");
+
+    // 2. 修补所有待处理的标签地址
+    for pending in pending_label_addresses {
+        let target_addr = find_label_address(&pending.target_label)?;
+
+        log::debug!(
+            "🔧 修补标签地址: {} -> 位置{} (0x{:016X})",
+            pending.target_label,
+            target_addr,
+            target_addr as u64
+        );
+
+        let address_bytes = (target_addr as u64).to_le_bytes();
+        unsafe {
+            for (i, &byte) in address_bytes.iter().enumerate() {
+                *memory_ptr.add(pending.patch_position + i) = byte;
+            }
+        }
+    }
+
+    log::debug!("🔧 开始修补ADR指令");
+
+    // 3. 修补所有待处理的ADR指令
+    for pending in pending_adrs {
+        let target_addr = find_label_address(&pending.target_label)?;
+
+        log::debug!(
+            "🔧 修补ADR指令: {} -> 目标地址: 0x{:016X}",
+            pending.target_label,
+            target_addr
+        );
+
+        match &pending.patch_type {
+            AdrPatchType::Adrp { dst_register: _ } => {
+                #[cfg(target_arch = "aarch64")]
+                {
+                    let current_pos = exec_base + pending.patch_position;
+                    let current_page = current_pos & !0xFFF;
+                    let target_page = target_addr & !0xFFF;
+                    let page_offset = ((target_page as i64) - (current_page as i64)) >> 12;
+
+                    if !(-(1 << 20)..(1 << 20)).contains(&page_offset) {
+                        return Err(format!(
+                            "ADRP页偏移超出范围: {} (应在 ±1M 范围内)",
+                            page_offset
+                        ));
+                    }
+
+                    let mut instruction =
+                        unsafe { read_u32_at(memory_ptr, pending.patch_position) };
+                    instruction &= 0x9F00001F;
+
+                    let imm = if page_offset < 0 {
+                        (0x200000 - (-page_offset as u32)) & 0x1FFFFF
+                    } else {
+                        page_offset as u32
+                    };
+
+                    let immhi = (imm >> 2) & 0x7FFFF;
+                    let immlo = imm & 0x3;
+                    instruction |= (immhi << 5) | (immlo << 29);
+
+                    log::debug!(
+                        "🔧 ADRP修补: 页偏移={}, 修补后指令: 0x{:08X}",
+                        page_offset,
+                        instruction
+                    );
+
+                    unsafe { write_u32_at(memory_ptr, pending.patch_position, instruction) };
+                }
+            }
+            AdrPatchType::AddLabel { dst_register: _ } => {
+                #[cfg(target_arch = "aarch64")]
+                {
+                    let page_offset = target_addr & 0xFFF;
+
+                    let mut instruction =
+                        unsafe { read_u32_at(memory_ptr, pending.patch_position) };
+                    instruction &= 0xFFC003FF;
+                    instruction |= ((page_offset as u32) & 0xFFF) << 10;
+
+                    log::debug!(
+                        "🔧 ADD修补: 页内偏移=0x{:X}, 修补后指令: 0x{:08X}",
+                        page_offset,
+                        instruction
+                    );
+
+                    unsafe { write_u32_at(memory_ptr, pending.patch_position, instruction) };
+                }
+            }
+            AdrPatchType::Store {
+                base_register: _,
+                offset: _,
+            } => {
+                #[cfg(target_arch = "aarch64")]
+                {
+                    let current_pos = exec_base + pending.patch_position;
+
+                    // 修补ADRP指令
+                    let page_offset = (target_addr & !0xFFF) as i64 - (current_pos & !0xFFF) as i64;
+                    let page_offset = page_offset >> 12;
+
+                    let mut adrp_instruction =
+                        unsafe { read_u32_at(memory_ptr, pending.patch_position) };
+                    let imm_lo = (page_offset as u32) & 0x3;
+                    let imm_hi = ((page_offset as u32) >> 2) & 0x7FFFF;
+                    adrp_instruction &= 0x9F00001F;
+                    adrp_instruction |= (imm_lo << 29) | (imm_hi << 5);
+
+                    // 修补ADD指令
+                    let add_pos = pending.patch_position + 4;
+                    let mut add_instruction = unsafe { read_u32_at(memory_ptr, add_pos) };
+                    let page_internal_offset = target_addr & 0xFFF;
+                    add_instruction &= 0xFFC003FF;
+                    add_instruction |= ((page_internal_offset as u32) & 0xFFF) << 10;
+
+                    unsafe {
+                        write_u32_at(memory_ptr, pending.patch_position, adrp_instruction);
+                        write_u32_at(memory_ptr, add_pos, add_instruction);
+                    }
+                }
+
+                #[cfg(not(target_arch = "aarch64"))]
+                {
+                    let address_bytes = (target_addr as u64).to_le_bytes();
+                    unsafe {
+                        for (i, &byte) in address_bytes.iter().enumerate() {
+                            *memory_ptr.add(pending.patch_position + i) = byte;
+                        }
+                    }
+                }
+            }
+            AdrPatchType::Adr { dst_register: _ } => {
+                // ADR指令修补（如果需要）
+                log::warn!("ADR指令修补暂未实现");
+            }
+        }
+    }
+
+    log::debug!("🔧 原地修补完成");
+    Ok(())
+}
+
+/// 从内存中读取 u32（小端序）
+#[inline]
+unsafe fn read_u32_at(ptr: *mut u8, offset: usize) -> u32 {
+    (ptr.add(offset) as *const u32).read_unaligned()
+}
+
+/// 向内存中写入 u32（小端序）
+#[inline]
+unsafe fn write_u32_at(ptr: *mut u8, offset: usize, value: u32) {
+    (ptr.add(offset) as *mut u32).write_unaligned(value);
+}

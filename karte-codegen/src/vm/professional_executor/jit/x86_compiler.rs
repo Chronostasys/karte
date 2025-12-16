@@ -1089,70 +1089,8 @@ impl JitCompiler for X86Compiler {
         Ok(compiled_function)
     }
 
-    /// 编译单个函数（使用全局标签表）
-    fn compile_function_with_global_labels(
-        &mut self,
-        function: &LirFunction,
-        program: &LirProgram,
-        global_labels: &std::collections::HashMap<String, *const u8>,
-    ) -> Result<CompiledFunction, String> {
-        if self.debug_mode {
-            println!("开始编译函数: {} (使用全局标签表)", function.name);
-            println!("LIR函数内容:");
-            for (i, instruction) in function.instructions.iter().enumerate() {
-                println!("  {}: {:?}", i, instruction);
-            }
-        }
-
-        let mut code_builder = if self.debug_mode {
-            CodeBuilder::with_debug_info()
-        } else {
-            CodeBuilder::new()
-        };
-
-        let global_labels_usize: std::collections::HashMap<String, usize> = global_labels
-            .iter()
-            .map(|(k, v)| (k.clone(), *v as usize))
-            .collect();
-        code_builder.set_global_labels(global_labels_usize);
-        // 设置全局标签表
-        // code_builder.set_global_labels(global_labels.clone());
-
-        // 函数序言
-        self.emit_function_prologue(&mut code_builder)?;
-
-        // 编译函数体
-        for (index, instruction) in function.instructions.iter().enumerate() {
-            if self.debug_mode {
-                code_builder.add_source_line(index);
-                println!("编译指令 {}: {:?}", index, instruction);
-            }
-
-            self.compile_instruction(instruction, &mut code_builder, program)?;
-        }
-
-        // 🔧 修复：总是生成函数尾声，确保正确的寄存器恢复
-        self.emit_function_epilogue(&mut code_builder)?;
-
-        // 完成代码生成
-        let machine_code = code_builder.finalize_with_global_addresses(None)?;
-
-        let compiled_function = CompiledFunction::new(
-            function.name.clone(),
-            machine_code,
-            0, // 入口点在函数开始
-        );
-
-        if self.debug_mode {
-            println!(
-                "函数 '{}' 编译完成，生成机器码 {} 字节",
-                function.name,
-                compiled_function.code_size()
-            );
-        }
-
-        Ok(compiled_function)
-    }
+    // 🔧 优化：compile_function_with_global_labels 已被移除
+    // 现在使用 compile_function + patch_executable_memory 进行单次编译+原地修补
 
     fn target_architecture(&self) -> &'static str {
         "x86-64"

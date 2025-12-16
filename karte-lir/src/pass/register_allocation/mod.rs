@@ -75,7 +75,7 @@ impl FunctionPass for SimpleStackRegisterAllocation {
     fn run_on_function(
         &mut self,
         function: &mut LirFunction,
-        _analyses: &mut AnalysisManager,
+        analyses: &mut AnalysisManager,
     ) -> PassResult {
         info!("🎯 开始遵循调用约定的寄存器分配：{}", function.name);
 
@@ -111,12 +111,22 @@ impl FunctionPass for SimpleStackRegisterAllocation {
         // 应用分配并处理溢出
         let result = self.apply_allocation_with_spilling(function, &allocation_map);
 
-        // 分析实际使用的寄存器
+        // 分析实际使用的寄存器并构建分配结果
         match result {
             PassResult::Unchanged | PassResult::Changed => {
                 let used_registers = self.analyze_register_usage(function, &allocation_map);
                 function.set_used_regs(used_registers);
                 info!("🎯 使用的寄存器: {:?}", function.get_used_regs());
+
+                // 🔧 新增：构建 RegisterAllocationResult 并存储到 AnalysisManager
+                let allocation_result =
+                    self.build_allocation_result(&allocation_map, &virtual_registers);
+                analyses.store_result(
+                    "register-allocation".to_string(),
+                    Box::new(allocation_result),
+                );
+                info!("🎯 已将寄存器分配结果存储到 AnalysisManager");
+
                 result
             }
             PassResult::Failed(_) => result,
@@ -1093,6 +1103,52 @@ impl SimpleStackRegisterAllocation {
         result.sort_unstable(); // 确定性输出
 
         result
+    }
+
+    /// 🔧 新增：从 allocation_map 构建 RegisterAllocationResult
+    ///
+    /// 这个方法将内部的 AllocationTarget 映射转换为标准的 RegisterAllocationResult，
+    /// 以便可以被其他 Pass（如 InstructionLoweringPass）使用。
+    fn build_allocation_result(
+        &self,
+        allocation_map: &HashMap<Register, AllocationTarget>,
+        virtual_registers: &[Register],
+    ) -> RegisterAllocationResult {
+        let mut register_mapping = HashMap::new();
+        let mut spilled_registers = HashMap::new();
+        let mut register_types = HashMap::new();
+
+        // 遍历所有虚拟寄存器，构建映射和溢出信息
+        for reg in virtual_registers {
+            if let Some(target) = allocation_map.get(reg) {
+                match target {
+                    AllocationTarget::Register(phys_reg) => {
+                        register_mapping.insert(*reg, *phys_reg);
+                        // 默认都是 Data 类型（简化处理，未来可以更精确）
+                        register_types.insert(*reg, RegisterType::Data);
+                    }
+                    AllocationTarget::Spill(slot_id) => {
+                        spilled_registers.insert(*reg, SpillSlot { slot_id: *slot_id });
+                        register_types.insert(*reg, RegisterType::Data);
+                    }
+                }
+            }
+        }
+
+        // 构建统计信息
+        let stats = AllocationStats {
+            total_virtual_registers: virtual_registers.len(),
+            allocated_physical_registers: register_mapping.len(),
+            spilled_registers: spilled_registers.len(),
+            register_pressure: register_mapping.len(), // 简化计算
+        };
+
+        RegisterAllocationResult {
+            register_mapping,
+            spilled_registers,
+            register_types,
+            stats,
+        }
     }
 }
 
