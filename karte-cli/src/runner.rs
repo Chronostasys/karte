@@ -659,8 +659,9 @@ pub fn process_file(
         println!("{}", lir_program.to_ir_string());
     } else {
         let mut pipeline = karte_lir::OptimizationPipeline::new(optimization_level);
-        pipeline.optimize(&mut lir_program)
-                    .map_err(|errors| -> Box<dyn std::error::Error> {
+        pipeline
+            .optimize(&mut lir_program)
+            .map_err(|errors| -> Box<dyn std::error::Error> {
                 format!("LIR优化失败: {}", errors.join(", ")).into()
             })?;
         execute_lir(&lir_program, verbose)?;
@@ -695,9 +696,10 @@ pub fn process_expression(
     if emit_lir {
         println!("{}", lir_program.to_ir_string());
     } else {
-                let mut pipeline = karte_lir::OptimizationPipeline::new(optimization_level);
-        pipeline.optimize(&mut lir_program)
-                    .map_err(|errors| -> Box<dyn std::error::Error> {
+        let mut pipeline = karte_lir::OptimizationPipeline::new(optimization_level);
+        pipeline
+            .optimize(&mut lir_program)
+            .map_err(|errors| -> Box<dyn std::error::Error> {
                 format!("LIR优化失败: {}", errors.join(", ")).into()
             })?;
         execute_lir(&lir_program, verbose)?;

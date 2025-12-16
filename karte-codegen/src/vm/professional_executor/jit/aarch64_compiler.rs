@@ -4,7 +4,7 @@
 
 use super::code_buffer::{CodeBuilder, JumpType};
 use super::compiler_trait::*;
-use super::ffi::{RuntimeArg, RuntimeCall};
+use super::ffi::{RuntimeArg, RuntimeCall, RuntimeIntrinsic};
 use karte_common::calling_convention::{CallingConvention, PhysicalRegister, CC};
 use karte_lir::{Instruction, LirFunction, LirProgram, Operand, Register};
 use std::collections::HashMap;
@@ -26,10 +26,6 @@ pub struct AArch64Compiler {
     current_function_use_regs: Vec<PhysicalRegister>,
     /// 当前编译的函数名（用于生成唯一label）
     current_function_name: String,
-    /// 当前函数的降级后生命周期信息（用于优化寄存器保存）
-    current_lowered_lifetimes: Option<Vec<karte_lir::pass::register_allocation::RegisterLifetime>>,
-    /// 当前函数的降级后寄存器映射
-    current_lowered_register_mapping: Option<HashMap<Register, u8>>,
 }
 
 /// AArch64寄存器枚举
@@ -83,8 +79,6 @@ impl AArch64Compiler {
             unique_label_counter: 0,
             current_function_use_regs: Vec::new(),
             current_function_name: String::new(),
-            current_lowered_lifetimes: None,
-            current_lowered_register_mapping: None,
         };
 
         // 初始化寄存器映射
@@ -230,6 +224,7 @@ impl AArch64Compiler {
         code_builder: &mut CodeBuilder,
         is_main_function: bool,
         instruction_index: usize,
+        function: &LirFunction,
     ) -> Result<(), String> {
         if self.debug_mode {
             log::debug!("编译AArch64指令: {}", instruction);
@@ -294,6 +289,20 @@ impl AArch64Compiler {
             Instruction::Store64 {
                 addr, offset, src, ..
             } => self.compile_store64(addr, *offset, src, code_builder),
+            Instruction::StorePair {
+                addr,
+                offset,
+                src1,
+                src2,
+                ..
+            } => self.compile_store_pair(addr, *offset, src1, src2, code_builder),
+            Instruction::LoadPair {
+                dst1,
+                dst2,
+                addr,
+                offset,
+                ..
+            } => self.compile_load_pair(dst1, dst2, addr, *offset, code_builder),
             Instruction::Alloc {
                 dst,
                 size,
@@ -307,18 +316,19 @@ impl AArch64Compiler {
                 allocation_type,
                 code_builder,
                 instruction_index,
+                function,
             ),
             Instruction::Free { addr, .. } => {
-                self.compile_free(addr, code_builder, instruction_index)
+                self.compile_free(addr, code_builder, instruction_index, function)
             }
             Instruction::Retain { value, .. } => {
-                self.compile_retain(value, code_builder, instruction_index)
+                self.compile_retain(value, code_builder, instruction_index, function)
             }
             Instruction::Release { value, .. } => {
-                self.compile_release(value, code_builder, instruction_index)
+                self.compile_release(value, code_builder, instruction_index, function)
             }
             Instruction::Safepoint { .. } => {
-                self.compile_safepoint(code_builder, instruction_index)
+                self.compile_safepoint(code_builder, instruction_index, function)
             }
             Instruction::Nop { .. } => {
                 // AArch64 NOP指令 (0xD503201F)
@@ -616,7 +626,7 @@ impl AArch64Compiler {
         code_builder: &mut CodeBuilder,
         is_main_function: bool,
     ) -> Result<(), String> {
-        // 如果有返回值，先将其移动到返回值寄存器X0
+        // 1. 将返回值移动到X0寄存器
         if let Some(return_reg) = value {
             let src_reg = self.get_physical_register(return_reg)?;
             if src_reg != (AArch64Register::X0 as u8) {
@@ -626,50 +636,34 @@ impl AArch64Compiler {
             // 无返回值的函数默认返回0
             self.emit_mov_reg_imm64(code_builder, AArch64Register::X0 as u8, 0);
         }
-
-        // 只有主函数会与宿主环境交换返回槽指针
-        if is_main_function {
-            let slot_reg = AArch64Register::X16 as u8;
-            self.load_and_pop_return_slot_pointer(code_builder, slot_reg);
-        }
-
         // VM调用约定：返回时需要弹出虚拟返回地址并跳转
         let vm_sp_reg = self.vm_calling_convention.stack_pointer;
         let return_addr_reg = self.vm_calling_convention.return_address;
-
         if is_main_function {
-            // 加载返回地址到专用寄存器
-            self.emit_ldr_reg_mem(code_builder, return_addr_reg, vm_sp_reg, 0);
-            // 弹出返回地址槽位
-            self.emit_add_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 8);
-            // main 函数负责从VM世界回退到宿主环境
-            let host_return_label = self.next_label("jit_return_host");
-            self.emit_cmp_reg_imm(code_builder, return_addr_reg, 0);
-            code_builder.emit_jump(JumpType::ConditionalEqual, &host_return_label);
+            // Main函数逻辑：
+            // 虚拟栈布局（从低地址到高地址）：
+            // [SP+0]: 返回值槽指针（X0参数，由序言保存）
+            // [SP+16]: 系统SP（由序言保存）
+            //
+            // 2. 弹出返回值槽（16字节）
+            self.emit_add_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 16);
 
-            // 非零返回地址：继续在JIT世界中执行
-            // 🔧 修复：如果是JIT内部调用，不需要写回返回槽（因为调用者没传槽指针）
-            // 直接返回X0中的值即可
-            let ret_reg = Register::Physical(return_addr_reg);
-            self.compile_jump_register(&ret_reg, code_builder)?;
-
-            // 零返回地址：回到宿主
-            code_builder.define_label(&host_return_label)?;
-
-            // 🔧 修复：不需要写回返回槽，直接返回X0中的值
-            // if let Some(slot_reg) = return_slot_reg {
-            //     self.emit_store_return_value_to_slot(code_builder, slot_reg);
-            // }
-
+            // 3. 调用epilogue恢复系统栈并返回
+            // epilogue会：
+            //   - 从虚拟栈读取系统SP并切换回系统栈
+            //   - 恢复callee-saved寄存器
+            //   - 恢复X29/X30
+            //   - RET（使用系统栈上的X30）
             self.emit_function_epilogue(code_builder)?;
             self.emit_ret(code_builder);
         } else {
-            // 🔧 修复：内部函数返回前需要恢复 callee-saved 寄存器
-            // 否则调用者的寄存器会被破坏
+            // 内部函数逻辑：
+            // 2. 恢复callee-saved寄存器（从虚拟栈）
             self.emit_internal_function_epilogue(code_builder)?;
             // 加载返回地址到专用寄存器
             self.emit_ldr_reg_mem(code_builder, return_addr_reg, vm_sp_reg, 0);
-            // 普通函数：直接跳向被调用者设置的继续执行位置
+
+            // 4. 跳转到返回地址
             let ret_reg = Register::Physical(return_addr_reg);
             self.compile_jump_register(&ret_reg, code_builder)?;
         }
@@ -731,6 +725,118 @@ impl AArch64Compiler {
         Ok(())
     }
 
+    /// 编译StorePair指令 (STP)
+    fn compile_store_pair(
+        &mut self,
+        addr: &Register,
+        offset: i64,
+        src1: &Register,
+        src2: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> Result<(), String> {
+        let base_reg = self.get_physical_register(addr)?;
+        let reg1 = self.get_physical_register(src1)?;
+        let reg2 = self.get_physical_register(src2)?;
+
+        // STP <reg1>, <reg2>, [<base>, #<offset>]
+        // offset必须是8的倍数，且在±256KB范围内
+        if offset % 8 != 0 {
+            return Err(format!(
+                "StorePair offset must be 8-byte aligned, got: {}",
+                offset
+            ));
+        }
+
+        // 🔧 修复：如果操作SP，确保使用16字节对齐
+        if base_reg == AArch64Register::SP as u8 {
+            // 确保offset是16字节的倍数，以保持SP对齐
+            let aligned_offset = if offset % 16 != 0 {
+                // 向下对齐到16字节边界
+                offset - (offset % 16)
+            } else {
+                offset
+            };
+
+            let scaled_offset = aligned_offset / 8;
+            if scaled_offset < -4096 || scaled_offset > 4095 {
+                return Err(format!(
+                    "StorePair offset out of range (±32KB): {}",
+                    scaled_offset
+                ));
+            }
+
+            self.emit_stp_offset(code_builder, reg1, reg2, base_reg, aligned_offset as i32);
+        } else {
+            // 非SP寄存器，使用原始offset
+            let scaled_offset = offset / 8;
+            if scaled_offset < -4096 || scaled_offset > 4095 {
+                return Err(format!(
+                    "StorePair offset out of range (±32KB): {}",
+                    scaled_offset
+                ));
+            }
+
+            self.emit_stp_offset(code_builder, reg1, reg2, base_reg, offset as i32);
+        }
+        Ok(())
+    }
+
+    /// 编译LoadPair指令 (LDP)
+    fn compile_load_pair(
+        &mut self,
+        dst1: &Register,
+        dst2: &Register,
+        addr: &Register,
+        offset: i64,
+        code_builder: &mut CodeBuilder,
+    ) -> Result<(), String> {
+        let base_reg = self.get_physical_register(addr)?;
+        let reg1 = self.get_physical_register(dst1)?;
+        let reg2 = self.get_physical_register(dst2)?;
+
+        // LDP <reg1>, <reg2>, [<base>, #<offset>]
+        // offset必须是8的倍数，且在±256KB范围内
+        if offset % 8 != 0 {
+            return Err(format!(
+                "LoadPair offset must be 8-byte aligned, got: {}",
+                offset
+            ));
+        }
+
+        // 🔧 修复：如果操作SP，确保使用16字节对齐
+        if base_reg == AArch64Register::SP as u8 {
+            // 确保offset是16字节的倍数，以保持SP对齐
+            let aligned_offset = if offset % 16 != 0 {
+                // 向下对齐到16字节边界
+                offset - (offset % 16)
+            } else {
+                offset
+            };
+
+            let scaled_offset = aligned_offset / 8;
+            if scaled_offset < -4096 || scaled_offset > 4095 {
+                return Err(format!(
+                    "LoadPair offset out of range (±32KB): {}",
+                    scaled_offset
+                ));
+            }
+
+            self.emit_ldp_offset(code_builder, reg1, reg2, base_reg, aligned_offset as i32);
+        } else {
+            // 非SP寄存器，使用原始offset
+            let scaled_offset = offset / 8;
+            if scaled_offset < -4096 || scaled_offset > 4095 {
+                return Err(format!(
+                    "LoadPair offset out of range (±32KB): {}",
+                    scaled_offset
+                ));
+            }
+
+            self.emit_ldp_offset(code_builder, reg1, reg2, base_reg, offset as i32);
+        }
+        Ok(())
+    }
+
     fn compile_alloc(
         &mut self,
         dst: &Register,
@@ -739,11 +845,12 @@ impl AArch64Compiler {
         allocation_type: &karte_lir::AllocationType,
         code_builder: &mut CodeBuilder,
         instruction_index: usize,
+        function: &LirFunction,
     ) -> Result<(), String> {
         match allocation_type {
             karte_lir::AllocationType::Heap => {
                 let call = RuntimeCall::alloc(size, alignment);
-                self.emit_runtime_call(code_builder, call, Some(dst), instruction_index)
+                self.emit_runtime_call(code_builder, call, Some(dst), instruction_index, function)
             }
             _ => Err(format!(
                 "Alloc instruction with unsupported allocation type: {:?}",
@@ -757,9 +864,10 @@ impl AArch64Compiler {
         addr: &Register,
         code_builder: &mut CodeBuilder,
         instruction_index: usize,
+        function: &LirFunction,
     ) -> Result<(), String> {
         let call = RuntimeCall::free(*addr);
-        self.emit_runtime_call(code_builder, call, None, instruction_index)
+        self.emit_runtime_call(code_builder, call, None, instruction_index, function)
     }
 
     fn compile_retain(
@@ -767,9 +875,10 @@ impl AArch64Compiler {
         value: &Register,
         code_builder: &mut CodeBuilder,
         instruction_index: usize,
+        function: &LirFunction,
     ) -> Result<(), String> {
         let call = RuntimeCall::retain(*value);
-        self.emit_runtime_call(code_builder, call, None, instruction_index)
+        self.emit_runtime_call(code_builder, call, None, instruction_index, function)
     }
 
     fn compile_release(
@@ -777,19 +886,21 @@ impl AArch64Compiler {
         value: &Register,
         code_builder: &mut CodeBuilder,
         instruction_index: usize,
+        function: &LirFunction,
     ) -> Result<(), String> {
         let call = RuntimeCall::release(*value);
-        self.emit_runtime_call(code_builder, call, None, instruction_index)
+        self.emit_runtime_call(code_builder, call, None, instruction_index, function)
     }
 
     fn compile_safepoint(
         &mut self,
         code_builder: &mut CodeBuilder,
         instruction_index: usize,
+        function: &LirFunction,
     ) -> Result<(), String> {
         // GC 安全点：调用运行时函数
         let call = RuntimeCall::gc_safepoint();
-        self.emit_runtime_call(code_builder, call, None, instruction_index)
+        self.emit_runtime_call(code_builder, call, None, instruction_index, function)
     }
 
     fn emit_runtime_call(
@@ -798,18 +909,37 @@ impl AArch64Compiler {
         call: RuntimeCall,
         result: Option<&Register>,
         instruction_index: usize,
+        function: &LirFunction,
     ) -> Result<(), String> {
         let return_reg = AArch64Register::X0 as u8;
-        let exclude: Vec<u8> = if result.is_some() && call.expects_result() {
-            vec![return_reg]
-        } else {
-            Vec::new()
-        };
 
-        // 🔧 判断是否是 GC safepoint 相关调用
-        // GC safepoint 调用（AllocAligned, Free, GcSafepoint）需要保存所有活跃寄存器
-        // 普通 runtime call（Retain, Release）只需保存活跃的 caller-saved 寄存器
-        use super::ffi::RuntimeIntrinsic;
+        // 🔧 关键修复：排除当前指令定义的目标寄存器
+        // 因为在调用之前，目标寄存器还不存在，不应该被保存
+        let mut exclude: Vec<u8> = vec![];
+
+        // 排除返回值寄存器（x0）
+        if result.is_some() && call.expects_result() {
+            exclude.push(return_reg);
+        }
+
+        // 🔧 排除目标寄存器本身（当前指令正在定义的寄存器）
+        // 例如：Alloc { dst = #p1 } 在调用 GC 分配之前，#p1 还不存在
+        if let Some(dst) = result {
+            if let Ok(dst_reg) = self.get_physical_register(dst) {
+                if !exclude.contains(&dst_reg) {
+                    exclude.push(dst_reg);
+                }
+            }
+        }
+
+        // 🔧 从 metadata 中获取调用位置活跃寄存器信息
+        // metadata 包含预先计算的活跃寄存器列表
+        let live_register_info = function
+            .instruction_metadata
+            .get(&instruction_index)
+            .and_then(|meta| meta.live_register_info.as_ref());
+
+        // 🔧 判断是否是 GC safepoint：AllocAligned, Free, GcSafepoint 会触发 GC
         let is_gc_safepoint = matches!(
             call.intrinsic,
             RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::Free | RuntimeIntrinsic::GcSafepoint
@@ -818,7 +948,7 @@ impl AArch64Compiler {
         let (saved_regs, stack_space) = self.save_call_clobbered_registers(
             code_builder,
             &exclude,
-            instruction_index,
+            live_register_info,
             is_gc_safepoint,
         );
 
@@ -966,10 +1096,10 @@ impl AArch64Compiler {
         &self,
         code_builder: &mut CodeBuilder,
         exclude: &[u8],
-        instruction_index: usize,
+        live_register_info: Option<&karte_lir::LiveRegisterInfo>,
         is_gc_safepoint: bool,
     ) -> (Vec<u8>, usize) {
-        // 🔧 基于生命周期分析的优化寄存器保存
+        // 🔧 基于调用位置活跃寄存器信息的优化寄存器保存
         //
         // 关键区别：
         // 1. GC safepoint相关调用（alloc, free, gc_safepoint）：
@@ -981,43 +1111,41 @@ impl AArch64Compiler {
 
         let karte_virtual_sp_reg = self.vm_calling_convention.stack_pointer;
 
-        // 获取需要保存的寄存器列表
-        let mut regs_to_virtual_stack: Vec<u8> = if let (Some(lifetimes), Some(register_mapping)) = (
-            &self.current_lowered_lifetimes,
-            &self.current_lowered_register_mapping,
-        ) {
-            // 使用生命周期分析确定需要保存的寄存器
+        // 从 metadata 读取活跃寄存器列表
+        let mut regs_to_virtual_stack: Vec<u8> = if let Some(live_info) = live_register_info {
+            // 从 metadata 中获取活跃寄存器
             let mut live_regs = Vec::new();
 
-            for lifetime in lifetimes {
-                // 检查该寄存器是否在当前指令位置活跃
-                if instruction_index >= lifetime.start && instruction_index <= lifetime.end {
-                    // 获取物理寄存器
-                    if let Some(&phys_reg) = register_mapping.get(&lifetime.register) {
-                        if is_gc_safepoint {
-                            // GC safepoint：保存所有活跃寄存器
-                            if !exclude.contains(&phys_reg) {
-                                live_regs.push(phys_reg);
-                            }
-                        } else {
-                            // 普通runtime call：只保存活跃的caller-saved寄存器
-                            if self.ffi_calling_convention.is_caller_saved(phys_reg) {
-                                if !exclude.contains(&phys_reg) {
-                                    live_regs.push(phys_reg);
-                                }
+            for reg in &live_info.live_registers {
+                if let Register::Physical(phys_reg) = reg {
+                    if is_gc_safepoint {
+                        // GC safepoint：保存所有活跃寄存器
+                        if !exclude.contains(phys_reg) {
+                            live_regs.push(*phys_reg);
+                        }
+                    } else {
+                        // 普通runtime call：只保存活跃的caller-saved寄存器
+                        if self.ffi_calling_convention.is_caller_saved(*phys_reg) {
+                            if !exclude.contains(phys_reg) {
+                                live_regs.push(*phys_reg);
                             }
                         }
                     }
                 }
             }
-            // GC safepoint调用还需保存未被使用的callee-saved寄存器，保证root都在stack中
-            for i in self
-                .vm_calling_convention
-                .callee_saved
-                .iter()
-                .filter(|e| !self.current_function_use_regs.contains(*e))
-            {
-                live_regs.push(*i);
+
+            // 如果是 GC safepoint，添加未使用的 VM callee-saved 寄存器
+            if is_gc_safepoint {
+                for i in self
+                    .vm_calling_convention
+                    .callee_saved
+                    .iter()
+                    .filter(|e| !self.current_function_use_regs.contains(*e))
+                {
+                    if !live_regs.contains(i) && !exclude.contains(i) {
+                        live_regs.push(*i);
+                    }
+                }
             }
 
             // 去重并排序
@@ -1027,15 +1155,13 @@ impl AArch64Compiler {
             if self.debug_mode {
                 if is_gc_safepoint {
                     log::debug!(
-                        "🔧 GC Safepoint优化：指令 {} 位置需保存 {} 个活跃寄存器: {:?}",
-                        instruction_index,
+                        "✅ GC Safepoint：需保存 {} 个活跃寄存器: {:?}",
                         live_regs.len(),
                         live_regs
                     );
                 } else {
                     log::debug!(
-                        "🔧 普通调用优化：指令 {} 位置只需保存 {} 个caller-saved寄存器: {:?}",
-                        instruction_index,
+                        "✅ 普通调用：只需保存 {} 个caller-saved寄存器: {:?}",
                         live_regs.len(),
                         live_regs
                     );
@@ -1044,7 +1170,7 @@ impl AArch64Compiler {
 
             live_regs
         } else {
-            // 回退：如果没有生命周期信息，保守地保存所有caller-saved寄存器
+            // 保守回退：如果没有活跃寄存器信息，保守地保存所有caller-saved寄存器
             let all_caller_saved: Vec<u8> = if is_gc_safepoint {
                 (0..=31).collect::<Vec<u8>>()
             } else {
@@ -1052,8 +1178,8 @@ impl AArch64Compiler {
             };
 
             if self.debug_mode {
-                log::debug!(
-                    "⚠️  未找到生命周期信息，保守保存所有caller-saved寄存器: {:?}",
+                log::warn!(
+                    "未找到活跃寄存器信息，保守保存所有caller-saved寄存器: {:?}",
                     all_caller_saved
                 );
             }
@@ -1061,7 +1187,9 @@ impl AArch64Compiler {
         };
         regs_to_virtual_stack.retain(|reg| !exclude.contains(reg));
 
-        let virtual_stack_space = regs_to_virtual_stack.len() * 8;
+        // 🔧 修复：确保虚拟栈空间是 16 字节对齐的
+        let raw_stack_space = regs_to_virtual_stack.len() * 8;
+        let virtual_stack_space = ((raw_stack_space + 15) / 16) * 16;
 
         // 步骤1：保存 r0-r5 到虚拟栈
         if !regs_to_virtual_stack.is_empty() {
@@ -1070,7 +1198,7 @@ impl AArch64Compiler {
                 code_builder,
                 karte_virtual_sp_reg,
                 karte_virtual_sp_reg,
-                virtual_stack_space as i32,
+                virtual_stack_space as i32 + 32,
             );
 
             // 保存所有寄存器到调整后的虚拟栈上
@@ -1092,16 +1220,10 @@ impl AArch64Compiler {
             -16,
         );
         // 与之前 STP 的 second slot 对齐，写入 [SP, #8]
-        self.emit_str_reg_mem(
-            code_builder,
-            vm_fp_reg,
-            AArch64Register::SP as u8,
-            8,
-        );
+        self.emit_str_reg_mem(code_builder, vm_fp_reg, AArch64Register::SP as u8, 8);
 
         (regs_to_virtual_stack, virtual_stack_space)
     }
-
     fn restore_call_clobbered_registers(
         &self,
         code_builder: &mut CodeBuilder,
@@ -1114,12 +1236,7 @@ impl AArch64Compiler {
 
         // 步骤1：恢复 VM 帧指针，并保持与保存步骤相同的栈调整
         let vm_fp_reg = self.vm_calling_convention.frame_pointer;
-        self.emit_ldr_reg_mem(
-            code_builder,
-            vm_fp_reg,
-            AArch64Register::SP as u8,
-            8,
-        );
+        self.emit_ldr_reg_mem(code_builder, vm_fp_reg, AArch64Register::SP as u8, 8);
         self.emit_add_reg_reg_imm(
             code_builder,
             AArch64Register::SP as u8,
@@ -1141,7 +1258,7 @@ impl AArch64Compiler {
                 code_builder,
                 karte_virtual_sp_reg,
                 karte_virtual_sp_reg,
-                stack_space as i32,
+                stack_space as i32 + 32,
             );
         }
     }
@@ -1219,6 +1336,16 @@ impl AArch64Compiler {
         code_builder.emit_bytes(&instruction.to_le_bytes());
     }
 
+    /// 生成AND三寄存器指令
+    fn emit_and_reg_reg(&self, code_builder: &mut CodeBuilder, dst: u8, src1: u8, src2: u8) {
+        // AND <Xd>, <Xn>, <Xm>
+        // 31|30|29|28 27 26 25 24 23 22 21|20 16|15 10|9 5|4 0
+        // 1 |0 |0 |0  0  0  1  0  0  0  0 |Xm   |0     |Xn |Xd
+        let instruction =
+            0x8A000000u32 | ((src2 as u32) << 16) | ((src1 as u32) << 5) | (dst as u32);
+        code_builder.emit_bytes(&instruction.to_le_bytes());
+    }
+
     /// 生成MUL三寄存器指令
     fn emit_mul_reg_reg_reg(&self, code_builder: &mut CodeBuilder, dst: u8, src1: u8, src2: u8) {
         // MUL <Xd>, <Xn>, <Xm>
@@ -1267,33 +1394,35 @@ impl AArch64Compiler {
     /// 生成LDR内存加载指令
     fn emit_ldr_reg_mem(&self, code_builder: &mut CodeBuilder, dst: u8, base: u8, offset: i32) {
         // LDR <Xt>, [<Xn|SP>, #offset]
-        // 🔧 修复：AArch64 LDR指令只支持无符号偏移！范围是0到32760（8字节对齐）
-        // 负偏移必须使用间接寻址或pre/post-indexed寻址模式
 
         if offset >= 0 && offset % 8 == 0 && offset <= 32760 {
-            // 使用立即数偏移寻址模式（8字节对齐，仅正偏移）
-            // 31|30|29|28 27 26|25 24|23 22|21   12|11 10|9 5|4 0
-            // 1 |1 |1 |1  1  0 |0  1 |0  1 |imm12  |0  1 |Rn |Rt
-
-            // 对于8字节对齐的偏移，实际编码的是 offset/8
+            // 正偏移，8字节对齐：使用 LDR (unsigned offset)
+            // 指令编码: 1111 1001 01 imm12 Rn Rt
+            // F9 40 0000: LDR Xt, [Xn/SP, #imm12*8]
             let scaled_offset = (offset / 8) as u32;
-            // 12位无符号偏移：范围0到4095
-
             let instruction =
                 0xF9400000u32 | (scaled_offset << 10) | ((base as u32) << 5) | (dst as u32);
             code_builder.emit_bytes(&instruction.to_le_bytes());
+        } else if offset >= -256 && offset <= 255 {
+            // 小范围偏移（含负偏移、非对齐）：使用 LDUR (unscaled)
+            // 指令编码: 1111 1000 01 0 imm9 00 Rn Rt
+            // F8 40 0000: LDUR Xt, [Xn/SP, #simm9]
+            // imm9 是 9 位有符号数，范围 -256 到 +255
+            let imm9 = (offset & 0x1FF) as u32; // 取低 9 位作为有符号数
+            let instruction = 0xF8400000u32 | (imm9 << 12) | ((base as u32) << 5) | (dst as u32);
+            code_builder.emit_bytes(&instruction.to_le_bytes());
         } else {
-            // 负偏移或超出范围，使用间接寻址
-            let temp_reg = AArch64Register::X17 as u8;
-
-            // 先将偏移加载到临时寄存器
+            // 大偏移：使用临时寄存器 + 寄存器偏移模式
+            // 1. MOV X16, #offset
+            // 2. LDR Xt, [Xn, X16]
+            let temp_reg = AArch64Register::X16 as u8;
             self.emit_mov_reg_imm64(code_builder, temp_reg, offset as i64);
 
-            // 计算有效地址：temp_reg = base + offset
-            self.emit_add_reg_reg_reg(code_builder, temp_reg, base, temp_reg);
-
-            // LDR dst, [temp_reg] (基础寻址模式)
-            let instruction = 0xF9400000u32 | ((temp_reg as u32) << 5) | (dst as u32);
+            // LDR Xt, [Xn, Xm] - 寄存器偏移模式
+            // 指令编码: 1111 1000 011 Rm 011 S 10 Rn Rt
+            // F8 60 68 00: LDR Xt, [Xn, Xm, LSL #0]
+            let instruction =
+                0xF8606800u32 | ((temp_reg as u32) << 16) | ((base as u32) << 5) | (dst as u32);
             code_builder.emit_bytes(&instruction.to_le_bytes());
         }
     }
@@ -1301,33 +1430,35 @@ impl AArch64Compiler {
     /// 生成STR内存存储指令
     fn emit_str_reg_mem(&self, code_builder: &mut CodeBuilder, src: u8, base: u8, offset: i32) {
         // STR <Xt>, [<Xn|SP>, #offset]
-        // 🔧 修复：AArch64 STR指令只支持无符号偏移！范围是0到32760（8字节对齐）
-        // 负偏移必须使用间接寻址或pre/post-indexed寻址模式
 
         if offset >= 0 && offset % 8 == 0 && offset <= 32760 {
-            // 使用立即数偏移寻址模式（8字节对齐，仅正偏移）
-            // 31|30|29|28 27 26|25 24|23 22|21   12|11 10|9 5|4 0
-            // 1 |1 |1 |1  1  0 |0  1 |0  0 |imm12  |0  1 |Rn |Rt
-
-            // 对于8字节对齐的偏移，实际编码的是 offset/8
+            // 正偏移，8字节对齐：使用 STR (unsigned offset)
+            // 指令编码: 1111 1001 00 imm12 Rn Rt
+            // F9 00 0000: STR Xt, [Xn/SP, #imm12*8]
             let scaled_offset = (offset / 8) as u32;
-            // 12位无符号偏移：范围0到4095
-
             let instruction =
                 0xF9000000u32 | (scaled_offset << 10) | ((base as u32) << 5) | (src as u32);
             code_builder.emit_bytes(&instruction.to_le_bytes());
+        } else if offset >= -256 && offset <= 255 {
+            // 小范围偏移（含负偏移、非对齐）：使用 STUR (unscaled)
+            // 指令编码: 1111 1000 00 0 imm9 00 Rn Rt
+            // F8 00 0000: STUR Xt, [Xn/SP, #simm9]
+            // imm9 是 9 位有符号数，范围 -256 到 +255
+            let imm9 = (offset & 0x1FF) as u32; // 取低 9 位作为有符号数
+            let instruction = 0xF8000000u32 | (imm9 << 12) | ((base as u32) << 5) | (src as u32);
+            code_builder.emit_bytes(&instruction.to_le_bytes());
         } else {
-            // 负偏移或超出范围，使用间接寻址
-            let temp_reg = AArch64Register::X17 as u8;
-
-            // 先将偏移加载到临时寄存器
+            // 大偏移：使用临时寄存器 + 寄存器偏移模式
+            // 1. MOV X16, #offset
+            // 2. STR Xt, [Xn, X16]
+            let temp_reg = AArch64Register::X16 as u8;
             self.emit_mov_reg_imm64(code_builder, temp_reg, offset as i64);
 
-            // 计算有效地址：temp_reg = base + offset
-            self.emit_add_reg_reg_reg(code_builder, temp_reg, base, temp_reg);
-
-            // STR src, [temp_reg] (基础寻址模式)
-            let instruction = 0xF9000000u32 | ((temp_reg as u32) << 5) | (src as u32);
+            // STR Xt, [Xn, Xm] - 寄存器偏移模式
+            // 指令编码: 1111 1000 001 Rm 011 S 10 Rn Rt
+            // F8 20 68 00: STR Xt, [Xn, Xm, LSL #0]
+            let instruction =
+                0xF8206800u32 | ((temp_reg as u32) << 16) | ((base as u32) << 5) | (src as u32);
             code_builder.emit_bytes(&instruction.to_le_bytes());
         }
     }
@@ -1341,7 +1472,11 @@ impl AArch64Compiler {
         base: u8,
         offset: i32,
     ) {
-        debug_assert!(offset % 8 == 0, "STP offset must be 8-byte aligned: {}", offset);
+        debug_assert!(
+            offset % 8 == 0,
+            "STP offset must be 8-byte aligned: {}",
+            offset
+        );
         let scaled = offset / 8;
         debug_assert!(
             (-64..=63).contains(&scaled),
@@ -1359,6 +1494,38 @@ impl AArch64Compiler {
         code_builder.emit_bytes(&instruction.to_le_bytes());
     }
 
+    /// 生成 STP (offset) 指令，使用偏移寻址但不修改基址寄存器
+    fn emit_stp_offset(
+        &self,
+        code_builder: &mut CodeBuilder,
+        first: u8,
+        second: u8,
+        base: u8,
+        offset: i32,
+    ) {
+        debug_assert!(
+            offset % 8 == 0,
+            "STP offset must be 8-byte aligned: {}",
+            offset
+        );
+        let scaled = offset / 8;
+        debug_assert!(
+            (-64..=63).contains(&scaled),
+            "STP offset out of encodable range: {}",
+            offset
+        );
+
+        let imm7 = ((scaled & 0x7F) as u32) << 15;
+        // 0xA9000000 = STP with signed offset (no writeback)
+        let instruction = 0xA9000000u32
+            | imm7
+            | (((second as u32) & 0x1F) << 10)
+            | (((base as u32) & 0x1F) << 5)
+            | ((first as u32) & 0x1F);
+
+        code_builder.emit_bytes(&instruction.to_le_bytes());
+    }
+
     /// 生成 LDP (post-index) 指令，通常用于从系统栈恢复寄存器对
     fn emit_ldp_post_index(
         &self,
@@ -1368,7 +1535,11 @@ impl AArch64Compiler {
         base: u8,
         offset: i32,
     ) {
-        debug_assert!(offset % 8 == 0, "LDP offset must be 8-byte aligned: {}", offset);
+        debug_assert!(
+            offset % 8 == 0,
+            "LDP offset must be 8-byte aligned: {}",
+            offset
+        );
         let scaled = offset / 8;
         debug_assert!(
             (-64..=63).contains(&scaled),
@@ -1378,6 +1549,38 @@ impl AArch64Compiler {
 
         let imm7 = ((scaled & 0x7F) as u32) << 15;
         let instruction = 0xA8C00000u32
+            | imm7
+            | (((second as u32) & 0x1F) << 10)
+            | (((base as u32) & 0x1F) << 5)
+            | ((first as u32) & 0x1F);
+
+        code_builder.emit_bytes(&instruction.to_le_bytes());
+    }
+
+    /// 生成 LDP (offset) 指令，使用偏移寻址但不修改基址寄存器
+    fn emit_ldp_offset(
+        &self,
+        code_builder: &mut CodeBuilder,
+        first: u8,
+        second: u8,
+        base: u8,
+        offset: i32,
+    ) {
+        debug_assert!(
+            offset % 8 == 0,
+            "LDP offset must be 8-byte aligned: {}",
+            offset
+        );
+        let scaled = offset / 8;
+        debug_assert!(
+            (-64..=63).contains(&scaled),
+            "LDP offset out of encodable range: {}",
+            offset
+        );
+
+        let imm7 = ((scaled & 0x7F) as u32) << 15;
+        // 0xA9400000 = LDP with signed offset (no writeback)
+        let instruction = 0xA9400000u32
             | imm7
             | (((second as u32) & 0x1F) << 10)
             | (((base as u32) & 0x1F) << 5)
@@ -1410,12 +1613,25 @@ impl AArch64Compiler {
         }
 
         // AAPCS64 标准序言：
-        // 1. 首先保存帧指针和链接寄存器（标准 C 序言）
-        // STP X29, X30, [SP, #-16]!
-        let stp_x29_x30 = 0xA9BF7BFDu32;
-        code_builder.emit_bytes(&stp_x29_x30.to_le_bytes());
+        // 1. 为系统栈分配帧空间（32字节）
+        // SUB SP, SP, #32
+        self.emit_add_reg_reg_imm(
+            code_builder,
+            AArch64Register::SP as u8,
+            AArch64Register::SP as u8,
+            -32,
+        );
 
-        // 2. 设置新帧指针
+        // 2. 保存 x29 到系统栈（X30稍后保存到虚拟栈）
+        // STR X29, [SP, #0]
+        self.emit_str_reg_mem(
+            code_builder,
+            AArch64Register::X29 as u8,
+            AArch64Register::SP as u8,
+            0,
+        );
+
+        // 3. 设置新帧指针
         // MOV X29, SP
         self.emit_mov_reg_reg(
             code_builder,
@@ -1423,28 +1639,38 @@ impl AArch64Compiler {
             AArch64Register::SP as u8,
         );
 
-        // 3. 保存其他 callee-saved 寄存器（如果有的话）
+        // 4. 保存其他 callee-saved 寄存器（如果有的话）
         self.save_callee_saved_registers(code_builder)?;
 
-        // 4. 保存 VM 帧指针（继续保持 16 字节对齐的栈平衡）
+        // 5. 保存系统SP到X16
+        // MOV X16, SP
+        self.emit_mov_reg_reg(code_builder, 16, AArch64Register::SP as u8);
+
+        // 6. 切换到虚拟栈
+        // MOV SP, X0 (x0 = 虚拟栈顶地址)
+        // MOV X29, X1 (x1 = 虚拟栈底地址)
+        self.emit_mov_reg_reg(code_builder, vm_sp, x0);
+        self.emit_mov_reg_reg(code_builder, vm_fp, x1);
+
+        // 7. 在虚拟栈保存系统SP和X30
+        // SUB SP, SP, #16
+        // STR X16, [SP, #0]  (系统SP)
+        // STR X30, [SP, #8]  (返回地址)
         self.emit_add_reg_reg_imm(
             code_builder,
             AArch64Register::SP as u8,
             AArch64Register::SP as u8,
             -16,
         );
+        self.emit_str_reg_mem(code_builder, 16, AArch64Register::SP as u8, 0);
         self.emit_str_reg_mem(
             code_builder,
-            vm_fp,
+            AArch64Register::X30 as u8,
             AArch64Register::SP as u8,
             8,
         );
 
-        // 5. 设置 VM 寄存器
-        self.emit_mov_reg_reg(code_builder, vm_sp, x0);
-        self.emit_mov_reg_reg(code_builder, vm_fp, x1);
-
-        // 6. 为返回值槽分配空间（16字节对齐）
+        // 8. 为返回值槽分配空间（16字节对齐）
         self.save_return_slot_pointer(code_builder);
 
         // AAPCS64 要求：栈必须在函数入口处16字节对齐
@@ -1492,12 +1718,11 @@ impl AArch64Compiler {
             log::debug!("生成内部函数序言：保存 {} 个寄存器", callee_saved.len());
         }
 
-
-
         // 保存每个 callee-saved 寄存器到虚拟栈
+        // 每次分配16字节以确保SP保持16字节对齐
         for &reg in callee_saved {
-            // 先压入虚拟栈
-            self.emit_sub_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 8);
+            // 先压入虚拟栈（16字节对齐）
+            self.emit_sub_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 16);
 
             // 存储寄存器值到虚拟栈
             self.emit_str_reg_mem(code_builder, reg, vm_sp_reg, 0);
@@ -1529,8 +1754,8 @@ impl AArch64Compiler {
             // 从虚拟栈加载寄存器值
             self.emit_ldr_reg_mem(code_builder, reg, vm_sp_reg, 0);
 
-            // 弹出虚拟栈
-            self.emit_add_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 8);
+            // 弹出虚拟栈（16字节对齐）
+            self.emit_add_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 16);
         }
 
         if self.debug_mode {
@@ -1551,32 +1776,200 @@ impl AArch64Compiler {
     /// 生成主函数尾声（用于与宿主环境交互的main函数）
     fn emit_function_epilogue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
         // AAPCS64 标准尾声：按照序言的逆序恢复寄存器
+        // 注意：进入尾声时，SP指向虚拟栈，X29可能也指向虚拟栈
 
-        // 1. 恢复返回值槽指针（如果有的话）
-        // 注意：这会在 main 函数返回前由 compile_return 处理
-        // 这里不需要处理
+        // 1. 不处理返回值槽（由 compile_return 负责）
 
-        // 2. 恢复 callee-saved 寄存器（逆序）
-        self.restore_callee_saved_registers(code_builder)?;
+        // 2. 从系统栈帧恢复系统SP（需要知道系统栈帧的X29值）
+        // 问题：X29现在指向虚拟栈，无法直接访问系统栈帧
+        // 解决方案：系统栈帧的X29保存在系统栈 [系统SP, #0] 位置
+        // 但我们需要先知道系统SP...这是个循环依赖
 
-        // 3. 恢复 VM 帧指针并回收相同的栈空间
+        // 新方案：利用虚拟栈底（X1参数）来定位保存的系统栈指针
+        // 实际上，我们应该在序言中将系统栈信息保存到一个固定可访问的位置
+
+        // 临时方案：使用X19作为系统栈帧指针寄存器
+        // 在序言中保存系统X29到X19，这里从X19恢复
+
+        // 但这不可行，因为X19可能被使用...
+
+        // 正确方案：恢复系统栈的流程应该是：
+        // 1. 从某个已知位置读取保存的系统SP
+        // 2. MOV SP, 系统SP
+        // 3. 从系统栈恢复 callee-saved 寄存器
+        // 4. 从系统栈恢复 X29, X30
+        // 5. 释放系统栈帧
+
+        // 关键问题：如何从虚拟栈状态访问系统栈保存的值？
+        // 答案：在序言中，我们将系统SP保存到了 [X29(系统帧), #16]
+        // 但现在X29指向虚拟栈，我们无法访问系统帧的X29
+
+        // 解决方案：在序言中，除了将系统SP保存到系统栈，也保存到虚拟栈的固定位置
+        // 或者：使用一个callee-saved寄存器（如X19）来保存系统帧指针
+
+        // 让我重新设计：使用X19保存系统栈帧指针
+        // 序言：MOV X19, X29（系统帧）
+        // 尾声：LDR X16, [X19, #16]（从系统帧读取保存的系统SP）
+
+        // 但这要求X19不被使用，或者需要额外保存X19...
+
+        // 最简单的方案：将系统SP保存到虚拟栈底（通过X1参数）的固定偏移位置
+        // 但这会污染虚拟栈
+
+        // 实际上，让我重新思考整个设计：
+        // 目标：支持从虚拟栈恢复到系统栈
+        // 约束：切换到虚拟栈后，无法直接访问系统栈帧
+        // 解决方案选项：
+        // 1. 使用 callee-saved 寄存器保存系统栈信息（但需要额外保存该寄存器）
+        // 2. 将系统栈信息保存到虚拟栈（简单但占用虚拟栈空间）
+        // 3. 使用全局变量保存系统栈信息（线程不安全）
+
+        // 选择方案2：将系统SP保存到虚拟栈顶部固定位置
+
+        // 修改后的设计：
+        // 序言：
+        // 1. 在系统栈分配帧并保存X29/X30
+        // 2. 保存callee-saved寄存器到系统栈
+        // 3. 切换到虚拟栈
+        // 4. 在虚拟栈分配空间并保存系统SP
+        // 尾声：
+        // 1. 从虚拟栈读取系统SP
+        // 2. 切换回系统栈
+        // 3. 恢复callee-saved寄存器
+        // 4. 恢复X29/X30并释放帧
+
+        // 实现：假设序言在虚拟栈 [SP, #8] 保存了系统SP
+
+        // 虚拟栈不需要恢复，直接切换到系统栈即可
+
+        // 关键修复：序言中保存系统SP到系统栈帧 [X29, #16]
+        // 这里需要先找到系统栈帧的X29
+
+        // 重新审视问题：序言保存系统SP到 [系统X29, #16]
+        // 但切换到虚拟栈后，X29被覆盖为虚拟X29
+        // 所以我们需要在切换前，将系统X29保存到某处
+
+        // 新方案：在序言中，将系统X29保存到虚拟栈的固定位置
+        // 尾声中，从虚拟栈读取系统X29，然后从系统栈读取系统SP
+
+        // 等等，我想复杂了。让我重新看看序言代码...
+
+        // 看序言代码：
+        // 5. MOV X16, SP（此时SP是系统SP）
+        // 6. STR X16, [X29, #16]（X29是系统帧指针）
+        // 7. 切换到虚拟栈
+
+        // 所以系统SP确实保存在系统栈帧的 [系统X29, #16]
+        // 但我们切换到虚拟栈后，X29变成了虚拟X29
+
+        // 关键insight：系统X29保存在系统栈 [系统SP, #0]
+        // 而系统SP保存在系统栈 [系统X29, #16]
+        // 这是循环依赖！
+
+        // 解决方案：在切换到虚拟栈前，计算好系统栈帧的基址，并保存到虚拟栈
+        // 或者：序言中，在切换到虚拟栈后，将系统栈信息保存到虚拟栈
+
+        // 最简洁的方案：
+        // 序言：SUB SP(系统), #32 → 保存X29/X30 → MOV X29(系统), SP →
+        //      保存callee-saved → MOV X16, SP(系统当前值包含callee-saved) →
+        //      切换到虚拟栈 → SUB SP(虚拟), #16 → STR X16, [SP(虚拟), #8] → ...
+        // 尾声：... → LDR X16, [SP(虚拟)+偏移, #8] → 切换回系统栈 → ...
+
+        // 让我直接实现，假设序言将系统SP保存到了 [系统X29, #16]，
+        // 同时也保存到虚拟栈的某个位置
+
+        // 实际上，查看序言最后的save_return_slot_pointer，它会：
+        // SUB SP, #16
+        // STR X0, [SP, #0]
+        // 所以虚拟栈布局是：
+        // [SP+0]: 返回值槽指针(X0)
+        // [SP+8]: 未使用
+        // [SP+16]: 虚拟栈上可能还有其他数据
+
+        // 我的修改后序言会是：
+        // 系统栈：分配32字节，保存X29/X30/callee-saved/系统SP到系统栈
+        // 虚拟栈：只保存返回值槽指针
+
+        // 问题：我修改后的序言不再将系统SP保存到虚拟栈！
+        // 所以尾声无法从虚拟栈读取系统SP
+
+        // 我需要修改序言，在虚拟栈也保存系统SP，或者在尾声中想办法访问系统栈
+
+        // 实际上，可以利用这个事实：callee-saved寄存器中可能有某个寄存器没被使用
+        // 或者，使用一个临时寄存器（如X17）来传递系统帧信息
+
+        // 更简单的方案：既然系统X29保存在系统栈 [系统SP, #0]，
+        // 而系统SP保存在 [系统X29, #16]，
+        // 我们可以在序言中，除了保存到系统栈，也保存一份到虚拟栈
+
+        // 或者，最最简单的方案：使用一个全局变量/寄存器来保存系统栈帧指针
+        // 但这需要额外的机制
+
+        // 让我采用最直接的方案：在虚拟栈固定位置保存系统SP
+
+        // 修改序言为：
+        // 1-5. 在系统栈setup帧并保存系统SP到[X29, #16]
+        // 6. 切换到虚拟栈
+        // 7. SUB SP(虚拟), #16
+        // 8. STR X16(系统SP), [SP(虚拟), #8]
+        // 9. 调用save_return_slot_pointer（会再分配16字节）
+
+        // 这样虚拟栈布局是：
+        // [SP+0]: 返回值槽指针
+        // [SP+16]: 系统SP保存位置 [SP+16+8]
+
+        // 尾声：
+        // 1. 跳过返回值槽：ADD SP, #16
+        // 2. 读取系统SP：LDR X16, [SP, #8]
+        // 3. 回收保存系统SP的空间：ADD SP, #16
+        // 4. 切换回系统栈：MOV SP, X16
+        // 5. 恢复callee-saved
+        // 6. 恢复X29/X30
+
+        // 这个方案可行！让我实现它
+
+        // 但我刚才的序言修改没有在虚拟栈保存系统SP！我需要补上
+
+        // 对了，我可以直接在这里写尾声，然后回头修改序言
+
+        // 尾声实现（假设虚拟栈布局如上所述）：
+
+        // compile_return已经弹出了返回值槽（+16字节）
+        // 虚拟栈布局（compile_return后）：
+        // [SP+0]: 系统SP
+        // [SP+8]: X30
+
+        // 1. 从虚拟栈读取X30和系统SP
         self.emit_ldr_reg_mem(
             code_builder,
-            self.vm_calling_convention.frame_pointer,
+            AArch64Register::X30 as u8,
             AArch64Register::SP as u8,
             8,
         );
+        self.emit_ldr_reg_mem(code_builder, 16, AArch64Register::SP as u8, 0);
+
+        // 2. 切换回系统栈
+        self.emit_mov_reg_reg(code_builder, AArch64Register::SP as u8, 16);
+
+        // 3. 恢复 callee-saved 寄存器（从系统栈）
+        self.restore_callee_saved_registers(code_builder)?;
+
+        // 4. 恢复 X29
+        // LDR X29, [SP, #0]
+        self.emit_ldr_reg_mem(
+            code_builder,
+            AArch64Register::X29 as u8,
+            AArch64Register::SP as u8,
+            0,
+        );
+
+        // 5. 释放系统栈帧（32字节）
         self.emit_add_reg_reg_imm(
             code_builder,
             AArch64Register::SP as u8,
             AArch64Register::SP as u8,
-            16,
+            32,
         );
-
-        // 4. 恢复帧指针和链接寄存器（标准 C 尾声）
-        // LDP X29, X30, [SP], #16 (post-index load pair)
-        let ldp_x29_x30 = 0xA8C17BFDu32;
-        code_builder.emit_bytes(&ldp_x29_x30.to_le_bytes());
 
         Ok(())
     }
@@ -1825,17 +2218,8 @@ impl JitCompiler for AArch64Compiler {
         // 缓存当前函数的 callee-saved 信息
         self.current_function_use_regs = function.get_used_regs().to_vec();
 
-        // 🔧 加载降级后的生命周期信息用于优化寄存器保存
-        self.current_lowered_lifetimes = function.lowered_lifetimes.clone();
-        self.current_lowered_register_mapping = function.lowered_register_mapping.clone();
-
-        if self.debug_mode {
-            if let Some(ref lifetimes) = self.current_lowered_lifetimes {
-                log::debug!("🔧 加载了降级后生命周期信息: {} 个寄存器", lifetimes.len());
-            } else {
-                log::debug!("⚠️  未找到降级后生命周期信息，将使用保守的寄存器保存策略");
-            }
-        }
+        // 🔧 活跃寄存器信息已由 CallsiteLiveRegisterPass 预先计算并存储在 instruction_metadata 中
+        // 无需在 JIT 编译时重新运行生命周期分析
 
         // 创建代码构建器
         let mut code_builder = CodeBuilder::new();
@@ -1864,7 +2248,13 @@ impl JitCompiler for AArch64Compiler {
         // 编译所有指令
         for (index, instruction) in function.instructions.iter().skip(1).enumerate() {
             // skip(1)后enumerate从0开始，所以实际指令索引是index+1
-            self.compile_instruction(instruction, &mut code_builder, is_main_function, index + 1)?;
+            self.compile_instruction(
+                instruction,
+                &mut code_builder,
+                is_main_function,
+                index + 1,
+                function,
+            )?;
         }
 
         // 获取label信息（在finalize之前）
@@ -1910,142 +2300,8 @@ impl JitCompiler for AArch64Compiler {
         Ok(compiled_function)
     }
 
-    /// 编译单个函数（使用全局标签表）
-    fn compile_function_with_global_labels(
-        &mut self,
-        function: &LirFunction,
-        program: &LirProgram,
-        global_labels: &std::collections::HashMap<String, *const u8>,
-    ) -> Result<CompiledFunction, String> {
-        if self.debug_mode {
-            log::debug!("AArch64: 开始编译函数 '{}' (使用全局标签表)", function.name);
-        }
-
-        // 🔧 修复：设置当前函数名，用于生成唯一label
-        self.current_function_name = function.name.clone();
-        self.unique_label_counter = 0; // 重置计数器
-
-        let mut code_builder = if self.debug_mode {
-            CodeBuilder::with_debug_info()
-        } else {
-            CodeBuilder::new()
-        };
-
-        // 设置全局标签表
-        let global_labels_usize: std::collections::HashMap<String, usize> = global_labels
-            .iter()
-            .map(|(k, v)| (k.clone(), *v as usize))
-            .collect();
-        code_builder.set_global_labels(global_labels_usize);
-
-        // 🔧 修复：设置当前函数使用的 callee-saved 寄存器
-        self.current_function_use_regs = function.get_used_regs().to_vec();
-
-        // 🔧 加载降级后的生命周期信息用于优化寄存器保存
-        self.current_lowered_lifetimes = function.lowered_lifetimes.clone();
-        self.current_lowered_register_mapping = function.lowered_register_mapping.clone();
-
-        if self.debug_mode {
-            if let Some(ref lifetimes) = self.current_lowered_lifetimes {
-                log::debug!("🔧 加载了降级后生命周期信息: {} 个寄存器", lifetimes.len());
-            } else {
-                log::debug!("⚠️  未找到降级后生命周期信息，将使用保守的寄存器保存策略");
-            }
-        }
-
-        // 生成函数标签（这是函数的入口点）
-        let function_label = format!("func_{}", function.name);
-        code_builder.define_label(&function_label)?;
-
-        // 🔧 修复：只有main函数才需要C FFI序言尾声，其他函数使用简化版本
-        let is_main_function = self.is_entry_function(&function.name, program);
-
-        // 生成函数序言（在函数标签之后，但在实际代码之前）
-        // 注意：只有main函数在这里插入prologue，因为main是被外部C代码调用的
-        if is_main_function {
-            // C FFI序言：用于main函数的外部调用
-            self.emit_function_prologue(&mut code_builder)?;
-        }
-        // 内部函数的prologue在第一个label之后插入，因为内部调用会跳转到第一个label
-
-        // 检查第一个instruction是label，是则编译，不是则返回错误
-        if let Some(Instruction::Label { id, .. }) = function.instructions.first() {
-            code_builder.define_label(&format!("label_{}", id.0))?;
-        } else {
-            return Err(format!("函数 '{}' 的第一个指令必须是label", function.name));
-        }
-
-        if !is_main_function {
-            // 简化序言：用于内部函数调用
-            self.emit_internal_function_prologue(&mut code_builder)?;
-        }
-
-        // 编译函数体
-        for (index, instruction) in function.instructions.iter().skip(1).enumerate() {
-            if self.debug_mode {
-                code_builder.add_source_line(index);
-            }
-
-            // skip(1)后enumerate从0开始，所以实际指令索引是index+1
-            self.compile_instruction(instruction, &mut code_builder, is_main_function, index + 1)?;
-        }
-
-        // 获取label信息（在finalize之前）
-        let labels = code_builder.exported_labels().clone();
-
-        if self.debug_mode {
-            log::debug!(
-                "🔧 编译函数 '{}' 时收集到 {} 个label",
-                function.name,
-                labels.len()
-            );
-            for (label, offset) in &labels {
-                log::debug!("🔧   label: {} -> 偏移: {}", label, offset);
-            }
-        }
-
-        // 获取编译后的机器码
-        // 从全局标签表中获取当前函数的可执行内存基址
-        let exec_base =
-            if let Some(&func_addr) = global_labels.get(&format!("func_{}", function.name)) {
-                // 函数地址就是基址
-                if self.debug_mode {
-                    log::debug!("🔧 找到函数的地址: 0x{:016X}", func_addr as usize);
-                }
-                func_addr as usize
-            } else {
-                // 如果没有找到函数地址，使用0作为默认值
-                if self.debug_mode {
-                    log::debug!(
-                        "🔧 警告：未找到函数 '{}' 的地址，使用0作为exec_base",
-                        function.name
-                    );
-                }
-                0
-            };
-
-        let machine_code = code_builder
-            .finalize_with_global_addresses_and_exec_base(Some(global_labels), exec_base)?;
-
-        // 创建编译后的函数
-        let mut compiled_function = CompiledFunction::new(
-            function.name.clone(),
-            machine_code,
-            0, // 入口点就是函数开始
-        );
-
-        // 保存label信息
-        compiled_function.labels = labels;
-
-        println!(
-            "AArch64: 函数 '{}' 编译完成，机器码大小: {} 字节\n{}",
-            function.name,
-            compiled_function.code_size(),
-            compiled_function
-        );
-
-        Ok(compiled_function)
-    }
+    // 🔧 优化：compile_function_with_global_labels 已被移除
+    // 现在使用 compile_function + patch_executable_memory 进行单次编译+原地修补
 
     /// 获取目标架构名称
     fn target_architecture(&self) -> &'static str {

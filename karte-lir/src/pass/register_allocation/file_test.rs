@@ -1,6 +1,7 @@
 use super::*;
 use crate::pass::stack_frame_layout::StackFrameLayoutPass;
 use crate::{Instruction, LirFunction, Operand, Register};
+use karte_common::calling_convention::{REG_X0, REG_X1, REG_X2, REG_X29};
 use karte_diagnostics::Span;
 use std::collections::HashMap;
 
@@ -35,6 +36,7 @@ fn parse_lir_file(content: &str) -> Result<LirFunction, String> {
         used_regs: Vec::new(),
         lowered_lifetimes: None,
         lowered_register_mapping: None,
+        instruction_metadata: HashMap::new(),
     };
 
     // 解析指令
@@ -283,8 +285,11 @@ L1:
     });
 
     // 验证是否有基于 FP 的栈访问（布局已下沉为 FP+offset）
+    // ARM64 AAPCS64: FP = x29
     let has_fp_memory_access = function.instructions.iter().any(|inst| match inst {
-        Instruction::Load64 { addr, .. } | Instruction::Store64 { addr, .. } => addr.id() == 7,
+        Instruction::Load64 { addr, .. } | Instruction::Store64 { addr, .. } => {
+            addr.id() == REG_X29 as usize
+        }
         _ => false,
     });
 
@@ -443,6 +448,7 @@ fn test_function_parameter_register_allocation() {
         used_regs: Vec::new(),
         lowered_lifetimes: None,
         lowered_register_mapping: None,
+        instruction_metadata: HashMap::new(),
     };
 
     info!("🧪 测试前的函数参数: {:?}", function.parameter_registers);
@@ -461,11 +467,11 @@ fn test_function_parameter_register_allocation() {
     // 验证结果
     assert!(matches!(result, PassResult::Changed));
 
-    // 验证参数寄存器分配是否正确
-    // 参数1(RegisterId(100)) 应该分配到 r1
-    // 参数2(RegisterId(101)) 应该分配到 r2
-    // 参数3(RegisterId(102)) 应该分配到 r3
-    // 返回值(RegisterId(201)) 应该分配到 r0
+    // 验证参数寄存器分配是否正确 (ARM64 AAPCS64)
+    // 参数1(RegisterId(100)) 应该分配到 x0 (REG_X0)
+    // 参数2(RegisterId(101)) 应该分配到 x1 (REG_X1)
+    // 参数3(RegisterId(102)) 应该分配到 x2 (REG_X2)
+    // 返回值(RegisterId(201)) 应该分配到 x0 (REG_X0)
 
     let mut found_param_usage = false;
     let mut found_return_assignment = false;
@@ -473,26 +479,29 @@ fn test_function_parameter_register_allocation() {
     for instruction in &function.instructions {
         match instruction {
             Instruction::Add { src1, src2, .. } => {
-                // 检查是否使用了正确的参数寄存器
+                // 检查是否使用了正确的参数寄存器 (ARM64: x0, x1, x2)
                 if let (Operand::Register { id: reg1 }, Operand::Register { id: reg2 }) =
                     (src1, src2)
                 {
-                    if (reg1.id() == 1 && reg2.id() == 2) || (reg1.id() == 2 && reg2.id() == 1) {
+                    let r1 = reg1.id();
+                    let r2 = reg2.id();
+                    // 检查是否使用了 x0 和 x1，或者 x1 和 x2
+                    if (r1 == REG_X0 as usize && r2 == REG_X1 as usize)
+                        || (r1 == REG_X1 as usize && r2 == REG_X0 as usize)
+                        || (r1 == REG_X1 as usize && r2 == REG_X2 as usize)
+                        || (r1 == REG_X2 as usize && r2 == REG_X1 as usize)
+                    {
                         found_param_usage = true;
-                        info!(
-                            "✅ 找到正确的参数寄存器使用: r{} + r{}",
-                            reg1.id(),
-                            reg2.id()
-                        );
+                        info!("✅ 找到正确的参数寄存器使用: x{} + x{}", r1, r2);
                     }
                 }
             }
             Instruction::Return {
                 value: Some(reg), ..
             } => {
-                if reg.id() == 0 {
+                if reg.id() == REG_X0 as usize {
                     found_return_assignment = true;
-                    info!("✅ 找到正确的返回值寄存器: r{}", reg.id());
+                    info!("✅ 找到正确的返回值寄存器: x{}", reg.id());
                 }
             }
             _ => {}

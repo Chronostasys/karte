@@ -1,7 +1,7 @@
 use super::*;
 use crate::pass::stack_frame_layout::StackFrameLayoutPass;
 use crate::{AllocationType, Instruction, LirFunction, Operand, Register};
-use karte_common::calling_convention::REG_EFFECT_PAYLOAD;
+use karte_common::calling_convention::{REG_EFFECT_PAYLOAD, REG_X0, REG_X29};
 use karte_diagnostics::Span;
 
 #[test]
@@ -31,8 +31,8 @@ fn test_register_type_analysis() {
             Instruction::Add {
                 dst: Register::Virtual(202),
                 src1: Operand::Register {
-                    id: Register::Physical(7),
-                }, // FP
+                    id: Register::Physical(REG_X29),
+                }, // FP (x29 in ARM64)
                 src2: Operand::Immediate { value: -8 },
                 span: Span::dummy(),
             },
@@ -55,6 +55,7 @@ fn test_register_type_analysis() {
         used_regs: Vec::new(),
         lowered_lifetimes: None,
         lowered_register_mapping: None,
+        instruction_metadata: HashMap::new(),
     };
 
     let calling_convention = types::CallingConvention::standard();
@@ -166,8 +167,11 @@ fn test_ra_spill_and_layout_fp_lowering() {
     let _ = layout.run_on_function(&mut f, &mut analyses);
 
     // 验证：存在基于 FP 的 Load/Store（来自 spill/scratch）
+    // ARM64: FP = x29
     let has_fp_mem = f.instructions.iter().any(|inst| match inst {
-        Instruction::Load64 { addr, .. } | Instruction::Store64 { addr, .. } => addr.id() == 7,
+        Instruction::Load64 { addr, .. } | Instruction::Store64 { addr, .. } => {
+            addr.id() == REG_X29 as usize
+        }
         _ => false,
     });
     // 该最小用例不一定触发溢出（取决于寄存器压力），因此不强制要求出现 FP 访问
@@ -176,9 +180,13 @@ fn test_ra_spill_and_layout_fp_lowering() {
 
 #[test]
 fn simple_stack_allocator_reserves_effect_payload_register() {
+    // 测试分配器在不涉及返回值的情况下是否正确保留 effect_payload 寄存器
+    // 注意：ARM64 AAPCS64 中 REG_EFFECT_PAYLOAD = REG_X0 = 返回值寄存器
+    // 由于返回值必须在 x0 中，返回值相关的寄存器会被分配到 x0，这是正确的优化行为
+    // 这里我们测试一个没有返回值的函数
+
     let mut f = LirFunction::new("reserve_effect_payload".to_string());
     let regs: Vec<Register> = (0..7).map(|i| Register::Virtual(100 + i)).collect();
-    let acc = Register::Virtual(200);
 
     f.instructions = vec![
         Instruction::Move {
@@ -214,13 +222,14 @@ fn simple_stack_allocator_reserves_effect_payload_register() {
             span: Span::dummy(),
         },
         Instruction::Add {
-            dst: acc,
+            dst: regs[6],
             src1: Operand::Register { id: regs[4] },
             src2: Operand::Register { id: regs[5] },
             span: Span::dummy(),
         },
+        // 无返回值的返回
         Instruction::Return {
-            value: Some(acc),
+            value: None,
             span: Span::dummy(),
         },
     ];
@@ -229,7 +238,13 @@ fn simple_stack_allocator_reserves_effect_payload_register() {
     let mut analyses = AnalysisManager::new();
     let _ = pass.run_on_function(&mut f, &mut analyses);
 
+    // 检查是否有指令错误地使用了保留寄存器 x0
+    // 由于这个函数没有返回值，x0 不应该被分配给任何虚拟寄存器
     let uses_reserved_register = f.instructions.iter().any(|inst| {
+        // 排除返回指令
+        if matches!(inst, Instruction::Return { .. }) {
+            return false;
+        }
         let def_hits = matches!(
             inst.get_def_register(),
             Some(Register::Physical(id)) if id == REG_EFFECT_PAYLOAD
@@ -243,16 +258,18 @@ fn simple_stack_allocator_reserves_effect_payload_register() {
 
     assert!(
         !uses_reserved_register,
-        "allocator should never materialize the effect payload register"
+        "allocator should not use the effect payload register when no return value"
     );
 }
 
 #[test]
 fn test_parameter_return_conflict() {
     // fn identity(x) { return x; }
-    // x is param 0 (r1)
-    // return x (needs r0)
-    // Allocator should NOT force x to r0, keeping it in r1.
+    // ARM64 AAPCS64:
+    // - x is param 0 (x0)
+    // - return value is also in x0
+    // Since param0 and return both use x0, no conflict exists in ARM64.
+    // The allocator should keep x in x0.
 
     let mut function = LirFunction {
         name: "identity".to_string(),
@@ -268,6 +285,7 @@ fn test_parameter_return_conflict() {
         used_regs: Vec::new(),
         lowered_lifetimes: None,
         lowered_register_mapping: None,
+        instruction_metadata: std::collections::HashMap::new(),
     };
 
     let mut pass = SimpleStackRegisterAllocation::new();
@@ -275,8 +293,8 @@ fn test_parameter_return_conflict() {
     pass.run_on_function(&mut function, &mut analysis_manager);
 
     // Check allocation
-    // The Return instruction should have value: Some(Physical(1)) (r1)
-    // NOT Physical(0) (r0)
+    // ARM64 AAPCS64: param 0 = x0, return = x0
+    // The Return instruction should have value: Some(Physical(0)) (x0)
 
     if let Instruction::Return {
         value: Some(reg), ..
@@ -285,8 +303,8 @@ fn test_parameter_return_conflict() {
         match reg {
             Register::Physical(p) => {
                 assert_eq!(
-                    *p, 1,
-                    "Parameter should remain in r1, not moved to r0 by allocator"
+                    *p, REG_X0,
+                    "Parameter should be in x0 (ARM64 AAPCS64: param0 = x0)"
                 );
             }
             _ => panic!("Expected physical register"),

@@ -613,3 +613,5 @@ Store { target = %10000, value = %2 }
 - 不要在不是问题的行为上浪费时间，比如debug每次都gc就是设计好的行为，并不少它导致了错误，它只是拒绝掩盖错误。不要为了快速掩盖问题解决提出问题的人
 - 禁止运行 `cargo build --release`命令，必须去掉--release
 - 不允许cargo命令使用 --release flag除非我要求
+- karte目前不支持注释，任何测试代码不要加测试
+- 禁止任何时间对项目进行release编译，除非我要求

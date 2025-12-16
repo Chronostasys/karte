@@ -113,6 +113,10 @@ impl IndexInstructionTransformer {
                     if idx < function.instructions.len() {
                         debug!("🔧 删除指令 [{}]: {:?}", idx, function.instructions[idx]);
                         function.instructions.remove(idx);
+
+                        // 🔧 同步更新 metadata 索引
+                        update_metadata_on_remove(&mut function.instruction_metadata, idx);
+
                         modified = true;
                         removed_count += 1;
                     }
@@ -124,6 +128,7 @@ impl IndexInstructionTransformer {
                             idx, function.instructions[idx], new_instr
                         );
                         function.instructions[idx] = new_instr.clone();
+                        // Replace 不需要更新索引，metadata 保持在同一位置
                         modified = true;
                         replaced_count += 1;
                     }
@@ -132,6 +137,10 @@ impl IndexInstructionTransformer {
                     if idx <= function.instructions.len() {
                         debug!("🔧 插入指令 [{}]: {}", idx, new_instr);
                         function.instructions.insert(idx, new_instr.clone());
+
+                        // 🔧 同步更新 metadata 索引
+                        update_metadata_on_insert(&mut function.instruction_metadata, idx);
+
                         modified = true;
                         inserted_count += 1;
                     }
@@ -393,6 +402,9 @@ impl HistoryBasedTransformer {
                 );
                 function.instructions.remove(corrected_index);
 
+                // 🔧 同步更新 metadata 索引
+                update_metadata_on_remove(&mut function.instruction_metadata, corrected_index);
+
                 // 更新后续历史记录中的位置
                 self.adjust_history_positions_after_removal(corrected_index);
             }
@@ -402,12 +414,16 @@ impl HistoryBasedTransformer {
                     corrected_index, function.instructions[corrected_index], new_instruction
                 );
                 function.instructions[corrected_index] = new_instruction.clone();
+                // Replace 不需要更新 metadata 索引
             }
             HistoryBasedOperationType::Insert(new_instruction) => {
                 debug!("🧠   插入指令 [{}]: {:?}", corrected_index, new_instruction);
                 function
                     .instructions
                     .insert(corrected_index, new_instruction.clone());
+
+                // 🔧 同步更新 metadata 索引
+                update_metadata_on_insert(&mut function.instruction_metadata, corrected_index);
             }
         }
 
@@ -557,6 +573,69 @@ impl BatchTransformer {
     pub fn is_empty(&self) -> bool {
         self.index_transformer.is_empty() && self.history_transformer.is_empty()
     }
+}
+
+/// 删除指令时更新 metadata 索引
+///
+/// 当删除位置 `removed_index` 的指令时：
+/// - 删除该位置的 metadata（如果存在）
+/// - 所有 index > removed_index 的 metadata 向前移动一位（index - 1）
+fn update_metadata_on_remove(
+    metadata: &mut std::collections::HashMap<usize, crate::InstructionMetadata>,
+    removed_index: usize,
+) {
+    // 1. 删除当前位置的 metadata
+    metadata.remove(&removed_index);
+
+    // 2. 收集所有需要更新的索引
+    let keys_to_update: Vec<usize> = metadata
+        .keys()
+        .filter(|&&k| k > removed_index)
+        .copied()
+        .collect();
+
+    // 3. 更新索引（从大到小，避免覆盖）
+    for old_key in keys_to_update.iter().rev() {
+        if let Some(meta) = metadata.remove(old_key) {
+            metadata.insert(old_key - 1, meta);
+        }
+    }
+
+    trace!(
+        "🔧 Metadata 更新：删除位置 {}，更新了 {} 个后续索引",
+        removed_index,
+        keys_to_update.len()
+    );
+}
+
+/// 插入指令时更新 metadata 索引
+///
+/// 当在位置 `insert_index` 插入指令时：
+/// - 所有 index >= insert_index 的 metadata 向后移动一位（index + 1）
+/// - 新插入的指令默认没有 metadata（由调用者决定是否添加）
+fn update_metadata_on_insert(
+    metadata: &mut std::collections::HashMap<usize, crate::InstructionMetadata>,
+    insert_index: usize,
+) {
+    // 收集所有需要更新的索引
+    let keys_to_update: Vec<usize> = metadata
+        .keys()
+        .filter(|&&k| k >= insert_index)
+        .copied()
+        .collect();
+
+    // 更新索引（从大到小，避免覆盖）
+    for old_key in keys_to_update.iter().rev() {
+        if let Some(meta) = metadata.remove(old_key) {
+            metadata.insert(old_key + 1, meta);
+        }
+    }
+
+    trace!(
+        "🔧 Metadata 更新：插入位置 {}，更新了 {} 个后续索引",
+        insert_index,
+        keys_to_update.len()
+    );
 }
 
 /// 变换工具函数

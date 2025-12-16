@@ -132,8 +132,8 @@ impl Default for CompatibilityVMManager {
 }
 
 /// 虚拟机配置常量
-/// 通用寄存器数量 - 为了更好地测试寄存器分配算法，减少到8个
-pub const NUM_REGISTERS: usize = 8;
+/// 通用寄存器数量 - ARM64 ABI 使用 32 个通用寄存器 (x0-x30 + sp)
+pub const NUM_REGISTERS: usize = 32;
 /// 内存大小 (1MB)
 pub const MEMORY_SIZE: usize = 1024 * 1024;
 /// 栈大小

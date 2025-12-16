@@ -116,36 +116,34 @@ impl StackFrameLayoutPass {
         slots
     }
 
-    fn compute_live_ranges(&self, function: &LirFunction, slots: &mut [StackSlotInfo]) {
-        for (i, instr) in function.instructions.iter().enumerate() {
-            match instr {
-                Instruction::Load64 { addr, .. } => {
-                    for slot in slots.iter_mut() {
-                        if *addr == slot.addr_reg {
-                            slot.start = Some(slot.start.map_or(i, |s| s.min(i)));
-                            slot.end = Some(slot.end.map_or(i, |e| e.max(i)));
-                        }
-                    }
-                }
-                Instruction::Store64 { addr, src, .. } => {
-                    for slot in slots.iter_mut() {
-                        // 直接对该槽地址进行访问
-                        if *addr == slot.addr_reg {
-                            slot.start = Some(slot.start.map_or(i, |s| s.min(i)));
-                            slot.end = Some(slot.end.map_or(i, |e| e.max(i)));
-                        }
-
-                        // 地址逃逸：将该槽的地址值写入了其它内存位置
-                        if let Operand::Register { id } = src {
-                            if *id == slot.addr_reg {
-                                slot.start = Some(slot.start.map_or(i, |s| s.min(i)));
-                                // 保守处理：延长到函数末尾，避免与别名间接使用冲突
-                                slot.end = Some(function.instructions.len().saturating_sub(1));
-                            }
-                        }
-                    }
-                }
-                _ => {}
+    /// 使用专业的生命周期分析计算栈槽生存期
+    ///
+    /// 🔧 修复：不再手动扫描Load/Store指令（会被BlockLayoutPass重排影响）
+    /// 而是使用基于CFG的专业生命周期分析，正确处理控制流
+    fn compute_live_ranges_from_lifetime_analysis(
+        &self,
+        slots: &mut [StackSlotInfo],
+        lifetime_result: &crate::pass::LifetimeAnalysisResult,
+    ) {
+        for slot in slots.iter_mut() {
+            // 从生命周期分析结果中查找该地址寄存器的生存期
+            if let Some(lifetime) = lifetime_result
+                .lifetimes
+                .iter()
+                .find(|lt| lt.register == slot.addr_reg)
+            {
+                slot.start = Some(lifetime.start);
+                slot.end = Some(lifetime.end);
+                debug!(
+                    "📊 栈槽 {:?} 生存期: [{}, {}]（来自生命周期分析）",
+                    slot.addr_reg, lifetime.start, lifetime.end
+                );
+            } else {
+                // 如果生命周期分析中没有找到，说明该寄存器未被使用
+                debug!(
+                    "⚠️ 栈槽 {:?} 未在生命周期分析中找到，视为未使用",
+                    slot.addr_reg
+                );
             }
         }
     }
@@ -307,7 +305,7 @@ impl FunctionPass for StackFrameLayoutPass {
     fn run_on_function(
         &mut self,
         function: &mut LirFunction,
-        _analyses: &mut AnalysisManager,
+        analyses: &mut AnalysisManager,
     ) -> PassResult {
         info!("🎯 StackFrameLayout: 函数 {}", function.name);
 
@@ -317,10 +315,22 @@ impl FunctionPass for StackFrameLayoutPass {
             return PassResult::Unchanged;
         }
 
-        // 2) 生存期
-        self.compute_live_ranges(function, &mut slots);
+        // 2) 获取专业的生命周期分析结果
+        // 🔧 修复：使用基于CFG的生命周期分析，正确处理BlockLayoutPass重排后的指令顺序
+        let lifetime_result =
+            match analyses.get_result::<crate::pass::LifetimeAnalysisResult>("lifetime-analysis") {
+                Some(result) => result,
+                None => {
+                    return PassResult::Failed(
+                        "StackFrameLayout 需要先运行 lifetime-analysis".to_string(),
+                    );
+                }
+            };
 
-        // 3) 过滤无使用的槽（仅删除 Alloc）
+        // 3) 从生命周期分析结果计算栈槽生存期
+        self.compute_live_ranges_from_lifetime_analysis(&mut slots, lifetime_result);
+
+        // 4) 过滤无使用的槽（仅删除 Alloc）
         // 先移除无用 Alloc
         {
             use crate::pass::instruction_transformer::IndexInstructionTransformer;
@@ -349,7 +359,7 @@ impl FunctionPass for StackFrameLayoutPass {
             return PassResult::Changed;
         }
 
-        // 4) 线性扫描分配负偏移（相对FP）
+        // 5) 线性扫描分配负偏移（相对FP）
         used_slots.sort_by_key(|s| s.start.unwrap());
         let mut allocator = LinearScanAllocator::default();
         let mut offset_map: HashMap<Register, i64> = HashMap::new();
@@ -381,6 +391,8 @@ impl FunctionPass for StackFrameLayoutPass {
 
         // 6) 设置 stack_frame_size（正数）
         function.stack_frame_size = (-allocator.current_neg_offset) as usize;
+        // 保持16字节对齐
+        function.stack_frame_size = (function.stack_frame_size + 15) & !15;
         info!(
             "✅ StackFrameLayout 完成，frame_size={}，槽数量={}",
             function.stack_frame_size,
@@ -390,7 +402,9 @@ impl FunctionPass for StackFrameLayoutPass {
     }
 
     fn required_analyses(&self) -> Vec<&'static str> {
-        vec![]
+        // 🔧 修复：声明依赖生命周期分析，确保栈槽生存期计算正确
+        // LifetimeAnalysis 依赖 CFG、DefUse、Liveness，能够正确处理 BlockLayoutPass 重排后的指令顺序
+        vec!["lifetime-analysis"]
     }
 
     fn invalidated_analyses(&self) -> Vec<&'static str> {

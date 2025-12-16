@@ -210,7 +210,7 @@ impl EffectLoweringPass {
         new_instructions.push(Instruction::Sub {
             dst: sp,
             src1: Operand::Register { id: sp },
-            src2: Operand::Immediate { value: 8 },
+            src2: Operand::Immediate { value: 16 },
             span: *span,
         });
         new_instructions.push(Instruction::Store64 {
@@ -412,7 +412,7 @@ impl EffectLoweringPass {
         new_instructions.push(Instruction::Add {
             dst: sp,
             src1: Operand::Register { id: sp },
-            src2: Operand::Immediate { value: 8 },
+            src2: Operand::Immediate { value: 16 },
             span: Span::dummy(),
         });
 
@@ -437,7 +437,7 @@ impl EffectLoweringPass {
         new_instructions.push(Instruction::Add {
             dst: sp,
             src1: Operand::Register { id: sp },
-            src2: Operand::Immediate { value: 8 },
+            src2: Operand::Immediate { value: 16 },
             span: *span,
         });
 
@@ -495,13 +495,15 @@ impl FunctionPass for EffectLoweringPass {
     }
 
     fn required_analyses(&self) -> Vec<&'static str> {
-        // Effect指令降级需要生命周期分析的结果来优化调用
-        vec!["lifetime-analysis"]
+        // 🔧 2025-12: Effect指令降级必须在CFG分析之前运行
+        // 因为CFG不理解effect指令，所以这个pass不能依赖任何CFG相关的分析
+        vec![]
     }
 
     fn invalidated_analyses(&self) -> Vec<&'static str> {
         // Effect指令降级会改变指令序列，使所有分析失效
-        vec!["lifetime-analysis", "cfg-analysis", "def-use-analysis"]
+        // 🔧 2025-12: 修复分析名称不匹配的bug - 使用正确的分析名称
+        vec!["lifetime-analysis", "cfg", "def-use", "liveness"]
     }
 
     fn run_on_function(
