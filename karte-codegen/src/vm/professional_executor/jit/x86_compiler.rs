@@ -1270,6 +1270,19 @@ impl JitCompiler for X86Compiler {
 
 // 函数序言和尾声的实现
 impl X86Compiler {
+    /// 获取需要保存的callee-saved寄存器
+    fn get_callee_saved_registers(&self) -> Vec<u8> {
+        // 从calling convention获取callee-saved寄存器列表
+        let callee_saved_regs = &self.calling_convention.callee_saved;
+        
+        // 过滤出实际被使用的寄存器
+        self.current_function_use_regs
+            .iter()
+            .filter(|&&reg| callee_saved_regs.contains(&reg))
+            .copied()
+            .collect()
+    }
+
     /// 生成函数序言
     fn emit_function_prologue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
         // System V AMD64 ABI (Linux/Unix标准): rdi/rsi为前两个参数
@@ -1278,22 +1291,91 @@ impl X86Compiler {
         let vm_sp = X86Register::R10 as u8; // r6
         let vm_fp = X86Register::R11 as u8; // r7
 
-        // 🔧 修复：将参数移动到虚拟机寄存器，但不干扰LIR的栈帧管理
+        if self.debug_mode {
+            println!("x86序言开始：生成符合 System V ABI 的函数序言");
+        }
+
+        // 1. 保存callee-saved寄存器
+        self.save_callee_saved_registers(code_builder)?;
+
+        // 2. 将参数移动到虚拟机寄存器
         // 将虚拟栈指针参数移动到r10 (r6)
         self.emit_mov_reg_reg(code_builder, vm_sp, rdi);
         // 将虚拟帧指针参数移动到r11 (r7)
         self.emit_mov_reg_reg(code_builder, vm_fp, rsi);
 
-        // 🔧 新增：确保r6和r7的初始值正确，让LIR的栈帧管理指令能正常工作
-        // 此时r6和r7已经包含了虚拟栈的地址，LIR的栈帧管理指令会基于这些值工作
+        if self.debug_mode {
+            println!("x86序言完成");
+        }
+
+        Ok(())
+    }
+
+    /// 保存callee-saved寄存器
+    fn save_callee_saved_registers(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+        let callee_saved = self.get_callee_saved_registers();
+        if callee_saved.is_empty() {
+            return Ok(());
+        }
+
+        if self.debug_mode {
+            println!("保存 callee-saved 寄存器: {:?}", callee_saved);
+        }
+
+        // x86使用PUSH指令保存寄存器（自动递减RSP）
+        for &reg in &callee_saved {
+            // PUSH r64: REX.W + 50+rd (如果需要REX前缀)
+            if reg >= 8 {
+                // R8-R15需要REX前缀
+                code_builder.emit_byte(0x41); // REX.B
+            }
+            code_builder.emit_byte(0x50 + (reg & 0x7));
+        }
+
+        Ok(())
+    }
+
+    /// 恢复callee-saved寄存器
+    fn restore_callee_saved_registers(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+        let callee_saved = self.get_callee_saved_registers();
+        if callee_saved.is_empty() {
+            return Ok(());
+        }
+
+        if self.debug_mode {
+            println!("恢复 callee-saved 寄存器: {:?}", callee_saved);
+        }
+
+        // x86使用POP指令恢复寄存器（自动递增RSP）
+        // 注意：恢复顺序必须与保存顺序相反
+        for &reg in callee_saved.iter().rev() {
+            // POP r64: REX.W + 58+rd (如果需要REX前缀)
+            if reg >= 8 {
+                // R8-R15需要REX前缀
+                code_builder.emit_byte(0x41); // REX.B
+            }
+            code_builder.emit_byte(0x58 + (reg & 0x7));
+        }
 
         Ok(())
     }
 
     /// 生成函数尾声
     fn emit_function_epilogue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
-        // 只生成ret指令
+        if self.debug_mode {
+            println!("x86尾声开始");
+        }
+
+        // 1. 恢复callee-saved寄存器
+        self.restore_callee_saved_registers(code_builder)?;
+
+        // 2. 生成ret指令
         code_builder.emit_byte(0xC3);
+
+        if self.debug_mode {
+            println!("x86尾声完成");
+        }
+
         Ok(())
     }
 }
