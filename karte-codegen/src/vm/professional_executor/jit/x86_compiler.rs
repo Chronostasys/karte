@@ -15,6 +15,8 @@ pub struct X86Compiler {
     register_mapping: HashMap<Register, u8>,
     /// 调用约定
     calling_convention: CallingConventionInfo,
+    /// VM调用约定（用于虚拟栈指针）
+    vm_calling_convention: CallingConventionInfo,
     /// 调试模式
     debug_mode: bool,
     /// 唯一label计数器（用于在编译时生成跳转目标）
@@ -23,24 +25,43 @@ pub struct X86Compiler {
     current_function_use_regs: Vec<u8>,
     /// 当前编译的函数名（用于生成唯一label）
     current_function_name: String,
+    /// 虚拟栈指针寄存器（R10，对应Physical(6)）
+    karte_virtual_sp_reg: u8,
 }
 
 impl X86Compiler {
     /// 创建新的x86编译器
     pub fn new(debug_mode: bool) -> Result<Self, String> {
+        let vm_calling_convention = Self::create_vm_calling_convention();
+        let karte_virtual_sp_reg = vm_calling_convention.stack_pointer;
+        
         let mut compiler = Self {
             register_mapping: HashMap::new(),
             calling_convention: Self::create_calling_convention(),
+            vm_calling_convention,
             debug_mode: true, // 强制启用调试模式
             unique_label_counter: 0,
             current_function_use_regs: Vec::new(),
             current_function_name: String::new(),
+            karte_virtual_sp_reg,
         };
 
         // 初始化寄存器映射
         compiler.initialize_register_mapping();
 
         Ok(compiler)
+    }
+    
+    /// 创建VM调用约定（用于虚拟栈管理）
+    fn create_vm_calling_convention() -> CallingConventionInfo {
+        CallingConventionInfo {
+            parameter_registers: vec![],
+            return_register: X86Register::RAX as u8,
+            stack_pointer: X86Register::R10 as u8, // 虚拟栈指针使用R10
+            frame_pointer: X86Register::R11 as u8, // 虚拟帧指针使用R11
+            caller_saved: vec![],
+            callee_saved: vec![],
+        }
     }
 
     /// 创建x86-64调用约定
@@ -987,26 +1008,52 @@ impl X86Compiler {
         code_builder: &mut CodeBuilder,
         exclude: &[u8],
     ) -> (Vec<u8>, usize) {
-        let regs: Vec<u8> = self
+        // 获取虚拟栈指针寄存器
+        let karte_virtual_sp_reg = self.karte_virtual_sp_reg;
+        
+        // 过滤出需要保存的caller-saved寄存器（排除虚拟栈指针本身）
+        let mut regs: Vec<u8> = self
             .calling_convention
             .caller_saved
             .iter()
             .copied()
-            .filter(|reg| !exclude.contains(reg))
+            .filter(|reg| !exclude.contains(reg) && *reg != karte_virtual_sp_reg)
             .collect();
 
         if regs.is_empty() {
+            // 步骤2：即使没有caller-saved寄存器要保存，也要保存VM帧指针到系统栈
+            let vm_fp_reg = self.vm_calling_convention.frame_pointer;
+            
+            // 分配16字节系统栈空间（保持对齐）
+            self.emit_sub_rsp_imm(code_builder, 16);
+            // 保存VM帧指针到[RSP+8]
+            self.emit_mov_mem_reg(code_builder, X86Register::RSP as u8, 8, vm_fp_reg);
+            
             return (regs, 0);
         }
 
-        let stack_space = align_to(regs.len() * 8, 16);
-        self.emit_sub_rsp_imm(code_builder, stack_space as i32);
+        // 🔧 关键：确保虚拟栈空间16字节对齐
+        let raw_stack_space = regs.len() * 8;
+        let virtual_stack_space = ((raw_stack_space + 15) / 16) * 16;
 
+        // 步骤1：保存寄存器到虚拟栈
+        // 调整虚拟栈指针（向下增长，额外分配32字节缓冲）
+        self.emit_sub_reg_imm32(code_builder, karte_virtual_sp_reg, (virtual_stack_space as i32) + 32);
+
+        // 保存所有寄存器到虚拟栈
         for (idx, reg) in regs.iter().enumerate() {
-            self.emit_mov_mem_reg(code_builder, X86Register::RSP as u8, (idx * 8) as i32, *reg);
+            self.emit_mov_mem_reg(code_builder, karte_virtual_sp_reg, (idx * 8) as i32, *reg);
         }
 
-        (regs, stack_space)
+        // 步骤2：保存VM帧指针到系统栈（用于栈回溯）
+        let vm_fp_reg = self.vm_calling_convention.frame_pointer;
+        
+        // 分配16字节系统栈空间（保持对齐）
+        self.emit_sub_rsp_imm(code_builder, 16);
+        // 保存VM帧指针到[RSP+8]
+        self.emit_mov_mem_reg(code_builder, X86Register::RSP as u8, 8, vm_fp_reg);
+
+        (regs, virtual_stack_space)
     }
 
     fn restore_call_clobbered_registers(
@@ -1015,15 +1062,26 @@ impl X86Compiler {
         regs: &[u8],
         stack_space: usize,
     ) {
+        // 🔧 关键：恢复顺序与保存顺序相反
+        
+        // 步骤1：从系统栈恢复VM帧指针
+        let vm_fp_reg = self.vm_calling_convention.frame_pointer;
+        self.emit_mov_reg_mem(code_builder, vm_fp_reg, X86Register::RSP as u8, 8);
+        self.emit_add_rsp_imm(code_builder, 16);
+
         if regs.is_empty() {
             return;
         }
 
+        // 步骤2：从虚拟栈恢复caller-saved寄存器
+        let karte_virtual_sp_reg = self.karte_virtual_sp_reg;
+        
         for (idx, reg) in regs.iter().enumerate() {
-            self.emit_mov_reg_mem(code_builder, *reg, X86Register::RSP as u8, (idx * 8) as i32);
+            self.emit_mov_reg_mem(code_builder, *reg, karte_virtual_sp_reg, (idx * 8) as i32);
         }
 
-        self.emit_add_rsp_imm(code_builder, stack_space as i32);
+        // 恢复虚拟栈指针
+        self.emit_add_reg_imm32(code_builder, karte_virtual_sp_reg, (stack_space as i32) + 32);
     }
 
     /// add reg, reg (64位)
