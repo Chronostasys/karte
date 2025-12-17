@@ -33,8 +33,8 @@ impl X86Compiler {
     pub fn new(debug_mode: bool) -> Result<Self, String> {
         let mut compiler = Self {
             register_mapping: HashMap::new(),
-            ffi_calling_convention: Self::create_calling_convention(),
-            vm_calling_convention: CallingConvention::standard(),
+            ffi_calling_convention: Self::create_c_ffi_calling_convention(),
+            vm_calling_convention: CallingConvention::x86_64(),
             debug_mode: true, // 强制启用调试模式以便观察编译过程
             unique_label_counter: 0,
             current_function_use_regs: Vec::new(),
@@ -47,102 +47,97 @@ impl X86Compiler {
         Ok(compiler)
     }
 
-    /// 创建x86-64调用约定 (System V AMD64 ABI)
-    fn create_calling_convention() -> CallingConventionInfo {
+    /// 创建 C FFI 调用约定 (System V AMD64 ABI for Linux/macOS)
+    ///
+    /// 这个调用约定用于调用 C 运行时函数 (runtime intrinsics)
+    fn create_c_ffi_calling_convention() -> CallingConventionInfo {
+        use karte_common::calling_convention::*;
         CallingConventionInfo {
             parameter_registers: vec![
-                X86Register::RDI as u8, // 第一个参数/返回值
-                X86Register::RSI as u8, // 第二个参数
-                X86Register::RDX as u8, // 第三个参数
-                X86Register::RCX as u8, // 第四个参数
-                X86Register::R8 as u8,  // 第五个参数
-                X86Register::R9 as u8,  // 第六个参数
+                REG_RDI, // 第一个参数
+                REG_RSI, // 第二个参数
+                REG_RDX, // 第三个参数
+                REG_RCX, // 第四个参数
+                REG_R8,  // 第五个参数
+                REG_R9,  // 第六个参数
             ],
-            return_register: X86Register::RAX as u8,
-            stack_pointer: X86Register::RSP as u8,
-            frame_pointer: X86Register::RBP as u8,
+            return_register: REG_RAX,
+            stack_pointer: REG_RSP,
+            frame_pointer: REG_RBP,
             caller_saved: vec![
-                X86Register::RAX as u8,
-                X86Register::RCX as u8,
-                X86Register::RDX as u8,
-                X86Register::RSI as u8,
-                X86Register::RDI as u8,
-                X86Register::R8 as u8,
-                X86Register::R9 as u8,
-                X86Register::R10 as u8,
-                X86Register::R11 as u8,
+                REG_RAX, REG_RCX, REG_RDX, REG_RSI, REG_RDI,
+                REG_R8, REG_R9, REG_R10, REG_R11,
             ],
             callee_saved: vec![
-                X86Register::RBX as u8,
-                X86Register::RBP as u8,
-                X86Register::R12 as u8,
-                X86Register::R13 as u8,
-                X86Register::R14 as u8,
-                X86Register::R15 as u8,
+                REG_RBX, REG_RBP, REG_R12, REG_R13, REG_R14, REG_R15,
             ],
         }
     }
 
     /// 初始化寄存器映射
+    ///
+    /// 将 LIR 的虚拟寄存器和物理寄存器映射到 x86-64 的实际物理寄存器
     fn initialize_register_mapping(&mut self) {
+        use karte_common::calling_convention::*;
+
         // 虚拟寄存器到物理寄存器的映射
-        // 简化映射，避免复杂的栈指针管理
+        // 虚拟寄存器在寄存器分配时已经被分配到物理寄存器
         for i in 0..8 {
             let virtual_reg = Register::Virtual(i);
             let physical_reg = match i {
-                0 => X86Register::RAX as u8, // r0 -> rax (返回值寄存器)
-                1 => X86Register::RBX as u8, // r1 -> rbx
-                2 => X86Register::RCX as u8, // r2 -> rcx
-                3 => X86Register::RDX as u8, // r3 -> rdx
-                4 => X86Register::R8 as u8,  // r4 -> r8
-                5 => X86Register::R9 as u8,  // r5 -> r9
-                6 => X86Register::R10 as u8, // r6 -> r10 (简化：不再用作虚拟栈指针)
-                7 => X86Register::R11 as u8, // r7 -> r11 (简化：不再用作虚拟帧指针)
-                _ => X86Register::R12 as u8, // 其他使用临时寄存器
+                0 => REG_RAX, // r0 -> rax (返回值寄存器)
+                1 => REG_RBX, // r1 -> rbx
+                2 => REG_RCX, // r2 -> rcx
+                3 => REG_RDX, // r3 -> rdx
+                4 => REG_R8,  // r4 -> r8
+                5 => REG_R9,  // r5 -> r9
+                6 => REG_R10, // r6 -> r10 (VM栈指针)
+                7 => REG_R11, // r7 -> r11 (VM帧指针)
+                _ => REG_R12, // 其他使用临时寄存器
             };
             self.register_mapping.insert(virtual_reg, physical_reg);
         }
 
-        // 物理寄存器直接映射 - x86只有16个通用寄存器,但需要支持32个物理寄存器
-        // 寄存器16-31将复用x86寄存器,但要避免冲突
+        // 物理寄存器直接映射
+        // LIR 的物理寄存器编号 (0-31) 映射到 x86-64 实际寄存器
+        // x86-64 只有 16 个通用寄存器，所以 16-31 需要复用
         for i in 0..32 {
             let physical_reg = Register::Physical(i);
             // 映射到对应的 x86-64 寄存器
             let x86_reg = match i {
-                0 => X86Register::RAX as u8,  // r0 (返回值)
-                1 => X86Register::RBX as u8,  // r1 (参数1)
-                2 => X86Register::RCX as u8,  // r2 (参数2)
-                3 => X86Register::RDX as u8,  // r3 (参数3)
-                4 => X86Register::R8 as u8,   // r4 (参数4)
-                5 => X86Register::R9 as u8,   // r5 (返回地址)
-                6 => X86Register::R10 as u8,  // r6 (栈指针)
-                7 => X86Register::R11 as u8,  // r7 (帧指针)
-                8 => X86Register::RSI as u8,  // r8
-                9 => X86Register::RDI as u8,  // r9
-                10 => X86Register::R12 as u8, // r10
-                11 => X86Register::R13 as u8, // r11
-                12 => X86Register::R14 as u8, // r12 (effect栈指针)
-                13 => X86Register::R15 as u8, // r13
-                14 => X86Register::RBP as u8, // r14
-                15 => X86Register::RSP as u8, // r15
+                0 => REG_RAX,  // r0 (返回值)
+                1 => REG_RBX,  // r1 (callee-saved)
+                2 => REG_RCX,  // r2 (参数3 in C FFI)
+                3 => REG_RDX,  // r3 (参数4 in C FFI)
+                4 => REG_R8,   // r4 (参数5 in C FFI, 参数2 in VM)
+                5 => REG_R9,   // r5 (参数6 in C FFI, 参数1 in VM)
+                6 => REG_R10,  // r6 (VM栈指针)
+                7 => REG_R11,  // r7 (VM帧指针)
+                8 => REG_RSI,  // r8 (参数2 in C FFI)
+                9 => REG_RDI,  // r9 (参数1 in C FFI)
+                10 => REG_R12, // r10 (Effect栈指针, callee-saved)
+                11 => REG_R13, // r11 (callee-saved)
+                12 => REG_R14, // r12 (callee-saved)
+                13 => REG_R15, // r13 (callee-saved)
+                14 => REG_RBP, // r14 (帧指针)
+                15 => REG_RSP, // r15 (栈指针)
                 // 16-31: 复用寄存器（x86-64只有16个通用寄存器）
-                // 这些寄存器应该在寄存器分配时避免使用,或者spill到栈上
-                16 => X86Register::RAX as u8,
-                17 => X86Register::RBX as u8,
-                18 => X86Register::RCX as u8,
-                19 => X86Register::RDX as u8,
-                20 => X86Register::RSI as u8,
-                21 => X86Register::RDI as u8,
-                22 => X86Register::R8 as u8,
-                23 => X86Register::R9 as u8,
-                24 => X86Register::R10 as u8,
-                25 => X86Register::R11 as u8,
-                26 => X86Register::R12 as u8,
-                27 => X86Register::R13 as u8,
-                28 => X86Register::R14 as u8,
-                29 => X86Register::R15 as u8,
-                30 => X86Register::RBP as u8,
-                31 => X86Register::RSP as u8,
+                16 => REG_RAX,
+                17 => REG_RBX,
+                18 => REG_RCX,
+                19 => REG_RDX,
+                20 => REG_RSI,
+                21 => REG_RDI,
+                22 => REG_R8,
+                23 => REG_R9,
+                24 => REG_R10,
+                25 => REG_R11,
+                26 => REG_R12,
+                27 => REG_R13,
+                28 => REG_R14,
+                29 => REG_R15,
+                30 => REG_RBP,
+                31 => REG_RSP,
                 _ => unreachable!(),
             };
             self.register_mapping.insert(physical_reg, x86_reg);
@@ -280,37 +275,42 @@ impl X86Compiler {
     }
 }
 
-/// x86-64寄存器枚举
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum X86Register {
-    RAX = 0,
-    RCX = 1,
-    RDX = 2,
-    RBX = 3,
-    RSP = 4, // 栈指针
-    RBP = 5, // 帧指针
-    RSI = 6,
-    RDI = 7,
-    R8 = 8,
-    R9 = 9,
-    R10 = 10,
-    R11 = 11,
-    R12 = 12,
-    R13 = 13,
-    R14 = 14,
-    R15 = 15,
-}
-
-impl X86Register {
-    /// 检查是否需要REX前缀
-    fn needs_rex_prefix(self) -> bool {
-        (self as u8) >= 8
+/// x86-64 寄存器编码辅助函数
+impl X86Compiler {
+    /// 将 PhysicalRegister 映射到 x86-64 硬件寄存器编号
+    ///
+    /// 返回值是 x86-64 硬件寄存器编号 (0-15)
+    fn phys_reg_to_x86_hw_reg(&self, reg: PhysicalRegister) -> u8 {
+        use karte_common::calling_convention::*;
+        match reg {
+            REG_RAX => 0,  // RAX
+            REG_RCX => 1,  // RCX
+            REG_RDX => 2,  // RDX
+            REG_RBX => 3,  // RBX
+            REG_RSP => 4,  // RSP
+            REG_RBP => 5,  // RBP
+            REG_RSI => 6,  // RSI
+            REG_RDI => 7,  // RDI
+            REG_R8 => 8,   // R8
+            REG_R9 => 9,   // R9
+            REG_R10 => 10, // R10
+            REG_R11 => 11, // R11
+            REG_R12 => 12, // R12
+            REG_R13 => 13, // R13
+            REG_R14 => 14, // R14
+            REG_R15 => 15, // R15
+            _ => panic!("未知的物理寄存器: {}", reg),
+        }
     }
 
-    /// 获取ModR/M字段中的寄存器编码
-    fn modrm_encoding(self) -> u8 {
-        (self as u8) & 0x7
+    /// 检查寄存器是否需要REX前缀 (R8-R15)
+    fn needs_rex_prefix(reg: u8) -> bool {
+        reg >= 8
+    }
+
+    /// 获取ModR/M字段中的寄存器编码 (取低3位)
+    fn modrm_encoding(reg: u8) -> u8 {
+        reg & 0x7
     }
 }
 
@@ -493,9 +493,11 @@ impl X86Compiler {
         // - 商存储在RAX中，余数存储在RDX中
         // - 需要先用CQO指令将RAX符号扩展到RDX:RAX
         
+        use karte_common::calling_convention::{REG_RAX, REG_RDX, REG_R8};
+        
         let dst_reg = self.get_physical_register(dst)?;
-        let rax = X86Register::RAX as u8;
-        let rdx = X86Register::RDX as u8;
+        let rax = self.phys_reg_to_x86_hw_reg(REG_RAX);
+        let rdx = self.phys_reg_to_x86_hw_reg(REG_RDX);
 
         // 保存RAX和RDX（如果它们不是dst）
         let need_save_rax = dst_reg != rax;
@@ -541,7 +543,7 @@ impl X86Compiler {
             Operand::Immediate { value } => {
                 // 除数是立即数，需要先加载到寄存器
                 // 使用R8作为临时寄存器
-                let temp_reg = X86Register::R8 as u8;
+                let temp_reg = self.phys_reg_to_x86_hw_reg(REG_R8);
                 self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
                 self.emit_rex_prefix(code_builder, true, 0, 0, temp_reg);
                 code_builder.emit_byte(0xF7);
@@ -803,14 +805,17 @@ impl X86Compiler {
         is_main_function: bool,
     ) -> Result<(), String> {
         // 1. 将返回值移动到RAX寄存器
+        use karte_common::calling_convention::REG_RAX;
+        let rax = self.phys_reg_to_x86_hw_reg(REG_RAX);
+        
         if let Some(return_reg) = value {
             let src_reg = self.get_physical_register(return_reg)?;
-            if src_reg != (X86Register::RAX as u8) {
-                self.emit_mov_reg_reg(code_builder, X86Register::RAX as u8, src_reg);
+            if src_reg != rax {
+                self.emit_mov_reg_reg(code_builder, rax, src_reg);
             }
         } else {
             // 无返回值的函数默认返回0
-            self.emit_mov_reg_imm64(code_builder, X86Register::RAX as u8, 0);
+            self.emit_mov_reg_imm64(code_builder, rax, 0);
         }
 
         // VM调用约定：返回时需要弹出虚拟返回地址并跳转
@@ -1015,7 +1020,8 @@ impl X86Compiler {
         instruction_index: usize,
         function: &LirFunction,
     ) -> Result<(), String> {
-        let return_reg = X86Register::RAX as u8;
+        use karte_common::calling_convention::REG_RAX;
+        let return_reg = self.phys_reg_to_x86_hw_reg(REG_RAX);
 
         // 🔧 关键修复：排除当前指令定义的目标寄存器
         // 因为在调用之前，目标寄存器还不存在，不应该被保存
@@ -1056,13 +1062,14 @@ impl X86Compiler {
             is_gc_safepoint,
         );
 
+        use karte_common::calling_convention::{REG_RDI, REG_RSI, REG_RDX, REG_RCX, REG_R8, REG_R9};
         let arg_regs = [
-            X86Register::RDI as u8,
-            X86Register::RSI as u8,
-            X86Register::RDX as u8,
-            X86Register::RCX as u8,
-            X86Register::R8 as u8,
-            X86Register::R9 as u8,
+            self.phys_reg_to_x86_hw_reg(REG_RDI),
+            self.phys_reg_to_x86_hw_reg(REG_RSI),
+            self.phys_reg_to_x86_hw_reg(REG_RDX),
+            self.phys_reg_to_x86_hw_reg(REG_RCX),
+            self.phys_reg_to_x86_hw_reg(REG_R8),
+            self.phys_reg_to_x86_hw_reg(REG_R9),
         ];
 
         for (idx, arg) in call.args.iter().enumerate() {
@@ -1126,16 +1133,20 @@ impl X86Compiler {
     }
 
     fn emit_sub_rsp_imm(&self, code_builder: &mut CodeBuilder, imm: i32) {
-        self.emit_rex_prefix(code_builder, true, 0, 0, X86Register::RSP as u8);
+        use karte_common::calling_convention::REG_RSP;
+        let rsp = self.phys_reg_to_x86_hw_reg(REG_RSP);
+        self.emit_rex_prefix(code_builder, true, 0, 0, rsp);
         code_builder.emit_byte(0x81);
-        self.emit_modrm(code_builder, 0b11, 0b101, X86Register::RSP as u8);
+        self.emit_modrm(code_builder, 0b11, 0b101, rsp);
         code_builder.emit_i32(imm);
     }
 
     fn emit_add_rsp_imm(&self, code_builder: &mut CodeBuilder, imm: i32) {
-        self.emit_rex_prefix(code_builder, true, 0, 0, X86Register::RSP as u8);
+        use karte_common::calling_convention::REG_RSP;
+        let rsp = self.phys_reg_to_x86_hw_reg(REG_RSP);
+        self.emit_rex_prefix(code_builder, true, 0, 0, rsp);
         code_builder.emit_byte(0x81);
-        self.emit_modrm(code_builder, 0b11, 0b000, X86Register::RSP as u8);
+        self.emit_modrm(code_builder, 0b11, 0b000, rsp);
         code_builder.emit_i32(imm);
     }
 
@@ -1267,7 +1278,9 @@ impl X86Compiler {
         // 分配 16 字节，保持与原来相同的栈平衡
         self.emit_sub_rsp_imm(code_builder, 16);
         // 写入 [RSP, #8]
-        self.emit_mov_mem_reg(code_builder, X86Register::RSP as u8, 8, vm_fp_reg);
+        use karte_common::calling_convention::REG_RSP;
+        let rsp = self.phys_reg_to_x86_hw_reg(REG_RSP);
+        self.emit_mov_mem_reg(code_builder, rsp, 8, vm_fp_reg);
 
         (regs_to_virtual_stack, virtual_stack_space)
     }
@@ -1283,8 +1296,10 @@ impl X86Compiler {
         // 2. 再从虚拟栈恢复寄存器
 
         // 步骤1：恢复 VM 帧指针，并保持与保存步骤相同的栈调整
+        use karte_common::calling_convention::REG_RSP;
+        let rsp = self.phys_reg_to_x86_hw_reg(REG_RSP);
         let vm_fp_reg = self.vm_calling_convention.frame_pointer;
-        self.emit_mov_reg_mem(code_builder, vm_fp_reg, X86Register::RSP as u8, 8);
+        self.emit_mov_reg_mem(code_builder, vm_fp_reg, rsp, 8);
         self.emit_add_rsp_imm(code_builder, 16);
 
         // 步骤2：恢复寄存器从虚拟栈
@@ -1443,7 +1458,8 @@ impl X86Compiler {
 
     /// 生成 call abs64 指令
     fn emit_call_absolute(&self, code_builder: &mut CodeBuilder, func: u64) {
-        let tmp = X86Register::RAX as u8;
+        use karte_common::calling_convention::REG_RAX;
+        let tmp = self.phys_reg_to_x86_hw_reg(REG_RAX);
         self.emit_mov_reg_imm64(code_builder, tmp, func as i64);
         // CALL r/m64: FF /2
         code_builder.emit_byte(0xFF);
@@ -1641,9 +1657,14 @@ impl JitCompiler for X86Compiler {
 impl X86Compiler {
     /// 生成函数序言 (主函数)
     fn emit_function_prologue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+        use karte_common::calling_convention::{REG_RDI, REG_RSI, REG_RBP, REG_RSP, REG_R8};
+        
         // System V AMD64 ABI: rdi/rsi为前两个参数
-        let rdi = X86Register::RDI as u8; // 第一个参数：虚拟栈顶地址
-        let rsi = X86Register::RSI as u8; // 第二个参数：虚拟栈底地址
+        let rdi = self.phys_reg_to_x86_hw_reg(REG_RDI); // 第一个参数：虚拟栈顶地址
+        let rsi = self.phys_reg_to_x86_hw_reg(REG_RSI); // 第二个参数：虚拟栈底地址
+        let rbp = self.phys_reg_to_x86_hw_reg(REG_RBP);
+        let rsp = self.phys_reg_to_x86_hw_reg(REG_RSP);
+        let r8 = self.phys_reg_to_x86_hw_reg(REG_R8);
         let vm_sp = self.vm_calling_convention.stack_pointer;
         let vm_fp = self.vm_calling_convention.frame_pointer;
 
@@ -1656,7 +1677,7 @@ impl X86Compiler {
         // push rbp
         code_builder.emit_byte(0x55);
         // mov rbp, rsp
-        self.emit_mov_reg_reg(code_builder, X86Register::RBP as u8, X86Register::RSP as u8);
+        self.emit_mov_reg_reg(code_builder, rbp, rsp);
         // sub rsp, 32
         self.emit_sub_rsp_imm(code_builder, 32);
 
@@ -1665,7 +1686,7 @@ impl X86Compiler {
 
         // 3. 保存系统SP到R8
         // mov r8, rsp
-        self.emit_mov_reg_reg(code_builder, 8, X86Register::RSP as u8);
+        self.emit_mov_reg_reg(code_builder, r8, rsp);
 
         // 4. 切换到虚拟栈
         // mov r10, rdi (rdi = 虚拟栈顶地址)
@@ -1784,18 +1805,23 @@ impl X86Compiler {
         // 虚拟栈布局（compile_return后）：
         // [SP+0]: 系统SP
 
+        use karte_common::calling_convention::{REG_RSP, REG_RBP, REG_R8};
+        let rsp = self.phys_reg_to_x86_hw_reg(REG_RSP);
+        let rbp = self.phys_reg_to_x86_hw_reg(REG_RBP);
+        let r8 = self.phys_reg_to_x86_hw_reg(REG_R8);
+        
         // 1. 从虚拟栈读取系统SP
-        self.emit_mov_reg_mem(code_builder, 8, self.vm_calling_convention.stack_pointer, 0);
+        self.emit_mov_reg_mem(code_builder, r8, self.vm_calling_convention.stack_pointer, 0);
 
         // 2. 切换回系统栈
-        self.emit_mov_reg_reg(code_builder, X86Register::RSP as u8, 8);
+        self.emit_mov_reg_reg(code_builder, rsp, r8);
 
         // 3. 恢复 callee-saved 寄存器（从系统栈）
         self.restore_callee_saved_registers(code_builder)?;
 
         // 4. 恢复系统栈帧
         // mov rsp, rbp
-        self.emit_mov_reg_reg(code_builder, X86Register::RSP as u8, X86Register::RBP as u8);
+        self.emit_mov_reg_reg(code_builder, rsp, rbp);
         // pop rbp
         code_builder.emit_byte(0x5D);
 
@@ -1807,9 +1833,11 @@ impl X86Compiler {
 
     /// 保存返回槽指针（caller通过RDI传入）
     fn save_return_slot_pointer(&self, code_builder: &mut CodeBuilder) {
+        use karte_common::calling_convention::REG_RDI;
+        let rdi = self.phys_reg_to_x86_hw_reg(REG_RDI);
         let vm_sp = self.vm_calling_convention.stack_pointer;
         self.emit_sub_reg_imm32(code_builder, vm_sp, 16);
-        self.emit_mov_mem_reg(code_builder, vm_sp, 0, X86Register::RDI as u8);
+        self.emit_mov_mem_reg(code_builder, vm_sp, 0, rdi);
     }
 
     /// 恢复返回槽指针并弹出栈空间
@@ -1821,7 +1849,9 @@ impl X86Compiler {
 
     /// 将当前RAX返回值写入返回槽地址
     fn emit_store_return_value_to_slot(&self, code_builder: &mut CodeBuilder, slot_reg: u8) {
-        self.emit_mov_mem_reg(code_builder, slot_reg, 0, X86Register::RAX as u8);
+        use karte_common::calling_convention::REG_RAX;
+        let rax = self.phys_reg_to_x86_hw_reg(REG_RAX);
+        self.emit_mov_mem_reg(code_builder, slot_reg, 0, rax);
     }
 
     /// 保存 callee-saved 寄存器
@@ -1836,8 +1866,10 @@ impl X86Compiler {
         }
 
         // 排除 RBP（已经在标准序言中保存）
+        use karte_common::calling_convention::REG_RBP;
+        let rbp = self.phys_reg_to_x86_hw_reg(REG_RBP);
         let mut regs = callee_saved.clone();
-        regs.retain(|&r| r != X86Register::RBP as u8);
+        regs.retain(|&r| r != rbp);
 
         for &reg in &regs {
             // push reg
@@ -1863,8 +1895,10 @@ impl X86Compiler {
         }
 
         // 排除 RBP（在标准尾声中恢复）
+        use karte_common::calling_convention::REG_RBP;
+        let rbp = self.phys_reg_to_x86_hw_reg(REG_RBP);
         let mut regs = callee_saved.clone();
-        regs.retain(|&r| r != X86Register::RBP as u8);
+        regs.retain(|&r| r != rbp);
 
         // 逆序恢复
         for &reg in regs.iter().rev() {
