@@ -409,12 +409,12 @@ impl X86Compiler {
         // x86-64除法使用IDIV指令，被除数在RDX:RAX中，除数在r/m64中
         // 商存储在RAX，余数存储在RDX
         
-        // 1. 将src1移动到RAX (保存src2如果它在RAX中)
+        // 1. 保存src2如果它在RAX或RDX中（因为CQO会覆盖RDX）
         let src2_in_tmp = match src2 {
             Operand::Register { id } => {
                 let src2_reg = self.get_physical_register(id)?;
-                if src2_reg == rax {
-                    // src2在RAX中，需要先保存到临时寄存器
+                if src2_reg == rax || src2_reg == rdx {
+                    // src2在RAX或RDX中，需要先保存到临时寄存器
                     let tmp = X86Register::R8 as u8;
                     self.emit_mov_reg_reg(code_builder, tmp, src2_reg);
                     Some(tmp)
