@@ -17,6 +17,12 @@ pub struct X86Compiler {
     calling_convention: CallingConventionInfo,
     /// 调试模式
     debug_mode: bool,
+    /// 唯一label计数器（用于在编译时生成跳转目标）
+    unique_label_counter: usize,
+    /// 当前函数使用的 callee-saved 寄存器列表
+    current_function_use_regs: Vec<u8>,
+    /// 当前编译的函数名（用于生成唯一label）
+    current_function_name: String,
 }
 
 impl X86Compiler {
@@ -26,6 +32,9 @@ impl X86Compiler {
             register_mapping: HashMap::new(),
             calling_convention: Self::create_calling_convention(),
             debug_mode: true, // 强制启用调试模式
+            unique_label_counter: 0,
+            current_function_use_regs: Vec::new(),
+            current_function_name: String::new(),
         };
 
         // 初始化寄存器映射
@@ -1189,6 +1198,13 @@ impl JitCompiler for X86Compiler {
                 println!("  {}: {:?}", i, instruction);
             }
         }
+
+        // 🔧 设置当前函数名，用于生成唯一label
+        self.current_function_name = function.name.clone();
+        self.unique_label_counter = 0; // 重置计数器
+
+        // 🔧 缓存当前函数的 callee-saved 信息
+        self.current_function_use_regs = function.get_used_regs().to_vec();
 
         let mut code_builder = if self.debug_mode {
             CodeBuilder::with_debug_info()
