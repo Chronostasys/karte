@@ -88,13 +88,34 @@ impl X86Compiler {
             self.register_mapping.insert(virtual_reg, physical_reg);
         }
 
-        // 🔧 修复：物理寄存器映射，确保Physical(6)和Physical(7)映射到r10和r11
-        for i in 0..16 {
+        // 🔧 修复：物理寄存器映射，支持0..32范围（对应AArch64寄存器编号）
+        // x86_64只有16个通用寄存器，需要将32个物理寄存器映射到它们
+        for i in 0..32 {
             let physical_reg = Register::Physical(i);
             let x86_reg = match i {
-                6 => X86Register::R10 as u8, // Physical(6) -> r10 (虚拟机栈指针)
-                7 => X86Register::R11 as u8, // Physical(7) -> r11 (虚拟机帧指针)
-                _ => i,                      // 其他物理寄存器直接映射
+                // 直接映射的寄存器 (0-15)
+                0 => X86Register::RAX as u8,  // r0 (返回值)
+                1 => X86Register::RCX as u8,  // r1
+                2 => X86Register::RDX as u8,  // r2
+                3 => X86Register::RBX as u8,  // r3
+                4 => X86Register::R8 as u8,   // r4
+                5 => X86Register::R9 as u8,   // r5
+                6 => X86Register::R10 as u8,  // r6 (虚拟机栈指针)
+                7 => X86Register::R11 as u8,  // r7 (虚拟机帧指针)
+                8 => X86Register::R12 as u8,  // r8
+                9 => X86Register::R13 as u8,  // r9
+                10 => X86Register::R14 as u8, // r10
+                11 => X86Register::R15 as u8, // r11
+                12 => X86Register::RSI as u8, // r12
+                13 => X86Register::RDI as u8, // r13
+                14 => X86Register::R12 as u8, // r14 (重用)
+                15 => X86Register::R13 as u8, // r15 (重用)
+                // 对于AArch64的高位寄存器(16-28)，映射到可用的x86寄存器
+                16..=28 => X86Register::R14 as u8, // r16-r28 -> r14 (重用，实际不常用)
+                29 => X86Register::RBP as u8,      // r29 -> rbp (帧指针)
+                30 => X86Register::R15 as u8,      // r30 (链接寄存器) -> r15
+                31 => X86Register::RSP as u8,      // r31 -> rsp (栈指针)
+                _ => unreachable!(),
             };
             self.register_mapping.insert(physical_reg, x86_reg);
         }
@@ -174,6 +195,30 @@ impl X86Compiler {
             Instruction::Store64 {
                 addr, offset, src, ..
             } => self.compile_store64(addr, *offset, src, code_builder),
+            Instruction::LoadPair {
+                dst1,
+                dst2,
+                addr,
+                offset,
+                ..
+            } => {
+                // LoadPair是AArch64特有的，在x86上分解为两个Load64
+                self.compile_load64(dst1, addr, *offset, code_builder)?;
+                self.compile_load64(dst2, addr, *offset + 8, code_builder)
+            }
+            Instruction::StorePair {
+                addr,
+                offset,
+                src1,
+                src2,
+                ..
+            } => {
+                // StorePair是AArch64特有的，在x86上分解为两个Store64
+                let src1_operand = Operand::Register { id: src1.clone() };
+                let src2_operand = Operand::Register { id: src2.clone() };
+                self.compile_store64(addr, *offset, &src1_operand, code_builder)?;
+                self.compile_store64(addr, *offset + 8, &src2_operand, code_builder)
+            }
             Instruction::Alloc {
                 dst,
                 size,
