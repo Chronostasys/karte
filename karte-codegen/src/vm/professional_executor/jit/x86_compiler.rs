@@ -1240,13 +1240,26 @@ impl JitCompiler for X86Compiler {
         self.emit_function_epilogue(&mut code_builder)?;
 
         // 完成代码生成
-        let machine_code = code_builder.finalize_with_global_addresses(None)?;
+        // 🔧 导出待修补信息（用于后续的原地修补）
+        let labels = code_builder.exported_labels().clone();
+        let pending_jumps = code_builder.exported_pending_jumps().clone();
+        let pending_label_addresses = code_builder.exported_pending_label_addresses().clone();
+        let pending_adrs = code_builder.exported_pending_adrs().clone();
 
-        let compiled_function = CompiledFunction::new(
+        // 第一轮编译：不修补跨函数标签引用，直接返回未修补的机器码
+        let machine_code = code_builder.finalize()?;
+
+        let mut compiled_function = CompiledFunction::new(
             function.name.clone(),
             machine_code,
             0, // 入口点在函数开始
         );
+
+        // 🔧 保存label信息和待修补信息（用于patch_executable_memory）
+        compiled_function.labels = labels;
+        compiled_function.pending_jumps = pending_jumps;
+        compiled_function.pending_label_addresses = pending_label_addresses;
+        compiled_function.pending_adrs = pending_adrs;
 
         if self.debug_mode {
             println!(
