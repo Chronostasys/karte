@@ -276,7 +276,7 @@ pub struct CallingConventionInfo {
 
 impl CallingConventionInfo {
     /// 从karte_common::CallingConvention转换
-    pub fn from_common_cc(cc: &karte_common::CallingConvention) -> Self {
+    pub fn from_common_cc(cc: &karte_common::calling_convention::CallingConvention) -> Self {
         Self {
             parameter_registers: cc.argument_registers.iter().map(|&r| r as u8).collect(),
             return_register: cc.return_register as u8,

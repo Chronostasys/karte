@@ -7,7 +7,7 @@ use super::compiler_trait::*;
 use super::ffi::{RuntimeArg, RuntimeCall};
 use karte_lir::{Instruction, LirFunction, LirProgram, Operand, Register};
 use std::collections::HashMap;
-use karte_common::CallingConvention as CommonCC;
+use karte_common::calling_convention::CallingConvention as CommonCC;
 
 /// x86-64编译器
 #[derive(Debug)]
