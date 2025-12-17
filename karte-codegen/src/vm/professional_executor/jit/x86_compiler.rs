@@ -1372,21 +1372,22 @@ impl X86Compiler {
         // System V AMD64 ABI (Linux/Unix标准): rdi/rsi为前两个参数
         let rdi = X86Register::RDI as u8;
         let rsi = X86Register::RSI as u8;
-        let vm_sp = X86Register::R10 as u8; // r6
-        let vm_fp = X86Register::R11 as u8; // r7
+        let vm_sp = X86Register::R10 as u8; // 虚拟栈指针
+        let vm_fp = X86Register::R11 as u8; // 虚拟帧指针
 
         if self.debug_mode {
             println!("x86序言开始：生成符合 System V ABI 的函数序言");
         }
 
-        // 1. 保存callee-saved寄存器
-        self.save_callee_saved_registers(code_builder)?;
-
-        // 2. 将参数移动到虚拟机寄存器
-        // 将虚拟栈指针参数移动到r10 (r6)
+        // 1. 先将参数移动到虚拟机寄存器（必须在save_callee_saved之前！）
+        // 因为save_callee_saved可能需要使用虚拟栈指针
+        // 将虚拟栈指针参数移动到r10
         self.emit_mov_reg_reg(code_builder, vm_sp, rdi);
-        // 将虚拟帧指针参数移动到r11 (r7)
+        // 将虚拟帧指针参数移动到r11
         self.emit_mov_reg_reg(code_builder, vm_fp, rsi);
+
+        // 2. 保存callee-saved寄存器到系统栈
+        self.save_callee_saved_registers(code_builder)?;
 
         if self.debug_mode {
             println!("x86序言完成");
