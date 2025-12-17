@@ -17,7 +17,7 @@ pub struct X86Compiler {
     /// 调用约定
     calling_convention: CallingConventionInfo,
     /// VM调用约定（用于虚拟栈指针）
-    vm_calling_convention: CallingConventionInfo,
+    vm_calling_convention: CommonCC,
     /// 调试模式
     debug_mode: bool,
     /// 唯一label计数器（用于在编译时生成跳转目标）
@@ -33,15 +33,16 @@ pub struct X86Compiler {
 impl X86Compiler {
     /// 创建新的x86编译器
     pub fn new(debug_mode: bool) -> Result<Self, String> {
+        let vm_cc = CommonCC::standard();
         let mut compiler = Self {
             register_mapping: HashMap::new(),
             calling_convention: Self::create_calling_convention(),
-            vm_calling_convention: CallingConventionInfo::from_common_cc(&CommonCC::standard()),
+            vm_calling_convention: vm_cc.clone(),
             debug_mode: true, // 强制启用调试模式
             unique_label_counter: 0,
             current_function_use_regs: Vec::new(),
             current_function_name: String::new(),
-            karte_virtual_sp_reg: CommonCC::standard().stack_pointer,
+            karte_virtual_sp_reg: vm_cc.stack_pointer,
         };
 
         // 初始化寄存器映射
@@ -150,6 +151,7 @@ impl X86Compiler {
         &mut self,
         instruction: &Instruction,
         code_builder: &mut CodeBuilder,
+        is_main_function: bool,
         _program: &LirProgram,
     ) -> Result<(), String> {
         if self.debug_mode {
@@ -199,7 +201,7 @@ impl X86Compiler {
             Instruction::JumpRegister {
                 target_register, ..
             } => self.compile_jump_register(target_register, code_builder),
-            Instruction::Return { value, .. } => self.compile_return(value.as_ref(), code_builder),
+            Instruction::Return { value, .. } => self.compile_return(value.as_ref(), code_builder, is_main_function),
             Instruction::Label { id, .. } => {
                 let label_name = format!("label_{}", id.0);
                 code_builder.define_label(&label_name)?;
@@ -766,20 +768,44 @@ impl X86Compiler {
         &mut self,
         value: Option<&Register>,
         code_builder: &mut CodeBuilder,
+        is_main_function: bool,
     ) -> Result<(), String> {
-        // 🔧 修复：只移动返回值到RAX，不生成ret指令
-        // 如果有返回值，将其移动到RAX
+        // 1. 将返回值移动到RAX寄存器
         if let Some(reg) = value {
             let src_reg = self.get_physical_register(reg)?;
             let rax = X86Register::RAX as u8;
             if src_reg != rax {
                 self.emit_mov_reg_reg(code_builder, rax, src_reg);
             }
+        } else {
+            // 无返回值的函数默认返回0
+            self.emit_mov_reg_imm64(code_builder, X86Register::RAX as u8, 0);
         }
-
-        // 🔧 修复：不在这里生成ret指令，让函数尾声处理
-        // ret指令会在函数尾声生成
-        Ok(())
+        
+        // 从VM calling convention获取虚拟栈和返回地址寄存器
+        let vm_sp_physical = Register::Physical(self.vm_calling_convention.stack_pointer);
+        let vm_return_addr_physical = Register::Physical(self.vm_calling_convention.return_address);
+        let vm_sp_reg = self.get_physical_register(&vm_sp_physical)?;
+        let return_addr_reg = self.get_physical_register(&vm_return_addr_physical)?;
+        
+        if is_main_function {
+            // Main函数逻辑：恢复系统栈并返回
+            // 注意：不在这里生成完整的epilogue，compile_function会在末尾生成
+            Ok(())
+        } else {
+            // 内部函数逻辑：从虚拟栈恢复并跳转到返回地址
+            // 1. 恢复callee-saved寄存器（从虚拟栈）
+            self.emit_internal_function_epilogue(code_builder)?;
+            
+            // 2. 加载返回地址到寄存器
+            self.emit_mov_reg_mem(code_builder, return_addr_reg, vm_sp_reg, 0);
+            
+            // 3. 跳转到返回地址
+            let ret_reg = Register::Physical(self.vm_calling_convention.return_address);
+            self.compile_jump_register(&ret_reg, code_builder)?;
+            
+            Ok(())
+        }
     }
 
     /// 编译64位加载指令
@@ -1268,14 +1294,24 @@ impl JitCompiler for X86Compiler {
         let function_label = format!("func_{}", function.name);
         code_builder.define_label(&function_label)?;
 
-        // 函数序言
-        self.emit_function_prologue(&mut code_builder)?;
+        let is_main_function = self.is_entry_function(&function.name, program);
+        
+        // 生成函数序言（在函数标签之后，但在实际代码之前）
+        // 注意：只有main函数在这里插入prologue，因为main是被外部C代码调用的
+        if is_main_function {
+            self.emit_function_prologue(&mut code_builder)?;
+        }
 
         // 🔧 检查第一个instruction是label，是则编译，不是则返回错误
         if let Some(Instruction::Label { id, .. }) = function.instructions.first() {
             code_builder.define_label(&format!("label_{}", id.0))?;
         } else {
             return Err(format!("函数 '{}' 的第一个指令必须是label", function.name));
+        }
+        
+        if !is_main_function {
+            // 简化序言：用于内部函数调用
+            self.emit_internal_function_prologue(&mut code_builder)?;
         }
 
         // 编译函数体 (跳过第一个label指令，因为已经处理了)
@@ -1285,11 +1321,13 @@ impl JitCompiler for X86Compiler {
                 println!("编译指令 {}: {:?}", index, instruction);
             }
 
-            self.compile_instruction(instruction, &mut code_builder, program)?;
+            self.compile_instruction(instruction, &mut code_builder, is_main_function, program)?;
         }
 
-        // 🔧 修复：总是生成函数尾声，确保正确的寄存器恢复
-        self.emit_function_epilogue(&mut code_builder)?;
+        // 🔧 修复：只为main函数生成函数尾声，内部函数通过Return指令处理
+        if is_main_function {
+            self.emit_function_epilogue(&mut code_builder)?;
+        }
 
         // 完成代码生成
         // 🔧 导出待修补信息（用于后续的原地修补）
@@ -1346,6 +1384,17 @@ impl JitCompiler for X86Compiler {
 
 // 函数序言和尾声的实现
 impl X86Compiler {
+    /// 判断当前函数是否是程序入口（main）
+    fn is_entry_function(&self, function_name: &str, program: &LirProgram) -> bool {
+        if let Some(main) = &program.main_function {
+            if main == function_name {
+                return true;
+            }
+        }
+        
+        function_name == "main" || function_name == karte_mir::lower::SCRIPT_ENTRY_POINT
+    }
+
     /// 获取需要保存的callee-saved寄存器
     fn get_callee_saved_registers(&self) -> Vec<u8> {
         // 从calling convention获取callee-saved寄存器列表
@@ -1356,6 +1405,21 @@ impl X86Compiler {
             .iter()
             .filter(|&&reg| callee_saved_regs.contains(&reg))
             .copied()
+            .collect()
+    }
+    
+    /// 获取需要保存的VM callee-saved寄存器（用于内部函数）
+    fn get_vm_callee_saved_registers(&self) -> Vec<u8> {
+        let vm_cc = CommonCC::standard();
+        let vm_callee_saved = vm_cc.callee_saved.clone();
+        
+        // 过滤出实际被使用的寄存器，并转换为x86寄存器编号
+        self.current_function_use_regs
+            .iter()
+            .filter(|&&reg| vm_callee_saved.contains(&reg))
+            .map(|&reg| {
+                self.get_physical_register(&Register::Physical(reg)).unwrap_or(reg)
+            })
             .collect()
     }
 
@@ -1415,10 +1479,10 @@ impl X86Compiler {
 
         // System V ABI要求RSP在CALL前必须16字节对齐
         // 函数入口时RSP = 16n + 8 (因为CALL压入了8字节返回地址)
-        // 保存callee-saved寄存器后，如果保存了奇数个寄存器，需要额外对齐
-        if callee_saved.len() % 2 == 1 {
-            // 保存了奇数个寄存器，栈现在是16字节对齐的，需要减8使其错位
-            // 这样CALL指令后栈又会16字节对齐（CALL会push 8字节返回地址）
+        // 保存callee-saved寄存器后，需要确保RSP是16字节对齐
+        // 如果保存了偶数个寄存器，栈现在是16n+8，需要再减8使其16字节对齐
+        if callee_saved.len() % 2 == 0 {
+            // 保存了偶数个寄存器（或0个），栈现在不对齐，需要减8对齐
             self.emit_sub_rsp_imm(code_builder, 8);
         }
 
@@ -1437,7 +1501,7 @@ impl X86Compiler {
         }
 
         // 如果保存时添加了对齐填充，恢复时需要先移除
-        if callee_saved.len() % 2 == 1 {
+        if callee_saved.len() % 2 == 0 {
             self.emit_add_rsp_imm(code_builder, 8);
         }
 
@@ -1471,6 +1535,83 @@ impl X86Compiler {
             println!("x86尾声完成");
         }
 
+        Ok(())
+    }
+    
+    /// 生成内部函数序言（用于虚拟机内部函数调用）
+    fn emit_internal_function_prologue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+        // 获取虚拟栈指针寄存器
+        let vm_sp_physical = Register::Physical(self.vm_calling_convention.stack_pointer);
+        let vm_fp_physical = Register::Physical(self.vm_calling_convention.frame_pointer);
+        let vm_sp_reg = self.get_physical_register(&vm_sp_physical)?;
+        let vm_fp_reg = self.get_physical_register(&vm_fp_physical)?;
+        
+        // 保存fp sp到虚拟栈（与AArch64一致的逻辑）
+        // 先分配空间
+        self.emit_sub_reg_imm32(code_builder, vm_sp_reg, 16);
+        // 保存 vm_fp 到 [vm_sp + 8]
+        self.emit_mov_mem_reg(code_builder, vm_sp_reg, 8, vm_fp_reg);
+        // 保存当前 vm_sp 到 [vm_sp + 0]
+        // 注意：在x86中，这会保存已经减16后的vm_sp值
+        // 但恢复时会先load这个值然后再加16，所以逻辑是对的
+        self.emit_mov_mem_reg(code_builder, vm_sp_reg, 0, vm_sp_reg);
+        
+        // 使用LIR寄存器分配器计算的实际使用的callee-saved寄存器
+        let callee_saved = self.get_vm_callee_saved_registers();
+        
+        // 早期返回：如果没有需要保存的寄存器
+        if callee_saved.is_empty() {
+            if self.debug_mode {
+                println!("生成内部函数序言：无需保存寄存器");
+            }
+            return Ok(());
+        }
+        
+        if self.debug_mode {
+            println!("生成内部函数序言：保存 {} 个寄存器", callee_saved.len());
+        }
+        
+        // 保存每个 callee-saved 寄存器到虚拟栈
+        // 每次分配16字节以确保虚拟SP保持16字节对齐
+        for &reg in &callee_saved {
+            // 先压入虚拟栈（16字节对齐）
+            self.emit_sub_reg_imm32(code_builder, vm_sp_reg, 16);
+            
+            // 存储寄存器值到虚拟栈
+            self.emit_mov_mem_reg(code_builder, vm_sp_reg, 0, reg);
+        }
+        
+        Ok(())
+    }
+    
+    /// 生成内部函数尾声（用于虚拟机内部函数调用）
+    fn emit_internal_function_epilogue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+        let vm_sp_physical = Register::Physical(self.vm_calling_convention.stack_pointer);
+        let vm_fp_physical = Register::Physical(self.vm_calling_convention.frame_pointer);
+        let vm_sp_reg = self.get_physical_register(&vm_sp_physical)?;
+        let vm_fp_reg = self.get_physical_register(&vm_fp_physical)?;
+        
+        // 使用LIR寄存器分配器计算的实际使用的callee-saved寄存器
+        let callee_saved = self.get_vm_callee_saved_registers();
+        
+        // 按逆序恢复寄存器（后进先出）
+        for &reg in callee_saved.iter().rev() {
+            // 从虚拟栈加载寄存器值
+            self.emit_mov_reg_mem(code_builder, reg, vm_sp_reg, 0);
+            
+            // 弹出虚拟栈（16字节对齐）
+            self.emit_add_reg_imm32(code_builder, vm_sp_reg, 16);
+        }
+        
+        if self.debug_mode {
+            println!("恢复了 {} 个 callee-saved 寄存器从虚拟栈", callee_saved.len());
+        }
+        
+        // 恢复fp sp从虚拟栈
+        self.emit_mov_reg_mem(code_builder, vm_sp_reg, vm_sp_reg, 0);
+        self.emit_mov_reg_mem(code_builder, vm_fp_reg, vm_sp_reg, 8);
+        self.emit_add_reg_imm32(code_builder, vm_sp_reg, 16);
+        
         Ok(())
     }
 }
