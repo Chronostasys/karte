@@ -241,8 +241,9 @@ impl CodeBuilder {
         self.emit_i32(0); // 占位符，稍后修补
 
         // 记录待修补的调用
+        // 注意：patch_position指向指令开始（0xE8），修补时会加上instruction_size() - 4来定位rel32字段
         self.pending_jumps.push(PendingJump {
-            patch_position: patch_position + 1, // 地址字段的位置
+            patch_position, // 指令开始位置，与emit_jump保持一致
             target_label: target_label.to_string(),
             jump_type: JumpType::Call,
         });
@@ -1044,6 +1045,7 @@ pub fn patch_executable_memory(
         #[cfg(not(target_arch = "aarch64"))]
         {
             // x86/x64跳转修补
+            // pending.patch_position指向指令开始，需要加上偏移来定位rel32字段
             let patch_pos = pending.patch_position + pending.jump_type.instruction_size() - 4;
             let current_pos = exec_base + patch_pos + 4;
             let relative_offset = (target_addr as i64) - (current_pos as i64);
