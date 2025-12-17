@@ -1212,11 +1212,22 @@ impl JitCompiler for X86Compiler {
             CodeBuilder::new()
         };
 
+        // 🔧 生成函数标签（这是函数的入口点）
+        let function_label = format!("func_{}", function.name);
+        code_builder.define_label(&function_label)?;
+
         // 函数序言
         self.emit_function_prologue(&mut code_builder)?;
 
-        // 编译函数体
-        for (index, instruction) in function.instructions.iter().enumerate() {
+        // 🔧 检查第一个instruction是label，是则编译，不是则返回错误
+        if let Some(Instruction::Label { id, .. }) = function.instructions.first() {
+            code_builder.define_label(&format!("label_{}", id.0))?;
+        } else {
+            return Err(format!("函数 '{}' 的第一个指令必须是label", function.name));
+        }
+
+        // 编译函数体 (跳过第一个label指令，因为已经处理了)
+        for (index, instruction) in function.instructions.iter().skip(1).enumerate() {
             if self.debug_mode {
                 code_builder.add_source_line(index);
                 println!("编译指令 {}: {:?}", index, instruction);
