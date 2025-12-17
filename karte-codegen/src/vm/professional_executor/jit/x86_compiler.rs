@@ -130,6 +130,9 @@ impl X86Compiler {
             Instruction::Mul {
                 dst, src1, src2, ..
             } => self.compile_mul(dst, src1, src2, code_builder),
+            Instruction::Div {
+                dst, src1, src2, ..
+            } => self.compile_div(dst, src1, src2, code_builder),
             Instruction::Compare { src1, src2, .. } => {
                 self.compile_compare(src1, src2, code_builder)
             }
@@ -143,8 +146,14 @@ impl X86Compiler {
             Instruction::JumpLess { target, .. } => {
                 self.compile_conditional_jump(JumpType::ConditionalLess, target, code_builder)
             }
+            Instruction::JumpLessEqual { target, .. } => {
+                self.compile_conditional_jump(JumpType::ConditionalLessEqual, target, code_builder)
+            }
             Instruction::JumpGreater { target, .. } => {
                 self.compile_conditional_jump(JumpType::ConditionalGreater, target, code_builder)
+            }
+            Instruction::JumpGreaterEqual { target, .. } => {
+                self.compile_conditional_jump(JumpType::ConditionalGreaterEqual, target, code_builder)
             }
             Instruction::Call { target, .. } => self.compile_call(target, code_builder),
             Instruction::JumpIndirect {
@@ -382,6 +391,87 @@ impl X86Compiler {
                 return Err(format!("mul指令不支持的src2类型: {:?}", src2));
             }
         }
+        Ok(())
+    }
+
+    /// 编译div指令 (有符号除法)
+    fn compile_div(
+        &mut self,
+        dst: &Register,
+        src1: &Operand,
+        src2: &Operand,
+        code_builder: &mut CodeBuilder,
+    ) -> Result<(), String> {
+        let dst_reg = self.get_physical_register(dst)?;
+        let rax = X86Register::RAX as u8;
+        let rdx = X86Register::RDX as u8;
+
+        // x86-64除法使用IDIV指令，被除数在RDX:RAX中，除数在r/m64中
+        // 商存储在RAX，余数存储在RDX
+        
+        // 1. 将src1移动到RAX (保存src2如果它在RAX中)
+        let src2_in_tmp = match src2 {
+            Operand::Register { id } => {
+                let src2_reg = self.get_physical_register(id)?;
+                if src2_reg == rax {
+                    // src2在RAX中，需要先保存到临时寄存器
+                    let tmp = X86Register::R8 as u8;
+                    self.emit_mov_reg_reg(code_builder, tmp, src2_reg);
+                    Some(tmp)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        
+        match src1 {
+            Operand::Register { id } => {
+                let src1_reg = self.get_physical_register(id)?;
+                if src1_reg != rax {
+                    self.emit_mov_reg_reg(code_builder, rax, src1_reg);
+                }
+            }
+            Operand::Immediate { value } => {
+                self.emit_mov_reg_imm64(code_builder, rax, *value);
+            }
+            _ => {
+                return Err(format!("div指令不支持的src1类型: {:?}", src1));
+            }
+        }
+
+        // 2. 符号扩展RAX到RDX:RAX (CQO指令)
+        // REX.W + 99: CQO
+        self.emit_rex_prefix(code_builder, true, 0, 0, 0);
+        code_builder.emit_byte(0x99);
+
+        // 3. 除以src2
+        if let Some(tmp_reg) = src2_in_tmp {
+            // src2已经保存在临时寄存器中
+            self.emit_idiv_reg(code_builder, tmp_reg);
+        } else {
+            match src2 {
+                Operand::Register { id } => {
+                    let src2_reg = self.get_physical_register(id)?;
+                    self.emit_idiv_reg(code_builder, src2_reg);
+                }
+                Operand::Immediate { value } => {
+                    // 立即数需要先加载到寄存器
+                    let tmp_reg = X86Register::R8 as u8;
+                    self.emit_mov_reg_imm64(code_builder, tmp_reg, *value);
+                    self.emit_idiv_reg(code_builder, tmp_reg);
+                }
+                _ => {
+                    return Err(format!("div指令不支持的src2类型: {:?}", src2));
+                }
+            }
+        }
+
+        // 4. 将结果从RAX移动到dst
+        if dst_reg != rax {
+            self.emit_mov_reg_reg(code_builder, dst_reg, rax);
+        }
+
         Ok(())
     }
 
@@ -933,6 +1023,14 @@ impl X86Compiler {
         code_builder.emit_i32(imm);
     }
 
+    /// idiv reg (64位有符号除法)
+    fn emit_idiv_reg(&self, code_builder: &mut CodeBuilder, src: u8) {
+        // REX.W + F7 /7: IDIV r/m64
+        self.emit_rex_prefix(code_builder, true, 0, 0, src);
+        code_builder.emit_byte(0xF7);
+        self.emit_modrm(code_builder, 0b11, 7, src);
+    }
+
     /// cmp reg, reg (64位)
     fn emit_cmp_reg_reg(&self, code_builder: &mut CodeBuilder, reg1: u8, reg2: u8) {
         // REX.W + 39 /r: CMP r/m64, r64
@@ -1113,17 +1211,17 @@ impl JitCompiler for X86Compiler {
 impl X86Compiler {
     /// 生成函数序言
     fn emit_function_prologue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
-        // Windows x64 ABI: rcx/rdx为前两个参数
-        let rcx = X86Register::RCX as u8;
-        let rdx = X86Register::RDX as u8;
+        // System V AMD64 ABI (Linux/Unix标准): rdi/rsi为前两个参数
+        let rdi = X86Register::RDI as u8;
+        let rsi = X86Register::RSI as u8;
         let vm_sp = X86Register::R10 as u8; // r6
         let vm_fp = X86Register::R11 as u8; // r7
 
         // 🔧 修复：将参数移动到虚拟机寄存器，但不干扰LIR的栈帧管理
         // 将虚拟栈指针参数移动到r10 (r6)
-        self.emit_mov_reg_reg(code_builder, vm_sp, rcx);
+        self.emit_mov_reg_reg(code_builder, vm_sp, rdi);
         // 将虚拟帧指针参数移动到r11 (r7)
-        self.emit_mov_reg_reg(code_builder, vm_fp, rdx);
+        self.emit_mov_reg_reg(code_builder, vm_fp, rsi);
 
         // 🔧 新增：确保r6和r7的初始值正确，让LIR的栈帧管理指令能正常工作
         // 此时r6和r7已经包含了虚拟栈的地址，LIR的栈帧管理指令会基于这些值工作
