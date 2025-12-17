@@ -1356,6 +1356,15 @@ impl X86Compiler {
             code_builder.emit_byte(0x50 + (reg & 0x7));
         }
 
+        // System V ABI要求RSP在CALL前必须16字节对齐
+        // 函数入口时RSP = 16n + 8 (因为CALL压入了8字节返回地址)
+        // 保存callee-saved寄存器后，如果保存了奇数个寄存器，需要额外对齐
+        if callee_saved.len() % 2 == 1 {
+            // 保存了奇数个寄存器，栈现在是16字节对齐的，需要减8使其错位
+            // 这样CALL指令后栈又会16字节对齐（CALL会push 8字节返回地址）
+            self.emit_sub_rsp_imm(code_builder, 8);
+        }
+
         Ok(())
     }
 
@@ -1368,6 +1377,11 @@ impl X86Compiler {
 
         if self.debug_mode {
             println!("恢复 callee-saved 寄存器: {:?}", callee_saved);
+        }
+
+        // 如果保存时添加了对齐填充，恢复时需要先移除
+        if callee_saved.len() % 2 == 1 {
+            self.emit_add_rsp_imm(code_builder, 8);
         }
 
         // x86使用POP指令恢复寄存器（自动递增RSP）
