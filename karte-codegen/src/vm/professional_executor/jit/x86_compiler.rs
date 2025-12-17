@@ -7,6 +7,7 @@ use super::compiler_trait::*;
 use super::ffi::{RuntimeArg, RuntimeCall};
 use karte_lir::{Instruction, LirFunction, LirProgram, Operand, Register};
 use std::collections::HashMap;
+use karte_common::CallingConvention as CommonCC;
 
 /// x86-64编译器
 #[derive(Debug)]
@@ -32,37 +33,21 @@ pub struct X86Compiler {
 impl X86Compiler {
     /// 创建新的x86编译器
     pub fn new(debug_mode: bool) -> Result<Self, String> {
-        let vm_calling_convention = Self::create_vm_calling_convention();
-        let karte_virtual_sp_reg = vm_calling_convention.stack_pointer;
-        
         let mut compiler = Self {
             register_mapping: HashMap::new(),
             calling_convention: Self::create_calling_convention(),
-            vm_calling_convention,
+            vm_calling_convention: CallingConventionInfo::from_common_cc(&CommonCC::standard()),
             debug_mode: true, // 强制启用调试模式
             unique_label_counter: 0,
             current_function_use_regs: Vec::new(),
             current_function_name: String::new(),
-            karte_virtual_sp_reg,
+            karte_virtual_sp_reg: CommonCC::standard().stack_pointer,
         };
 
         // 初始化寄存器映射
         compiler.initialize_register_mapping();
 
         Ok(compiler)
-    }
-    
-    /// 创建VM调用约定（用于虚拟栈管理）
-    /// 注意：这里使用物理寄存器编号(Physical)，Physical(6) 映射到 R10
-    fn create_vm_calling_convention() -> CallingConventionInfo {
-        CallingConventionInfo {
-            parameter_registers: vec![],
-            return_register: X86Register::RAX as u8,
-            stack_pointer: 6, // Physical(6) 映射到 R10，用作虚拟栈指针
-            frame_pointer: 7, // Physical(7) 映射到 R11，用作虚拟帧指针
-            caller_saved: vec![],
-            callee_saved: vec![],
-        }
     }
 
     /// 创建x86-64调用约定
@@ -1009,9 +994,13 @@ impl X86Compiler {
         code_builder: &mut CodeBuilder,
         exclude: &[u8],
     ) -> (Vec<u8>, usize) {
-        // 获取虚拟栈指针对应的x86寄存器（Physical(6) -> R10）
-        let karte_virtual_sp_x86_reg = X86Register::R10 as u8;
-        let karte_virtual_fp_x86_reg = X86Register::R11 as u8;
+        // 从VM calling convention获取虚拟栈和帧指针的Physical寄存器号
+        let vm_sp_physical = Register::Physical(self.vm_calling_convention.stack_pointer);
+        let vm_fp_physical = Register::Physical(self.vm_calling_convention.frame_pointer);
+        
+        // 转换为x86寄存器号
+        let karte_virtual_sp_x86_reg = self.get_physical_register(&vm_sp_physical).unwrap();
+        let karte_virtual_fp_x86_reg = self.get_physical_register(&vm_fp_physical).unwrap();
         
         // 过滤出需要保存的caller-saved寄存器（排除虚拟栈/帧指针和exclude列表）
         let regs: Vec<u8> = self
@@ -1066,8 +1055,13 @@ impl X86Compiler {
     ) {
         // 🔧 关键：恢复顺序与保存顺序相反
         
+        // 从VM calling convention获取虚拟栈和帧指针
+        let vm_sp_physical = Register::Physical(self.vm_calling_convention.stack_pointer);
+        let vm_fp_physical = Register::Physical(self.vm_calling_convention.frame_pointer);
+        let karte_virtual_sp_x86_reg = self.get_physical_register(&vm_sp_physical).unwrap();
+        let karte_virtual_fp_x86_reg = self.get_physical_register(&vm_fp_physical).unwrap();
+        
         // 步骤1：从系统栈恢复VM帧指针
-        let karte_virtual_fp_x86_reg = X86Register::R11 as u8;
         self.emit_mov_reg_mem(code_builder, karte_virtual_fp_x86_reg, X86Register::RSP as u8, 8);
         self.emit_add_rsp_imm(code_builder, 16);
 
@@ -1076,8 +1070,6 @@ impl X86Compiler {
         }
 
         // 步骤2：从虚拟栈恢复caller-saved寄存器
-        let karte_virtual_sp_x86_reg = X86Register::R10 as u8;
-        
         for (idx, reg) in regs.iter().enumerate() {
             self.emit_mov_reg_mem(code_builder, *reg, karte_virtual_sp_x86_reg, (idx * 8) as i32);
         }
@@ -1372,8 +1364,12 @@ impl X86Compiler {
         // System V AMD64 ABI (Linux/Unix标准): rdi/rsi为前两个参数
         let rdi = X86Register::RDI as u8;
         let rsi = X86Register::RSI as u8;
-        let vm_sp = X86Register::R10 as u8; // 虚拟栈指针
-        let vm_fp = X86Register::R11 as u8; // 虚拟帧指针
+        
+        // 从VM calling convention获取虚拟栈和帧指针的Physical寄存器号，然后转换为x86寄存器
+        let vm_sp_physical = Register::Physical(self.vm_calling_convention.stack_pointer);
+        let vm_fp_physical = Register::Physical(self.vm_calling_convention.frame_pointer);
+        let vm_sp = self.get_physical_register(&vm_sp_physical)?;
+        let vm_fp = self.get_physical_register(&vm_fp_physical)?;
 
         if self.debug_mode {
             println!("x86序言开始：生成符合 System V ABI 的函数序言");
@@ -1381,9 +1377,9 @@ impl X86Compiler {
 
         // 1. 先将参数移动到虚拟机寄存器（必须在save_callee_saved之前！）
         // 因为save_callee_saved可能需要使用虚拟栈指针
-        // 将虚拟栈指针参数移动到r10
+        // 将虚拟栈指针参数移动到vm_sp
         self.emit_mov_reg_reg(code_builder, vm_sp, rdi);
-        // 将虚拟帧指针参数移动到r11
+        // 将虚拟帧指针参数移动到vm_fp
         self.emit_mov_reg_reg(code_builder, vm_fp, rsi);
 
         // 2. 保存callee-saved寄存器到系统栈

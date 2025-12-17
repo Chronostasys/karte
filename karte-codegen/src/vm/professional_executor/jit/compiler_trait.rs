@@ -274,6 +274,20 @@ pub struct CallingConventionInfo {
     pub callee_saved: Vec<u8>,
 }
 
+impl CallingConventionInfo {
+    /// 从karte_common::CallingConvention转换
+    pub fn from_common_cc(cc: &karte_common::CallingConvention) -> Self {
+        Self {
+            parameter_registers: cc.argument_registers.iter().map(|&r| r as u8).collect(),
+            return_register: cc.return_register as u8,
+            stack_pointer: cc.stack_pointer as u8,
+            frame_pointer: cc.frame_pointer as u8,
+            caller_saved: cc.caller_saved.iter().map(|&r| r as u8).collect(),
+            callee_saved: cc.callee_saved.iter().map(|&r| r as u8).collect(),
+        }
+    }
+}
+
 impl CC for CallingConventionInfo {
     fn is_caller_saved(&self, reg: u8) -> bool {
         self.caller_saved.contains(&reg)
