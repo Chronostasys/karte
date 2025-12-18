@@ -1680,31 +1680,34 @@ impl X86Compiler {
 
         if self.debug_mode {
             log::debug!("序言开始：生成符合 System V AMD64 ABI 的函数序言");
+            log::debug!("  vm_sp_hw = {} (RSP), vm_fp_hw = {} (RBP)", vm_sp_hw, vm_fp_hw);
         }
 
-        // System V AMD64 ABI 标准序言：
-        // 1. 为系统栈分配帧空间（32字节）
-        // push rbp
-        code_builder.emit_byte(0x55);
-        // mov rbp, rsp
-        self.emit_mov_reg_reg(code_builder, rbp, rsp);
+        // System V AMD64 ABI 标准序言（简化版，与 AArch64 对齐）：
+        // 1. 在系统栈分配帧空间（32字节）并保存系统FP
         // sub rsp, 32
         self.emit_sub_rsp_imm(code_builder, 32);
+        // mov [rsp, #0], rbp  (保存系统FP)
+        self.emit_mov_mem_reg(code_builder, rsp, 0, rbp);
+        
+        // 2. 设置新的系统FP
+        // mov rbp, rsp
+        self.emit_mov_reg_reg(code_builder, rbp, rsp);
 
-        // 2. 保存其他 callee-saved 寄存器（如果有的话）
+        // 3. 保存其他 callee-saved 寄存器（如果有的话）
         self.save_callee_saved_registers(code_builder)?;
 
-        // 3. 保存系统SP到R8
+        // 4. 保存系统SP到R8
         // mov r8, rsp
         self.emit_mov_reg_reg(code_builder, r8, rsp);
 
-        // 4. 切换到虚拟栈（与AArch64一致）
+        // 5. 切换到虚拟栈（与AArch64一致）
         // mov rsp, rdi (rdi = 虚拟栈顶地址)
         // mov rbp, rsi (rsi = 虚拟栈底地址)
         self.emit_mov_reg_reg(code_builder, vm_sp_hw, rdi);
         self.emit_mov_reg_reg(code_builder, vm_fp_hw, rsi);
 
-        // 5. 在虚拟栈保存系统SP和返回地址（与AArch64一致）
+        // 6. 在虚拟栈保存系统SP（与AArch64一致）
         // sub rsp, 16（注意：此时rsp已经切换到虚拟栈）
         self.emit_sub_reg_imm32(code_builder, vm_sp_hw, 16);
         // mov [rsp, #0], r8  (保存系统SP)
@@ -1712,10 +1715,10 @@ impl X86Compiler {
         // mov qword ptr [rsp, #8], 0   (x86不需要保存LR，填0占位)
         self.emit_mov_mem_imm32(code_builder, vm_sp_hw, 8, 0);
 
-        // 6. 为返回值槽分配空间（16字节对齐）
+        // 7. 为返回值槽分配空间（16字节对齐）
         // sub rsp, 16
         self.emit_sub_reg_imm32(code_builder, vm_sp_hw, 16);
-        // mov [rsp, #0], rdi (保存返回值槽指针，rdi是第一个C参数)
+        // mov [rsp, #0], rdi (保存返回值槽指针)
         self.emit_mov_mem_reg(code_builder, vm_sp_hw, 0, rdi);
 
         if self.debug_mode {
@@ -1834,11 +1837,11 @@ impl X86Compiler {
         // 3. 恢复 callee-saved 寄存器（从系统栈）
         self.restore_callee_saved_registers(code_builder)?;
 
-        // 4. 恢复系统栈帧
-        // mov rsp, rbp
-        self.emit_mov_reg_reg(code_builder, rsp, rbp);
-        // pop rbp
-        code_builder.emit_byte(0x5D);
+        // 4. 恢复系统FP并调整栈
+        // mov rbp, [rsp, #0]  (恢复系统FP)
+        self.emit_mov_reg_mem(code_builder, rbp, rsp, 0);
+        // add rsp, 32  (释放栈帧)
+        self.emit_add_rsp_imm(code_builder, 32);
 
         // 5. ret
         self.emit_ret(code_builder);
