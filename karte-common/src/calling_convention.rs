@@ -248,13 +248,13 @@ impl CallingConvention {
             return_register: REG_RAX,            // 返回值在 RAX
             caller_saved,
             callee_saved,
-            stack_pointer: REG_RSP,              // RSP 作为栈指针
-            frame_pointer: REG_RBP,              // RBP 作为帧指针
+            stack_pointer: REG_R10,              // 🔧 修复：R10 作为VM虚拟栈指针
+            frame_pointer: REG_R11,              // 🔧 修复：R11 作为VM虚拟帧指针
             return_address: REG_RAX,             // x86-64 使用栈保存返回地址，这里用RAX标识
             effect_stack_pointer: REG_R12,       // 使用 R12 作为effect栈指针
             effect_payload_register: REG_RAX,    // 使用返回值寄存器
-            effect_tag_register: REG_R10,        // 使用 R10 作为effect标签
-            effect_resume_temp: REG_R11,         // 使用 R11 作为临时寄存器
+            effect_tag_register: REG_R13,        // 🔧 修复：R13 作为effect标签（避免与VM栈指针R10冲突）
+            effect_resume_temp: REG_R14,         // 🔧 修复：R14 作为临时寄存器（避免与VM帧指针R11冲突）
             temp_registers: {
                 // 临时寄存器包括所有 caller-saved 寄存器
                 vec![
@@ -265,7 +265,7 @@ impl CallingConvention {
                 ]
             },
             stack_alignment: 16,                 // x86-64 要求16字节对齐
-            use_system_stack_pointer: true,      // 使用系统 RSP
+            use_system_stack_pointer: false,     // 🔧 修复：使用VM虚拟栈，不使用系统SP
         }
     }
 

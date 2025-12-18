@@ -496,32 +496,28 @@ impl X86Compiler {
         use karte_common::calling_convention::{REG_RAX, REG_RDX, REG_R8};
         
         let dst_reg = self.get_physical_register(dst)?;
-        let rax = self.phys_reg_to_x86_hw_reg(REG_RAX);
-        let rdx = self.phys_reg_to_x86_hw_reg(REG_RDX);
+        let rax_hw = self.phys_reg_to_x86_hw_reg(REG_RAX);
+        let rdx_hw = self.phys_reg_to_x86_hw_reg(REG_RDX);
 
-        // 保存RAX和RDX（如果它们不是dst）
-        let need_save_rax = dst_reg != rax;
-        let need_save_rdx = dst_reg != rdx;
+        // 🔧 修复：简化除法实现，避免栈操作
+        // 步骤：
+        // 1. 将src1加载到RAX
+        // 2. CQO（符号扩展RAX到RDX:RAX）
+        // 3. IDIV src2
+        // 4. 将结果从RAX复制到dst（如果不同）
         
-        if need_save_rax {
-            // push rax
-            code_builder.emit_bytes(&[0x50]);
-        }
-        if need_save_rdx {
-            // push rdx
-            code_builder.emit_bytes(&[0x52]);
-        }
-
+        // 注意：除法会修改RAX和RDX，但LIR寄存器分配器应该已经考虑了这一点
+        
         // 将src1移动到RAX
         match src1 {
             Operand::Register { id } => {
                 let src1_reg = self.get_physical_register(id)?;
-                if src1_reg != rax {
-                    self.emit_mov_reg_reg(code_builder, rax, src1_reg);
+                if src1_reg != rax_hw {
+                    self.emit_mov_reg_reg(code_builder, rax_hw, src1_reg);
                 }
             }
             Operand::Immediate { value } => {
-                self.emit_mov_reg_imm64(code_builder, rax, *value);
+                self.emit_mov_reg_imm64(code_builder, rax_hw, *value);
             }
             _ => {
                 return Err(format!("div指令不支持的src1类型: {:?}", src1));
@@ -554,19 +550,9 @@ impl X86Compiler {
             }
         }
 
-        // 将商从RAX移动到dst
-        if dst_reg != rax {
-            self.emit_mov_reg_reg(code_builder, dst_reg, rax);
-        }
-
-        // 恢复RAX和RDX
-        if need_save_rdx {
-            // pop rdx
-            code_builder.emit_bytes(&[0x5A]);
-        }
-        if need_save_rax && dst_reg != rax {
-            // pop rax
-            code_builder.emit_bytes(&[0x58]);
+        // 将商从RAX移动到dst（如果需要）
+        if dst_reg != rax_hw {
+            self.emit_mov_reg_reg(code_builder, dst_reg, rax_hw);
         }
 
         Ok(())
