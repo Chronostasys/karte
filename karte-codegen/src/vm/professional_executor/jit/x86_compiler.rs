@@ -1868,23 +1868,23 @@ impl X86Compiler {
         }
 
         // 步骤2: 恢复 FP/SP
-        // x86-64 特殊处理：不能直接 mov SP, [SP+0]，因为会破坏基址
-        // 必须先保存到临时寄存器
-        // 🔧 关键修复：使用 R10 (caller-saved) 而不是 R13 (callee-saved)
-        // 原因：R13 可能在步骤1中被恢复，使用它会破坏刚恢复的值
-        use karte_common::calling_convention::REG_R10;
-        let temp_reg = REG_R10 as u8;
+        // 🔧 关键修复：完全对齐AArch64的实现
+        // AArch64: SP = [SP+0], FP = [SP+8], SP += 16
+        // x86无法直接实现 "SP = [SP+0]"，需要临时寄存器
         
-        // 2.1. 读取保存的SP值（实际上等于当前SP，这是AArch64的设计）
-        self.emit_mov_reg_mem(code_builder, temp_reg, vm_sp_hw, 0);   // temp = [SP+0] = SP
+        // 使用 RCX 作为临时寄存器（参数寄存器2，在返回时安全使用）
+        use karte_common::calling_convention::REG_RCX;
+        let temp_reg = REG_RCX as u8;
         
-        // 2.2. 恢复FP
-        self.emit_mov_reg_mem(code_builder, vm_fp_hw, vm_sp_hw, 8);   // FP = [SP+8]
-        
-        // 2.3. 将SP设置为保存的值（实际上不变）
+        // 按照AArch64的顺序：
+        // 1. SP = [SP+0]（通过临时寄存器）
+        self.emit_mov_reg_mem(code_builder, temp_reg, vm_sp_hw, 0);   // temp = [SP+0]
         self.emit_mov_reg_reg(code_builder, vm_sp_hw, temp_reg);       // SP = temp
         
-        // 2.4. 恢复到进入函数前的SP位置
+        // 2. FP = [SP+8]（注意：现在使用的是新的SP值）
+        self.emit_mov_reg_mem(code_builder, vm_fp_hw, vm_sp_hw, 8);   // FP = [SP+8]
+        
+        // 3. SP += 16
         self.emit_add_reg_imm32(code_builder, vm_sp_hw, 16);           // SP += 16
 
         Ok(())

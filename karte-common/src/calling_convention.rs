@@ -276,7 +276,10 @@ impl CallingConvention {
             callee_saved,
             stack_pointer: REG_RSP,              // 4 - RSP 作为VM栈指针
             frame_pointer: REG_RBP,              // 5 - RBP 作为VM帧指针
-            return_address: REG_R12,             // 12 - R12 作为返回地址寄存器（callee-saved）
+            // 🔧 关键修复：return_address必须使用caller-saved寄存器！
+            // AArch64使用X30(LR, caller-saved)，x86应该使用R11(caller-saved)
+            // R12是callee-saved，在compile_return中使用它会破坏callee-saved约定
+            return_address: REG_R11,             // 11 - R11 作为返回地址寄存器（caller-saved）
             effect_stack_pointer: REG_R12,       // 12 - R12  
             effect_payload_register: REG_RAX,    // 0 - RAX
             effect_tag_register: REG_R10,        // 10 - R10

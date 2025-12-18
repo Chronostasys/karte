@@ -1,0 +1,9 @@
+fn helper(x:number) -> number {
+    x + 1
+}
+
+fn main() -> number {
+    let a = helper(5);
+    let b = helper(4);
+    a + b
+}

@@ -1,0 +1,5 @@
+fn double(x:number) -> number { x * 2 }
+
+fn main() -> number {
+    double(5)
+}
