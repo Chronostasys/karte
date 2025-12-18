@@ -493,13 +493,22 @@ impl CodeBuilder {
         for pending in &self.pending_label_addresses {
             let target_addr = self.find_label_address(&pending.target_label, global_addresses)?;
 
+            // 🔧 修复：对于本地标签（小偏移），需要加上exec_base转换为绝对地址
+            let absolute_addr = if target_addr < 0x10000 {
+                // 本地标签（相对偏移），转换为绝对地址
+                exec_base + target_addr
+            } else {
+                // 全局标签（已经是绝对地址）
+                target_addr
+            };
+
             // 将标签地址写入代码
-            let address_bytes = (target_addr as u64).to_le_bytes();
+            let address_bytes = (absolute_addr as u64).to_le_bytes();
             log::debug!(
-                "🔧 修补标签地址: {} -> 位置{} (0x{:016X})",
+                "🔧 修补标签地址: {} -> 相对位置{} -> 绝对地址0x{:016X}",
                 pending.target_label,
                 target_addr,
-                target_addr as u64
+                absolute_addr
             );
             self.buffer
                 .write_bytes_at(pending.patch_position, &address_bytes)?;

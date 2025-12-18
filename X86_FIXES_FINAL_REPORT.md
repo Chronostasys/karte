@@ -1,277 +1,184 @@
-# x86-64 JIT 编译器修复最终报告
+# X86-64 JIT 编译器修复最终报告
 
-## 执行摘要
+## 测试结果改进
 
-通过系统性地修复 x86-64 calling convention 配置错误和重构硬编码寄存器，成功将测试通过率从 **44%** 提升到 **64%**。
+### 修复前
+- **通过**: 211/239 (88.3%)
+- **失败**: 23/239 (9.6%) - 全部 SIGSEGV
 
-## 测试结果对比
-
-| 指标 | 修复前 | 修复后 | 改善 |
-|------|--------|--------|------|
-| **通过测试** | 105 | 150 | +45 (+43%) |
-| **失败测试** | 129 | 84 | -45 (-35%) |
-| **跳过测试** | 5 | 5 | 0 |
-| **通过率** | 43.9% | 64.1% | +20.2% |
+### 修复后
+- **通过**: 214/239 (89.5%) ✅ **+3 个**
+- **失败**: 20/239 (8.3%) ✅ **-3 个**
+- **跳过**: 5/239 (2.1%)
 
 ## 关键修复
 
-### 1. ✅ VM 栈指针配置错误（根本原因）
+### 1. MOV R64, imm64 指令的 REX 前缀错误 ✅ **已修复**
 
-**问题**：
-在 `/workspace/karte-common/src/calling_convention.rs` 的 `CallingConvention::x86_64()` 方法中，VM 的栈指针和帧指针被错误地配置为系统栈寄存器：
+**问题**: Store64 Label 实现中，MOV R11, imm64 指令的 REX 前缀参数顺序错误。
 
+**位置**: `karte-codegen/src/vm/professional_executor/jit/x86_compiler.rs:873`
+
+**错误代码**:
 ```rust
-// ❌ 错误配置
-stack_pointer: REG_RSP,    // 15 - 系统栈指针
-frame_pointer: REG_RBP,    // 14 - 系统帧指针
+self.emit_rex_prefix(code_builder, true, temp_reg, 0, 0);  // ❌ 错误
 ```
 
-**影响**：
-- 函数序言中试图将虚拟栈地址保存到系统的 RBP/RSP 中
-- 导致系统栈被破坏
-- 几乎所有 JIT 执行测试都段错误
-
-**修复**：
+**正确代码**:
 ```rust
-// ✅ 正确配置
-stack_pointer: REG_R10,    // 6 - VM虚拟栈指针
-frame_pointer: REG_R11,    // 7 - VM虚拟帧指针
-use_system_stack_pointer: false,  // 使用VM虚拟栈
+self.emit_rex_prefix(code_builder, true, 0, 0, temp_reg);  // ✅ 正确
 ```
 
-**效果**：
-- **45个测试**从失败变为通过
-- 所有基础算术、逻辑运算、控制流测试现在通过
+**原因分析**:
+- `MOV r64, imm64` 使用 opcode `B8+r` 编码
+- 寄存器编码在 opcode 中，对应 REX.B 位（第4个参数），不是 REX.R 位（第2个参数）
+- R11 的编号是 11 (1011b)，高位为 1，需要 REX.B = 1
+- 错误的参数顺序导致 REX.B = 0，使得 MOV 变成了 MOV RBX (寄存器3) 而不是 R11 (寄存器11)
+- 结果是标签地址被写入了错误的寄存器
 
-**相关文件**：
-- `/workspace/karte-common/src/calling_convention.rs:251-252, 268`
+**调试过程**:
+1. GDB 显示 RIP = 0x246，R11 = 0x246 - 说明跳转到了相对偏移而不是绝对地址
+2. 日志显示标签地址修补完成，但实际上没生效
+3. 检查发现 MOV 指令的 REX 前缀参数顺序错误
 
----
+### 2. 返回地址寄存器冲突 ✅ **已修复**
 
-### 2. ✅ Effect 寄存器冲突
+**问题**: x86-64 calling convention 使用 RAX 作为返回地址寄存器，但 RAX 也是返回值寄存器。
 
-**问题**：
-Effect 相关寄存器与 VM 栈/帧指针使用了相同的寄存器：
+**修复**: 
+- 文件: `karte-common/src/calling_convention.rs:276`
+- 将 `return_address` 从 `REG_RAX` 改为 `REG_R12`
 
-```rust
-// ❌ 冲突配置
-stack_pointer: REG_R10,          // R10
-effect_tag_register: REG_R10,    // R10 冲突！
-frame_pointer: REG_R11,          // R11
-effect_resume_temp: REG_R11,     // R11 冲突！
+### 3. 内部函数序言/尾声的栈指针处理 ✅ **已修复**
+
+**问题**: x86-64 不能直接执行 `mov SP, [SP+0]`，因为会破坏基址寄存器。
+
+**修复**:
+- 文件: `karte-codegen/src/vm/professional_executor/jit/x86_compiler.rs:1743-1827`
+- 使用临时寄存器（R11）避免基址破坏
+- 对齐 AArch64 的序言/尾声语义
+
+### 4. 标签地址修补逻辑 ✅ **已修复**
+
+**问题**: 对于本地标签（相对偏移），修补时没有加上 exec_base 转换为绝对地址。
+
+**修复**:
+- 文件: `karte-codegen/src/vm/professional_executor/jit/code_buffer.rs:492-515`
+- 判断是否为本地标签（偏移 < 0x10000）
+- 本地标签加上 exec_base 转换为绝对地址
+
+## 当前状态
+
+### 工作的测试
+- ✅ 简单函数调用（如 `add(1, 2)`）
+- ✅ 多参数函数
+- ✅ 嵌套函数调用
+- ✅ 所有不涉及闭包的测试
+
+### 仍然失败的测试 (20个)
+所有涉及闭包和 lambda 的测试：
+- `test_closure_as_higher_order_param`
+- `test_function_as_value`
+- `test_identity_closure_returns_function`
+- `test_lambda_creation`
+- `test_let_with_lambda`
+- 等...
+
+**失败模式**: 全部 SIGSEGV
+
+## 已修改的文件
+
+1. **karte-common/src/calling_convention.rs**
+   - 修改返回地址寄存器从 RAX 到 R12
+
+2. **karte-codegen/src/vm/professional_executor/jit/x86_compiler.rs**
+   - 修复 MOV R64, imm64 的 REX 前缀参数顺序 (line 873)
+   - 修复内部函数序言/尾声的栈指针处理 (lines 1743-1827)
+   - 修复 compile_return 中返回值和返回地址的处理顺序 (lines 753-808)
+   - 修复 Store64 Label 的实现 (lines 863-880)
+
+3. **karte-codegen/src/vm/professional_executor/jit/code_buffer.rs**
+   - 修复标签地址修补逻辑，正确处理本地标签 (lines 492-515)
+
+## 下一步调试建议
+
+### 1. 闭包相关问题
+剩余的失败都涉及闭包，可能的问题：
+- 闭包结构的内存布局
+- 闭包捕获变量的访问
+- CallIndirect 指令的实现
+- 环境指针的传递
+
+### 2. 调试方法
+```bash
+# 创建最小闭包测试
+cat > /tmp/test_closure.karte << 'EOF'
+fn main() -> number {
+    let f = |x: number| { x + 1 };
+    f(5)
+}
+EOF
+
+# 运行并查看崩溃
+gdb --args ./target/debug/karte run /tmp/test_closure.karte
+
+# 在 GDB 中查看崩溃时的状态
+run
+info registers
+bt
 ```
 
-**修复**：
-```rust
-// ✅ 避免冲突
-stack_pointer: REG_R10,          // R10
-effect_tag_register: REG_R13,    // R13 (callee-saved)
-frame_pointer: REG_R11,          // R11
-effect_resume_temp: REG_R14,     // R14 (callee-saved)
+### 3. 检查项
+- [ ] CallIndirect 的 JMP 指令编码是否正确
+- [ ] 闭包结构的字段偏移是否正确（function_ptr, env_ptr）
+- [ ] 环境指针的传递是否符合调用约定
+- [ ] Load64 从闭包结构加载函数指针时的偏移
+
+## 成就总结
+
+✅ **修复了函数调用基础设施**
+- 简单函数调用现在可以正常工作
+- 参数传递正确
+- 返回值处理正确
+
+✅ **修复了关键的指令编码错误**
+- MOV R64, imm64 的 REX 前缀
+- 标签地址的修补逻辑
+
+✅ **提升了测试通过率**
+- 从 88.3% 提升到 89.5%
+- 修复了 3 个测试
+
+## 技术要点
+
+### x86-64 REX 前缀编码
+```
+REX 前缀格式: 0100WRXB
+- W: 0=32位操作数, 1=64位操作数
+- R: ModR/M.reg 字段的扩展位 (bit 3)
+- X: SIB.index 字段的扩展位 (bit 3)
+- B: ModR/M.r/m 或 SIB.base 或 opcode.reg 字段的扩展位 (bit 3)
 ```
 
-**相关文件**：
-- `/workspace/karte-common/src/calling_convention.rs:254-257`
+对于 `MOV r64, imm64` (opcode B8+r)：
+- 寄存器编码在 opcode 中 (+r)
+- 需要设置 REX.B 位来访问 R8-R15
+- **不需要** REX.R 位
 
----
+### 标签地址修补
+```rust
+// 本地标签（函数内的跳转目标）存储为相对偏移
+if offset < 0x10000 {
+    absolute_addr = exec_base + offset;
+}
+// 全局标签（跨函数调用）已经是绝对地址
+else {
+    absolute_addr = offset;
+}
+```
 
-### 3. ✅ 硬编码寄存器重构
+## 参考资料
 
-**工作内容**：
-- 删除了 `X86Register` enum
-- 移除了约 30 处 `X86Register::XXX as u8` 硬编码
-- 所有寄存器访问改为使用 calling convention 常量
-- 新增 `phys_reg_to_x86_hw_reg()` 映射函数
-
-**影响的函数**（15个）：
-- `compile_div`, `compile_return`, `emit_runtime_call`
-- `emit_function_prologue`, `emit_function_epilogue`
-- `save_callee_saved_registers`, `restore_callee_saved_registers`
-- 等等
-
-**相关文件**：
-- `/workspace/karte-codegen/src/vm/professional_executor/jit/x86_compiler.rs` (全文)
-- `/workspace/karte-codegen/src/vm/professional_executor/jit/compiler_trait.rs` (CallingConventionInfo)
-
----
-
-### 4. ⏳ 除法指令优化（待完善）
-
-**改进**：
-- 简化了实现，移除了手动的 push/pop 栈操作
-- 依赖寄存器分配器处理 RAX/RDX 的冲突
-
-**当前状态**：
-- ⚠️ `test_evaluate_division` 仍然 SIGFPE
-- 需要进一步调试
-
-**相关文件**：
-- `/workspace/karte-codegen/src/vm/professional_executor/jit/x86_compiler.rs:484-555`
-
----
-
-## 当前测试状态
-
-### ✅ 通过的测试类别（150个）
-
-1. **基础运算** (100% 通过)
-   - 算术：加减乘、一元运算
-   - 比较：等于、不等于、小于、大于、小于等于、大于等于
-   - 逻辑：与、或、非、短路求值
-
-2. **控制流** (100% 通过)
-   - if/else 表达式
-   - while 循环
-   - 嵌套控制流
-
-3. **变量和赋值** (100% 通过)
-   - let 绑定
-   - 赋值语句
-   - 变量作用域
-
-4. **模式匹配** (部分通过)
-   - 简单匹配
-   - 布尔字面量
-
-5. **Parser/Type Checker** (100% 通过)
-   - 所有词法、语法、类型检查测试
-
-### ⚠️ 失败的测试类别（84个）
-
-1. **函数调用** (大部分失败)
-   - Lambda 创建和调用
-   - 闭包作为参数
-   - 高阶函数
-   - 多参数函数
-
-2. **结构体** (全部失败)
-   - 结构体定义和构造
-   - 字段访问
-   - 嵌套结构体
-
-3. **自定义类型** (全部失败)
-   - Enum 定义
-   - 参数化类型
-   - 模式匹配with数据
-
-4. **引用** (全部失败)
-   - 简单引用
-   - 解引用
-   - 引用算术
-
-5. **数组** (全部失败)
-   - 数组字面量
-   - 索引访问
-
-6. **代数效应** (全部失败)
-   - Effect pipeline
-   - Effect 传播
-
-7. **除法** (1个失败)
-   - `test_evaluate_division` - SIGFPE
-
----
-
-## 剩余问题分析
-
-### 问题 1: 函数调用失败
-
-**可能原因**：
-- 参数传递可能使用了错误的寄存器顺序
-- VM calling convention 的参数寄存器配置可能不正确
-- 内部函数序言/尾声可能有问题
-
-**调试建议**：
-1. 检查 `argument_registers` 配置是否与 LIR 生成的代码一致
-2. 对比 AArch64 的参数传递方式
-3. 添加调试日志查看参数寄存器的值
-
-### 问题 2: 结构体/数组失败
-
-**可能原因**：
-- 内存布局计算可能有问题
-- Load64/Store64 指令可能使用了错误的寄存器
-- 指针算术可能不正确
-
-**调试建议**：
-1. 检查 `StructFieldLoad`/`StructFieldStore` 的编译
-2. 验证内存访问的基地址寄存器
-
-### 问题 3: 除法 SIGFPE
-
-**可能原因**：
-- 寄存器保存/恢复逻辑仍有问题
-- CQO 指令可能在错误的时机执行
-- 临时寄存器 R8 可能与其他寄存器冲突
-
-**调试建议**：
-1. 使用 GDB 查看除法指令执行时的寄存器状态
-2. 检查生成的机器码是否正确
-3. 对比 AArch64 的除法实现
-
----
-
-## 代码质量改进
-
-1. **✅ 模块化**：Calling convention 集中管理，易于维护
-2. **✅ 可移植性**：x86 和 AArch64 使用相同的抽象
-3. **✅ 类型安全**：使用常量而非魔法数字
-4. **✅ 文档完善**：添加了详细的注释和说明
-
----
-
-## 下一步工作
-
-### 优先级 P0（Critical）
-
-1. **修复除法指令** - 唯一的 SIGFPE 错误
-2. **修复函数调用** - 24个失败测试
-3. **修复简单函数调用** - `test_simple_function_call`
-
-### 优先级 P1（High）
-
-4. **修复结构体支持** - 15个失败测试
-5. **修复引用支持** - 6个失败测试
-
-### 优先级 P2（Medium）
-
-6. **修复自定义类型** - 17个失败测试
-7. **修复数组支持** - 2个失败测试
-
-### 优先级 P3（Low）
-
-8. **修复代数效应** - 3个失败测试
-9. **性能优化**
-10. **添加更多测试**
-
----
-
-## 总结
-
-通过本次系统性的重构和修复：
-
-1. **✅ 完成了用户的两个主要请求**：
-   - 为 x86-64 添加专用 calling convention
-   - 将硬编码寄存器改为使用 calling convention
-
-2. **✅ 显著提升了测试通过率**：
-   - 从 44% 提升到 64%
-   - 45个测试从失败变为通过
-
-3. **✅ 修复了根本性的架构问题**：
-   - VM 栈指针配置错误
-   - 寄存器冲突
-
-4. **⏳ 识别了剩余问题**：
-   - 函数调用、结构体、引用、除法等
-   - 提供了详细的调试建议
-
-项目现在具有良好的基础，剩余的问题可以逐个解决。建议按优先级顺序处理，优先修复函数调用和除法问题，这两个是最基础的功能。
-
----
-
-## 相关文档
-
-- [详细技术文档](/workspace/X86_CALLING_CONVENTION_REFACTOR.md)
-- [中文总结](/workspace/X86_REFACTOR_SUMMARY_zh.md)
-- [实现总结](/workspace/X86_IMPLEMENTATION_SUMMARY.md)
+- [Intel® 64 and IA-32 Architectures Software Developer's Manual](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
+- [x86-64 Instruction Encoding](https://wiki.osdev.org/X86-64_Instruction_Encoding)
+- [REX prefix](https://en.wikipedia.org/wiki/X86-64#REX_prefix)
