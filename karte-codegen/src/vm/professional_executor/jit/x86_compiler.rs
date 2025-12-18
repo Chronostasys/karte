@@ -107,7 +107,9 @@ impl X86Compiler {
             self.register_mapping.insert(physical_reg, i as u8);
         }
         
-        // 16-31: 不应该被使用，但为了防御性编程，映射到循环的 0-15
+        // 16-31: 不应该被 LIR 生成，如果生成了说明 CallingConvention 配置错误
+        // 现在 CallingConvention::standard() 已修复为架构特定，不应该再出现这种情况
+        // 但为了调试方便，暂时保留映射（TODO: 改为报错）
         for i in 16..32 {
             let physical_reg = Register::Physical(i);
             self.register_mapping.insert(physical_reg, (i % 16) as u8);
@@ -449,22 +451,42 @@ impl X86Compiler {
         // - 商存储在RAX中，余数存储在RDX中
         // - 需要先用CQO指令将RAX符号扩展到RDX:RAX
         
-        use karte_common::calling_convention::{REG_RAX, REG_RDX, REG_R8};
+        use karte_common::calling_convention::{REG_RAX, REG_RDX, REG_R13};
         
         let dst_reg = self.get_physical_register(dst)?;
         let rax_hw = REG_RAX as u8;
         let rdx_hw = REG_RDX as u8;
 
-        // 🔧 修复：简化除法实现，避免栈操作
-        // 步骤：
-        // 1. 将src1加载到RAX
-        // 2. CQO（符号扩展RAX到RDX:RAX）
-        // 3. IDIV src2
-        // 4. 将结果从RAX复制到dst（如果不同）
+        // x86-64 IDIV 要求：
+        // - 被除数在 RAX
+        // - 除数不能是 RAX 或 RDX
+        // - 商在 RAX，余数在 RDX
         
-        // 注意：除法会修改RAX和RDX，但LIR寄存器分配器应该已经考虑了这一点
+        // 1. 保存 src2 到临时寄存器（如果 src2 会被 CQO 破坏）
+        let divisor_reg = match src2 {
+            Operand::Register { id } => {
+                let src2_reg = self.get_physical_register(id)?;
+                // 如果 src2 是 RDX，需要先保存到其他寄存器
+                if src2_reg == rdx_hw {
+                    let temp = REG_R13 as u8;
+                    self.emit_mov_reg_reg(code_builder, temp, src2_reg);
+                    temp
+                } else {
+                    src2_reg
+                }
+            }
+            Operand::Immediate { value } => {
+                // 立即数需要加载到寄存器
+                let temp = REG_R13 as u8;
+                self.emit_mov_reg_imm64(code_builder, temp, *value);
+                temp
+            }
+            _ => {
+                return Err(format!("div指令不支持的src2类型: {:?}", src2));
+            }
+        };
         
-        // 将src1移动到RAX
+        // 2. 将 src1 加载到 RAX
         match src1 {
             Operand::Register { id } => {
                 let src1_reg = self.get_physical_register(id)?;
@@ -480,33 +502,16 @@ impl X86Compiler {
             }
         }
 
-        // CQO: 符号扩展RAX到RDX:RAX
+        // 3. CQO: 符号扩展 RAX 到 RDX:RAX
         code_builder.emit_bytes(&[0x48, 0x99]);
 
-        // IDIV src2
-        match src2 {
-            Operand::Register { id } => {
-                let src2_reg = self.get_physical_register(id)?;
-                // REX.W + F7 /7: IDIV r/m64
-                self.emit_rex_prefix(code_builder, true, 0, 0, src2_reg);
-                code_builder.emit_byte(0xF7);
-                self.emit_modrm(code_builder, 0b11, 7, src2_reg);
-            }
-            Operand::Immediate { value } => {
-                // 除数是立即数，需要先加载到寄存器
-                // 使用R8作为临时寄存器
-                let temp_reg = REG_R8 as u8;
-                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
-                self.emit_rex_prefix(code_builder, true, 0, 0, temp_reg);
-                code_builder.emit_byte(0xF7);
-                self.emit_modrm(code_builder, 0b11, 7, temp_reg);
-            }
-            _ => {
-                return Err(format!("div指令不支持的src2类型: {:?}", src2));
-            }
-        }
+        // 4. IDIV divisor
+        // REX.W + F7 /7: IDIV r/m64
+        self.emit_rex_prefix(code_builder, true, 0, 0, divisor_reg);
+        code_builder.emit_byte(0xF7);
+        self.emit_modrm(code_builder, 0b11, 7, divisor_reg);
 
-        // 将商从RAX移动到dst（如果需要）
+        // 5. 将商从 RAX 移动到 dst（如果需要）
         if dst_reg != rax_hw {
             self.emit_mov_reg_reg(code_builder, dst_reg, rax_hw);
         }
@@ -1740,9 +1745,17 @@ impl X86Compiler {
         let vm_fp_hw = self.get_vm_fp_hw();
         
         // 保存fp sp到虚拟栈
+        // 🔧 修复：使用 store-pair 模拟（先保存到 [SP-16] 再调整 SP）
+        // x86 没有 STP，需要先调整 SP，然后保存
+        // 但保存 SP 时需要保存旧值（SP+16）
         self.emit_sub_reg_imm32(code_builder, vm_sp_hw, 16);
         self.emit_mov_mem_reg(code_builder, vm_sp_hw, 8, vm_fp_hw);
-        self.emit_mov_mem_reg(code_builder, vm_sp_hw, 0, vm_sp_hw);
+        // 保存旧 SP = 当前SP + 16
+        use karte_common::calling_convention::REG_R13;
+        let temp = REG_R13 as u8;
+        self.emit_mov_reg_reg(code_builder, temp, vm_sp_hw);
+        self.emit_add_reg_imm32(code_builder, temp, 16);
+        self.emit_mov_mem_reg(code_builder, vm_sp_hw, 0, temp);
 
         // 使用LIR寄存器分配器计算的实际使用的callee-saved寄存器
         let callee_saved = &self.get_vm_callee_saved_registers();
@@ -1807,9 +1820,12 @@ impl X86Compiler {
         }
 
         // 恢复fp sp从虚拟栈
-        self.emit_mov_reg_mem(code_builder, vm_sp_hw, vm_sp_hw, 0);
-        self.emit_mov_reg_mem(code_builder, vm_fp_hw, vm_sp_hw, 8);
-        self.emit_add_reg_imm32(code_builder, vm_sp_hw, 16);
+        // 读取保存的旧 SP 和 FP
+        use karte_common::calling_convention::REG_R13;
+        let temp = REG_R13 as u8;
+        self.emit_mov_reg_mem(code_builder, temp, vm_sp_hw, 0);      // temp = 旧SP
+        self.emit_mov_reg_mem(code_builder, vm_fp_hw, vm_sp_hw, 8);  // FP = 旧FP
+        self.emit_mov_reg_reg(code_builder, vm_sp_hw, temp);          // SP = 旧SP
 
         Ok(())
     }
