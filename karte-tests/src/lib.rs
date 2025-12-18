@@ -27,8 +27,20 @@ pub fn dummy_span() -> Span {
 
 /// 简化的执行函数，直接返回i64结果，带调试选项
 pub fn execute_with_pipeline_debug(expr: &Expr, debug: bool) -> Result<i64, String> {
-    // 1. HIR -> MIR
-    let mir_program = karte_mir::lower::lower_expr_to_mir(expr)
+    // 0. 类型检查以获取类型信息
+    let (_, expr_types, type_diagnostics) = 
+        karte_hir::type_check_with_context_and_maps(expr, Default::default());
+    if type_diagnostics.has_errors() {
+        return Err(format!("Type check errors: {:?}", type_diagnostics));
+    }
+    
+    // 1. HIR -> MIR (带类型信息)
+    let options = karte_mir::lower::LoweringOptions {
+        known_functions: std::collections::HashSet::new(),
+        module_context: None,
+        expr_types,
+    };
+    let mir_program = karte_mir::lower::lower_expr_to_mir_with_options(expr, options)
         .map_err(|e| format!("MIR lowering error: {:?}", e))?;
 
     if debug {
