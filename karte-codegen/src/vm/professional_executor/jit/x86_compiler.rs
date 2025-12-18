@@ -1851,8 +1851,9 @@ impl X86Compiler {
         // 🔧 修复：恢复fp sp从虚拟栈
         // x86-64 特殊处理：不能直接 mov SP, [SP+0]，因为会破坏基址
         // 必须先保存到临时寄存器
-        use karte_common::calling_convention::REG_R11;
-        let temp_reg = REG_R11 as u8;
+        // 🔧 使用 R13 而不是 R11，因为 R11 可能被用作 effect_resume_temp
+        use karte_common::calling_convention::REG_R13;
+        let temp_reg = REG_R13 as u8;
         
         // 1. 读取保存的SP值（实际上等于当前SP，这是AArch64的设计）
         self.emit_mov_reg_mem(code_builder, temp_reg, vm_sp_hw, 0);   // temp = [SP+0] = SP
