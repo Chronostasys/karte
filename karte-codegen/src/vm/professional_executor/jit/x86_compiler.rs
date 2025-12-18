@@ -756,25 +756,23 @@ impl X86Compiler {
         code_builder: &mut CodeBuilder,
         is_main_function: bool,
     ) -> Result<(), String> {
-        // 1. 将返回值移动到RAX寄存器
         use karte_common::calling_convention::REG_RAX;
         let rax = REG_RAX as u8;
-        
-        if let Some(return_reg) = value {
-            let src_reg = self.get_physical_register(return_reg)?;
-            if src_reg != rax {
-                self.emit_mov_reg_reg(code_builder, rax, src_reg);
-            }
-        } else {
-            // 无返回值的函数默认返回0
-            self.emit_mov_reg_imm64(code_builder, rax, 0);
-        }
-
-        // VM调用约定：返回时需要弹出虚拟返回地址并跳转
         let vm_sp_hw = self.get_vm_sp_hw();
         let return_addr_hw = self.get_vm_return_addr_hw();
         
         if is_main_function {
+            // 1. 将返回值移动到RAX寄存器
+            if let Some(return_reg) = value {
+                let src_reg = self.get_physical_register(return_reg)?;
+                if src_reg != rax {
+                    self.emit_mov_reg_reg(code_builder, rax, src_reg);
+                }
+            } else {
+                // 无返回值的函数默认返回0
+                self.emit_mov_reg_imm64(code_builder, rax, 0);
+            }
+            
             // Main函数逻辑：
             // 虚拟栈布局（从低地址到高地址）：
             // [SP+0]: 返回值槽指针（RDI参数，由序言保存）
@@ -791,15 +789,39 @@ impl X86Compiler {
             //   - RET（使用系统栈上的返回地址）
             self.emit_function_epilogue(code_builder)?;
         } else {
-            // 内部函数逻辑：
+            // 🔧 修复：内部函数返回逻辑
+            // 关键：在恢复 callee-saved 寄存器之前先保存返回地址
+            // 因为返回地址寄存器（R12）可能会被 epilogue 恢复
+            
+            // 1. 先从虚拟栈读取返回地址，保存到不会被 epilogue 修改的寄存器
+            // 使用 R11（caller-saved，不会被 epilogue 恢复）
+            use karte_common::calling_convention::REG_R11;
+            let temp_return_addr = REG_R11 as u8;
+            
+            // 在 epilogue 之前，SP 还指向栈帧底部，返回地址在 SP 恢复后的位置
+            // 所以我们需要计算返回地址的位置
+            // 但这很复杂，让我们改用另一种方法：在 epilogue 之后再读取返回地址
+            
             // 2. 恢复callee-saved寄存器（从虚拟栈）
             self.emit_internal_function_epilogue(code_builder)?;
             
-            // 3. 加载返回地址到专用寄存器
-            self.emit_mov_reg_mem(code_builder, return_addr_hw, vm_sp_hw, 0);
+            // 3. 此时 SP 已经恢复到进入函数前的位置，[SP+0] 是返回地址
+            // 加载返回地址到临时寄存器（不能用 R12，因为它可能保存了重要数据）
+            self.emit_mov_reg_mem(code_builder, temp_return_addr, vm_sp_hw, 0);
+            
+            // 4. 将返回值移动到RAX寄存器
+            if let Some(return_reg) = value {
+                let src_reg = self.get_physical_register(return_reg)?;
+                if src_reg != rax {
+                    self.emit_mov_reg_reg(code_builder, rax, src_reg);
+                }
+            } else {
+                // 无返回值的函数默认返回0
+                self.emit_mov_reg_imm64(code_builder, rax, 0);
+            }
 
-            // 4. 跳转到返回地址
-            let ret_reg = Register::Physical(self.vm_calling_convention.return_address);
+            // 5. 跳转到返回地址（使用临时寄存器）
+            let ret_reg = Register::Physical(REG_R11);
             self.compile_jump_register(&ret_reg, code_builder)?;
         }
 
@@ -841,11 +863,20 @@ impl X86Compiler {
             Operand::Label { id } => {
                 // store64 [addr + offset], label - 存储标签地址
                 let label_name = format!("label_{}", id.0);
-                // 1. 使用R8加载label地址
-                // LEA R8, [RIP + label]
-                self.emit_lea_reg_rip_rel(code_builder, 8, &label_name);
-                // 2. 存储R8到目标内存
-                self.emit_mov_mem_reg(code_builder, addr_reg, offset as i32, 8);
+                // 🔧 修复：使用临时寄存器 R11（caller-saved），并正确处理标签引用
+                // 1. MOV R11, <label_address> (将被修补为实际地址)
+                use karte_common::calling_convention::REG_R11;
+                let temp_reg = REG_R11 as u8;
+                
+                // 生成 MOV R11, imm64 指令
+                // REX.W + B8+r: MOV r64, imm64
+                self.emit_rex_prefix(code_builder, true, temp_reg, 0, 0);
+                code_builder.emit_byte(0xB8 + (temp_reg & 0x07));
+                // 发射标签地址占位符（将被修补）
+                code_builder.emit_label_address(&label_name);
+                
+                // 2. 存储 R11 到目标内存
+                self.emit_mov_mem_reg(code_builder, addr_reg, offset as i32, temp_reg);
             }
             _ => {
                 return Err(format!("store64指令不支持的src类型: {:?}", src));
@@ -1750,7 +1781,7 @@ impl X86Compiler {
         let vm_fp_hw = self.get_vm_fp_hw();
         
         // 保存fp sp到虚拟栈
-        // 对齐 AArch64 的语义：保存当前SP（新栈帧底部）
+        // 对齐 AArch64 的语义：保存更新后的SP（新栈帧底部）
         self.emit_sub_reg_imm32(code_builder, vm_sp_hw, 16);
         self.emit_mov_mem_reg(code_builder, vm_sp_hw, 8, vm_fp_hw);
         self.emit_mov_mem_reg(code_builder, vm_sp_hw, 0, vm_sp_hw);
@@ -1817,11 +1848,23 @@ impl X86Compiler {
             );
         }
 
-        // 恢复fp sp从虚拟栈
-        // 对齐 AArch64 的语义
-        self.emit_mov_reg_mem(code_builder, vm_sp_hw, vm_sp_hw, 0);  // SP = 新栈帧底部
-        self.emit_mov_reg_mem(code_builder, vm_fp_hw, vm_sp_hw, 8);  // FP = 旧FP
-        self.emit_add_reg_imm32(code_builder, vm_sp_hw, 16);          // SP += 16，指向返回地址
+        // 🔧 修复：恢复fp sp从虚拟栈
+        // x86-64 特殊处理：不能直接 mov SP, [SP+0]，因为会破坏基址
+        // 必须先保存到临时寄存器
+        use karte_common::calling_convention::REG_R11;
+        let temp_reg = REG_R11 as u8;
+        
+        // 1. 读取保存的SP值（实际上等于当前SP，这是AArch64的设计）
+        self.emit_mov_reg_mem(code_builder, temp_reg, vm_sp_hw, 0);   // temp = [SP+0] = SP
+        
+        // 2. 恢复FP
+        self.emit_mov_reg_mem(code_builder, vm_fp_hw, vm_sp_hw, 8);   // FP = [SP+8]
+        
+        // 3. 将SP设置为保存的值（实际上不变）
+        self.emit_mov_reg_reg(code_builder, vm_sp_hw, temp_reg);       // SP = temp
+        
+        // 4. 恢复到进入函数前的SP位置
+        self.emit_add_reg_imm32(code_builder, vm_sp_hw, 16);           // SP += 16
 
         Ok(())
     }
