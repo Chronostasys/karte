@@ -40,11 +40,20 @@ pub fn execute_with_pipeline_debug(expr: &Expr, debug: bool) -> Result<i64, Stri
         module_context: None,
         expr_types,
     };
-    let mir_program = karte_mir::lower::lower_expr_to_mir_with_options(expr, options)
+    let mut mir_program = karte_mir::lower::lower_expr_to_mir_with_options(expr, options)
         .map_err(|e| format!("MIR lowering error: {:?}", e))?;
 
     if debug {
-        println!("=== MIR Program ===");
+        println!("=== MIR Program (before escape analysis) ===");
+        println!("{}", mir_program);
+    }
+
+    // 1.5. 应用逃逸分析优化
+    karte_module_system::optimize_mir_with_escape_analysis(&mut mir_program, false)
+        .map_err(|e| format!("Escape analysis error: {:?}", e))?;
+
+    if debug {
+        println!("=== MIR Program (after escape analysis) ===");
         println!("{}", mir_program);
     }
 
@@ -69,11 +78,11 @@ pub fn execute_with_pipeline_debug(expr: &Expr, debug: bool) -> Result<i64, Stri
         opt_stats.print();
         println!("=== 优化后的LIR ===");
         println!("{}", lir_program);
-        // 新增：打印各函数的 stack_frame_size
+        // 新增：打印各函数的 stack_frame_size 和 used_regs
         for (name, func) in &lir_program.functions {
             println!(
-                "[调试] 优化后函数 {} stack_frame_size = {}",
-                name, func.stack_frame_size
+                "[调试] 优化后函数 {} stack_frame_size = {}, used_regs = {:?}",
+                name, func.stack_frame_size, func.used_regs
             );
         }
         println!("================================================");

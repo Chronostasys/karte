@@ -274,10 +274,10 @@ impl CallingConvention {
             stack_pointer: REG_RSP,              // 4 - RSP 作为VM栈指针
             frame_pointer: REG_RBP,              // 5 - RBP 作为VM帧指针
             return_address: REG_R12,             // 12 - R12 作为返回地址寄存器（callee-saved）
-            effect_stack_pointer: REG_R12,       // 12 - R12
+            effect_stack_pointer: REG_R12,       // 12 - R12  
             effect_payload_register: REG_RAX,    // 0 - RAX
             effect_tag_register: REG_R10,        // 10 - R10
-            effect_resume_temp: REG_R15,         // 15 - R15
+            effect_resume_temp: REG_R9,          // 9 - R9 (caller-saved，用于CallIndirect临时存储)
             temp_registers: {
                 // 临时寄存器包括所有 caller-saved 寄存器
                 vec![

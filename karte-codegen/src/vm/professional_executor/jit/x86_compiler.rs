@@ -787,29 +787,19 @@ impl X86Compiler {
             //   - 恢复callee-saved寄存器
             //   - 恢复RBP
             //   - RET（使用系统栈上的返回地址）
+            
+            // 🔧 调试：在切换回系统栈前，检查虚拟栈指针
+            if self.debug_mode {
+                log::debug!("main函数返回前虚拟栈状态将在epilogue中处理");
+            }
+            
             self.emit_function_epilogue(code_builder)?;
         } else {
-            // 🔧 修复：内部函数返回逻辑
-            // 关键：在恢复 callee-saved 寄存器之前先保存返回地址
-            // 因为返回地址寄存器（R12）可能会被 epilogue 恢复
+            // 🔧 修复：内部函数返回逻辑（对齐AArch64）
+            // 关键：必须在 epilogue 之前设置返回值！
+            // 否则返回值寄存器可能被 epilogue 恢复的 callee-saved 寄存器覆盖
             
-            // 1. 先从虚拟栈读取返回地址，保存到不会被 epilogue 修改的寄存器
-            // 使用 R11（caller-saved，不会被 epilogue 恢复）
-            use karte_common::calling_convention::REG_R11;
-            let temp_return_addr = REG_R11 as u8;
-            
-            // 在 epilogue 之前，SP 还指向栈帧底部，返回地址在 SP 恢复后的位置
-            // 所以我们需要计算返回地址的位置
-            // 但这很复杂，让我们改用另一种方法：在 epilogue 之后再读取返回地址
-            
-            // 2. 恢复callee-saved寄存器（从虚拟栈）
-            self.emit_internal_function_epilogue(code_builder)?;
-            
-            // 3. 此时 SP 已经恢复到进入函数前的位置，[SP+0] 是返回地址
-            // 加载返回地址到临时寄存器（不能用 R12，因为它可能保存了重要数据）
-            self.emit_mov_reg_mem(code_builder, temp_return_addr, vm_sp_hw, 0);
-            
-            // 4. 将返回值移动到RAX寄存器
+            // 1. 将返回值移动到RAX寄存器（在 epilogue 之前）
             if let Some(return_reg) = value {
                 let src_reg = self.get_physical_register(return_reg)?;
                 if src_reg != rax {
@@ -819,9 +809,16 @@ impl X86Compiler {
                 // 无返回值的函数默认返回0
                 self.emit_mov_reg_imm64(code_builder, rax, 0);
             }
+            
+            // 2. 恢复callee-saved寄存器（从虚拟栈）
+            self.emit_internal_function_epilogue(code_builder)?;
+            
+            // 3. 此时 SP 已经恢复到进入函数前的位置，[SP+0] 是返回地址
+            // 加载返回地址到专用寄存器（R12）
+            self.emit_mov_reg_mem(code_builder, return_addr_hw, vm_sp_hw, 0);
 
-            // 5. 跳转到返回地址（使用临时寄存器）
-            let ret_reg = Register::Physical(REG_R11);
+            // 4. 跳转到返回地址
+            let ret_reg = Register::Physical(self.vm_calling_convention.return_address);
             self.compile_jump_register(&ret_reg, code_builder)?;
         }
 
@@ -1248,25 +1245,24 @@ impl X86Compiler {
         };
         regs_to_virtual_stack.retain(|reg| !exclude.contains(reg));
 
-        if regs_to_virtual_stack.is_empty() {
-            return (regs_to_virtual_stack, 0);
-        }
-
         // 🔧 修复：确保虚拟栈空间是 16 字节对齐的
         let raw_stack_space = regs_to_virtual_stack.len() * 8;
         let virtual_stack_space = ((raw_stack_space + 15) / 16) * 16;
 
-        // 步骤1：保存寄存器到虚拟栈
-        // 一次性调整虚拟栈指针（向下增长）
-        let karte_virtual_sp_hw = karte_virtual_sp_reg as u8;
-        self.emit_sub_reg_imm32(code_builder, karte_virtual_sp_hw, virtual_stack_space as i32 + 32);
+        // 步骤1：保存寄存器到虚拟栈（只有非空时才调整虚拟栈）
+        if !regs_to_virtual_stack.is_empty() {
+            // 一次性调整虚拟栈指针（向下增长）
+            let karte_virtual_sp_hw = self.get_vm_sp_hw();
+            self.emit_sub_reg_imm32(code_builder, karte_virtual_sp_hw, virtual_stack_space as i32 + 32);
 
-        // 保存所有寄存器到调整后的虚拟栈上
-        for (idx, reg) in regs_to_virtual_stack.iter().enumerate() {
-            self.emit_mov_mem_reg(code_builder, karte_virtual_sp_hw, (idx * 8) as i32, *reg);
+            // 保存所有寄存器到调整后的虚拟栈上
+            for (idx, reg) in regs_to_virtual_stack.iter().enumerate() {
+                self.emit_mov_mem_reg(code_builder, karte_virtual_sp_hw, (idx * 8) as i32, *reg);
+            }
         }
 
-        // 步骤2：只在系统栈保存 VM 帧指针，SP 依靠栈平衡自动恢复
+        // 步骤2：总是在系统栈保存 VM 帧指针（即使 regs 为空）
+        // 这样可以保持系统栈的平衡
         let vm_fp_hw = self.get_vm_fp_hw();
         if self.debug_mode {
             log::debug!("保存 VM 帧寄存器到系统栈: fp=p{}", self.vm_calling_convention.frame_pointer);
@@ -1288,17 +1284,16 @@ impl X86Compiler {
         stack_space: usize,
     ) {
         // 🔧 关键修复：恢复顺序与保存顺序相反
-        // 1. 先从系统栈恢复 VM 栈/帧指针
-        // 2. 再从虚拟栈恢复寄存器
-
-        // 步骤1：恢复 VM 帧指针，并保持与保存步骤相同的栈调整
+        // 重要：系统栈的FP总是被保存，必须总是恢复（与AArch64对齐）
+        
+        // 步骤1：总是恢复 VM 帧指针（与保存对称）
         use karte_common::calling_convention::REG_RSP;
         let rsp = REG_RSP as u8;
         let vm_fp_hw = self.get_vm_fp_hw();
         self.emit_mov_reg_mem(code_builder, vm_fp_hw, rsp, 8);
         self.emit_add_rsp_imm(code_builder, 16);
 
-        // 步骤2：恢复寄存器从虚拟栈
+        // 步骤2：恢复寄存器从虚拟栈（只有非空时才调整虚拟栈）
         if !regs.is_empty() {
             let karte_virtual_sp_hw = self.get_vm_sp_hw();
 
@@ -1509,10 +1504,14 @@ impl X86Compiler {
 
     /// 生成 call abs64 指令
     fn emit_call_absolute(&self, code_builder: &mut CodeBuilder, func: u64) {
-        use karte_common::calling_convention::REG_RAX;
-        let tmp = REG_RAX as u8;
+        // 🔧 修复：使用 R10 作为临时寄存器，而不是 RAX
+        // RAX 可能被用作返回值或参数，R10 是 caller-saved 但不用于参数传递
+        use karte_common::calling_convention::REG_R10;
+        let tmp = REG_R10 as u8;
         self.emit_mov_reg_imm64(code_builder, tmp, func as i64);
         // CALL r/m64: FF /2
+        // 对于R8-R15，需要REX前缀
+        self.emit_rex_prefix(code_builder, false, 0, 0, tmp);
         code_builder.emit_byte(0xFF);
         self.emit_modrm(code_builder, 0b11, 0b010, tmp);
     }
