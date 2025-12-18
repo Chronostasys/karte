@@ -284,6 +284,26 @@ impl CC for CallingConventionInfo {
     }
 }
 
+impl CallingConventionInfo {
+    /// 获取需要保存的 callee-saved 寄存器
+    pub fn get_callee_save_registers(&self, used_registers: &[u8]) -> Vec<u8> {
+        used_registers
+            .iter()
+            .filter(|&&reg| self.is_callee_saved(reg))
+            .copied()
+            .collect()
+    }
+    
+    /// 获取需要保存的 caller-saved 寄存器
+    pub fn get_caller_save_registers(&self, live_registers: &[u8]) -> Vec<u8> {
+        live_registers
+            .iter()
+            .filter(|&&reg| self.is_caller_saved(reg))
+            .copied()
+            .collect()
+    }
+}
+
 /// 调试信息
 #[derive(Debug, Clone)]
 pub struct DebugInfo {

@@ -4,7 +4,8 @@
 
 use super::code_buffer::{CodeBuilder, JumpType};
 use super::compiler_trait::*;
-use super::ffi::{RuntimeArg, RuntimeCall};
+use super::ffi::{RuntimeArg, RuntimeCall, RuntimeIntrinsic};
+use karte_common::calling_convention::{CallingConvention, PhysicalRegister, CC};
 use karte_lir::{Instruction, LirFunction, LirProgram, Operand, Register};
 use std::collections::HashMap;
 
@@ -13,10 +14,18 @@ use std::collections::HashMap;
 pub struct X86Compiler {
     /// 寄存器映射 (虚拟寄存器 -> 物理寄存器)
     register_mapping: HashMap<Register, u8>,
-    /// 调用约定
-    calling_convention: CallingConventionInfo,
+    /// C FFI调用约定 (System V AMD64 ABI on Linux/macOS, Microsoft x64 on Windows)
+    ffi_calling_convention: CallingConventionInfo,
+    /// Karte VM调用约定
+    vm_calling_convention: CallingConvention,
     /// 调试模式
     debug_mode: bool,
+    /// 唯一label计数器（用于在编译时生成跳转目标）
+    unique_label_counter: usize,
+    /// 当前函数使用的 callee-saved 寄存器列表
+    current_function_use_regs: Vec<PhysicalRegister>,
+    /// 当前编译的函数名（用于生成唯一label）
+    current_function_name: String,
 }
 
 impl X86Compiler {
@@ -24,8 +33,12 @@ impl X86Compiler {
     pub fn new(debug_mode: bool) -> Result<Self, String> {
         let mut compiler = Self {
             register_mapping: HashMap::new(),
-            calling_convention: Self::create_calling_convention(),
-            debug_mode: true, // 强制启用调试模式
+            ffi_calling_convention: Self::create_c_ffi_calling_convention(),
+            vm_calling_convention: CallingConvention::x86_64(),
+            debug_mode: true, // 强制启用调试模式以便观察编译过程
+            unique_label_counter: 0,
+            current_function_use_regs: Vec::new(),
+            current_function_name: String::new(),
         };
 
         // 初始化寄存器映射
@@ -34,69 +47,72 @@ impl X86Compiler {
         Ok(compiler)
     }
 
-    /// 创建x86-64调用约定
-    fn create_calling_convention() -> CallingConventionInfo {
+    /// 创建 C FFI 调用约定 (System V AMD64 ABI for Linux/macOS)
+    ///
+    /// 这个调用约定用于调用 C 运行时函数 (runtime intrinsics)
+    fn create_c_ffi_calling_convention() -> CallingConventionInfo {
+        use karte_common::calling_convention::*;
         CallingConventionInfo {
             parameter_registers: vec![
-                X86Register::RDI as u8, // 第一个参数
-                X86Register::RSI as u8, // 第二个参数
-                X86Register::RDX as u8, // 第三个参数
-                X86Register::RCX as u8, // 第四个参数
+                REG_RDI, // 第一个参数
+                REG_RSI, // 第二个参数
+                REG_RDX, // 第三个参数
+                REG_RCX, // 第四个参数
+                REG_R8,  // 第五个参数
+                REG_R9,  // 第六个参数
             ],
-            return_register: X86Register::RAX as u8,
-            stack_pointer: X86Register::RSP as u8,
-            frame_pointer: X86Register::RBP as u8,
+            return_register: REG_RAX,
+            stack_pointer: REG_RSP,
+            frame_pointer: REG_RBP,
             caller_saved: vec![
-                X86Register::RAX as u8,
-                X86Register::RCX as u8,
-                X86Register::RDX as u8,
-                X86Register::RSI as u8,
-                X86Register::RDI as u8,
-                X86Register::R8 as u8,
-                X86Register::R9 as u8,
-                X86Register::R10 as u8,
-                X86Register::R11 as u8,
+                REG_RAX, REG_RCX, REG_RDX, REG_RSI, REG_RDI,
+                REG_R8, REG_R9, REG_R10, REG_R11,
             ],
             callee_saved: vec![
-                X86Register::RBX as u8,
-                X86Register::RBP as u8,
-                X86Register::R12 as u8,
-                X86Register::R13 as u8,
-                X86Register::R14 as u8,
-                X86Register::R15 as u8,
+                REG_RBX, REG_RBP, REG_R12, REG_R13, REG_R14, REG_R15,
             ],
         }
     }
 
     /// 初始化寄存器映射
+    ///
+    /// 将 LIR 的虚拟寄存器和物理寄存器映射到 x86-64 的实际物理寄存器
+    /// PhysicalRegister 值直接等于 x86-64 硬件寄存器编号（与 AArch64 一致）
     fn initialize_register_mapping(&mut self) {
-        // 🔧 修复：建立虚拟寄存器到物理寄存器的映射
-        // 确保r0映射到RAX（返回值寄存器），避免与函数序言冲突
+        use karte_common::calling_convention::*;
+
+        // 虚拟寄存器到物理寄存器的映射（与AArch64一致）
         for i in 0..8 {
             let virtual_reg = Register::Virtual(i);
             let physical_reg = match i {
-                0 => X86Register::RAX as u8, // r0 -> rax (返回值寄存器)
-                1 => X86Register::RBX as u8, // r1 -> rbx
-                2 => X86Register::RCX as u8, // r2 -> rcx
-                3 => X86Register::RDX as u8, // r3 -> rdx
-                4 => X86Register::R8 as u8,  // r4 -> r8
-                5 => X86Register::R9 as u8,  // r5 -> r9
-                6 => X86Register::R10 as u8, // r6 -> r10 (虚拟机栈指针)
-                7 => X86Register::R11 as u8, // r7 -> r11 (虚拟机帧指针)
-                _ => X86Register::R12 as u8,
+                0 => REG_RAX as u8, // r0 -> rax (返回值寄存器)
+                1 => REG_RCX as u8, // r1 -> rcx
+                2 => REG_RDX as u8, // r2 -> rdx
+                3 => REG_RBX as u8, // r3 -> rbx
+                4 => REG_R8 as u8,  // r4 -> r8
+                5 => REG_R9 as u8,  // r5 -> r9
+                6 => REG_R10 as u8, // r6 -> r10 (简化：不再用作虚拟栈指针)
+                7 => REG_R11 as u8, // r7 -> r11 (简化：不再用作虚拟帧指针)
+                _ => REG_R12 as u8, // 其他使用临时寄存器
             };
             self.register_mapping.insert(virtual_reg, physical_reg);
         }
 
-        // 🔧 修复：物理寄存器映射，确保Physical(6)和Physical(7)映射到r10和r11
+        // 物理寄存器直接映射（x86-64 只支持 0-15）
+        // ⚠️ 关键：x86-64 只有 16 个寄存器，LIR passes 现在使用 x86_64() 配置，
+        // 所以只会生成 0-15 的物理寄存器编号
         for i in 0..16 {
             let physical_reg = Register::Physical(i);
-            let x86_reg = match i {
-                6 => X86Register::R10 as u8, // Physical(6) -> r10 (虚拟机栈指针)
-                7 => X86Register::R11 as u8, // Physical(7) -> r11 (虚拟机帧指针)
-                _ => i,                      // 其他物理寄存器直接映射
-            };
-            self.register_mapping.insert(physical_reg, x86_reg);
+            // PhysicalRegister 值直接等于硬件寄存器编号
+            self.register_mapping.insert(physical_reg, i as u8);
+        }
+        
+        // 16-31: 不应该被 LIR 生成，如果生成了说明 CallingConvention 配置错误
+        // 现在 CallingConvention::standard() 已修复为架构特定，不应该再出现这种情况
+        // 但为了调试方便，暂时保留映射（TODO: 改为报错）
+        for i in 16..32 {
+            let physical_reg = Register::Physical(i);
+            self.register_mapping.insert(physical_reg, (i % 16) as u8);
         }
     }
 
@@ -108,15 +124,41 @@ impl X86Compiler {
             .ok_or_else(|| format!("未映射的寄存器: {:?}", reg))
     }
 
+    /// 获取 VM 栈指针的硬件寄存器编号
+    ///
+    /// x86-64: stack_pointer=4 (RSP), 直接返回硬件寄存器编号
+    fn get_vm_sp_hw(&self) -> u8 {
+        // PhysicalRegister 值直接等于硬件寄存器编号
+        self.vm_calling_convention.stack_pointer as u8
+    }
+
+    /// 获取 VM 帧指针的硬件寄存器编号
+    ///
+    /// x86-64: frame_pointer=5 (RBP), 直接返回硬件寄存器编号
+    fn get_vm_fp_hw(&self) -> u8 {
+        // PhysicalRegister 值直接等于硬件寄存器编号
+        self.vm_calling_convention.frame_pointer as u8
+    }
+
+    /// 获取 VM 返回地址的硬件寄存器编号
+    ///
+    /// x86-64: return_address=0 (RAX), 直接返回硬件寄存器编号
+    fn get_vm_return_addr_hw(&self) -> u8 {
+        // PhysicalRegister 值直接等于硬件寄存器编号
+        self.vm_calling_convention.return_address as u8
+    }
+
     /// 编译单个指令
     fn compile_instruction(
         &mut self,
         instruction: &Instruction,
         code_builder: &mut CodeBuilder,
-        _program: &LirProgram,
+        is_main_function: bool,
+        instruction_index: usize,
+        function: &LirFunction,
     ) -> Result<(), String> {
         if self.debug_mode {
-            println!("编译指令: {:?}", instruction);
+            log::debug!("编译x86-64指令: {}", instruction);
         }
 
         match instruction {
@@ -130,6 +172,9 @@ impl X86Compiler {
             Instruction::Mul {
                 dst, src1, src2, ..
             } => self.compile_mul(dst, src1, src2, code_builder),
+            Instruction::Div {
+                dst, src1, src2, ..
+            } => self.compile_div(dst, src1, src2, code_builder),
             Instruction::Compare { src1, src2, .. } => {
                 self.compile_compare(src1, src2, code_builder)
             }
@@ -143,17 +188,30 @@ impl X86Compiler {
             Instruction::JumpLess { target, .. } => {
                 self.compile_conditional_jump(JumpType::ConditionalLess, target, code_builder)
             }
+            Instruction::JumpLessEqual { target, .. } => {
+                self.compile_conditional_jump(JumpType::ConditionalLessEqual, target, code_builder)
+            }
             Instruction::JumpGreater { target, .. } => {
                 self.compile_conditional_jump(JumpType::ConditionalGreater, target, code_builder)
             }
+            Instruction::JumpGreaterEqual { target, .. } => self.compile_conditional_jump(
+                JumpType::ConditionalGreaterEqual,
+                target,
+                code_builder,
+            ),
             Instruction::Call { target, .. } => self.compile_call(target, code_builder),
+            Instruction::CallIndirect {
+                function_register, ..
+            } => self.compile_jump_indirect(function_register, code_builder),
             Instruction::JumpIndirect {
                 function_register, ..
             } => self.compile_jump_indirect(function_register, code_builder),
             Instruction::JumpRegister {
                 target_register, ..
             } => self.compile_jump_register(target_register, code_builder),
-            Instruction::Return { value, .. } => self.compile_return(value.as_ref(), code_builder),
+            Instruction::Return { value, .. } => {
+                self.compile_return(value.as_ref(), code_builder, is_main_function)
+            }
             Instruction::Label { id, .. } => {
                 let label_name = format!("label_{}", id.0);
                 code_builder.define_label(&label_name)?;
@@ -165,60 +223,57 @@ impl X86Compiler {
             Instruction::Store64 {
                 addr, offset, src, ..
             } => self.compile_store64(addr, *offset, src, code_builder),
+            Instruction::StorePair {
+                addr,
+                offset,
+                src1,
+                src2,
+                ..
+            } => self.compile_store_pair(addr, *offset, src1, src2, code_builder),
+            Instruction::LoadPair {
+                dst1,
+                dst2,
+                addr,
+                offset,
+                ..
+            } => self.compile_load_pair(dst1, dst2, addr, *offset, code_builder),
             Instruction::Alloc {
                 dst,
                 size,
                 alignment,
                 allocation_type,
                 ..
-            } => self.compile_alloc(dst, *size, *alignment, allocation_type, code_builder),
-            Instruction::Free { addr, .. } => self.compile_free(addr, code_builder),
-            Instruction::Retain { value, .. } => self.compile_retain(value, code_builder),
-            Instruction::Release { value, .. } => self.compile_release(value, code_builder),
-            Instruction::Safepoint { .. } => self.compile_safepoint(code_builder),
+            } => self.compile_alloc(
+                dst,
+                *size,
+                *alignment,
+                allocation_type,
+                code_builder,
+                instruction_index,
+                function,
+            ),
+            Instruction::Free { addr, .. } => {
+                self.compile_free(addr, code_builder, instruction_index, function)
+            }
+            Instruction::Retain { value, .. } => {
+                self.compile_retain(value, code_builder, instruction_index, function)
+            }
+            Instruction::Release { value, .. } => {
+                self.compile_release(value, code_builder, instruction_index, function)
+            }
+            Instruction::Safepoint { .. } => {
+                self.compile_safepoint(code_builder, instruction_index, function)
+            }
             Instruction::Nop { .. } => {
-                // NOP指令
-                code_builder.emit_byte(0x90);
+                // x86-64 NOP指令 (0x90)
+                self.emit_nop(code_builder);
                 Ok(())
             }
-            _ => Err(format!("不支持的指令类型: {:?}", instruction)),
+            _ => Err(format!("不支持的x86-64指令类型: {:?}", instruction)),
         }
     }
 }
 
-/// x86-64寄存器枚举
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum X86Register {
-    RAX = 0,
-    RCX = 1,
-    RDX = 2,
-    RBX = 3,
-    RSP = 4, // 栈指针
-    RBP = 5, // 帧指针
-    RSI = 6,
-    RDI = 7,
-    R8 = 8,
-    R9 = 9,
-    R10 = 10,
-    R11 = 11,
-    R12 = 12,
-    R13 = 13,
-    R14 = 14,
-    R15 = 15,
-}
-
-impl X86Register {
-    /// 检查是否需要REX前缀
-    fn needs_rex_prefix(self) -> bool {
-        (self as u8) >= 8
-    }
-
-    /// 获取ModR/M字段中的寄存器编码
-    fn modrm_encoding(self) -> u8 {
-        (self as u8) & 0x7
-    }
-}
 
 // 继续X86Compiler的实现 - 指令编译方法
 impl X86Compiler {
@@ -385,6 +440,88 @@ impl X86Compiler {
         Ok(())
     }
 
+    /// 编译除法指令
+    fn compile_div(
+        &mut self,
+        dst: &Register,
+        src1: &Operand,
+        src2: &Operand,
+        code_builder: &mut CodeBuilder,
+    ) -> Result<(), String> {
+        // x86-64的除法指令比较特殊：
+        // - 被除数必须在RAX中
+        // - 除数可以是任何寄存器或内存
+        // - 商存储在RAX中，余数存储在RDX中
+        // - 需要先用CQO指令将RAX符号扩展到RDX:RAX
+        
+        use karte_common::calling_convention::{REG_RAX, REG_RDX, REG_R13};
+        
+        let dst_reg = self.get_physical_register(dst)?;
+        let rax_hw = REG_RAX as u8;
+        let rdx_hw = REG_RDX as u8;
+
+        // x86-64 IDIV 要求：
+        // - 被除数在 RAX
+        // - 除数不能是 RAX 或 RDX
+        // - 商在 RAX，余数在 RDX
+        
+        // 1. 保存 src2 到临时寄存器（如果 src2 会被 CQO 破坏）
+        let divisor_reg = match src2 {
+            Operand::Register { id } => {
+                let src2_reg = self.get_physical_register(id)?;
+                // 如果 src2 是 RDX，需要先保存到其他寄存器
+                if src2_reg == rdx_hw {
+                    let temp = REG_R13 as u8;
+                    self.emit_mov_reg_reg(code_builder, temp, src2_reg);
+                    temp
+                } else {
+                    src2_reg
+                }
+            }
+            Operand::Immediate { value } => {
+                // 立即数需要加载到寄存器
+                let temp = REG_R13 as u8;
+                self.emit_mov_reg_imm64(code_builder, temp, *value);
+                temp
+            }
+            _ => {
+                return Err(format!("div指令不支持的src2类型: {:?}", src2));
+            }
+        };
+        
+        // 2. 将 src1 加载到 RAX
+        match src1 {
+            Operand::Register { id } => {
+                let src1_reg = self.get_physical_register(id)?;
+                if src1_reg != rax_hw {
+                    self.emit_mov_reg_reg(code_builder, rax_hw, src1_reg);
+                }
+            }
+            Operand::Immediate { value } => {
+                self.emit_mov_reg_imm64(code_builder, rax_hw, *value);
+            }
+            _ => {
+                return Err(format!("div指令不支持的src1类型: {:?}", src1));
+            }
+        }
+
+        // 3. CQO: 符号扩展 RAX 到 RDX:RAX
+        code_builder.emit_bytes(&[0x48, 0x99]);
+
+        // 4. IDIV divisor
+        // REX.W + F7 /7: IDIV r/m64
+        self.emit_rex_prefix(code_builder, true, 0, 0, divisor_reg);
+        code_builder.emit_byte(0xF7);
+        self.emit_modrm(code_builder, 0b11, 7, divisor_reg);
+
+        // 5. 将商从 RAX 移动到 dst（如果需要）
+        if dst_reg != rax_hw {
+            self.emit_mov_reg_reg(code_builder, dst_reg, rax_hw);
+        }
+
+        Ok(())
+    }
+
     /// 编译比较指令
     fn compile_compare(
         &mut self,
@@ -454,72 +591,74 @@ impl X86Compiler {
     ) -> Result<(), String> {
         let function_reg = self.get_physical_register(function_register)?;
 
-        // call rax - FF D0 (间接调用)
+        // 🔧 注意：使用 JMP 而不是 CALL
+        // 因为 LIR 降级阶段已经手动将返回地址压栈
+        // jmp rax - FF E0 (间接跳转，使用 /4 而不是 /2)
         // 对于x86-64，我们需要根据寄存器生成不同的指令
         match function_reg {
             0 => {
-                // call rax - FF D0
-                code_builder.emit_bytes(&[0xFF, 0xD0]);
+                // jmp rax - FF E0
+                code_builder.emit_bytes(&[0xFF, 0xE0]);
             }
             1 => {
-                // call rcx - FF D1
-                code_builder.emit_bytes(&[0xFF, 0xD1]);
+                // jmp rcx - FF E1
+                code_builder.emit_bytes(&[0xFF, 0xE1]);
             }
             2 => {
-                // call rdx - FF D2
-                code_builder.emit_bytes(&[0xFF, 0xD2]);
+                // jmp rdx - FF E2
+                code_builder.emit_bytes(&[0xFF, 0xE2]);
             }
             3 => {
-                // call rbx - FF D3
-                code_builder.emit_bytes(&[0xFF, 0xD3]);
+                // jmp rbx - FF E3
+                code_builder.emit_bytes(&[0xFF, 0xE3]);
             }
             4 => {
-                // call rsp - FF D4
-                code_builder.emit_bytes(&[0xFF, 0xD4]);
+                // jmp rsp - FF E4
+                code_builder.emit_bytes(&[0xFF, 0xE4]);
             }
             5 => {
-                // call rbp - FF D5
-                code_builder.emit_bytes(&[0xFF, 0xD5]);
+                // jmp rbp - FF E5
+                code_builder.emit_bytes(&[0xFF, 0xE5]);
             }
             6 => {
-                // call rsi - FF D6
-                code_builder.emit_bytes(&[0xFF, 0xD6]);
+                // jmp rsi - FF E6
+                code_builder.emit_bytes(&[0xFF, 0xE6]);
             }
             7 => {
-                // call rdi - FF D7
-                code_builder.emit_bytes(&[0xFF, 0xD7]);
+                // jmp rdi - FF E7
+                code_builder.emit_bytes(&[0xFF, 0xE7]);
             }
             8 => {
-                // call r8 - 41 FF D0
-                code_builder.emit_bytes(&[0x41, 0xFF, 0xD0]);
+                // jmp r8 - 41 FF E0
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE0]);
             }
             9 => {
-                // call r9 - 41 FF D1
-                code_builder.emit_bytes(&[0x41, 0xFF, 0xD1]);
+                // jmp r9 - 41 FF E1
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE1]);
             }
             10 => {
-                // call r10 - 41 FF D2
-                code_builder.emit_bytes(&[0x41, 0xFF, 0xD2]);
+                // jmp r10 - 41 FF E2
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE2]);
             }
             11 => {
-                // call r11 - 41 FF D3
-                code_builder.emit_bytes(&[0x41, 0xFF, 0xD3]);
+                // jmp r11 - 41 FF E3
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE3]);
             }
             12 => {
-                // call r12 - 41 FF D4
-                code_builder.emit_bytes(&[0x41, 0xFF, 0xD4]);
+                // jmp r12 - 41 FF E4
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE4]);
             }
             13 => {
-                // call r13 - 41 FF D5
-                code_builder.emit_bytes(&[0x41, 0xFF, 0xD5]);
+                // jmp r13 - 41 FF E5
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE5]);
             }
             14 => {
-                // call r14 - 41 FF D6
-                code_builder.emit_bytes(&[0x41, 0xFF, 0xD6]);
+                // jmp r14 - 41 FF E6
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE6]);
             }
             15 => {
-                // call r15 - 41 FF D7
-                code_builder.emit_bytes(&[0x41, 0xFF, 0xD7]);
+                // jmp r15 - 41 FF E7
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE7]);
             }
             _ => {
                 return Err(format!("不支持的寄存器: {}", function_reg));
@@ -615,19 +754,55 @@ impl X86Compiler {
         &mut self,
         value: Option<&Register>,
         code_builder: &mut CodeBuilder,
+        is_main_function: bool,
     ) -> Result<(), String> {
-        // 🔧 修复：只移动返回值到RAX，不生成ret指令
-        // 如果有返回值，将其移动到RAX
-        if let Some(reg) = value {
-            let src_reg = self.get_physical_register(reg)?;
-            let rax = X86Register::RAX as u8;
+        // 1. 将返回值移动到RAX寄存器
+        use karte_common::calling_convention::REG_RAX;
+        let rax = REG_RAX as u8;
+        
+        if let Some(return_reg) = value {
+            let src_reg = self.get_physical_register(return_reg)?;
             if src_reg != rax {
                 self.emit_mov_reg_reg(code_builder, rax, src_reg);
             }
+        } else {
+            // 无返回值的函数默认返回0
+            self.emit_mov_reg_imm64(code_builder, rax, 0);
         }
 
-        // 🔧 修复：不在这里生成ret指令，让函数尾声处理
-        // ret指令会在函数尾声生成
+        // VM调用约定：返回时需要弹出虚拟返回地址并跳转
+        let vm_sp_hw = self.get_vm_sp_hw();
+        let return_addr_hw = self.get_vm_return_addr_hw();
+        
+        if is_main_function {
+            // Main函数逻辑：
+            // 虚拟栈布局（从低地址到高地址）：
+            // [SP+0]: 返回值槽指针（RDI参数，由序言保存）
+            // [SP+16]: 系统SP（由序言保存）
+            //
+            // 2. 弹出返回值槽（16字节）
+            self.emit_add_reg_imm32(code_builder, vm_sp_hw, 16);
+
+            // 3. 调用epilogue恢复系统栈并返回
+            // epilogue会：
+            //   - 从虚拟栈读取系统SP并切换回系统栈
+            //   - 恢复callee-saved寄存器
+            //   - 恢复RBP
+            //   - RET（使用系统栈上的返回地址）
+            self.emit_function_epilogue(code_builder)?;
+        } else {
+            // 内部函数逻辑：
+            // 2. 恢复callee-saved寄存器（从虚拟栈）
+            self.emit_internal_function_epilogue(code_builder)?;
+            
+            // 3. 加载返回地址到专用寄存器
+            self.emit_mov_reg_mem(code_builder, return_addr_hw, vm_sp_hw, 0);
+
+            // 4. 跳转到返回地址
+            let ret_reg = Register::Physical(self.vm_calling_convention.return_address);
+            self.compile_jump_register(&ret_reg, code_builder)?;
+        }
+
         Ok(())
     }
 
@@ -666,14 +841,60 @@ impl X86Compiler {
             Operand::Label { id } => {
                 // store64 [addr + offset], label - 存储标签地址
                 let label_name = format!("label_{}", id.0);
-
-                // 使用CodeBuilder的标签地址功能
-                code_builder.emit_store_label_address(addr_reg, offset, &label_name);
+                // 1. 使用R8加载label地址
+                // LEA R8, [RIP + label]
+                self.emit_lea_reg_rip_rel(code_builder, 8, &label_name);
+                // 2. 存储R8到目标内存
+                self.emit_mov_mem_reg(code_builder, addr_reg, offset as i32, 8);
             }
             _ => {
                 return Err(format!("store64指令不支持的src类型: {:?}", src));
             }
         }
+        Ok(())
+    }
+
+    /// 编译StorePair指令 (模拟ARM的STP)
+    /// x86没有原生的pair store指令，使用两条mov指令
+    fn compile_store_pair(
+        &mut self,
+        addr: &Register,
+        offset: i64,
+        src1: &Register,
+        src2: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> Result<(), String> {
+        let base_reg = self.get_physical_register(addr)?;
+        let reg1 = self.get_physical_register(src1)?;
+        let reg2 = self.get_physical_register(src2)?;
+
+        // 存储第一个寄存器到 [base + offset]
+        self.emit_mov_mem_reg(code_builder, base_reg, offset as i32, reg1);
+        // 存储第二个寄存器到 [base + offset + 8]
+        self.emit_mov_mem_reg(code_builder, base_reg, (offset + 8) as i32, reg2);
+
+        Ok(())
+    }
+
+    /// 编译LoadPair指令 (模拟ARM的LDP)
+    /// x86没有原生的pair load指令，使用两条mov指令
+    fn compile_load_pair(
+        &mut self,
+        dst1: &Register,
+        dst2: &Register,
+        addr: &Register,
+        offset: i64,
+        code_builder: &mut CodeBuilder,
+    ) -> Result<(), String> {
+        let base_reg = self.get_physical_register(addr)?;
+        let reg1 = self.get_physical_register(dst1)?;
+        let reg2 = self.get_physical_register(dst2)?;
+
+        // 加载第一个寄存器从 [base + offset]
+        self.emit_mov_reg_mem(code_builder, reg1, base_reg, offset as i32);
+        // 加载第二个寄存器从 [base + offset + 8]
+        self.emit_mov_reg_mem(code_builder, reg2, base_reg, (offset + 8) as i32);
+
         Ok(())
     }
 
@@ -684,19 +905,18 @@ impl X86Compiler {
         alignment: usize,
         allocation_type: &karte_lir::AllocationType,
         code_builder: &mut CodeBuilder,
+        instruction_index: usize,
+        function: &LirFunction,
     ) -> Result<(), String> {
         match allocation_type {
             karte_lir::AllocationType::Heap => {
                 let call = RuntimeCall::alloc(size, alignment);
-                self.emit_runtime_call(code_builder, call, Some(dst))
+                self.emit_runtime_call(code_builder, call, Some(dst), instruction_index, function)
             }
-            _ => {
-                // 目前的JIT仅支持堆分配，其它类型暂未使用
-                Err(format!(
-                    "Alloc instruction with unsupported allocation type: {:?}",
-                    allocation_type
-                ))
-            }
+            _ => Err(format!(
+                "Alloc instruction with unsupported allocation type: {:?}",
+                allocation_type
+            )),
         }
     }
 
@@ -704,33 +924,44 @@ impl X86Compiler {
         &mut self,
         addr: &Register,
         code_builder: &mut CodeBuilder,
+        instruction_index: usize,
+        function: &LirFunction,
     ) -> Result<(), String> {
         let call = RuntimeCall::free(*addr);
-        self.emit_runtime_call(code_builder, call, None)
+        self.emit_runtime_call(code_builder, call, None, instruction_index, function)
     }
 
     fn compile_retain(
         &mut self,
         value: &Register,
         code_builder: &mut CodeBuilder,
+        instruction_index: usize,
+        function: &LirFunction,
     ) -> Result<(), String> {
         let call = RuntimeCall::retain(*value);
-        self.emit_runtime_call(code_builder, call, None)
+        self.emit_runtime_call(code_builder, call, None, instruction_index, function)
     }
 
     fn compile_release(
         &mut self,
         value: &Register,
         code_builder: &mut CodeBuilder,
+        instruction_index: usize,
+        function: &LirFunction,
     ) -> Result<(), String> {
         let call = RuntimeCall::release(*value);
-        self.emit_runtime_call(code_builder, call, None)
+        self.emit_runtime_call(code_builder, call, None, instruction_index, function)
     }
 
-    fn compile_safepoint(&mut self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+    fn compile_safepoint(
+        &mut self,
+        code_builder: &mut CodeBuilder,
+        instruction_index: usize,
+        function: &LirFunction,
+    ) -> Result<(), String> {
         // GC 安全点：调用运行时函数
         let call = RuntimeCall::gc_safepoint();
-        self.emit_runtime_call(code_builder, call, None)
+        self.emit_runtime_call(code_builder, call, None, instruction_index, function)
     }
 
     fn emit_runtime_call(
@@ -738,28 +969,65 @@ impl X86Compiler {
         code_builder: &mut CodeBuilder,
         call: RuntimeCall,
         result: Option<&Register>,
+        instruction_index: usize,
+        function: &LirFunction,
     ) -> Result<(), String> {
-        let return_reg = X86Register::RAX as u8;
-        let exclude: Vec<u8> = if result.is_some() && call.expects_result() {
-            vec![return_reg]
-        } else {
-            Vec::new()
-        };
-        let (saved_regs, stack_space) = self.save_call_clobbered_registers(code_builder, &exclude);
+        use karte_common::calling_convention::REG_RAX;
+        let return_reg = REG_RAX as u8;
 
+        // 🔧 关键修复：排除当前指令定义的目标寄存器
+        // 因为在调用之前，目标寄存器还不存在，不应该被保存
+        let mut exclude: Vec<u8> = vec![];
+
+        // 排除返回值寄存器（rax）
+        if result.is_some() && call.expects_result() {
+            exclude.push(return_reg);
+        }
+
+        // 🔧 排除目标寄存器本身（当前指令正在定义的寄存器）
+        // 例如：Alloc { dst = #p1 } 在调用 GC 分配之前，#p1 还不存在
+        if let Some(dst) = result {
+            if let Ok(dst_reg) = self.get_physical_register(dst) {
+                if !exclude.contains(&dst_reg) {
+                    exclude.push(dst_reg);
+                }
+            }
+        }
+
+        // 🔧 从 metadata 中获取调用位置活跃寄存器信息
+        // metadata 包含预先计算的活跃寄存器列表
+        let live_register_info = function
+            .instruction_metadata
+            .get(&instruction_index)
+            .and_then(|meta| meta.live_register_info.as_ref());
+
+        // 🔧 判断是否是 GC safepoint：AllocAligned, Free, GcSafepoint 会触发 GC
+        let is_gc_safepoint = matches!(
+            call.intrinsic,
+            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::Free | RuntimeIntrinsic::GcSafepoint
+        );
+
+        let (saved_regs, stack_space) = self.save_call_clobbered_registers(
+            code_builder,
+            &exclude,
+            live_register_info,
+            is_gc_safepoint,
+        );
+
+        use karte_common::calling_convention::{REG_RDI, REG_RSI, REG_RDX, REG_RCX, REG_R8, REG_R9};
         let arg_regs = [
-            X86Register::RDI as u8,
-            X86Register::RSI as u8,
-            X86Register::RDX as u8,
-            X86Register::RCX as u8,
-            X86Register::R8 as u8,
-            X86Register::R9 as u8,
+            REG_RDI as u8,
+            REG_RSI as u8,
+            REG_RDX as u8,
+            REG_RCX as u8,
+            REG_R8 as u8,
+            REG_R9 as u8,
         ];
 
         for (idx, arg) in call.args.iter().enumerate() {
             if idx >= arg_regs.len() {
                 return Err(format!(
-                    "runtime call {} 超过支持的参数数量(最多 {})",
+                    "runtime call {} 超出支持的参数数量(最多 {})",
                     call.intrinsic.name(),
                     arg_regs.len()
                 ));
@@ -808,6 +1076,17 @@ impl X86Compiler {
         code_builder.emit_byte(modrm);
     }
 
+    /// SIB (Scale-Index-Base) 字节编码
+    ///
+    /// SIB 格式: [scale:2][index:3][base:3]
+    /// - scale: 00=*1, 01=*2, 10=*4, 11=*8
+    /// - index: 索引寄存器 (100=无索引)
+    /// - base: 基址寄存器
+    fn emit_sib(&self, code_builder: &mut CodeBuilder, scale: u8, index: u8, base: u8) {
+        let sib = (scale << 6) | ((index & 0x07) << 3) | (base & 0x07);
+        code_builder.emit_byte(sib);
+    }
+
     /// mov reg, reg (64位)
     fn emit_mov_reg_reg(&self, code_builder: &mut CodeBuilder, dst: u8, src: u8) {
         // REX.W + 89 /r: MOV r/m64, r64
@@ -817,16 +1096,20 @@ impl X86Compiler {
     }
 
     fn emit_sub_rsp_imm(&self, code_builder: &mut CodeBuilder, imm: i32) {
-        self.emit_rex_prefix(code_builder, true, 0, 0, X86Register::RSP as u8);
+        use karte_common::calling_convention::REG_RSP;
+        let rsp = REG_RSP as u8;
+        self.emit_rex_prefix(code_builder, true, 0, 0, rsp);
         code_builder.emit_byte(0x81);
-        self.emit_modrm(code_builder, 0b11, 0b101, X86Register::RSP as u8);
+        self.emit_modrm(code_builder, 0b11, 0b101, rsp);
         code_builder.emit_i32(imm);
     }
 
     fn emit_add_rsp_imm(&self, code_builder: &mut CodeBuilder, imm: i32) {
-        self.emit_rex_prefix(code_builder, true, 0, 0, X86Register::RSP as u8);
+        use karte_common::calling_convention::REG_RSP;
+        let rsp = REG_RSP as u8;
+        self.emit_rex_prefix(code_builder, true, 0, 0, rsp);
         code_builder.emit_byte(0x81);
-        self.emit_modrm(code_builder, 0b11, 0b000, X86Register::RSP as u8);
+        self.emit_modrm(code_builder, 0b11, 0b000, rsp);
         code_builder.emit_i32(imm);
     }
 
@@ -839,47 +1122,162 @@ impl X86Compiler {
     }
 
     fn save_call_clobbered_registers(
-        &mut self,
+        &self,
         code_builder: &mut CodeBuilder,
         exclude: &[u8],
+        live_register_info: Option<&karte_lir::LiveRegisterInfo>,
+        is_gc_safepoint: bool,
     ) -> (Vec<u8>, usize) {
-        let regs: Vec<u8> = self
-            .calling_convention
-            .caller_saved
-            .iter()
-            .copied()
-            .filter(|reg| !exclude.contains(reg))
-            .collect();
+        // 🔧 基于调用位置活跃寄存器信息的优化寄存器保存
+        //
+        // 关键区别：
+        // 1. GC safepoint相关调用（alloc, free, gc_safepoint）：
+        //    需要保存**所有活跃寄存器**
+        //    和在函数开头未被保存的vm callee-saved寄存器（保证GC root都在stack中）
+        //
+        // 2. 普通runtime call（retain, release等）：
+        //    只需要保存**活跃的ffi caller-saved寄存器**
 
-        if regs.is_empty() {
-            return (regs, 0);
+        let karte_virtual_sp_reg = self.vm_calling_convention.stack_pointer;
+
+        // 从 metadata 读取活跃寄存器列表
+        let mut regs_to_virtual_stack: Vec<u8> = if let Some(live_info) = live_register_info {
+            // 从 metadata 中获取活跃寄存器
+            let mut live_regs = Vec::new();
+
+            for reg in &live_info.live_registers {
+                if let Register::Physical(phys_reg) = reg {
+                    if is_gc_safepoint {
+                        // GC safepoint：保存所有活跃寄存器
+                        if !exclude.contains(phys_reg) {
+                            live_regs.push(*phys_reg);
+                        }
+                    } else {
+                        // 普通runtime call：只保存活跃的caller-saved寄存器
+                        if self.ffi_calling_convention.is_caller_saved(*phys_reg) {
+                            if !exclude.contains(phys_reg) {
+                                live_regs.push(*phys_reg);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 如果是 GC safepoint，添加未使用的 VM callee-saved 寄存器
+            if is_gc_safepoint {
+                for i in self
+                    .vm_calling_convention
+                    .callee_saved
+                    .iter()
+                    .filter(|e| !self.current_function_use_regs.contains(*e))
+                {
+                    if !live_regs.contains(i) && !exclude.contains(i) {
+                        live_regs.push(*i);
+                    }
+                }
+            }
+
+            // 去重并排序
+            live_regs.sort();
+            live_regs.dedup();
+
+            if self.debug_mode {
+                if is_gc_safepoint {
+                    log::debug!(
+                        "✅ GC Safepoint：需保存 {} 个活跃寄存器: {:?}",
+                        live_regs.len(),
+                        live_regs
+                    );
+                } else {
+                    log::debug!(
+                        "✅ 普通调用：只需保存 {} 个caller-saved寄存器: {:?}",
+                        live_regs.len(),
+                        live_regs
+                    );
+                }
+            }
+
+            live_regs
+        } else {
+            // 保守回退：如果没有活跃寄存器信息，保守地保存所有caller-saved寄存器
+            let all_caller_saved: Vec<u8> = if is_gc_safepoint {
+                (0..=15).collect::<Vec<u8>>()
+            } else {
+                self.ffi_calling_convention.caller_saved.clone()
+            };
+
+            if self.debug_mode {
+                log::warn!(
+                    "未找到活跃寄存器信息，保守保存所有caller-saved寄存器: {:?}",
+                    all_caller_saved
+                );
+            }
+            all_caller_saved
+        };
+        regs_to_virtual_stack.retain(|reg| !exclude.contains(reg));
+
+        if regs_to_virtual_stack.is_empty() {
+            return (regs_to_virtual_stack, 0);
         }
 
-        let stack_space = align_to(regs.len() * 8, 16);
-        self.emit_sub_rsp_imm(code_builder, stack_space as i32);
+        // 🔧 修复：确保虚拟栈空间是 16 字节对齐的
+        let raw_stack_space = regs_to_virtual_stack.len() * 8;
+        let virtual_stack_space = ((raw_stack_space + 15) / 16) * 16;
 
-        for (idx, reg) in regs.iter().enumerate() {
-            self.emit_mov_mem_reg(code_builder, X86Register::RSP as u8, (idx * 8) as i32, *reg);
+        // 步骤1：保存寄存器到虚拟栈
+        // 一次性调整虚拟栈指针（向下增长）
+        let karte_virtual_sp_hw = karte_virtual_sp_reg as u8;
+        self.emit_sub_reg_imm32(code_builder, karte_virtual_sp_hw, virtual_stack_space as i32 + 32);
+
+        // 保存所有寄存器到调整后的虚拟栈上
+        for (idx, reg) in regs_to_virtual_stack.iter().enumerate() {
+            self.emit_mov_mem_reg(code_builder, karte_virtual_sp_hw, (idx * 8) as i32, *reg);
         }
 
-        (regs, stack_space)
+        // 步骤2：只在系统栈保存 VM 帧指针，SP 依靠栈平衡自动恢复
+        let vm_fp_hw = self.get_vm_fp_hw();
+        if self.debug_mode {
+            log::debug!("保存 VM 帧寄存器到系统栈: fp=p{}", self.vm_calling_convention.frame_pointer);
+        }
+        // 分配 16 字节，保持与原来相同的栈平衡
+        self.emit_sub_rsp_imm(code_builder, 16);
+        // 写入 [RSP, #8]
+        use karte_common::calling_convention::REG_RSP;
+        let rsp = REG_RSP as u8;
+        self.emit_mov_mem_reg(code_builder, rsp, 8, vm_fp_hw);
+
+        (regs_to_virtual_stack, virtual_stack_space)
     }
 
     fn restore_call_clobbered_registers(
-        &mut self,
+        &self,
         code_builder: &mut CodeBuilder,
         regs: &[u8],
         stack_space: usize,
     ) {
-        if regs.is_empty() {
-            return;
-        }
+        // 🔧 关键修复：恢复顺序与保存顺序相反
+        // 1. 先从系统栈恢复 VM 栈/帧指针
+        // 2. 再从虚拟栈恢复寄存器
 
-        for (idx, reg) in regs.iter().enumerate() {
-            self.emit_mov_reg_mem(code_builder, *reg, X86Register::RSP as u8, (idx * 8) as i32);
-        }
+        // 步骤1：恢复 VM 帧指针，并保持与保存步骤相同的栈调整
+        use karte_common::calling_convention::REG_RSP;
+        let rsp = REG_RSP as u8;
+        let vm_fp_hw = self.get_vm_fp_hw();
+        self.emit_mov_reg_mem(code_builder, vm_fp_hw, rsp, 8);
+        self.emit_add_rsp_imm(code_builder, 16);
 
-        self.emit_add_rsp_imm(code_builder, stack_space as i32);
+        // 步骤2：恢复寄存器从虚拟栈
+        if !regs.is_empty() {
+            let karte_virtual_sp_hw = self.get_vm_sp_hw();
+
+            // 先用偏移加载所有寄存器（保持虚拟SP不变）
+            for (idx, reg) in regs.iter().enumerate() {
+                self.emit_mov_reg_mem(code_builder, *reg, karte_virtual_sp_hw, (idx * 8) as i32);
+            }
+
+            // 然后一次性恢复虚拟栈指针（向上增长）
+            self.emit_add_reg_imm32(code_builder, karte_virtual_sp_hw, stack_space as i32 + 32);
+        }
     }
 
     /// add reg, reg (64位)
@@ -956,16 +1354,34 @@ impl X86Compiler {
         self.emit_rex_prefix(code_builder, true, dst, 0, base);
         code_builder.emit_byte(0x8B);
 
-        if offset == 0 && (base & 0x07) != 5 {
-            // RBP需要特殊处理
-            // ModR/M: mod=00, reg=dst, r/m=base
+        // x86-64 特殊情况：
+        // - RSP (4): r/m=100 需要SIB字节
+        // - RBP (5): mod=00 时不能直接使用（表示RIP相对寻址）
+        let base_low3 = base & 0x07;
+        
+        if base_low3 == 4 {
+            // RSP需要SIB字节
+            if offset == 0 {
+                self.emit_modrm(code_builder, 0b00, dst, 0b100);
+                self.emit_sib(code_builder, 0, 0b100, base);
+            } else if (-128..=127).contains(&offset) {
+                self.emit_modrm(code_builder, 0b01, dst, 0b100);
+                self.emit_sib(code_builder, 0, 0b100, base);
+                code_builder.emit_byte(offset as u8);
+            } else {
+                self.emit_modrm(code_builder, 0b10, dst, 0b100);
+                self.emit_sib(code_builder, 0, 0b100, base);
+                code_builder.emit_i32(offset);
+            }
+        } else if offset == 0 && base_low3 != 5 {
+            // 普通寄存器，offset=0
             self.emit_modrm(code_builder, 0b00, dst, base);
         } else if (-128..=127).contains(&offset) {
-            // ModR/M: mod=01, reg=dst, r/m=base + SIB + disp8
+            // disp8
             self.emit_modrm(code_builder, 0b01, dst, base);
             code_builder.emit_byte(offset as u8);
         } else {
-            // ModR/M: mod=10, reg=dst, r/m=base + SIB + disp32
+            // disp32
             self.emit_modrm(code_builder, 0b10, dst, base);
             code_builder.emit_i32(offset);
         }
@@ -977,13 +1393,34 @@ impl X86Compiler {
         self.emit_rex_prefix(code_builder, true, src, 0, base);
         code_builder.emit_byte(0x89);
 
-        if offset == 0 && (base & 0x07) != 5 {
-            // RBP需要特殊处理
+        // x86-64 特殊情况：
+        // - RSP (4): r/m=100 需要SIB字节
+        // - RBP (5): mod=00 时不能直接使用
+        let base_low3 = base & 0x07;
+        
+        if base_low3 == 4 {
+            // RSP需要SIB字节
+            if offset == 0 {
+                self.emit_modrm(code_builder, 0b00, src, 0b100);
+                self.emit_sib(code_builder, 0, 0b100, base);
+            } else if (-128..=127).contains(&offset) {
+                self.emit_modrm(code_builder, 0b01, src, 0b100);
+                self.emit_sib(code_builder, 0, 0b100, base);
+                code_builder.emit_byte(offset as u8);
+            } else {
+                self.emit_modrm(code_builder, 0b10, src, 0b100);
+                self.emit_sib(code_builder, 0, 0b100, base);
+                code_builder.emit_i32(offset);
+            }
+        } else if offset == 0 && base_low3 != 5 {
+            // 普通寄存器，offset=0
             self.emit_modrm(code_builder, 0b00, src, base);
         } else if (-128..=127).contains(&offset) {
+            // disp8
             self.emit_modrm(code_builder, 0b01, src, base);
             code_builder.emit_byte(offset as u8);
         } else {
+            // disp32
             self.emit_modrm(code_builder, 0b10, src, base);
             code_builder.emit_i32(offset);
         }
@@ -995,7 +1432,23 @@ impl X86Compiler {
         self.emit_rex_prefix(code_builder, true, 0, 0, base);
         code_builder.emit_byte(0xC7);
 
-        if offset == 0 && (base & 0x07) != 5 {
+        let base_low3 = base & 0x07;
+        
+        if base_low3 == 4 {
+            // RSP需要SIB字节
+            if offset == 0 {
+                self.emit_modrm(code_builder, 0b00, 0, 0b100);
+                self.emit_sib(code_builder, 0, 0b100, base);
+            } else if (-128..=127).contains(&offset) {
+                self.emit_modrm(code_builder, 0b01, 0, 0b100);
+                self.emit_sib(code_builder, 0, 0b100, base);
+                code_builder.emit_byte(offset as u8);
+            } else {
+                self.emit_modrm(code_builder, 0b10, 0, 0b100);
+                self.emit_sib(code_builder, 0, 0b100, base);
+                code_builder.emit_i32(offset);
+            }
+        } else if offset == 0 && base_low3 != 5 {
             self.emit_modrm(code_builder, 0b00, 0, base);
         } else if (-128..=127).contains(&offset) {
             self.emit_modrm(code_builder, 0b01, 0, base);
@@ -1024,67 +1477,173 @@ impl X86Compiler {
 
     /// 生成 call abs64 指令
     fn emit_call_absolute(&self, code_builder: &mut CodeBuilder, func: u64) {
-        let tmp = X86Register::RAX as u8;
+        use karte_common::calling_convention::REG_RAX;
+        let tmp = REG_RAX as u8;
         self.emit_mov_reg_imm64(code_builder, tmp, func as i64);
         // CALL r/m64: FF /2
         code_builder.emit_byte(0xFF);
         self.emit_modrm(code_builder, 0b11, 0b010, tmp);
     }
+
+    /// 生成NOP指令
+    fn emit_nop(&self, code_builder: &mut CodeBuilder) {
+        // x86-64 NOP = 0x90
+        code_builder.emit_byte(0x90);
+    }
+
+    /// 生成RET指令
+    fn emit_ret(&self, code_builder: &mut CodeBuilder) {
+        // RET = 0xC3
+        code_builder.emit_byte(0xC3);
+    }
+
+    /// LEA reg, [RIP + label] - 加载标签地址
+    fn emit_lea_reg_rip_rel(&self, code_builder: &mut CodeBuilder, dst: u8, label: &str) {
+        // REX.W + 8D /r: LEA r64, m
+        // 对于RIP相对寻址，ModR/M字段是 00 dst 101
+        self.emit_rex_prefix(code_builder, true, dst, 0, 0);
+        code_builder.emit_byte(0x8D);
+        
+        // ModR/M: mod=00, reg=dst, rm=101 (RIP相对)
+        let modrm = (dst << 3) | 0x05;
+        code_builder.emit_byte(modrm);
+        
+        // 记录需要修补的位置
+        // 这里需要CodeBuilder支持标签引用
+        // 暂时先emit一个占位符
+        code_builder.emit_i32(0);
+    }
+
+    /// 生成唯一label名称
+    /// 🔧 修复：包含函数名以确保跨函数唯一性
+    fn next_label(&mut self, prefix: &str) -> String {
+        let label = format!(
+            "{}_{}_{}",
+            self.current_function_name, prefix, self.unique_label_counter
+        );
+        self.unique_label_counter += 1;
+        label
+    }
+
+    /// 判断当前函数是否是程序入口（main）
+    fn is_entry_function(&self, function_name: &str, program: &LirProgram) -> bool {
+        if let Some(main) = &program.main_function {
+            if main == function_name {
+                return true;
+            }
+        }
+
+        function_name == "main" || function_name == karte_mir::lower::SCRIPT_ENTRY_POINT
+    }
+
+    fn get_c_ffi_callee_saved_registers(&self) -> Vec<u8> {
+        self.ffi_calling_convention
+            .get_callee_save_registers(&self.current_function_use_regs)
+    }
+
+    fn get_vm_callee_saved_registers(&self) -> Vec<u8> {
+        self.vm_calling_convention
+            .get_callee_save_registers(&self.current_function_use_regs)
+    }
 }
 
 // 实现JitCompiler trait
 impl JitCompiler for X86Compiler {
+    /// 编译函数
     fn compile_function(
         &mut self,
         function: &LirFunction,
         program: &LirProgram,
     ) -> Result<CompiledFunction, String> {
         if self.debug_mode {
-            println!("开始编译函数: {}", function.name);
-            println!("LIR函数内容:");
-            for (i, instruction) in function.instructions.iter().enumerate() {
-                println!("  {}: {:?}", i, instruction);
-            }
+            log::debug!("x86-64: 开始编译函数 '{}'", function.name);
         }
 
-        let mut code_builder = if self.debug_mode {
-            CodeBuilder::with_debug_info()
+        // 🔧 修复：设置当前函数名，用于生成唯一label
+        self.current_function_name = function.name.clone();
+        self.unique_label_counter = 0; // 重置计数器
+
+        // 缓存当前函数的 callee-saved 信息
+        self.current_function_use_regs = function.get_used_regs().to_vec();
+
+        // 🔧 活跃寄存器信息已由 CallsiteLiveRegisterPass 预先计算并存储在 instruction_metadata 中
+        // 无需在 JIT 编译时重新运行生命周期分析
+
+        // 创建代码构建器
+        let mut code_builder = CodeBuilder::new();
+
+        // 生成函数标签（这是函数的入口点）
+        let function_label = format!("func_{}", function.name);
+        code_builder.define_label(&function_label)?;
+
+        let is_main_function = self.is_entry_function(&function.name, program);
+        // 生成函数序言（在函数标签之后，但在实际代码之前）
+        // 注意：只有main函数在这里插入prologue，因为main是被外部C代码调用的
+        if is_main_function {
+            self.emit_function_prologue(&mut code_builder)?;
+        }
+
+        // 检查第一个instruction是label，是则编译，不是则返回错误
+        if let Some(Instruction::Label { id, .. }) = function.instructions.first() {
+            code_builder.define_label(&format!("label_{}", id.0))?;
         } else {
-            CodeBuilder::new()
-        };
-
-        // 函数序言
-        self.emit_function_prologue(&mut code_builder)?;
-
-        // 编译函数体
-        for (index, instruction) in function.instructions.iter().enumerate() {
-            if self.debug_mode {
-                code_builder.add_source_line(index);
-                println!("编译指令 {}: {:?}", index, instruction);
-            }
-
-            self.compile_instruction(instruction, &mut code_builder, program)?;
+            return Err(format!("函数 '{}' 的第一个指令必须是label", function.name));
+        }
+        if !is_main_function {
+            // 简化序言：用于内部函数调用
+            self.emit_internal_function_prologue(&mut code_builder)?;
+        }
+        // 编译所有指令
+        for (index, instruction) in function.instructions.iter().skip(1).enumerate() {
+            // skip(1)后enumerate从0开始，所以实际指令索引是index+1
+            self.compile_instruction(
+                instruction,
+                &mut code_builder,
+                is_main_function,
+                index + 1,
+                function,
+            )?;
         }
 
-        // 🔧 修复：总是生成函数尾声，确保正确的寄存器恢复
-        self.emit_function_epilogue(&mut code_builder)?;
-
-        // 完成代码生成
-        let machine_code = code_builder.finalize_with_global_addresses(None)?;
-
-        let compiled_function = CompiledFunction::new(
-            function.name.clone(),
-            machine_code,
-            0, // 入口点在函数开始
-        );
+        // 获取label信息（在finalize之前）
+        let labels = code_builder.exported_labels().clone();
+        let pending_jumps = code_builder.exported_pending_jumps().clone();
+        let pending_label_addresses = code_builder.exported_pending_label_addresses().clone();
+        let pending_adrs = code_builder.exported_pending_adrs().clone();
 
         if self.debug_mode {
-            println!(
-                "函数 '{}' 编译完成，生成机器码 {} 字节",
+            log::debug!(
+                "🔧 编译函数 '{}' 时收集到 {} 个label",
                 function.name,
-                compiled_function.code_size()
+                labels.len()
             );
+            for (label, offset) in &labels {
+                log::debug!("🔧   label: {} -> 偏移: {}", label, offset);
+            }
         }
+
+        // 第一轮编译：不修补跨函数标签引用，直接返回未修补的机器码
+        let machine_code = code_builder.finalize()?;
+
+        // 创建编译后的函数
+        let mut compiled_function = CompiledFunction::new(
+            function.name.clone(),
+            machine_code,
+            0, // 入口点就是函数开始
+        );
+
+        // 保存label信息和待修补信息
+        compiled_function.labels = labels;
+        compiled_function.pending_jumps = pending_jumps;
+        compiled_function.pending_label_addresses = pending_label_addresses;
+        compiled_function.pending_adrs = pending_adrs;
+
+        log::info!(
+            "x86-64: 函数 '{}' 编译完成，机器码大小: {} 字节\n{}",
+            function.name,
+            compiled_function.code_size(),
+            compiled_function
+        );
 
         Ok(compiled_function)
     }
@@ -1092,49 +1651,295 @@ impl JitCompiler for X86Compiler {
     // 🔧 优化：compile_function_with_global_labels 已被移除
     // 现在使用 compile_function + patch_executable_memory 进行单次编译+原地修补
 
+    /// 获取目标架构名称
     fn target_architecture(&self) -> &'static str {
         "x86-64"
     }
 
+    /// 获取寄存器映射
     fn get_register_mapping(&self) -> &HashMap<Register, u8> {
         &self.register_mapping
     }
 
+    /// 是否支持调试信息
     fn supports_debug_info(&self) -> bool {
         true
     }
 
+    /// 获取调用约定信息
     fn get_calling_convention(&self) -> CallingConventionInfo {
-        self.calling_convention.clone()
+        self.ffi_calling_convention.clone()
     }
 }
 
 // 函数序言和尾声的实现
 impl X86Compiler {
-    /// 生成函数序言
+    /// 生成函数序言 (主函数)
     fn emit_function_prologue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
-        // Windows x64 ABI: rcx/rdx为前两个参数
-        let rcx = X86Register::RCX as u8;
-        let rdx = X86Register::RDX as u8;
-        let vm_sp = X86Register::R10 as u8; // r6
-        let vm_fp = X86Register::R11 as u8; // r7
+        use karte_common::calling_convention::{REG_RDI, REG_RSI, REG_RBP, REG_RSP, REG_R8};
+        
+        // System V AMD64 ABI: rdi/rsi为前两个参数
+        let rdi = REG_RDI as u8; // 第一个参数：虚拟栈顶地址
+        let rsi = REG_RSI as u8; // 第二个参数：虚拟栈底地址
+        let rbp = REG_RBP as u8;
+        let rsp = REG_RSP as u8;
+        let r8 = REG_R8 as u8;
+        // 🔧 关键修复：通过 register_mapping 转换 VM 栈/帧指针逻辑编号到硬件寄存器
+        let vm_sp_hw = self.get_vm_sp_hw();
+        let vm_fp_hw = self.get_vm_fp_hw();
 
-        // 🔧 修复：将参数移动到虚拟机寄存器，但不干扰LIR的栈帧管理
-        // 将虚拟栈指针参数移动到r10 (r6)
-        self.emit_mov_reg_reg(code_builder, vm_sp, rcx);
-        // 将虚拟帧指针参数移动到r11 (r7)
-        self.emit_mov_reg_reg(code_builder, vm_fp, rdx);
+        if self.debug_mode {
+            log::debug!("序言开始：生成符合 System V AMD64 ABI 的函数序言");
+            log::debug!("  vm_sp_hw = {} (RSP), vm_fp_hw = {} (RBP)", vm_sp_hw, vm_fp_hw);
+        }
 
-        // 🔧 新增：确保r6和r7的初始值正确，让LIR的栈帧管理指令能正常工作
-        // 此时r6和r7已经包含了虚拟栈的地址，LIR的栈帧管理指令会基于这些值工作
+        // System V AMD64 ABI 标准序言（简化版，与 AArch64 对齐）：
+        // 1. 在系统栈分配帧空间（32字节）并保存系统FP
+        // sub rsp, 32
+        self.emit_sub_rsp_imm(code_builder, 32);
+        // mov [rsp, #0], rbp  (保存系统FP)
+        self.emit_mov_mem_reg(code_builder, rsp, 0, rbp);
+        
+        // 2. 设置新的系统FP
+        // mov rbp, rsp
+        self.emit_mov_reg_reg(code_builder, rbp, rsp);
+
+        // 3. 保存其他 callee-saved 寄存器（如果有的话）
+        self.save_callee_saved_registers(code_builder)?;
+
+        // 4. 保存系统SP到R8
+        // mov r8, rsp
+        self.emit_mov_reg_reg(code_builder, r8, rsp);
+
+        // 5. 切换到虚拟栈（与AArch64一致）
+        // mov rsp, rdi (rdi = 虚拟栈顶地址)
+        // mov rbp, rsi (rsi = 虚拟栈底地址)
+        self.emit_mov_reg_reg(code_builder, vm_sp_hw, rdi);
+        self.emit_mov_reg_reg(code_builder, vm_fp_hw, rsi);
+
+        // 6. 在虚拟栈保存系统SP（与AArch64一致）
+        // sub rsp, 16（注意：此时rsp已经切换到虚拟栈）
+        self.emit_sub_reg_imm32(code_builder, vm_sp_hw, 16);
+        // mov [rsp, #0], r8  (保存系统SP)
+        self.emit_mov_mem_reg(code_builder, vm_sp_hw, 0, r8);
+        // mov qword ptr [rsp, #8], 0   (x86不需要保存LR，填0占位)
+        self.emit_mov_mem_imm32(code_builder, vm_sp_hw, 8, 0);
+
+        // 7. 为返回值槽分配空间（16字节对齐）
+        // sub rsp, 16
+        self.emit_sub_reg_imm32(code_builder, vm_sp_hw, 16);
+        // mov [rsp, #0], rdi (保存返回值槽指针)
+        self.emit_mov_mem_reg(code_builder, vm_sp_hw, 0, rdi);
+
+        if self.debug_mode {
+            log::debug!("序言：栈使用量 = {} 字节", 32 + (self.get_c_ffi_callee_saved_registers().len() * 8));
+            log::debug!("序言：{} 个 callee-saved 寄存器", self.get_c_ffi_callee_saved_registers().len());
+        }
 
         Ok(())
     }
 
-    /// 生成函数尾声
+    /// 生成内部函数序言（用于虚拟机内部函数调用）
+    fn emit_internal_function_prologue(
+        &self,
+        code_builder: &mut CodeBuilder,
+    ) -> Result<(), String> {
+        // 首先存fp sp，然后保存callee-saved寄存器
+        // 获取虚拟栈指针寄存器（转换为硬件寄存器编号）
+        let vm_sp_hw = self.get_vm_sp_hw();
+        let vm_fp_hw = self.get_vm_fp_hw();
+        
+        // 保存fp sp到虚拟栈
+        // 对齐 AArch64 的语义：保存当前SP（新栈帧底部）
+        self.emit_sub_reg_imm32(code_builder, vm_sp_hw, 16);
+        self.emit_mov_mem_reg(code_builder, vm_sp_hw, 8, vm_fp_hw);
+        self.emit_mov_mem_reg(code_builder, vm_sp_hw, 0, vm_sp_hw);
+
+        // 使用LIR寄存器分配器计算的实际使用的callee-saved寄存器
+        let callee_saved = &self.get_vm_callee_saved_registers();
+
+        // 早期返回：如果没有需要保存的寄存器
+        if callee_saved.is_empty() {
+            if self.debug_mode {
+                log::debug!("生成内部函数序言：无需保存寄存器");
+            }
+            return Ok(());
+        }
+
+        if self.debug_mode {
+            log::debug!("生成内部函数序言：保存 {} 个寄存器", callee_saved.len());
+        }
+
+        // 保存每个 callee-saved 寄存器到虚拟栈
+        // 每次分配16字节以确保SP保持16字节对齐
+        for &reg in callee_saved {
+            // 先压入虚拟栈（16字节对齐）
+            self.emit_sub_reg_imm32(code_builder, vm_sp_hw, 16);
+            
+            // 存储寄存器值到虚拟栈
+            self.emit_mov_mem_reg(code_builder, vm_sp_hw, 0, reg);
+        }
+
+        if self.debug_mode {
+            log::debug!(
+                "保存了 {} 个 callee-saved 寄存器到虚拟栈",
+                callee_saved.len()
+            );
+        }
+
+        Ok(())
+    }
+
+    /// 生成内部函数尾声（用于虚拟机内部函数调用）
+    fn emit_internal_function_epilogue(
+        &self,
+        code_builder: &mut CodeBuilder,
+    ) -> Result<(), String> {
+        let vm_sp_hw = self.get_vm_sp_hw();
+        let vm_fp_hw = self.get_vm_fp_hw();
+
+        // 使用LIR寄存器分配器计算的实际使用的callee-saved寄存器
+        let callee_saved = &self.get_vm_callee_saved_registers();
+
+        // 按逆序恢复寄存器（后进先出）
+        for &reg in callee_saved.iter().rev() {
+            // 从虚拟栈加载寄存器值
+            self.emit_mov_reg_mem(code_builder, reg, vm_sp_hw, 0);
+            
+            // 弹出虚拟栈（16字节对齐）
+            self.emit_add_reg_imm32(code_builder, vm_sp_hw, 16);
+        }
+
+        if self.debug_mode {
+            log::debug!(
+                "恢复了 {} 个 callee-saved 寄存器从虚拟栈",
+                callee_saved.len()
+            );
+        }
+
+        // 恢复fp sp从虚拟栈
+        // 对齐 AArch64 的语义
+        self.emit_mov_reg_mem(code_builder, vm_sp_hw, vm_sp_hw, 0);  // SP = 新栈帧底部
+        self.emit_mov_reg_mem(code_builder, vm_fp_hw, vm_sp_hw, 8);  // FP = 旧FP
+        self.emit_add_reg_imm32(code_builder, vm_sp_hw, 16);          // SP += 16，指向返回地址
+
+        Ok(())
+    }
+
+    /// 生成主函数尾声（用于与宿主环境交互的main函数）
     fn emit_function_epilogue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
-        // 只生成ret指令
-        code_builder.emit_byte(0xC3);
+        // System V AMD64 ABI 标准尾声：按照序言的逆序恢复寄存器
+
+        // compile_return已经弹出了返回值槽（+16字节）
+        // 虚拟栈布局（compile_return后）：
+        // [SP+0]: 系统SP
+
+        use karte_common::calling_convention::{REG_RSP, REG_RBP, REG_R8};
+        let rsp = REG_RSP as u8;
+        let rbp = REG_RBP as u8;
+        let r8 = REG_R8 as u8;
+        
+        // 1. 从虚拟栈读取系统SP
+        let vm_sp_hw = self.get_vm_sp_hw();
+        self.emit_mov_reg_mem(code_builder, r8, vm_sp_hw, 0);
+
+        // 2. 切换回系统栈
+        self.emit_mov_reg_reg(code_builder, rsp, r8);
+
+        // 3. 恢复 callee-saved 寄存器（从系统栈）
+        self.restore_callee_saved_registers(code_builder)?;
+
+        // 4. 恢复系统FP并调整栈
+        // mov rbp, [rsp, #0]  (恢复系统FP)
+        self.emit_mov_reg_mem(code_builder, rbp, rsp, 0);
+        // add rsp, 32  (释放栈帧)
+        self.emit_add_rsp_imm(code_builder, 32);
+
+        // 5. ret
+        self.emit_ret(code_builder);
+
+        Ok(())
+    }
+
+    /// 保存返回槽指针（caller通过RDI传入）
+    fn save_return_slot_pointer(&self, code_builder: &mut CodeBuilder) {
+        use karte_common::calling_convention::REG_RDI;
+        let rdi = REG_RDI as u8;
+        let vm_sp_hw = self.get_vm_sp_hw();
+        self.emit_sub_reg_imm32(code_builder, vm_sp_hw, 16);
+        self.emit_mov_mem_reg(code_builder, vm_sp_hw, 0, rdi);
+    }
+
+    /// 恢复返回槽指针并弹出栈空间
+    fn load_and_pop_return_slot_pointer(&self, code_builder: &mut CodeBuilder, dst: u8) {
+        let vm_sp_hw = self.get_vm_sp_hw();
+        self.emit_mov_reg_mem(code_builder, dst, vm_sp_hw, 0);
+        self.emit_add_reg_imm32(code_builder, vm_sp_hw, 16);
+    }
+
+    /// 将当前RAX返回值写入返回槽地址
+    fn emit_store_return_value_to_slot(&self, code_builder: &mut CodeBuilder, slot_reg: u8) {
+        use karte_common::calling_convention::REG_RAX;
+        let rax = REG_RAX as u8;
+        self.emit_mov_mem_reg(code_builder, slot_reg, 0, rax);
+    }
+
+    /// 保存 callee-saved 寄存器
+    fn save_callee_saved_registers(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+        let callee_saved = &self.get_c_ffi_callee_saved_registers();
+        if callee_saved.is_empty() {
+            return Ok(());
+        }
+
+        if self.debug_mode {
+            log::debug!("保存 callee-saved 寄存器: {:?}", callee_saved);
+        }
+
+        // 排除 RBP（已经在标准序言中保存）
+        use karte_common::calling_convention::REG_RBP;
+        let rbp = REG_RBP as u8;
+        let mut regs = callee_saved.clone();
+        regs.retain(|&r| r != rbp);
+
+        for &reg in &regs {
+            // push reg
+            if reg >= 8 {
+                // R8-R15 需要REX前缀
+                code_builder.emit_byte(0x41);
+            }
+            code_builder.emit_byte(0x50 + (reg & 0x7));
+        }
+
+        Ok(())
+    }
+
+    /// 恢复 callee-saved 寄存器
+    fn restore_callee_saved_registers(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+        let callee_saved = &self.get_c_ffi_callee_saved_registers();
+        if callee_saved.is_empty() {
+            return Ok(());
+        }
+
+        if self.debug_mode {
+            log::debug!("恢复 callee-saved 寄存器: {:?}", callee_saved);
+        }
+
+        // 排除 RBP（在标准尾声中恢复）
+        use karte_common::calling_convention::REG_RBP;
+        let rbp = REG_RBP as u8;
+        let mut regs = callee_saved.clone();
+        regs.retain(|&r| r != rbp);
+
+        // 逆序恢复
+        for &reg in regs.iter().rev() {
+            // pop reg
+            if reg >= 8 {
+                // R8-R15 需要REX前缀
+                code_builder.emit_byte(0x41);
+            }
+            code_builder.emit_byte(0x58 + (reg & 0x7));
+        }
+
         Ok(())
     }
 }

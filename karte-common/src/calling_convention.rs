@@ -79,6 +79,25 @@ pub const REG_X29: PhysicalRegister = 29; // 帧指针 (FP)
 pub const REG_X30: PhysicalRegister = 30; // 链接寄存器 (LR)
 pub const REG_SP: PhysicalRegister = 31; // 栈指针 (SP) - 实际使用特殊编码
 
+// x86-64 System V AMD64 ABI 寄存器命名约定
+// 注意: PhysicalRegister 值直接等于 x86-64 硬件寄存器编号 (与 AArch64 一致)
+pub const REG_RAX: PhysicalRegister = 0;  // 硬件 RAX = 0, 返回值寄存器
+pub const REG_RCX: PhysicalRegister = 1;  // 硬件 RCX = 1, 参数4 (C调用约定)
+pub const REG_RDX: PhysicalRegister = 2;  // 硬件 RDX = 2, 参数3 (C调用约定)
+pub const REG_RBX: PhysicalRegister = 3;  // 硬件 RBX = 3, Callee-saved
+pub const REG_RSP: PhysicalRegister = 4;  // 硬件 RSP = 4, 栈指针
+pub const REG_RBP: PhysicalRegister = 5;  // 硬件 RBP = 5, 帧指针 (Callee-saved)
+pub const REG_RSI: PhysicalRegister = 6;  // 硬件 RSI = 6, 参数2 (C调用约定)
+pub const REG_RDI: PhysicalRegister = 7;  // 硬件 RDI = 7, 参数1 (C调用约定)
+pub const REG_R8:  PhysicalRegister = 8;  // 硬件 R8 = 8, 参数5 (C调用约定)
+pub const REG_R9:  PhysicalRegister = 9;  // 硬件 R9 = 9, 参数6 (C调用约定)
+pub const REG_R10: PhysicalRegister = 10; // 硬件 R10 = 10, 临时寄存器
+pub const REG_R11: PhysicalRegister = 11; // 硬件 R11 = 11, 临时寄存器
+pub const REG_R12: PhysicalRegister = 12; // 硬件 R12 = 12, Callee-saved / Effect栈指针
+pub const REG_R13: PhysicalRegister = 13; // 硬件 R13 = 13, Callee-saved
+pub const REG_R14: PhysicalRegister = 14; // 硬件 R14 = 14, Callee-saved
+pub const REG_R15: PhysicalRegister = 15; // 硬件 R15 = 15, Callee-saved
+
 // 保持向后兼容的别名
 pub const REG_RETURN: PhysicalRegister = REG_X0;
 pub const REG_ARG0: PhysicalRegister = REG_X0;
@@ -173,7 +192,107 @@ impl Default for CallingConvention {
 }
 
 impl CallingConvention {
-    /// 创建标准的 ARM64 AAPCS64 调用约定
+    /// 创建标准调用约定（根据目标架构自动选择）
+    ///
+    /// 这个方法会根据编译目标架构返回对应的调用约定，确保 LIR passes 使用正确的架构配置：
+    /// - x86-64: System V AMD64 ABI
+    /// - AArch64: AAPCS64
+    #[cfg(target_arch = "x86_64")]
+    pub fn standard() -> Self {
+        Self::x86_64()
+    }
+    
+    #[cfg(target_arch = "aarch64")]
+    pub fn standard() -> Self {
+        Self::aarch64()
+    }
+    
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    pub fn standard() -> Self {
+        compile_error!("不支持的目标架构");
+    }
+
+    /// 创建 x86-64 System V AMD64 ABI 调用约定
+    ///
+    /// 遵循 System V Application Binary Interface AMD64 Architecture Processor Supplement
+    ///
+    /// 寄存器分配策略 (C FFI调用约定):
+    /// - RDI, RSI, RDX, RCX, R8, R9: 参数传递 (最多6个整数/指针参数)
+    /// - RAX: 返回值寄存器
+    /// - RBX, R12-R15, RBP: Callee-saved 寄存器
+    /// - RAX, RCX, RDX, RSI, RDI, R8-R11: Caller-saved 寄存器
+    /// - RSP: 栈指针
+    ///
+    /// VM内部调用约定 (Karte VM):
+    /// - R9 (param1), R8 (param2), R2 (param3), R3 (param4), R4 (param5), R5 (param6): VM参数传递
+    /// - RAX (R0): VM返回值
+    /// - R10: VM栈指针
+    /// - R11: VM帧指针
+    /// - R12: Effect栈指针
+    /// - R13-R15, RBX: VM Callee-saved
+    ///
+    /// 说明: 使用 R9/R8 作为前两个VM参数，以避免与C FFI的 RDI/RSI 冲突
+    pub fn x86_64() -> Self {
+        let mut caller_saved = HashSet::new();
+        // C FFI caller-saved: RAX, RCX, RDX, RSI, RDI, R8-R11
+        caller_saved.insert(REG_RAX); // 0
+        caller_saved.insert(REG_RCX); // 1
+        caller_saved.insert(REG_RDX); // 2
+        caller_saved.insert(REG_RSI); // 6
+        caller_saved.insert(REG_RDI); // 7
+        caller_saved.insert(REG_R8);  // 8
+        caller_saved.insert(REG_R9);  // 9
+        caller_saved.insert(REG_R10); // 10
+        caller_saved.insert(REG_R11); // 11
+
+        let mut callee_saved = HashSet::new();
+        // C FFI callee-saved: RBX, R12-R15, RBP, RSP
+        callee_saved.insert(REG_RBX);  // 3
+        callee_saved.insert(REG_RBP);  // 5
+        callee_saved.insert(REG_R12);  // 12
+        callee_saved.insert(REG_R13);  // 13
+        callee_saved.insert(REG_R14);  // 14
+        callee_saved.insert(REG_R15);  // 15
+        callee_saved.insert(REG_RSP);  // 4 (特殊寄存器)
+
+        Self {
+            // VM内部调用约定: 使用 x86-64 自己的寄存器编号（0-15）
+            // ⚠️ 注意：x86-64 只有 16 个通用寄存器，绝对不能使用 16 以上的编号！
+            argument_registers: vec![
+                REG_RAX, // 0 - 参数1 / 返回值
+                REG_RCX, // 1 - 参数2
+                REG_RDX, // 2 - 参数3
+                REG_RBX, // 3 - 参数4
+                REG_R8,  // 8 - 参数5
+                REG_R9,  // 9 - 参数6
+                REG_R10, // 10 - 参数7
+                REG_R11, // 11 - 参数8
+            ],
+            return_register: REG_RAX,            // 0 - RAX
+            caller_saved,
+            callee_saved,
+            stack_pointer: REG_RSP,              // 4 - RSP 作为VM栈指针
+            frame_pointer: REG_RBP,              // 5 - RBP 作为VM帧指针
+            return_address: REG_RAX,             // 0 - RAX 作为返回地址占位（x86用栈）
+            effect_stack_pointer: REG_R12,       // 12 - R12
+            effect_payload_register: REG_RAX,    // 0 - RAX
+            effect_tag_register: REG_R10,        // 10 - R10
+            effect_resume_temp: REG_R15,         // 15 - R15
+            temp_registers: {
+                // 临时寄存器包括所有 caller-saved 寄存器
+                vec![
+                    REG_RAX, REG_RCX, REG_RDX, REG_RSI, REG_RDI,
+                    REG_R8, REG_R9, REG_R10, REG_R11,
+                    // Callee-saved 也可用作临时寄存器（需要保存/恢复）
+                    REG_RBX, REG_R12, REG_R13, REG_R14, REG_R15,
+                ]
+            },
+            stack_alignment: 16,                 // x86-64 要求16字节对齐
+            use_system_stack_pointer: true,      // 🔧 恢复：使用系统 RSP（与AArch64一致）
+        }
+    }
+
+    /// 创建 ARM64 AAPCS64 调用约定
     ///
     /// 遵循 ARM Procedure Call Standard for the 64-bit Architecture (AAPCS64)
     ///
@@ -190,7 +309,7 @@ impl CallingConvention {
     ///
     /// Caller-saved: x0-x18 (易失寄存器，调用者负责保存)
     /// Callee-saved: x19-x30 (非易失寄存器，被调用者负责保存)
-    pub fn standard() -> Self {
+    pub fn aarch64() -> Self {
         let mut caller_saved = HashSet::new();
         // x0-x18 都是 caller-saved (易失寄存器)
         for reg in 0..=18 {
