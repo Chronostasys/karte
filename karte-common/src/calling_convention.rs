@@ -256,28 +256,28 @@ impl CallingConvention {
         callee_saved.insert(REG_RSP);  // 4 (特殊寄存器)
 
         Self {
-            // VM内部调用约定: 使用与 AArch64 相同的编号系统以保持 LIR 兼容性
-            // LIR 生成器使用 CallingConvention::standard() (AArch64)，所以使用相同的参数寄存器编号
+            // VM内部调用约定: 使用 x86-64 自己的寄存器编号（0-15）
+            // ⚠️ 注意：x86-64 只有 16 个通用寄存器，绝对不能使用 16 以上的编号！
             argument_registers: vec![
-                0,  // #p0 - 参数1 / 返回值 (映射到 RAX)
-                1,  // #p1 - 参数2 (映射到 RCX)
-                2,  // #p2 - 参数3 (映射到 RDX)
-                3,  // #p3 - 参数4 (映射到 RBX)
-                4,  // #p4 - 参数5 (映射到 R8)
-                5,  // #p5 - 参数6 (映射到 R9)
-                6,  // #p6 - 参数7 (映射到 R10)
-                7,  // #p7 - 参数8 (映射到 R11)
+                REG_RAX, // 0 - 参数1 / 返回值
+                REG_RCX, // 1 - 参数2
+                REG_RDX, // 2 - 参数3
+                REG_RBX, // 3 - 参数4
+                REG_R8,  // 8 - 参数5
+                REG_R9,  // 9 - 参数6
+                REG_R10, // 10 - 参数7
+                REG_R11, // 11 - 参数8
             ],
-            return_register: 0,                  // #p0 (映射到 RAX)
+            return_register: REG_RAX,            // 0 - RAX
             caller_saved,
             callee_saved,
-            stack_pointer: 31,                   // #p31 作为VM栈指针（与AArch64一致，映射到RSP）
-            frame_pointer: 29,                   // #p29 作为VM帧指针（与AArch64一致，映射到RBP）
-            return_address: 30,                  // #p30 作为返回地址（与AArch64一致，x86用栈）
-            effect_stack_pointer: 12,            // #p12 作为effect栈指针（映射到R12）
-            effect_payload_register: 0,          // #p0 使用返回值寄存器（映射到RAX）
-            effect_tag_register: 10,             // #p10 作为effect标签（映射到R10）
-            effect_resume_temp: 15,              // #p15 作为临时寄存器（映射到R15）
+            stack_pointer: REG_RSP,              // 4 - RSP 作为VM栈指针
+            frame_pointer: REG_RBP,              // 5 - RBP 作为VM帧指针
+            return_address: REG_RAX,             // 0 - RAX 作为返回地址占位（x86用栈）
+            effect_stack_pointer: REG_R12,       // 12 - R12
+            effect_payload_register: REG_RAX,    // 0 - RAX
+            effect_tag_register: REG_R10,        // 10 - R10
+            effect_resume_temp: REG_R15,         // 15 - R15
             temp_registers: {
                 // 临时寄存器包括所有 caller-saved 寄存器
                 vec![

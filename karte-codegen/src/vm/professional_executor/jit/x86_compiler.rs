@@ -98,20 +98,19 @@ impl X86Compiler {
             self.register_mapping.insert(virtual_reg, physical_reg);
         }
 
-        // 物理寄存器映射（适配 AArch64 编号到 x86-64 硬件寄存器）
-        // LIR 使用 AArch64 的物理寄存器编号，需要映射到 x86-64
-        for i in 0..32 {
+        // 物理寄存器直接映射（x86-64 只支持 0-15）
+        // ⚠️ 关键：x86-64 只有 16 个寄存器，LIR passes 现在使用 x86_64() 配置，
+        // 所以只会生成 0-15 的物理寄存器编号
+        for i in 0..16 {
             let physical_reg = Register::Physical(i);
-            let hw_reg = match i {
-                // 特殊映射：AArch64 的栈/帧指针到 x86-64
-                29 => REG_RBP as u8, // #p29 (AArch64 FP) -> RBP (x86 FP)
-                31 => REG_RSP as u8, // #p31 (AArch64 SP) -> RSP (x86 SP)
-                // 0-15: 直接使用硬件寄存器编号（与新的 PhysicalRegister 定义一致）
-                i if i < 16 => i as u8,
-                // 16-28, 30: 复用寄存器
-                _ => ((i - 16) % 16) as u8,
-            };
-            self.register_mapping.insert(physical_reg, hw_reg);
+            // PhysicalRegister 值直接等于硬件寄存器编号
+            self.register_mapping.insert(physical_reg, i as u8);
+        }
+        
+        // 16-31: 不应该被使用，但为了防御性编程，映射到循环的 0-15
+        for i in 16..32 {
+            let physical_reg = Register::Physical(i);
+            self.register_mapping.insert(physical_reg, (i % 16) as u8);
         }
     }
 
@@ -124,18 +123,27 @@ impl X86Compiler {
     }
 
     /// 获取 VM 栈指针的硬件寄存器编号
-    fn get_vm_sp_hw(&self) -> Result<u8, String> {
-        self.get_physical_register(&Register::Physical(self.vm_calling_convention.stack_pointer))
+    ///
+    /// x86-64: stack_pointer=4 (RSP), 直接返回硬件寄存器编号
+    fn get_vm_sp_hw(&self) -> u8 {
+        // PhysicalRegister 值直接等于硬件寄存器编号
+        self.vm_calling_convention.stack_pointer as u8
     }
 
     /// 获取 VM 帧指针的硬件寄存器编号
-    fn get_vm_fp_hw(&self) -> Result<u8, String> {
-        self.get_physical_register(&Register::Physical(self.vm_calling_convention.frame_pointer))
+    ///
+    /// x86-64: frame_pointer=5 (RBP), 直接返回硬件寄存器编号
+    fn get_vm_fp_hw(&self) -> u8 {
+        // PhysicalRegister 值直接等于硬件寄存器编号
+        self.vm_calling_convention.frame_pointer as u8
     }
 
     /// 获取 VM 返回地址的硬件寄存器编号
-    fn get_vm_return_addr_hw(&self) -> Result<u8, String> {
-        self.get_physical_register(&Register::Physical(self.vm_calling_convention.return_address))
+    ///
+    /// x86-64: return_address=0 (RAX), 直接返回硬件寄存器编号
+    fn get_vm_return_addr_hw(&self) -> u8 {
+        // PhysicalRegister 值直接等于硬件寄存器编号
+        self.vm_calling_convention.return_address as u8
     }
 
     /// 编译单个指令
@@ -753,8 +761,8 @@ impl X86Compiler {
         }
 
         // VM调用约定：返回时需要弹出虚拟返回地址并跳转
-        let vm_sp_hw = self.get_vm_sp_hw()?;
-        let return_addr_hw = self.get_vm_return_addr_hw()?;
+        let vm_sp_hw = self.get_vm_sp_hw();
+        let return_addr_hw = self.get_vm_return_addr_hw();
         
         if is_main_function {
             // Main函数逻辑：
@@ -1217,7 +1225,7 @@ impl X86Compiler {
         }
 
         // 步骤2：只在系统栈保存 VM 帧指针，SP 依靠栈平衡自动恢复
-        let vm_fp_hw = self.vm_calling_convention.frame_pointer as u8;
+        let vm_fp_hw = self.get_vm_fp_hw();
         if self.debug_mode {
             log::debug!("保存 VM 帧寄存器到系统栈: fp=p{}", self.vm_calling_convention.frame_pointer);
         }
@@ -1244,13 +1252,13 @@ impl X86Compiler {
         // 步骤1：恢复 VM 帧指针，并保持与保存步骤相同的栈调整
         use karte_common::calling_convention::REG_RSP;
         let rsp = REG_RSP as u8;
-        let vm_fp_hw = self.vm_calling_convention.frame_pointer as u8;
+        let vm_fp_hw = self.get_vm_fp_hw();
         self.emit_mov_reg_mem(code_builder, vm_fp_hw, rsp, 8);
         self.emit_add_rsp_imm(code_builder, 16);
 
         // 步骤2：恢复寄存器从虚拟栈
         if !regs.is_empty() {
-            let karte_virtual_sp_hw = self.vm_calling_convention.stack_pointer as u8;
+            let karte_virtual_sp_hw = self.get_vm_sp_hw();
 
             // 先用偏移加载所有寄存器（保持虚拟SP不变）
             for (idx, reg) in regs.iter().enumerate() {
@@ -1667,8 +1675,8 @@ impl X86Compiler {
         let rsp = REG_RSP as u8;
         let r8 = REG_R8 as u8;
         // 🔧 关键修复：通过 register_mapping 转换 VM 栈/帧指针逻辑编号到硬件寄存器
-        let vm_sp_hw = self.get_vm_sp_hw()?;
-        let vm_fp_hw = self.get_vm_fp_hw()?;
+        let vm_sp_hw = self.get_vm_sp_hw();
+        let vm_fp_hw = self.get_vm_fp_hw();
 
         if self.debug_mode {
             log::debug!("序言开始：生成符合 System V AMD64 ABI 的函数序言");
@@ -1725,8 +1733,8 @@ impl X86Compiler {
     ) -> Result<(), String> {
         // 首先存fp sp，然后保存callee-saved寄存器
         // 获取虚拟栈指针寄存器（转换为硬件寄存器编号）
-        let vm_sp_hw = self.vm_calling_convention.stack_pointer as u8;
-        let vm_fp_hw = self.vm_calling_convention.frame_pointer as u8;
+        let vm_sp_hw = self.get_vm_sp_hw();
+        let vm_fp_hw = self.get_vm_fp_hw();
         
         // 保存fp sp到虚拟栈
         self.emit_sub_reg_imm32(code_builder, vm_sp_hw, 16);
@@ -1773,8 +1781,8 @@ impl X86Compiler {
         &self,
         code_builder: &mut CodeBuilder,
     ) -> Result<(), String> {
-        let vm_sp_hw = self.vm_calling_convention.stack_pointer as u8;
-        let vm_fp_hw = self.vm_calling_convention.frame_pointer as u8;
+        let vm_sp_hw = self.get_vm_sp_hw();
+        let vm_fp_hw = self.get_vm_fp_hw();
 
         // 使用LIR寄存器分配器计算的实际使用的callee-saved寄存器
         let callee_saved = &self.get_vm_callee_saved_registers();
@@ -1817,7 +1825,7 @@ impl X86Compiler {
         let r8 = REG_R8 as u8;
         
         // 1. 从虚拟栈读取系统SP
-        let vm_sp_hw = self.vm_calling_convention.stack_pointer as u8;
+        let vm_sp_hw = self.get_vm_sp_hw();
         self.emit_mov_reg_mem(code_builder, r8, vm_sp_hw, 0);
 
         // 2. 切换回系统栈
@@ -1842,14 +1850,14 @@ impl X86Compiler {
     fn save_return_slot_pointer(&self, code_builder: &mut CodeBuilder) {
         use karte_common::calling_convention::REG_RDI;
         let rdi = REG_RDI as u8;
-        let vm_sp_hw = self.vm_calling_convention.stack_pointer as u8;
+        let vm_sp_hw = self.get_vm_sp_hw();
         self.emit_sub_reg_imm32(code_builder, vm_sp_hw, 16);
         self.emit_mov_mem_reg(code_builder, vm_sp_hw, 0, rdi);
     }
 
     /// 恢复返回槽指针并弹出栈空间
     fn load_and_pop_return_slot_pointer(&self, code_builder: &mut CodeBuilder, dst: u8) {
-        let vm_sp_hw = self.vm_calling_convention.stack_pointer as u8;
+        let vm_sp_hw = self.get_vm_sp_hw();
         self.emit_mov_reg_mem(code_builder, dst, vm_sp_hw, 0);
         self.emit_add_reg_imm32(code_builder, vm_sp_hw, 16);
     }
