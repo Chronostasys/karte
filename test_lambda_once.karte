@@ -1,0 +1,6 @@
+fn double(x:number) -> number { x * 2 }
+
+fn main() -> number {
+    let apply = |f, x| { f(x) };
+    apply(double, 5)
+}

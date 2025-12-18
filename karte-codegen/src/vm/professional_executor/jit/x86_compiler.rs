@@ -1787,23 +1787,36 @@ impl X86Compiler {
         self.emit_mov_mem_reg(code_builder, vm_sp_hw, 0, vm_sp_hw);
 
         // 使用LIR寄存器分配器计算的实际使用的callee-saved寄存器
-        let callee_saved = &self.get_vm_callee_saved_registers();
+        // 🔧 关键修复：排除 SP 和 FP，因为它们已经在上面保存了
+        let mut callee_saved = self.get_vm_callee_saved_registers();
+        
+        if self.debug_mode {
+            log::debug!("=== 内部函数序言调试信息 ===");
+            log::debug!("vm_sp_hw = {}, vm_fp_hw = {}", vm_sp_hw, vm_fp_hw);
+            log::debug!("callee_saved（排除前）= {:?}", callee_saved);
+        }
+        
+        callee_saved.retain(|&r| r != vm_sp_hw && r != vm_fp_hw);
+
+        if self.debug_mode {
+            log::debug!("callee_saved（排除后）= {:?}", callee_saved);
+        }
 
         // 早期返回：如果没有需要保存的寄存器
         if callee_saved.is_empty() {
             if self.debug_mode {
-                log::debug!("生成内部函数序言：无需保存寄存器");
+                log::debug!("生成内部函数序言：无需保存额外的 callee-saved 寄存器");
             }
             return Ok(());
         }
 
         if self.debug_mode {
-            log::debug!("生成内部函数序言：保存 {} 个寄存器", callee_saved.len());
+            log::debug!("生成内部函数序言：保存 {} 个额外的寄存器", callee_saved.len());
         }
 
         // 保存每个 callee-saved 寄存器到虚拟栈
         // 每次分配16字节以确保SP保持16字节对齐
-        for &reg in callee_saved {
+        for &reg in &callee_saved {
             // 先压入虚拟栈（16字节对齐）
             self.emit_sub_reg_imm32(code_builder, vm_sp_hw, 16);
             
@@ -1830,9 +1843,15 @@ impl X86Compiler {
         let vm_fp_hw = self.get_vm_fp_hw();
 
         // 使用LIR寄存器分配器计算的实际使用的callee-saved寄存器
-        let callee_saved = &self.get_vm_callee_saved_registers();
+        // 🔧 关键修复：排除 SP 和 FP，因为它们会在后面单独恢复
+        let mut callee_saved = self.get_vm_callee_saved_registers();
+        callee_saved.retain(|&r| r != vm_sp_hw && r != vm_fp_hw);
 
-        // 按逆序恢复寄存器（后进先出）
+        // 🔧 关键修复：按照 prologue 的相反顺序恢复
+        // Prologue 顺序: 1) 保存 FP/SP, 2) 保存 callee-saved 寄存器
+        // Epilogue 顺序: 1) 恢复 callee-saved 寄存器, 2) 恢复 FP/SP
+        
+        // 步骤1: 按逆序恢复 callee-saved 寄存器（后进先出）
         for &reg in callee_saved.iter().rev() {
             // 从虚拟栈加载寄存器值
             self.emit_mov_reg_mem(code_builder, reg, vm_sp_hw, 0);
@@ -1848,23 +1867,24 @@ impl X86Compiler {
             );
         }
 
-        // 🔧 修复：恢复fp sp从虚拟栈
-        // x86-64 特殊处理：不能直接 mov SP, [SP+0]，因为会破坏基址
-        // 必须先保存到临时寄存器
-        // 🔧 使用 R13 而不是 R11，因为 R11 可能被用作 effect_resume_temp
-        use karte_common::calling_convention::REG_R13;
-        let temp_reg = REG_R13 as u8;
+        // 步骤2: 恢复 FP/SP
+        // 🔧 关键修复：完全对齐AArch64的实现
+        // AArch64: SP = [SP+0], FP = [SP+8], SP += 16
+        // x86无法直接实现 "SP = [SP+0]"，需要临时寄存器
         
-        // 1. 读取保存的SP值（实际上等于当前SP，这是AArch64的设计）
-        self.emit_mov_reg_mem(code_builder, temp_reg, vm_sp_hw, 0);   // temp = [SP+0] = SP
+        // 使用 RCX 作为临时寄存器（参数寄存器2，在返回时安全使用）
+        use karte_common::calling_convention::REG_RCX;
+        let temp_reg = REG_RCX as u8;
         
-        // 2. 恢复FP
-        self.emit_mov_reg_mem(code_builder, vm_fp_hw, vm_sp_hw, 8);   // FP = [SP+8]
-        
-        // 3. 将SP设置为保存的值（实际上不变）
+        // 按照AArch64的顺序：
+        // 1. SP = [SP+0]（通过临时寄存器）
+        self.emit_mov_reg_mem(code_builder, temp_reg, vm_sp_hw, 0);   // temp = [SP+0]
         self.emit_mov_reg_reg(code_builder, vm_sp_hw, temp_reg);       // SP = temp
         
-        // 4. 恢复到进入函数前的SP位置
+        // 2. FP = [SP+8]（注意：现在使用的是新的SP值）
+        self.emit_mov_reg_mem(code_builder, vm_fp_hw, vm_sp_hw, 8);   // FP = [SP+8]
+        
+        // 3. SP += 16
         self.emit_add_reg_imm32(code_builder, vm_sp_hw, 16);           // SP += 16
 
         Ok(())

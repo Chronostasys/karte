@@ -246,14 +246,17 @@ impl CallingConvention {
         caller_saved.insert(REG_R11); // 11
 
         let mut callee_saved = HashSet::new();
-        // C FFI callee-saved: RBX, R12-R15, RBP, RSP
+        // C FFI callee-saved: RBX, R12-R15
+        // 注意：RBP 和 RSP 不包含在 callee_saved 中，因为它们是特殊寄存器
+        // - RBP 用作虚拟帧指针，已在 prologue/epilogue 中手动保存和恢复
+        // - RSP 用作虚拟栈指针，不需要保存（总是被使用）
         callee_saved.insert(REG_RBX);  // 3
-        callee_saved.insert(REG_RBP);  // 5
+        // callee_saved.insert(REG_RBP);  // 5 - 帧指针，不应被寄存器分配器使用
         callee_saved.insert(REG_R12);  // 12
         callee_saved.insert(REG_R13);  // 13
         callee_saved.insert(REG_R14);  // 14
         callee_saved.insert(REG_R15);  // 15
-        callee_saved.insert(REG_RSP);  // 4 (特殊寄存器)
+        // callee_saved.insert(REG_RSP);  // 4 - 栈指针，不应被寄存器分配器使用
 
         Self {
             // VM内部调用约定: 使用 x86-64 自己的寄存器编号（0-15）
@@ -273,7 +276,10 @@ impl CallingConvention {
             callee_saved,
             stack_pointer: REG_RSP,              // 4 - RSP 作为VM栈指针
             frame_pointer: REG_RBP,              // 5 - RBP 作为VM帧指针
-            return_address: REG_R12,             // 12 - R12 作为返回地址寄存器（callee-saved）
+            // 🔧 关键修复：return_address必须使用caller-saved寄存器！
+            // AArch64使用X30(LR, caller-saved)，x86应该使用R11(caller-saved)
+            // R12是callee-saved，在compile_return中使用它会破坏callee-saved约定
+            return_address: REG_R11,             // 11 - R11 作为返回地址寄存器（caller-saved）
             effect_stack_pointer: REG_R12,       // 12 - R12  
             effect_payload_register: REG_RAX,    // 0 - RAX
             effect_tag_register: REG_R10,        // 10 - R10
