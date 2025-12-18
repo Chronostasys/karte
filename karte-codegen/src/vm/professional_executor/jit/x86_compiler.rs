@@ -868,9 +868,10 @@ impl X86Compiler {
                 use karte_common::calling_convention::REG_R11;
                 let temp_reg = REG_R11 as u8;
                 
-                // 生成 MOV R11, imm64 指令
+                // 🔧 修复：生成 MOV R11, imm64 指令
                 // REX.W + B8+r: MOV r64, imm64
-                self.emit_rex_prefix(code_builder, true, temp_reg, 0, 0);
+                // 对于 B8+r 编码，寄存器在 opcode 中，对应 REX.B 位（不是 REX.R）
+                self.emit_rex_prefix(code_builder, true, 0, 0, temp_reg);
                 code_builder.emit_byte(0xB8 + (temp_reg & 0x07));
                 // 发射标签地址占位符（将被修补）
                 code_builder.emit_label_address(&label_name);
