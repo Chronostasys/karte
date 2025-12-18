@@ -463,3 +463,658 @@ warning: `karte-gc` (lib) generated 2 warnings
    Compiling windows-targets v0.48.5
    Compiling rayon v1.11.0
    Compiling karte-lir v0.1.0 (/workspace/karte-lir)
+warning: unused imports: `AllocationType`, `LabelId`, `LirFunction`, `StructField`, `StructLayout`, and `tagged_union::TaggedUnionManager`
+ --> karte-lir/src/lower.rs:2:5
+  |
+2 |     tagged_union::TaggedUnionManager, AllocationType, Instruction, LabelId, LirFunction,
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^               ^^^^^^^  ^^^^^^^^^^^
+3 |     LirProgram, Operand, Register, StructField, StructLayout,
+  |                                    ^^^^^^^^^^^  ^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `BasicBlockId`, `BinaryOperator`, `Statement`, `TempId`, `Terminator`, and `UnaryOperator`
+ --> karte-lir/src/lower.rs:6:5
+  |
+6 |     BasicBlockId, BinaryOperator, MirProgram, Statement, TempId, Terminator, UnaryOperator, Value,
+  |     ^^^^^^^^^^^^  ^^^^^^^^^^^^^^              ^^^^^^^^^  ^^^^^^  ^^^^^^^^^^  ^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::hash_map::DefaultHasher`
+ --> karte-lir/src/lower.rs:8:5
+  |
+8 | use std::collections::hash_map::DefaultHasher;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Hash` and `Hasher`
+  --> karte-lir/src/lower.rs:10:17
+   |
+10 | use std::hash::{Hash, Hasher};
+   |                 ^^^^  ^^^^^^
+
+warning: unused imports: `collect_function_names_from_statement` and `collect_function_names_from_value`
+ --> karte-lir/src/lower/memory.rs:6:5
+  |
+6 |     collect_function_names_from_statement, collect_function_names_from_value, value_to_key,
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MirFunction`
+  --> karte-lir/src/lower/memory.rs:10:17
+   |
+10 | use karte_mir::{MirFunction, Statement, TempId, Terminator, Value};
+   |                 ^^^^^^^^^^^
+
+warning: unused import: `AnalysisPass`
+  --> karte-lir/src/pass/block_layout_pass.rs:20:30
+   |
+20 | use super::{AnalysisManager, AnalysisPass, FunctionPass, PassResult};
+   |                              ^^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+  --> karte-lir/src/pass/effect_lowering_pass.rs:13:5
+   |
+13 | use std::collections::HashMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `LabelId`
+  --> karte-lir/src/pass/explicit_jump_pass.rs:18:26
+   |
+18 | use crate::{Instruction, LabelId, LirFunction};
+   |                          ^^^^^^^
+
+warning: private item shadows public glob re-export
+  --> karte-lir/src/pass/register_allocation/mod.rs:12:40
+   |
+12 | use karte_common::calling_convention::{CallingConvention, PhysicalRegister};
+   |                                        ^^^^^^^^^^^^^^^^^
+   |
+note: the name `CallingConvention` in the type namespace is supposed to be publicly re-exported here
+  --> karte-lir/src/pass/register_allocation/mod.rs:8:9
+   |
+8  | pub use types::*;
+   |         ^^^^^^^^
+note: but the private item here shadows it
+  --> karte-lir/src/pass/register_allocation/mod.rs:12:40
+   |
+12 | use karte_common::calling_convention::{CallingConvention, PhysicalRegister};
+   |                                        ^^^^^^^^^^^^^^^^^
+   = note: `#[warn(hidden_glob_reexports)]` on by default
+
+warning: unused import: `ControlFlowNode`
+  --> karte-lir/src/pass/ssa_construction.rs:15:41
+   |
+15 | use super::analysis::{ControlFlowGraph, ControlFlowNode};
+   |                                         ^^^^^^^^^^^^^^^
+
+   Compiling karte-parser v0.1.0 (/workspace/karte-parser)
+   Compiling itertools v0.10.5
+   Compiling cast v0.3.0
+   Compiling same-file v1.0.6
+   Compiling colorchoice v1.0.4
+   Compiling anstyle-query v1.1.3
+   Compiling fastrand v2.3.0
+   Compiling number_prefix v0.4.0
+   Compiling is_terminal_polyfill v1.70.1
+   Compiling anstream v0.6.19
+   Compiling tempfile v3.20.0
+   Compiling criterion-plot v0.5.0
+   Compiling indicatif v0.17.11
+   Compiling walkdir v2.5.0
+   Compiling plotters v0.3.7
+   Compiling toml v0.8.23
+warning: unused variable: `cfg`
+   --> karte-lir/src/pass/analysis.rs:764:9
+    |
+764 |         cfg: &ControlFlowGraph,
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_cfg`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `pred_end`
+  --> karte-lir/src/pass/block_layout_pass.rs:71:33
+   |
+71 |                         let (_, pred_end) = pred_node.instruction_range;
+   |                                 ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_pred_end`
+
+warning: unused variable: `function`
+  --> karte-lir/src/pass/effect_lowering_pass.rs:81:9
+   |
+81 |         function: &mut LirFunction,
+   |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_function`
+
+warning: unused variable: `padding`
+   --> karte-lir/src/pass/instruction_lowering_pass.rs:127:13
+    |
+127 |         let padding = aligned_size - total_size;
+    |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_padding`
+
+warning: variable does not need to be mutable
+   --> karte-lir/src/pass/peephole_optimization_pass.rs:267:13
+    |
+267 |         let mut insert_pos = start;
+    |             ----^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` on by default
+
+   Compiling clap v4.5.40
+   Compiling windows-sys v0.48.0
+warning: unused variable: `virtual_reg`
+    --> karte-lir/src/pass/register_allocation/mod.rs:1095:14
+     |
+1095 |         for (virtual_reg, target) in allocation_map {
+     |              ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_virtual_reg`
+
+warning: unused variable: `function`
+    --> karte-lir/src/pass/register_allocation/mod.rs:1089:9
+     |
+1089 |         function: &LirFunction,
+     |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_function`
+
+   Compiling karte-rt v0.1.0 (/workspace/karte-rt)
+warning: unused import: `gc_alloc_no_collect`
+ --> karte-rt/src/ffi.rs:8:26
+  |
+8 | use karte_gc::{gc_alloc, gc_alloc_no_collect, gc_safepoint, ObjectType};
+  |                          ^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: method `build_id_to_index_map` is never used
+  --> karte-lir/src/pass/analysis.rs:57:8
+   |
+37 | impl ControlFlowGraph {
+   | --------------------- method in this implementation
+...
+57 |     fn build_id_to_index_map(&mut self) {
+   |        ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: field `next_register` is never read
+  --> karte-lir/src/pass/instruction_lowering_pass.rs:31:5
+   |
+21 | pub struct InstructionLoweringPass {
+   |            ----------------------- field in this struct
+...
+31 |     next_register: usize,
+   |     ^^^^^^^^^^^^^
+   |
+   = note: `InstructionLoweringPass` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: methods `new_register` and `effect_payload_register` are never used
+   --> karte-lir/src/pass/instruction_lowering_pass.rs:167:8
+    |
+34  | impl InstructionLoweringPass {
+    | ---------------------------- methods in this implementation
+...
+167 |     fn new_register(&mut self) -> Register {
+    |        ^^^^^^^^^^^^
+...
+178 |     fn effect_payload_register(&self) -> Register {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `save_lifetime_analysis_to_function` is never used
+   --> karte-lir/src/pass/pass_manager.rs:464:8
+    |
+56  | impl PassManager {
+    | ---------------- method in this implementation
+...
+464 |     fn save_lifetime_analysis_to_function(&self, function: &mut LirFunction) {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `refine_end_with_liveness` is never used
+   --> karte-lir/src/pass/register_allocation/lifetime_analysis.rs:489:8
+    |
+29  | impl LifetimeAnalyzer {
+    | --------------------- method in this implementation
+...
+489 |     fn refine_end_with_liveness(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `calling_convention` is never read
+  --> karte-lir/src/pass/stack_frame_layout.rs:26:5
+   |
+19 | struct LinearScanAllocator {
+   |        ------------------- field in this struct
+...
+26 |     calling_convention: CallingConvention,
+   |     ^^^^^^^^^^^^^^^^^^
+   |
+   = note: `LinearScanAllocator` has derived impls for the traits `Default` and `Debug`, but these are intentionally ignored during dead code analysis
+
+   Compiling karte-escape-analysis v0.1.0 (/workspace/karte-escape-analysis)
+warning: unused import: `EscapeAnalysisError`
+ --> karte-escape-analysis/src/analyzer.rs:4:20
+  |
+4 | use crate::error::{EscapeAnalysisError, Result};
+  |                    ^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `DependencyEdge`
+ --> karte-escape-analysis/src/analyzer.rs:5:20
+  |
+5 | use crate::graph::{DependencyEdge, VariableGraph};
+  |                    ^^^^^^^^^^^^^^
+
+warning: unused import: `LifetimeConstraint`
+ --> karte-escape-analysis/src/analyzer.rs:7:65
+  |
+7 |     AllocationSuggestion, EscapePoint, EscapeState, FunctionId, LifetimeConstraint,
+  |                                                                 ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `warn`
+  --> karte-escape-analysis/src/analyzer.rs:12:31
+   |
+12 | use log::{debug, info, trace, warn};
+   |                               ^^^^
+
+warning: unused imports: `ParameterTag` and `ReturnSource`
+   --> karte-escape-analysis/src/analyzer.rs:761:56
+    |
+761 |         use crate::function_summary::{FunctionSummary, ParameterTag, ReturnSource};
+    |                                                        ^^^^^^^^^^^^  ^^^^^^^^^^^^
+
+warning: unused import: `VecDeque`
+ --> karte-escape-analysis/src/call_graph.rs:7:42
+  |
+7 | use std::collections::{HashMap, HashSet, VecDeque};
+  |                                          ^^^^^^^^
+
+warning: unused import: `TempId`
+ --> karte-escape-analysis/src/escape_point_detector.rs:6:28
+  |
+6 | use karte_mir::{Statement, TempId, Terminator, Value};
+  |                            ^^^^^^
+
+warning: unused import: `EscapeAnalysisError`
+ --> karte-escape-analysis/src/graph.rs:5:20
+  |
+5 | use crate::error::{EscapeAnalysisError, Result};
+  |                    ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::error::Result`
+ --> karte-escape-analysis/src/pointer_usage_analyzer.rs:5:5
+  |
+5 | use crate::error::Result;
+  |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `BasicBlockId`
+ --> karte-escape-analysis/src/pointer_usage_analyzer.rs:8:17
+  |
+8 | use karte_mir::{BasicBlockId, MirFunction};
+  |                 ^^^^^^^^^^^^
+
+warning: `karte-rt` (lib) generated 1 warning (run `cargo fix --lib -p karte-rt` to apply 1 suggestion)
+   Compiling ciborium v0.2.2
+   Compiling env_filter v0.1.3
+warning: unused variable: `var_id`
+   --> karte-escape-analysis/src/allocation_strategy.rs:224:14
+    |
+224 |         for (var_id, escape_info) in &self.escape_analysis {
+    |              ^^^^^^ help: if this is intentional, prefix it with an underscore: `_var_id`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unreachable pattern
+   --> karte-escape-analysis/src/analyzer.rs:466:13
+    |
+204 |               Statement::Assign { target, source, .. } => {
+    |               ---------------------------------------- matches all the relevant values
+...
+466 | /             Statement::Assign {
+467 | |                 source: Value::Closure {
+468 | |                     captured_values, ..
+469 | |                 },
+470 | |                 ..
+471 | |             } => {
+    | |_____________^ no value can reach this
+    |
+    = note: `#[warn(unreachable_patterns)]` on by default
+
+warning: method `is_heap_allocated` is never used
+   --> karte-escape-analysis/src/analyzer.rs:983:8
+    |
+36  | impl EscapeAnalyzer {
+    | ------------------- method in this implementation
+...
+983 |     fn is_heap_allocated(&self, var_id: VariableId) -> bool {
+    |        ^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: field `escape_info` is never read
+  --> karte-escape-analysis/src/instruction_generator.rs:12:5
+   |
+10 | pub struct InstructionGenerator {
+   |            -------------------- field in this struct
+11 |     /// 逃逸分析结果
+12 |     escape_info: HashMap<VariableId, VariableEscapeInfo>,
+   |     ^^^^^^^^^^^
+
+   Compiling tinytemplate v1.2.1
+   Compiling tokio-macros v2.5.0
+   Compiling socket2 v0.5.10
+   Compiling mio v1.0.4
+   Compiling signal-hook-registry v1.4.5
+warning: `karte-escape-analysis` (lib) generated 14 warnings (run `cargo fix --lib -p karte-escape-analysis` to apply 10 suggestions)
+   Compiling pin-project-lite v0.2.16
+   Compiling oorandom v11.1.5
+   Compiling jiff v0.2.15
+   Compiling bytes v1.10.1
+   Compiling anes v0.1.6
+   Compiling criterion v0.5.1
+   Compiling tokio v1.45.1
+warning: `karte-lir` (lib) generated 24 warnings (run `cargo fix --lib -p karte-lir` to apply 11 suggestions)
+   Compiling env_logger v0.11.8
+   Compiling karte-module-system v0.1.0 (/workspace/karte-module-system)
+warning: unused import: `Span`
+ --> karte-module-system/src/project.rs:8:40
+  |
+8 | use karte_diagnostics::{DiagnosticBag, Span};
+  |                                        ^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused variable: `optimization_level`
+   --> karte-module-system/src/project.rs:231:5
+    |
+231 |     optimization_level: OptimizationLevel,
+    |     ^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_optimization_level`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+   Compiling karte-codegen v0.1.0 (/workspace/karte-codegen)
+warning: unused import: `warn`
+ --> karte-codegen/src/vm/professional_executor/execution_engine.rs:8:17
+  |
+8 | use log::{info, warn};
+  |                 ^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused variable: `element_size`
+   --> karte-codegen/src/vm/professional_executor/execution_engine.rs:524:17
+    |
+524 |             let element_size = std::mem::size_of::<i64>();
+    |                 ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_element_size`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `debug_mode`
+  --> karte-codegen/src/vm/professional_executor/jit/aarch64_compiler.rs:73:16
+   |
+73 |     pub fn new(debug_mode: bool) -> Result<Self, String> {
+   |                ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_debug_mode`
+
+warning: unused variable: `base_register`
+   --> karte-codegen/src/vm/professional_executor/jit/code_buffer.rs:319:48
+    |
+319 |     pub fn emit_store_label_address(&mut self, base_register: u8, offset: i64, target_label: &str) {
+    |                                                ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_base_register`
+
+warning: unused variable: `offset`
+   --> karte-codegen/src/vm/professional_executor/jit/code_buffer.rs:319:67
+    |
+319 |     pub fn emit_store_label_address(&mut self, base_register: u8, offset: i64, target_label: &str) {
+    |                                                                   ^^^^^^ help: if this is intentional, prefix it with an underscore: `_offset`
+
+warning: unused variable: `dst_register`
+   --> karte-codegen/src/vm/professional_executor/jit/code_buffer.rs:530:38
+    |
+530 |                 AdrPatchType::Adrp { dst_register } => {
+    |                                      ^^^^^^^^^^^^ help: try ignoring the field: `dst_register: _`
+
+warning: unused variable: `dst_register`
+   --> karte-codegen/src/vm/professional_executor/jit/code_buffer.rs:585:42
+    |
+585 |                 AdrPatchType::AddLabel { dst_register } => {
+    |                                          ^^^^^^^^^^^^ help: try ignoring the field: `dst_register: _`
+
+warning: unused variable: `base_register`
+   --> karte-codegen/src/vm/professional_executor/jit/code_buffer.rs:625:21
+    |
+625 |                     base_register,
+    |                     ^^^^^^^^^^^^^ help: try ignoring the field: `base_register: _`
+
+warning: unused variable: `offset`
+   --> karte-codegen/src/vm/professional_executor/jit/code_buffer.rs:626:21
+    |
+626 |                     offset,
+    |                     ^^^^^^ help: try ignoring the field: `offset: _`
+
+warning: unused variable: `entry_point`
+   --> karte-codegen/src/vm/professional_executor/jit/compiler_trait.rs:105:55
+    |
+105 |     pub fn new(name: String, code: MachineCodeBuffer, entry_point: usize) -> Self {
+    |                                                       ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_entry_point`
+
+warning: unused variable: `debug_mode`
+  --> karte-codegen/src/vm/professional_executor/jit/x86_compiler.rs:33:16
+   |
+33 |     pub fn new(debug_mode: bool) -> Result<Self, String> {
+   |                ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_debug_mode`
+
+warning: unused variable: `karte_virtual_sp_reg`
+    --> karte-codegen/src/vm/professional_executor/jit/x86_compiler.rs:1170:13
+     |
+1170 |         let karte_virtual_sp_reg = self.vm_calling_convention.stack_pointer;
+     |             ^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_karte_virtual_sp_reg`
+
+warning: unused variable: `label`
+    --> karte-codegen/src/vm/professional_executor/jit/x86_compiler.rs:1532:77
+     |
+1532 |     fn emit_lea_reg_rip_rel(&self, code_builder: &mut CodeBuilder, dst: u8, label: &str) {
+     |                                                                             ^^^^^ help: if this is intentional, prefix it with an underscore: `_label`
+
+warning: methods `emit_and_reg_reg`, `emit_stp_pre_index`, `emit_ldp_post_index`, `load_and_pop_return_slot_pointer`, `emit_store_return_value_to_slot`, and `next_label` are never used
+    --> karte-codegen/src/vm/professional_executor/jit/aarch64_compiler.rs:1340:8
+     |
+71   | impl AArch64Compiler {
+     | -------------------- methods in this implementation
+...
+1340 |     fn emit_and_reg_reg(&self, code_builder: &mut CodeBuilder, dst: u8, src1: u8, src2: u8) {
+     |        ^^^^^^^^^^^^^^^^
+...
+1467 |     fn emit_stp_pre_index(
+     |        ^^^^^^^^^^^^^^^^^^
+...
+1530 |     fn emit_ldp_post_index(
+     |        ^^^^^^^^^^^^^^^^^^^
+...
+1994 |     fn load_and_pop_return_slot_pointer(&self, code_builder: &mut CodeBuilder, dst: u8) {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2005 |     fn emit_store_return_value_to_slot(&self, code_builder: &mut CodeBuilder, slot_reg: u8) {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2013 |     fn next_label(&mut self, prefix: &str) -> String {
+     |        ^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` on by default
+
+warning: function `align_to` is never used
+    --> karte-codegen/src/vm/professional_executor/jit/aarch64_compiler.rs:2327:4
+     |
+2327 | fn align_to(value: usize, alignment: usize) -> usize {
+     |    ^^^^^^^^
+
+warning: function `read_u32_at` is never used
+    --> karte-codegen/src/vm/professional_executor/jit/code_buffer.rs:1219:11
+     |
+1219 | unsafe fn read_u32_at(ptr: *mut u8, offset: usize) -> u32 {
+     |           ^^^^^^^^^^^
+
+warning: function `write_u32_at` is never used
+    --> karte-codegen/src/vm/professional_executor/jit/code_buffer.rs:1225:11
+     |
+1225 | unsafe fn write_u32_at(ptr: *mut u8, offset: usize, value: u32) {
+     |           ^^^^^^^^^^^^
+
+warning: fields `name` and `entry_offset` are never read
+  --> karte-codegen/src/vm/professional_executor/jit/memory_manager.rs:41:5
+   |
+39 | struct FunctionBlock {
+   |        ------------- fields in this struct
+40 |     /// 函数名
+41 |     name: String,
+   |     ^^^^
+...
+47 |     entry_offset: usize,
+   |     ^^^^^^^^^^^^
+   |
+   = note: `FunctionBlock` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: methods `emit_lea_reg_rip_rel` and `next_label` are never used
+    --> karte-codegen/src/vm/professional_executor/jit/x86_compiler.rs:1532:8
+     |
+279  | impl X86Compiler {
+     | ---------------- methods in this implementation
+...
+1532 |     fn emit_lea_reg_rip_rel(&self, code_builder: &mut CodeBuilder, dst: u8, label: &str) {
+     |        ^^^^^^^^^^^^^^^^^^^^
+...
+1550 |     fn next_label(&mut self, prefix: &str) -> String {
+     |        ^^^^^^^^^^
+
+warning: methods `save_return_slot_pointer`, `load_and_pop_return_slot_pointer`, and `emit_store_return_value_to_slot` are never used
+    --> karte-codegen/src/vm/professional_executor/jit/x86_compiler.rs:1909:8
+     |
+1707 | impl X86Compiler {
+     | ---------------- methods in this implementation
+...
+1909 |     fn save_return_slot_pointer(&self, code_builder: &mut CodeBuilder) {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1918 |     fn load_and_pop_return_slot_pointer(&self, code_builder: &mut CodeBuilder, dst: u8) {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1925 |     fn emit_store_return_value_to_slot(&self, code_builder: &mut CodeBuilder, slot_reg: u8) {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `align_to` is never used
+    --> karte-codegen/src/vm/professional_executor/jit/x86_compiler.rs:1991:4
+     |
+1991 | fn align_to(value: usize, alignment: usize) -> usize {
+     |    ^^^^^^^^
+
+   Compiling karte-tests v0.1.0 (/workspace/karte-tests)
+warning: unused import: `karte_lexer::Lexer`
+ --> karte-tests/src/escape_analysis_tests.rs:9:5
+  |
+9 | use karte_lexer::Lexer;
+  |     ^^^^^^^^^^^^^^^^^^
+  |
+help: if this is a test module, consider adding a `#[cfg(test)]` to the containing module
+ --> karte-tests/src/lib.rs:7:1
+  |
+7 | pub mod escape_analysis_tests;
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `karte_lir::OptimizationLevel`
+  --> karte-tests/src/escape_analysis_tests.rs:10:5
+   |
+10 | use karte_lir::OptimizationLevel;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+help: if this is a test module, consider adding a `#[cfg(test)]` to the containing module
+  --> karte-tests/src/lib.rs:7:1
+   |
+7  | pub mod escape_analysis_tests;
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `LoweringOptions` and `lower_expr_to_mir_with_options`
+  --> karte-tests/src/escape_analysis_tests.rs:11:24
+   |
+11 | use karte_mir::lower::{lower_expr_to_mir_with_options, LoweringOptions};
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^
+   |
+help: if this is a test module, consider adding a `#[cfg(test)]` to the containing module
+  --> karte-tests/src/lib.rs:7:1
+   |
+7  | pub mod escape_analysis_tests;
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `lower_mir_to_final_lir` and `optimize_mir_with_escape_analysis`
+  --> karte-tests/src/escape_analysis_tests.rs:12:27
+   |
+12 | use karte_module_system::{lower_mir_to_final_lir, optimize_mir_with_escape_analysis};
+   |                           ^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+help: if this is a test module, consider adding a `#[cfg(test)]` to the containing module
+  --> karte-tests/src/lib.rs:7:1
+   |
+7  | pub mod escape_analysis_tests;
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `ParserMode` and `parse_with_type_check`
+  --> karte-tests/src/escape_analysis_tests.rs:13:20
+   |
+13 | use karte_parser::{parse_with_type_check, ParserMode};
+   |                    ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^
+   |
+help: if this is a test module, consider adding a `#[cfg(test)]` to the containing module
+  --> karte-tests/src/lib.rs:7:1
+   |
+7  | pub mod escape_analysis_tests;
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashSet`
+  --> karte-tests/src/escape_analysis_tests.rs:14:5
+   |
+14 | use std::collections::HashSet;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+help: if this is a test module, consider adding a `#[cfg(test)]` to the containing module
+  --> karte-tests/src/lib.rs:7:1
+   |
+7  | pub mod escape_analysis_tests;
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `log::info`
+  --> karte-tests/src/lib.rs:21:5
+   |
+21 | use log::info;
+   |     ^^^^^^^^^
+
+warning: `karte-tests` (lib) generated 7 warnings (run `cargo fix --lib -p karte-tests` to apply 7 suggestions)
+warning: `karte-codegen` (lib) generated 21 warnings (run `cargo fix --lib -p karte-codegen` to apply 1 suggestion)
+warning: `karte-module-system` (lib) generated 2 warnings (run `cargo fix --lib -p karte-module-system` to apply 1 suggestion)
+warning: unused import: `log::info`
+  --> karte-tests/src/lib.rs:21:5
+   |
+21 | use log::info;
+   |     ^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: `karte-tests` (lib test) generated 1 warning (run `cargo fix --lib -p karte-tests --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 32.76s
+     Running unittests src/lib.rs (target/debug/deps/karte_tests-e8dfaa338a227991)
+
+running 239 tests
+test assignment_integration_tests::assignment_integration_tests::test_assignment_precedence ... ok
+test assignment_integration_tests::assignment_integration_tests::test_chained_assignment_parsing ... ok
+test assignment_integration_tests::assignment_integration_tests::test_field_assignment_parsing ... ok
+test assignment_integration_tests::assignment_integration_tests::test_simple_assignment_parsing ... ok
+test assignment_integration_tests::assignment_integration_tests::test_assignment_mir_lowering ... ok
+test assignment_integration_tests::assignment_integration_tests::test_assignment_type_checking ... ok
+test cli_integration_tests::cli_tests::test_closure_as_higher_order_param ... ok
+test cli_integration_tests::cli_tests::test_compile_and_run_project_mode ... ok
+test cli_integration_tests::cli_tests::test_escape_after_deep_stack_usage ... ok
+test cli_integration_tests::cli_tests::test_function_as_value ... ok
+test cli_integration_tests::cli_tests::test_allocate_many_stack_refs ... ok
+error: test failed, to rerun pass `-p karte-tests --lib`
+
+Caused by:
+  process didn't exit successfully: `/workspace/target/debug/deps/karte_tests-e8dfaa338a227991` (signal: 11, SIGSEGV: invalid memory reference)
+   Doc-tests karte_tests
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: 1 target failed:
+    `-p karte-tests --lib`
