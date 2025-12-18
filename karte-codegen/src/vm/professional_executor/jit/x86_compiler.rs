@@ -123,6 +123,21 @@ impl X86Compiler {
             .ok_or_else(|| format!("未映射的寄存器: {:?}", reg))
     }
 
+    /// 获取 VM 栈指针的硬件寄存器编号
+    fn get_vm_sp_hw(&self) -> Result<u8, String> {
+        self.get_physical_register(&Register::Physical(self.vm_calling_convention.stack_pointer))
+    }
+
+    /// 获取 VM 帧指针的硬件寄存器编号
+    fn get_vm_fp_hw(&self) -> Result<u8, String> {
+        self.get_physical_register(&Register::Physical(self.vm_calling_convention.frame_pointer))
+    }
+
+    /// 获取 VM 返回地址的硬件寄存器编号
+    fn get_vm_return_addr_hw(&self) -> Result<u8, String> {
+        self.get_physical_register(&Register::Physical(self.vm_calling_convention.return_address))
+    }
+
     /// 编译单个指令
     fn compile_instruction(
         &mut self,
@@ -738,8 +753,8 @@ impl X86Compiler {
         }
 
         // VM调用约定：返回时需要弹出虚拟返回地址并跳转
-        let vm_sp_hw = self.vm_calling_convention.stack_pointer as u8;
-        let return_addr_hw = self.vm_calling_convention.return_address as u8;
+        let vm_sp_hw = self.get_vm_sp_hw()?;
+        let return_addr_hw = self.get_vm_return_addr_hw()?;
         
         if is_main_function {
             // Main函数逻辑：
@@ -1043,6 +1058,17 @@ impl X86Compiler {
         code_builder.emit_byte(modrm);
     }
 
+    /// SIB (Scale-Index-Base) 字节编码
+    ///
+    /// SIB 格式: [scale:2][index:3][base:3]
+    /// - scale: 00=*1, 01=*2, 10=*4, 11=*8
+    /// - index: 索引寄存器 (100=无索引)
+    /// - base: 基址寄存器
+    fn emit_sib(&self, code_builder: &mut CodeBuilder, scale: u8, index: u8, base: u8) {
+        let sib = (scale << 6) | ((index & 0x07) << 3) | (base & 0x07);
+        code_builder.emit_byte(sib);
+    }
+
     /// mov reg, reg (64位)
     fn emit_mov_reg_reg(&self, code_builder: &mut CodeBuilder, dst: u8, src: u8) {
         // REX.W + 89 /r: MOV r/m64, r64
@@ -1310,16 +1336,34 @@ impl X86Compiler {
         self.emit_rex_prefix(code_builder, true, dst, 0, base);
         code_builder.emit_byte(0x8B);
 
-        if offset == 0 && (base & 0x07) != 5 {
-            // RBP需要特殊处理
-            // ModR/M: mod=00, reg=dst, r/m=base
+        // x86-64 特殊情况：
+        // - RSP (4): r/m=100 需要SIB字节
+        // - RBP (5): mod=00 时不能直接使用（表示RIP相对寻址）
+        let base_low3 = base & 0x07;
+        
+        if base_low3 == 4 {
+            // RSP需要SIB字节
+            if offset == 0 {
+                self.emit_modrm(code_builder, 0b00, dst, 0b100);
+                self.emit_sib(code_builder, 0, 0b100, base);
+            } else if (-128..=127).contains(&offset) {
+                self.emit_modrm(code_builder, 0b01, dst, 0b100);
+                self.emit_sib(code_builder, 0, 0b100, base);
+                code_builder.emit_byte(offset as u8);
+            } else {
+                self.emit_modrm(code_builder, 0b10, dst, 0b100);
+                self.emit_sib(code_builder, 0, 0b100, base);
+                code_builder.emit_i32(offset);
+            }
+        } else if offset == 0 && base_low3 != 5 {
+            // 普通寄存器，offset=0
             self.emit_modrm(code_builder, 0b00, dst, base);
         } else if (-128..=127).contains(&offset) {
-            // ModR/M: mod=01, reg=dst, r/m=base + SIB + disp8
+            // disp8
             self.emit_modrm(code_builder, 0b01, dst, base);
             code_builder.emit_byte(offset as u8);
         } else {
-            // ModR/M: mod=10, reg=dst, r/m=base + SIB + disp32
+            // disp32
             self.emit_modrm(code_builder, 0b10, dst, base);
             code_builder.emit_i32(offset);
         }
@@ -1331,13 +1375,34 @@ impl X86Compiler {
         self.emit_rex_prefix(code_builder, true, src, 0, base);
         code_builder.emit_byte(0x89);
 
-        if offset == 0 && (base & 0x07) != 5 {
-            // RBP需要特殊处理
+        // x86-64 特殊情况：
+        // - RSP (4): r/m=100 需要SIB字节
+        // - RBP (5): mod=00 时不能直接使用
+        let base_low3 = base & 0x07;
+        
+        if base_low3 == 4 {
+            // RSP需要SIB字节
+            if offset == 0 {
+                self.emit_modrm(code_builder, 0b00, src, 0b100);
+                self.emit_sib(code_builder, 0, 0b100, base);
+            } else if (-128..=127).contains(&offset) {
+                self.emit_modrm(code_builder, 0b01, src, 0b100);
+                self.emit_sib(code_builder, 0, 0b100, base);
+                code_builder.emit_byte(offset as u8);
+            } else {
+                self.emit_modrm(code_builder, 0b10, src, 0b100);
+                self.emit_sib(code_builder, 0, 0b100, base);
+                code_builder.emit_i32(offset);
+            }
+        } else if offset == 0 && base_low3 != 5 {
+            // 普通寄存器，offset=0
             self.emit_modrm(code_builder, 0b00, src, base);
         } else if (-128..=127).contains(&offset) {
+            // disp8
             self.emit_modrm(code_builder, 0b01, src, base);
             code_builder.emit_byte(offset as u8);
         } else {
+            // disp32
             self.emit_modrm(code_builder, 0b10, src, base);
             code_builder.emit_i32(offset);
         }
@@ -1349,7 +1414,23 @@ impl X86Compiler {
         self.emit_rex_prefix(code_builder, true, 0, 0, base);
         code_builder.emit_byte(0xC7);
 
-        if offset == 0 && (base & 0x07) != 5 {
+        let base_low3 = base & 0x07;
+        
+        if base_low3 == 4 {
+            // RSP需要SIB字节
+            if offset == 0 {
+                self.emit_modrm(code_builder, 0b00, 0, 0b100);
+                self.emit_sib(code_builder, 0, 0b100, base);
+            } else if (-128..=127).contains(&offset) {
+                self.emit_modrm(code_builder, 0b01, 0, 0b100);
+                self.emit_sib(code_builder, 0, 0b100, base);
+                code_builder.emit_byte(offset as u8);
+            } else {
+                self.emit_modrm(code_builder, 0b10, 0, 0b100);
+                self.emit_sib(code_builder, 0, 0b100, base);
+                code_builder.emit_i32(offset);
+            }
+        } else if offset == 0 && base_low3 != 5 {
             self.emit_modrm(code_builder, 0b00, 0, base);
         } else if (-128..=127).contains(&offset) {
             self.emit_modrm(code_builder, 0b01, 0, base);
@@ -1585,9 +1666,9 @@ impl X86Compiler {
         let rbp = REG_RBP as u8;
         let rsp = REG_RSP as u8;
         let r8 = REG_R8 as u8;
-        // 🔧 关键修复：vm_sp 和 vm_fp 需要转换为硬件寄存器编号
-        let vm_sp_hw = self.vm_calling_convention.stack_pointer as u8;
-        let vm_fp_hw = self.vm_calling_convention.frame_pointer as u8;
+        // 🔧 关键修复：通过 register_mapping 转换 VM 栈/帧指针逻辑编号到硬件寄存器
+        let vm_sp_hw = self.get_vm_sp_hw()?;
+        let vm_fp_hw = self.get_vm_fp_hw()?;
 
         if self.debug_mode {
             log::debug!("序言开始：生成符合 System V AMD64 ABI 的函数序言");
@@ -1615,15 +1696,19 @@ impl X86Compiler {
         self.emit_mov_reg_reg(code_builder, vm_sp_hw, rdi);
         self.emit_mov_reg_reg(code_builder, vm_fp_hw, rsi);
 
-        // 5. 在虚拟栈保存系统SP和返回地址（x86没有专门的返回地址寄存器，使用栈）
-        // sub rsp, 16
-        self.emit_sub_rsp_imm(code_builder, 16);
-        // mov [rsp], r8  (系统SP)
+        // 5. 在虚拟栈保存系统SP和返回地址（与AArch64一致）
+        // sub rsp, 16（注意：此时rsp已经切换到虚拟栈）
+        self.emit_sub_reg_imm32(code_builder, vm_sp_hw, 16);
+        // mov [rsp, #0], r8  (保存系统SP)
         self.emit_mov_mem_reg(code_builder, vm_sp_hw, 0, r8);
-        // 注意：x86的返回地址由call指令自动压入系统栈，不需要手动保存
+        // mov qword ptr [rsp, #8], 0   (x86不需要保存LR，填0占位)
+        self.emit_mov_mem_imm32(code_builder, vm_sp_hw, 8, 0);
 
         // 6. 为返回值槽分配空间（16字节对齐）
-        self.save_return_slot_pointer(code_builder);
+        // sub rsp, 16
+        self.emit_sub_reg_imm32(code_builder, vm_sp_hw, 16);
+        // mov [rsp, #0], rdi (保存返回值槽指针，rdi是第一个C参数)
+        self.emit_mov_mem_reg(code_builder, vm_sp_hw, 0, rdi);
 
         if self.debug_mode {
             log::debug!("序言：栈使用量 = {} 字节", 32 + (self.get_c_ffi_callee_saved_registers().len() * 8));

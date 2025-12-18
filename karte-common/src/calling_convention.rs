@@ -194,24 +194,22 @@ impl Default for CallingConvention {
 impl CallingConvention {
     /// 创建标准调用约定（根据目标架构自动选择）
     ///
-    /// 这个方法会根据编译目标架构返回对应的调用约定：
+    /// 这个方法会根据编译目标架构返回对应的调用约定，确保 LIR passes 使用正确的架构配置：
     /// - x86-64: System V AMD64 ABI
     /// - AArch64: AAPCS64
+    #[cfg(target_arch = "x86_64")]
     pub fn standard() -> Self {
-        #[cfg(target_arch = "x86_64")]
-        {
-            Self::x86_64()
-        }
-        
-        #[cfg(target_arch = "aarch64")]
-        {
-            Self::aarch64()
-        }
-        
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        {
-            compile_error!("不支持的目标架构");
-        }
+        Self::x86_64()
+    }
+    
+    #[cfg(target_arch = "aarch64")]
+    pub fn standard() -> Self {
+        Self::aarch64()
+    }
+    
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    pub fn standard() -> Self {
+        compile_error!("不支持的目标架构");
     }
 
     /// 创建 x86-64 System V AMD64 ABI 调用约定
