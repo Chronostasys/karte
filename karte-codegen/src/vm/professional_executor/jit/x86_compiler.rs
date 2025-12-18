@@ -200,6 +200,9 @@ impl X86Compiler {
                 code_builder,
             ),
             Instruction::Call { target, .. } => self.compile_call(target, code_builder),
+            Instruction::CallIndirect {
+                function_register, ..
+            } => self.compile_jump_indirect(function_register, code_builder),
             Instruction::JumpIndirect {
                 function_register, ..
             } => self.compile_jump_indirect(function_register, code_builder),
@@ -588,72 +591,74 @@ impl X86Compiler {
     ) -> Result<(), String> {
         let function_reg = self.get_physical_register(function_register)?;
 
-        // call rax - FF D0 (间接调用)
+        // 🔧 注意：使用 JMP 而不是 CALL
+        // 因为 LIR 降级阶段已经手动将返回地址压栈
+        // jmp rax - FF E0 (间接跳转，使用 /4 而不是 /2)
         // 对于x86-64，我们需要根据寄存器生成不同的指令
         match function_reg {
             0 => {
-                // call rax - FF D0
-                code_builder.emit_bytes(&[0xFF, 0xD0]);
+                // jmp rax - FF E0
+                code_builder.emit_bytes(&[0xFF, 0xE0]);
             }
             1 => {
-                // call rcx - FF D1
-                code_builder.emit_bytes(&[0xFF, 0xD1]);
+                // jmp rcx - FF E1
+                code_builder.emit_bytes(&[0xFF, 0xE1]);
             }
             2 => {
-                // call rdx - FF D2
-                code_builder.emit_bytes(&[0xFF, 0xD2]);
+                // jmp rdx - FF E2
+                code_builder.emit_bytes(&[0xFF, 0xE2]);
             }
             3 => {
-                // call rbx - FF D3
-                code_builder.emit_bytes(&[0xFF, 0xD3]);
+                // jmp rbx - FF E3
+                code_builder.emit_bytes(&[0xFF, 0xE3]);
             }
             4 => {
-                // call rsp - FF D4
-                code_builder.emit_bytes(&[0xFF, 0xD4]);
+                // jmp rsp - FF E4
+                code_builder.emit_bytes(&[0xFF, 0xE4]);
             }
             5 => {
-                // call rbp - FF D5
-                code_builder.emit_bytes(&[0xFF, 0xD5]);
+                // jmp rbp - FF E5
+                code_builder.emit_bytes(&[0xFF, 0xE5]);
             }
             6 => {
-                // call rsi - FF D6
-                code_builder.emit_bytes(&[0xFF, 0xD6]);
+                // jmp rsi - FF E6
+                code_builder.emit_bytes(&[0xFF, 0xE6]);
             }
             7 => {
-                // call rdi - FF D7
-                code_builder.emit_bytes(&[0xFF, 0xD7]);
+                // jmp rdi - FF E7
+                code_builder.emit_bytes(&[0xFF, 0xE7]);
             }
             8 => {
-                // call r8 - 41 FF D0
-                code_builder.emit_bytes(&[0x41, 0xFF, 0xD0]);
+                // jmp r8 - 41 FF E0
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE0]);
             }
             9 => {
-                // call r9 - 41 FF D1
-                code_builder.emit_bytes(&[0x41, 0xFF, 0xD1]);
+                // jmp r9 - 41 FF E1
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE1]);
             }
             10 => {
-                // call r10 - 41 FF D2
-                code_builder.emit_bytes(&[0x41, 0xFF, 0xD2]);
+                // jmp r10 - 41 FF E2
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE2]);
             }
             11 => {
-                // call r11 - 41 FF D3
-                code_builder.emit_bytes(&[0x41, 0xFF, 0xD3]);
+                // jmp r11 - 41 FF E3
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE3]);
             }
             12 => {
-                // call r12 - 41 FF D4
-                code_builder.emit_bytes(&[0x41, 0xFF, 0xD4]);
+                // jmp r12 - 41 FF E4
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE4]);
             }
             13 => {
-                // call r13 - 41 FF D5
-                code_builder.emit_bytes(&[0x41, 0xFF, 0xD5]);
+                // jmp r13 - 41 FF E5
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE5]);
             }
             14 => {
-                // call r14 - 41 FF D6
-                code_builder.emit_bytes(&[0x41, 0xFF, 0xD6]);
+                // jmp r14 - 41 FF E6
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE6]);
             }
             15 => {
-                // call r15 - 41 FF D7
-                code_builder.emit_bytes(&[0x41, 0xFF, 0xD7]);
+                // jmp r15 - 41 FF E7
+                code_builder.emit_bytes(&[0x41, 0xFF, 0xE7]);
             }
             _ => {
                 return Err(format!("不支持的寄存器: {}", function_reg));
@@ -1745,17 +1750,10 @@ impl X86Compiler {
         let vm_fp_hw = self.get_vm_fp_hw();
         
         // 保存fp sp到虚拟栈
-        // 🔧 修复：使用 store-pair 模拟（先保存到 [SP-16] 再调整 SP）
-        // x86 没有 STP，需要先调整 SP，然后保存
-        // 但保存 SP 时需要保存旧值（SP+16）
+        // 对齐 AArch64 的语义：保存当前SP（新栈帧底部）
         self.emit_sub_reg_imm32(code_builder, vm_sp_hw, 16);
         self.emit_mov_mem_reg(code_builder, vm_sp_hw, 8, vm_fp_hw);
-        // 保存旧 SP = 当前SP + 16
-        use karte_common::calling_convention::REG_R13;
-        let temp = REG_R13 as u8;
-        self.emit_mov_reg_reg(code_builder, temp, vm_sp_hw);
-        self.emit_add_reg_imm32(code_builder, temp, 16);
-        self.emit_mov_mem_reg(code_builder, vm_sp_hw, 0, temp);
+        self.emit_mov_mem_reg(code_builder, vm_sp_hw, 0, vm_sp_hw);
 
         // 使用LIR寄存器分配器计算的实际使用的callee-saved寄存器
         let callee_saved = &self.get_vm_callee_saved_registers();
@@ -1820,12 +1818,10 @@ impl X86Compiler {
         }
 
         // 恢复fp sp从虚拟栈
-        // 读取保存的旧 SP 和 FP
-        use karte_common::calling_convention::REG_R13;
-        let temp = REG_R13 as u8;
-        self.emit_mov_reg_mem(code_builder, temp, vm_sp_hw, 0);      // temp = 旧SP
+        // 对齐 AArch64 的语义
+        self.emit_mov_reg_mem(code_builder, vm_sp_hw, vm_sp_hw, 0);  // SP = 新栈帧底部
         self.emit_mov_reg_mem(code_builder, vm_fp_hw, vm_sp_hw, 8);  // FP = 旧FP
-        self.emit_mov_reg_reg(code_builder, vm_sp_hw, temp);          // SP = 旧SP
+        self.emit_add_reg_imm32(code_builder, vm_sp_hw, 16);          // SP += 16，指向返回地址
 
         Ok(())
     }
