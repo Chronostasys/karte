@@ -540,19 +540,10 @@ impl InstructionLoweringPass {
         // 保存caller-saved寄存器到栈，使用StorePair优化
         self.save_registers_to_stack(&caller_saved, span, instructions);
 
-        // 🔧 关键修复：将函数指针保存到栈，避免在参数准备时被覆盖
-        // 因为 effect_resume_temp (R9) 也是参数寄存器
-        instructions.push(Instruction::Sub {
-            dst: self.stack_pointer_reg,
-            src1: Operand::Register {
-                id: self.stack_pointer_reg,
-            },
-            src2: Operand::Immediate { value: 16 },
-            span: *span,
-        });
-        instructions.push(Instruction::Store64 {
-            addr: self.stack_pointer_reg,
-            offset: 0,
+        // 将函数地址移动到临时寄存器
+        let temp_func_reg = self.effect_resume_temp_register();
+        instructions.push(Instruction::Move {
+            dst: temp_func_reg,
             src: Operand::Register {
                 id: *function_register,
             },
@@ -596,23 +587,6 @@ impl InstructionLoweringPass {
                 });
             }
         }
-
-        // 🔧 从栈恢复函数指针到临时寄存器
-        let temp_func_reg = self.effect_resume_temp_register();
-        instructions.push(Instruction::Load64 {
-            dst: temp_func_reg,
-            addr: self.stack_pointer_reg,
-            offset: 0,
-            span: *span,
-        });
-        instructions.push(Instruction::Add {
-            dst: self.stack_pointer_reg,
-            src1: Operand::Register {
-                id: self.stack_pointer_reg,
-            },
-            src2: Operand::Immediate { value: 16 },
-            span: *span,
-        });
 
         // 压入返回地址
         instructions.push(Instruction::Sub {
