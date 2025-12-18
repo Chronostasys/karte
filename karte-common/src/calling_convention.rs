@@ -192,6 +192,28 @@ impl Default for CallingConvention {
 }
 
 impl CallingConvention {
+    /// 创建标准调用约定（根据目标架构自动选择）
+    ///
+    /// 这个方法会根据编译目标架构返回对应的调用约定：
+    /// - x86-64: System V AMD64 ABI
+    /// - AArch64: AAPCS64
+    pub fn standard() -> Self {
+        #[cfg(target_arch = "x86_64")]
+        {
+            Self::x86_64()
+        }
+        
+        #[cfg(target_arch = "aarch64")]
+        {
+            Self::aarch64()
+        }
+        
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            compile_error!("不支持的目标架构");
+        }
+    }
+
     /// 创建 x86-64 System V AMD64 ABI 调用约定
     ///
     /// 遵循 System V Application Binary Interface AMD64 Architecture Processor Supplement
@@ -272,7 +294,7 @@ impl CallingConvention {
         }
     }
 
-    /// 创建标准的 ARM64 AAPCS64 调用约定
+    /// 创建 ARM64 AAPCS64 调用约定
     ///
     /// 遵循 ARM Procedure Call Standard for the 64-bit Architecture (AAPCS64)
     ///
@@ -289,7 +311,7 @@ impl CallingConvention {
     ///
     /// Caller-saved: x0-x18 (易失寄存器，调用者负责保存)
     /// Callee-saved: x19-x30 (非易失寄存器，被调用者负责保存)
-    pub fn standard() -> Self {
+    pub fn aarch64() -> Self {
         let mut caller_saved = HashSet::new();
         // x0-x18 都是 caller-saved (易失寄存器)
         for reg in 0..=18 {

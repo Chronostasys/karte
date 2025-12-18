@@ -74,7 +74,7 @@ impl AArch64Compiler {
         let mut compiler = Self {
             register_mapping: HashMap::new(),
             ffi_calling_convention: Self::create_calling_convention(),
-            vm_calling_convention: CallingConvention::standard(),
+            vm_calling_convention: CallingConvention::aarch64(),
             debug_mode: true, // 强制启用调试模式以便观察编译过程
             unique_label_counter: 0,
             current_function_use_regs: Vec::new(),
