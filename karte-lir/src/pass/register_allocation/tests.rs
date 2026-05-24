@@ -1,7 +1,7 @@
 use super::*;
 use crate::pass::stack_frame_layout::StackFrameLayoutPass;
 use crate::{AllocationType, Instruction, LirFunction, Operand, Register};
-use karte_common::calling_convention::{REG_EFFECT_PAYLOAD, REG_X0, REG_X29};
+use karte_common::calling_convention::{REG_ARG0, REG_EFFECT_PAYLOAD, REG_X29};
 use karte_diagnostics::Span;
 
 #[test]
@@ -293,8 +293,8 @@ fn test_parameter_return_conflict() {
     pass.run_on_function(&mut function, &mut analysis_manager);
 
     // Check allocation
-    // ARM64 AAPCS64: param 0 = x0, return = x0
-    // The Return instruction should have value: Some(Physical(0)) (x0)
+    // param0 应该在第一个参数寄存器中
+    // AArch64: ARG0 = x0, x86_64: ARG0 = rdi
 
     if let Instruction::Return {
         value: Some(reg), ..
@@ -303,8 +303,8 @@ fn test_parameter_return_conflict() {
         match reg {
             Register::Physical(p) => {
                 assert_eq!(
-                    *p, REG_X0,
-                    "Parameter should be in x0 (ARM64 AAPCS64: param0 = x0)"
+                    *p, REG_ARG0,
+                    "Parameter should be in the first argument register (ARG0)"
                 );
             }
             _ => panic!("Expected physical register"),
