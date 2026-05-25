@@ -3,7 +3,7 @@ use super::{
     lifetime_analysis_pass::LifetimeAnalysisPass,
     AnalysisManager, AnalysisPass, FunctionPass, PassResult, PassStats, ProgramPass,
 };
-use crate::{LirFunction, LirProgram};
+use crate::{KarteError, LirFunction, LirProgram};
 use log::{debug, info, trace};
 use once_cell::sync::Lazy;
 use std::time::Instant;
@@ -120,7 +120,7 @@ impl PassManager {
     }
 
     /// 在程序上运行所有 Pass（增强版本）
-    pub fn run_on_program(&mut self, program: &mut LirProgram) -> Result<(), String> {
+    pub fn run_on_program(&mut self, program: &mut LirProgram) -> crate::Result<()> {
         self.stats.clear();
 
         if self.debug {
@@ -160,7 +160,7 @@ impl PassManager {
     }
 
     /// 运行程序级别的Pass（新增方法）
-    fn run_program_passes(&mut self, program: &mut LirProgram) -> Result<(), String> {
+    fn run_program_passes(&mut self, program: &mut LirProgram) -> crate::Result<()> {
         let mut i = 0;
         while i < self.program_passes.len() {
             let start_time = Instant::now();
@@ -169,7 +169,7 @@ impl PassManager {
             let required_analyses = self.program_passes[i].required_analyses();
             for analysis_name in required_analyses {
                 if !self.analysis_manager.results.contains_key(analysis_name) {
-                    return Err(format!("找不到所需的分析: {}", analysis_name));
+                    return Err(format!("找不到所需的分析: {}", analysis_name).into());
                 }
             }
 
@@ -200,7 +200,7 @@ impl PassManager {
                     "程序Pass {} 失败: {}",
                     self.program_passes[i].name(),
                     msg
-                ));
+                ).into());
             }
 
             if self.debug {
@@ -223,7 +223,7 @@ impl PassManager {
         &mut self,
         function: &LirFunction,
         analysis_name: &str,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         // 如果已经运行过，直接返回
         if self.analysis_manager.results.contains_key(analysis_name) {
             return Ok(());
@@ -240,7 +240,7 @@ impl PassManager {
         });
 
         let mut analysis_pass =
-            analysis_pass_opt.ok_or_else(|| format!("找不到所需的分析: {}", analysis_name))?;
+            analysis_pass_opt.ok_or_else(|| KarteError::from(format!("找不到所需的分析: {}", analysis_name)))?;
 
         if self.debug {
             info!("    (按需运行分析: {})", analysis_name);
@@ -261,7 +261,7 @@ impl PassManager {
         // 运行当前分析
         let result = analysis_pass
             .analyze_function(function, &self.analysis_manager)
-            .map_err(|msg| format!("分析 Pass {} 失败: {}", analysis_name, msg))?;
+            .map_err(|msg| KarteError::from(format!("分析 Pass {} 失败: {}", analysis_name, msg)))?;
 
         self.analysis_manager
             .store_result(analysis_name.to_string(), result);
@@ -270,7 +270,7 @@ impl PassManager {
     }
 
     /// 为函数运行分析 Pass（从全局注册表读取）
-    fn run_analysis_passes_on_function(&mut self, function: &LirFunction) -> Result<(), String> {
+    fn run_analysis_passes_on_function(&mut self, function: &LirFunction) -> crate::Result<()> {
         // 🔧 优化：递归运行所有必需的分析Pass
         // 按照全局注册表的顺序运行所有分析，自动处理依赖关系
         let analysis_pass_count = STANDARD_ANALYSIS_PASSES.len();
@@ -309,7 +309,7 @@ impl PassManager {
                         let dep_result = dep_pass
                             .analyze_function(function, &self.analysis_manager)
                             .map_err(|msg| {
-                                format!("依赖分析 Pass {} 失败: {}", analysis_name, msg)
+                                KarteError::from(format!("依赖分析 Pass {} 失败: {}", analysis_name, msg))
                             })?;
                         self.analysis_manager
                             .store_result(analysis_name.to_string(), dep_result);
@@ -318,7 +318,7 @@ impl PassManager {
                             info!("    (自动运行依赖分析: {})", analysis_name);
                         }
                     } else {
-                        return Err(format!("找不到所需的分析: {}", analysis_name));
+                        return Err(format!("找不到所需的分析: {}", analysis_name).into());
                     }
                 }
             }
@@ -330,7 +330,7 @@ impl PassManager {
                         .store_result(pass_name.clone(), result);
                 }
                 Err(msg) => {
-                    return Err(format!("分析 Pass {} 失败: {}", pass_name, msg));
+                    return Err(format!("分析 Pass {} 失败: {}", pass_name, msg).into());
                 }
             }
 
@@ -348,7 +348,7 @@ impl PassManager {
     fn run_function_passes_on_function(
         &mut self,
         function: &mut LirFunction,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let mut i = 0;
         while i < self.function_passes.len() {
             info!(
@@ -393,7 +393,7 @@ impl PassManager {
                         "函数 Pass {} 失败: {}",
                         self.function_passes[i].name(),
                         msg
-                    ));
+                    ).into());
                 }
                 _ => {
                     info!(

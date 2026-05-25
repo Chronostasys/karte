@@ -213,7 +213,7 @@ impl InstructionLoweringPass {
         span: &Span,
         instructions: &mut Vec<Instruction>,
         function: &mut LirFunction,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         match allocation_type {
             AllocationType::Stack => {
                 // 栈分配：SP = SP - size; dst = SP
@@ -254,7 +254,7 @@ impl InstructionLoweringPass {
         offset: i64,
         span: &Span,
         instructions: &mut Vec<Instruction>,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         instructions.push(Instruction::Load64 {
             dst: *dst,
             addr: *addr,
@@ -272,7 +272,7 @@ impl InstructionLoweringPass {
         src: &Operand,
         span: &Span,
         instructions: &mut Vec<Instruction>,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         instructions.push(Instruction::Store64 {
             addr: *addr,
             offset,
@@ -291,7 +291,7 @@ impl InstructionLoweringPass {
         span: &Span,
         instructions: &mut Vec<Instruction>,
         function: &mut LirFunction,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let struct_layout = function
             .struct_types
             .get(struct_type)
@@ -316,7 +316,7 @@ impl InstructionLoweringPass {
         field_offset: usize,
         span: &Span,
         instructions: &mut Vec<Instruction>,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         self.lower_load64(dst, struct_addr, field_offset as i64, span, instructions)
     }
 
@@ -328,7 +328,7 @@ impl InstructionLoweringPass {
         src: &Operand,
         span: &Span,
         instructions: &mut Vec<Instruction>,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         self.lower_store64(struct_addr, field_offset as i64, src, span, instructions)
     }
 
@@ -343,7 +343,7 @@ impl InstructionLoweringPass {
         function: &mut LirFunction,
         instruction_index: usize,
         analyses: &AnalysisManager,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let return_label = function.new_label();
 
         // 获取需要保存的调用者保存寄存器
@@ -466,7 +466,7 @@ impl InstructionLoweringPass {
         function: &mut LirFunction,
         instruction_index: usize,
         analyses: &AnalysisManager,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let return_label = function.new_label();
 
         // 获取需要保存的调用者保存寄存器
@@ -594,11 +594,11 @@ impl InstructionLoweringPass {
         incoming: &[(crate::LabelId, Operand)],
         span: &Span,
         instructions: &mut Vec<Instruction>,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         println!("🔧 专业降级φ指令: dst={:?}, incoming={:?}", dst, incoming);
 
         if incoming.is_empty() {
-            return Err("φ指令没有incoming值".to_string());
+            return Err("φ指令没有incoming值".into());
         }
 
         println!("⚠️  警告：φ指令出现在降级阶段，这表明SSA降级不完整");

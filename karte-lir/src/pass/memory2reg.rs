@@ -367,7 +367,7 @@ impl Memory2RegPass {
         &self,
         function: &mut LirFunction,
         analysis: &Memory2RegAnalysis,
-    ) -> Result<bool, String> {
+    ) -> crate::Result<bool> {
         info!("🚀 开始Memory2Reg变换");
 
         let mut transformer = IndexInstructionTransformer::new();
@@ -445,7 +445,7 @@ impl Memory2RegPass {
         function: &mut LirFunction,
         analysis: &Memory2RegAnalysis,
         transformer: &mut IndexInstructionTransformer,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         // 关闭预插入溢出代码：统一由寄存器分配与后置栈帧布局处理
         // 之前的实现会在store之前插入无意义的load，破坏初始化顺序，导致错误。
         let _ = (function, analysis, transformer); // silence unused warnings

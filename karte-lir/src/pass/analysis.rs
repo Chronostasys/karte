@@ -120,7 +120,7 @@ impl ControlFlowAnalysis {
     }
 
     /// 构建控制流图
-    fn build_cfg(&self, function: &LirFunction) -> Result<ControlFlowGraph, String> {
+    fn build_cfg(&self, function: &LirFunction) -> crate::Result<ControlFlowGraph> {
         let mut nodes = Vec::new();
         let mut label_to_block = HashMap::new();
 
@@ -232,7 +232,7 @@ impl ControlFlowAnalysis {
         nodes: &mut [ControlFlowNode],
         function: &LirFunction,
         label_to_block: &HashMap<LabelId, usize>,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let nodes_len = nodes.len();
 
         for (block_id, node) in nodes.iter_mut().enumerate() {
@@ -338,7 +338,7 @@ impl AnalysisPass for ControlFlowAnalysis {
         &mut self,
         function: &LirFunction,
         _analyses: &AnalysisManager,
-    ) -> Result<Box<dyn AnalysisResult>, String> {
+    ) -> crate::Result<Box<dyn AnalysisResult>> {
         let cfg = self.build_cfg(function)?;
         Ok(Box::new(cfg))
     }
@@ -360,7 +360,7 @@ impl DefUseAnalysis {
     }
 
     /// 构建定义-使用链
-    fn build_def_use_chains(&self, function: &LirFunction) -> Result<DefUseChains, String> {
+    fn build_def_use_chains(&self, function: &LirFunction) -> crate::Result<DefUseChains> {
         let mut definitions = HashMap::new();
         let mut uses = HashMap::new();
         let mut instruction_defs = HashMap::new();
@@ -552,7 +552,7 @@ impl AnalysisPass for DefUseAnalysis {
         &mut self,
         function: &LirFunction,
         _analyses: &AnalysisManager,
-    ) -> Result<Box<dyn AnalysisResult>, String> {
+    ) -> crate::Result<Box<dyn AnalysisResult>> {
         let def_use = self.build_def_use_chains(function)?;
         Ok(Box::new(def_use))
     }
@@ -592,7 +592,7 @@ impl LivenessAnalysisPass {
         function: &LirFunction,
         cfg: &ControlFlowGraph,
         def_use: &DefUseChains,
-    ) -> Result<LivenessAnalysis, String> {
+    ) -> crate::Result<LivenessAnalysis> {
         debug!("🔍 开始活跃度分析");
 
         // 第一阶段：计算块级的 use 和 def 集合
@@ -620,12 +620,11 @@ impl LivenessAnalysisPass {
         function: &LirFunction,
         cfg: &ControlFlowGraph,
         def_use: &DefUseChains,
-    ) -> Result<
+    ) -> crate::Result<
         (
             HashMap<usize, HashSet<Register>>,
             HashMap<usize, HashSet<Register>>,
         ),
-        String,
     > {
         let mut block_use = HashMap::new();
         let mut block_def = HashMap::new();
@@ -681,12 +680,11 @@ impl LivenessAnalysisPass {
         cfg: &ControlFlowGraph,
         block_use: &HashMap<usize, HashSet<Register>>,
         block_def: &HashMap<usize, HashSet<Register>>,
-    ) -> Result<
+    ) -> crate::Result<
         (
             HashMap<usize, HashSet<Register>>,
             HashMap<usize, HashSet<Register>>,
         ),
-        String,
     > {
         let mut live_in: HashMap<usize, HashSet<Register>> = HashMap::new();
         let mut live_out: HashMap<usize, HashSet<Register>> = HashMap::new();
@@ -800,7 +798,7 @@ impl LivenessAnalysisPass {
         cfg: &ControlFlowGraph,
         def_use: &DefUseChains,
         live_out: &HashMap<usize, HashSet<Register>>,
-    ) -> Result<HashMap<usize, HashSet<Register>>, String> {
+    ) -> crate::Result<HashMap<usize, HashSet<Register>>> {
         let mut live_at_instruction = HashMap::new();
 
         for node in &cfg.nodes {
@@ -859,7 +857,7 @@ impl AnalysisPass for LivenessAnalysisPass {
         &mut self,
         function: &LirFunction,
         analyses: &AnalysisManager,
-    ) -> Result<Box<dyn AnalysisResult>, String> {
+    ) -> crate::Result<Box<dyn AnalysisResult>> {
         // 获取 CFG 分析结果
         let cfg = analyses
             .get_result::<ControlFlowGraph>("cfg")

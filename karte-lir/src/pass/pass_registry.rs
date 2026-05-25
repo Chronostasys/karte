@@ -174,7 +174,7 @@ impl PassRegistry {
     ///
     /// 注意: Analysis passes 从全局注册表自动加载并根据依赖按需执行，
     /// 不需要在字符串中显式指定。如果字符串中包含 analysis pass 名称，会被忽略。
-    pub fn build_pipeline_from_string(&self, pipeline: &str) -> Result<PassManager, String> {
+    pub fn build_pipeline_from_string(&self, pipeline: &str) -> crate::Result<PassManager> {
         // 特殊逻辑，如果 pipeline 为 O0 O1 O2 O3，构建预设的 pipeline
         if pipeline == "O0" {
             return Ok(self.build_debug_pipeline());
@@ -205,7 +205,7 @@ impl PassRegistry {
                 continue;
             }
 
-            return Err(format!("未知的 Pass: {}", pass_name));
+            return Err(format!("未知的 Pass: {}", pass_name).into());
         }
 
         Ok(manager)

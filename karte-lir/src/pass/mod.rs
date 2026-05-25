@@ -129,7 +129,7 @@ pub trait AnalysisPass: Send + Sync {
         &mut self,
         function: &LirFunction,
         analyses: &AnalysisManager,
-    ) -> Result<Box<dyn AnalysisResult>, String>;
+    ) -> crate::Result<Box<dyn AnalysisResult>>;
 
     /// 获取需要的分析信息
     fn required_analyses(&self) -> Vec<&'static str> {

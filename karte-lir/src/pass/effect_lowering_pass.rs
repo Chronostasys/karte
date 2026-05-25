@@ -79,7 +79,7 @@ impl EffectLoweringPass {
         span: &Span,
         new_instructions: &mut Vec<Instruction>,
         function: &mut LirFunction,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let eff = self.effect_stack_register();
         let sp = self.stack_pointer_register();
 
@@ -164,7 +164,7 @@ impl EffectLoweringPass {
         &mut self,
         span: &Span,
         new_instructions: &mut Vec<Instruction>,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let sp = self.stack_pointer_register();
         let eff = self.effect_stack_register();
         let tmp = self.new_register();
@@ -202,7 +202,7 @@ impl EffectLoweringPass {
         span: &Span,
         new_instructions: &mut Vec<Instruction>,
         function: &mut LirFunction,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let sp = self.stack_pointer_register();
         let eff = self.effect_stack_register();
 
@@ -450,7 +450,7 @@ impl EffectLoweringPass {
         value: &Operand,
         span: &Span,
         new_instructions: &mut Vec<Instruction>,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let eff = self.effect_stack_register();
         let tmp = self.effect_resume_temp_register();
 

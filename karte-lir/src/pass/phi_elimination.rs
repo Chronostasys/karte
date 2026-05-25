@@ -29,7 +29,7 @@ impl PhiEliminationPass {
         &self,
         function: &mut LirFunction,
         cfg: &ControlFlowGraph,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let mut transformer = IndexInstructionTransformer::new();
 
         // 扫描所有φ指令
@@ -145,7 +145,7 @@ impl FunctionPass for PhiEliminationPass {
             }
             Err(e) => {
                 error!("❌ φ指令消除失败: {}", e);
-                PassResult::Failed(e)
+                PassResult::Failed(e.to_string())
             }
         }
     }

@@ -44,7 +44,7 @@ impl BlockLayoutPass {
         &self,
         function: &LirFunction,
         cfg: &ControlFlowGraph,
-    ) -> Result<Vec<Instruction>, String> {
+    ) -> crate::Result<Vec<Instruction>> {
         info!("🔄 开始基本块布局优化");
 
         // 1. 确定新的块顺序
@@ -425,7 +425,7 @@ impl BlockLayoutPass {
     /// 2. 优先访问未访问的successor（forward edge）
     /// 3. 循环体块连续放置
     /// 4. 回边延迟处理
-    fn compute_optimal_order(&self, cfg: &ControlFlowGraph) -> Result<Vec<usize>, String> {
+    fn compute_optimal_order(&self, cfg: &ControlFlowGraph) -> crate::Result<Vec<usize>> {
         let mut visited = HashSet::new();
         let mut order = Vec::new();
         let mut worklist = VecDeque::new();

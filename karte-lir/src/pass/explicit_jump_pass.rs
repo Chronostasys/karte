@@ -47,7 +47,7 @@ impl ExplicitJumpPass {
         &self,
         function: &LirFunction,
         cfg: &ControlFlowGraph,
-    ) -> Result<Vec<Instruction>, String> {
+    ) -> crate::Result<Vec<Instruction>> {
         info!("🔄 开始显式化隐式跳转");
 
         let mut new_instructions = Vec::new();
@@ -82,7 +82,7 @@ impl ExplicitJumpPass {
                                 return Err(format!(
                                     "无法找到目标块 {} 的节点信息",
                                     target_block_id
-                                ));
+                                ).into());
                             }
                         };
                         let target_label_idx = target_node.instruction_range.0;
@@ -106,7 +106,7 @@ impl ExplicitJumpPass {
 
                             modifications += 1;
                         } else {
-                            return Err(format!("块 {} 的第一条指令不是Label", target_block_id));
+                            return Err(format!("块 {} 的第一条指令不是Label", target_block_id).into());
                         }
                     }
                 }

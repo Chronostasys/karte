@@ -101,7 +101,7 @@ impl OptimizationPipeline {
         let registry = PassRegistry::default();
         let mut pass_manager = registry
             .build_pipeline_from_string(pipeline_str)
-            .map_err(|e| vec![e])?;
+            .map_err(|e| vec![e.to_string()])?;
 
         if debug {
             println!("=== 使用自定义Pass管线 ===");
@@ -115,7 +115,7 @@ impl OptimizationPipeline {
             .sum();
 
         let start_time = std::time::Instant::now();
-        pass_manager.run_on_program(program).map_err(|e| vec![e])?;
+        pass_manager.run_on_program(program).map_err(|e| vec![e.to_string()])?;
         let total_time = start_time.elapsed();
 
         let instructions_after = program
@@ -170,7 +170,7 @@ impl OptimizationPipeline {
 
         // 运行优化
         let start_time = std::time::Instant::now();
-        pass_manager.run_on_program(program).map_err(|e| vec![e])?;
+        pass_manager.run_on_program(program).map_err(|e| vec![e.to_string()])?;
         let total_time = start_time.elapsed();
 
         // 统计优化后的指令数

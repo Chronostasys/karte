@@ -82,7 +82,7 @@ impl VerifyPass {
         self
     }
 
-    fn verify_function(&self, function: &LirFunction) -> Result<(), String> {
+    fn verify_function(&self, function: &LirFunction) -> crate::Result<()> {
         let mut defined_regs = HashSet::new();
         let mut labels = HashMap::new();
 
@@ -90,7 +90,7 @@ impl VerifyPass {
             match instr {
                 Instruction::Label { id, .. } => {
                     if labels.insert(*id, i).is_some() {
-                        return Err(format!("重复的标签: {:?}", id));
+                        return Err(format!("重复的标签: {:?}", id).into());
                     }
                 }
                 Instruction::Move { dst, src, .. } => {
@@ -138,7 +138,7 @@ impl VerifyPass {
         &self,
         operand: &crate::Operand,
         defined: &HashSet<crate::Register>,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         use crate::Operand;
 
         match operand {
@@ -155,13 +155,13 @@ impl VerifyPass {
         &self,
         reg: crate::Register,
         defined: &HashSet<crate::Register>,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         use crate::Register;
 
         match reg {
             Register::Virtual(_) => {
                 if self.strict && !defined.contains(&reg) {
-                    return Err(format!("寄存器 {:?} 在定义前使用", reg));
+                    return Err(format!("寄存器 {:?} 在定义前使用", reg).into());
                 }
             }
             Register::Physical(_) => {}
@@ -192,7 +192,7 @@ impl FunctionPass for VerifyPass {
     ) -> PassResult {
         match self.verify_function(function) {
             Ok(_) => PassResult::Unchanged,
-            Err(msg) => PassResult::Failed(msg),
+            Err(msg) => PassResult::Failed(msg.to_string()),
         }
     }
 

@@ -6,17 +6,17 @@ use karte_diagnostics::Span;
 use std::collections::HashMap;
 
 /// 解析LIR文件内容为LirFunction
-fn parse_lir_file(content: &str) -> Result<LirFunction, String> {
+fn parse_lir_file(content: &str) -> crate::Result<LirFunction> {
     let lines: Vec<&str> = content.lines().collect();
 
     if lines.is_empty() {
-        return Err("Empty file".to_string());
+        return Err("Empty file".into());
     }
 
     // 解析函数头
     let first_line = lines[0].trim();
     if !first_line.starts_with("function ") {
-        return Err("Invalid function header".to_string());
+        return Err("Invalid function header".into());
     }
 
     let function_name = first_line
@@ -54,11 +54,11 @@ fn parse_lir_file(content: &str) -> Result<LirFunction, String> {
 }
 
 /// 解析单条指令
-fn parse_instruction(line: &str, line_num: usize) -> Result<Instruction, String> {
+fn parse_instruction(line: &str, line_num: usize) -> crate::Result<Instruction> {
     let parts: Vec<&str> = line.split_whitespace().collect();
 
     if parts.is_empty() {
-        return Err(format!("Empty instruction at line {}", line_num));
+        return Err(format!("Empty instruction at line {}", line_num).into());
     }
 
     match parts[0] {
@@ -77,7 +77,7 @@ fn parse_instruction(line: &str, line_num: usize) -> Result<Instruction, String>
         // mov 指令
         "mov" => {
             if parts.len() != 3 {
-                return Err(format!("Invalid mov instruction at line {}", line_num));
+                return Err(format!("Invalid mov instruction at line {}", line_num).into());
             }
 
             let dst = parse_register(parts[1].trim_end_matches(','))?;
@@ -92,7 +92,7 @@ fn parse_instruction(line: &str, line_num: usize) -> Result<Instruction, String>
         // add 指令
         "add" => {
             if parts.len() != 4 {
-                return Err(format!("Invalid add instruction at line {}", line_num));
+                return Err(format!("Invalid add instruction at line {}", line_num).into());
             }
 
             let dst = parse_register(parts[1].trim_end_matches(','))?;
@@ -109,7 +109,7 @@ fn parse_instruction(line: &str, line_num: usize) -> Result<Instruction, String>
         // load64 指令 - load64 r10, [r5]
         "load64" => {
             if parts.len() != 3 {
-                return Err(format!("Invalid load64 instruction at line {}", line_num));
+                return Err(format!("Invalid load64 instruction at line {}", line_num).into());
             }
 
             let dst = parse_register(parts[1].trim_end_matches(','))?;
@@ -127,7 +127,7 @@ fn parse_instruction(line: &str, line_num: usize) -> Result<Instruction, String>
                     span: Span::dummy(),
                 })
             } else {
-                Err(format!("Invalid load64 address format: {}", addr_str))
+                Err(format!("Invalid load64 address format: {}", addr_str).into())
             }
         }
         // ret 指令
@@ -186,37 +186,37 @@ fn parse_instruction(line: &str, line_num: usize) -> Result<Instruction, String>
             Err(format!(
                 "Unknown instruction '{}' at line {}",
                 parts[0], line_num
-            ))
+            ).into())
         }
     }
 }
 
 /// 解析寄存器
-fn parse_register(s: &str) -> Result<Register, String> {
+fn parse_register(s: &str) -> crate::Result<Register> {
     if let Some(num_str) = s.strip_prefix('r') {
         let num: usize = num_str
             .parse()
-            .map_err(|_| format!("Invalid register number: {}", s))?;
+            .map_err(|_| crate::KarteError::from(format!("Invalid register number: {}", s)))?;
         Ok(Register::Virtual(num))
     } else {
-        Err(format!("Invalid register format: {}", s))
+        Err(format!("Invalid register format: {}", s).into())
     }
 }
 
 /// 解析操作数
-fn parse_operand(s: &str) -> Result<Operand, String> {
+fn parse_operand(s: &str) -> crate::Result<Operand> {
     if let Some(num_str) = s.strip_prefix('#') {
         // 立即数
         let value: i64 = num_str
             .parse()
-            .map_err(|_| format!("Invalid immediate value: {}", s))?;
+            .map_err(|_| crate::KarteError::from(format!("Invalid immediate value: {}", s)))?;
         Ok(Operand::Immediate { value })
     } else if s.starts_with('r') {
         // 寄存器
         let reg = parse_register(s)?;
         Ok(Operand::Register { id: reg })
     } else {
-        Err(format!("Invalid operand format: {}", s))
+        Err(format!("Invalid operand format: {}", s).into())
     }
 }
 

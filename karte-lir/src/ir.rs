@@ -1195,7 +1195,7 @@ impl LirFunction {
 
     /// 验证指令是否违反栈指针寄存器使用规则
     /// 栈指针寄存器(RegisterId(6))只能用于栈操作和栈帧管理
-    pub fn validate_stack_pointer_usage(&self) -> Result<(), String> {
+    pub fn validate_stack_pointer_usage(&self) -> crate::Result<()> {
         // 🔧 修复：支持基于帧指针的栈帧管理代码
         for (index, instruction) in self.instructions.iter().enumerate() {
             match instruction {
@@ -1216,7 +1216,7 @@ impl LirFunction {
                                 return Err(format!(
                                     "指令 {} 违反栈指针使用规则: 栈指针寄存器只能用于栈操作",
                                     index
-                                ));
+                                ).into());
                             }
                         }
                     }
@@ -1234,7 +1234,7 @@ impl LirFunction {
                                 return Err(format!(
                                     "指令 {} 违反栈指针使用规则: 栈指针寄存器只能用于栈操作",
                                     index
-                                ));
+                                ).into());
                             }
                         }
                     }
@@ -1253,7 +1253,7 @@ impl LirFunction {
                                 return Err(format!(
                                     "指令 {} 违反栈指针使用规则: 栈指针寄存器只能用于栈操作",
                                     index
-                                ));
+                                ).into());
                             }
                         }
                     }
