@@ -615,3 +615,10 @@ Store { target = %10000, value = %2 }
 - 不允许cargo命令使用 --release flag除非我要求
 - karte目前不支持注释，任何测试代码不要加测试
 - 禁止任何时间对项目进行release编译，除非我要求
+- **x86_64 GOTCHA**: `effect_tag_register`、`return_address` 等专用寄存器绝不能与 `vm_sp(R10)` 或 `vm_fp(R11)` 冲突，否则 EffectPerform 会直接破坏虚拟栈指针
+- **SSA GOTCHA**: SSA rename_block_recursive 必须使用支配树子节点遍历（而不是 CFG 后继 + idom 检查），否则合并块会被遗漏导致寄存器使用未重命名
+
+## Knowledge Files
+
+- `docs/agent/x86-jit-codegen.md` — x86_64 JIT register conventions, save/restore, effect handler compilation
+- `docs/agent/ssa-construction.md` — SSA construction pass, dominator tree traversal

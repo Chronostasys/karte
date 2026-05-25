@@ -1,11 +1,15 @@
 use super::*;
 use crate::pass::stack_frame_layout::StackFrameLayoutPass;
 use crate::{AllocationType, Instruction, LirFunction, Operand, Register};
-use karte_common::calling_convention::{REG_ARG0, REG_EFFECT_PAYLOAD, REG_X29};
+use karte_common::calling_convention::{CallingConvention, REG_ARG0, REG_EFFECT_PAYLOAD};
 use karte_diagnostics::Span;
 
 #[test]
 fn test_register_type_analysis() {
+    // 使用调用约定获取实际的帧指针寄存器
+    let cc = CallingConvention::standard();
+    let fp_reg_physical = cc.frame_pointer;
+
     // 创建一个简单的测试函数
     let function = LirFunction {
         name: "test_function".to_string(),
@@ -31,8 +35,8 @@ fn test_register_type_analysis() {
             Instruction::Add {
                 dst: Register::Virtual(202),
                 src1: Operand::Register {
-                    id: Register::Physical(REG_X29),
-                }, // FP (x29 in ARM64)
+                    id: Register::Physical(fp_reg_physical),
+                }, // 使用当前架构的帧指针
                 src2: Operand::Immediate { value: -8 },
                 span: Span::dummy(),
             },
@@ -167,10 +171,11 @@ fn test_ra_spill_and_layout_fp_lowering() {
     let _ = layout.run_on_function(&mut f, &mut analyses);
 
     // 验证：存在基于 FP 的 Load/Store（来自 spill/scratch）
-    // ARM64: FP = x29
+    let cc2 = CallingConvention::standard();
+    let fp_reg2 = cc2.frame_pointer;
     let has_fp_mem = f.instructions.iter().any(|inst| match inst {
         Instruction::Load64 { addr, .. } | Instruction::Store64 { addr, .. } => {
-            addr.id() == REG_X29 as usize
+            addr.id() == fp_reg2 as usize
         }
         _ => false,
     });

@@ -31,9 +31,18 @@ impl LinearScanAllocator {
     /// 创建新的线性扫描分配器
     pub fn new(calling_convention: CallingConvention) -> Self {
         let mut reserved = HashSet::new();
-        reserved.insert(calling_convention.stack_pointer); // r6
-        reserved.insert(calling_convention.frame_pointer); // r7
-                                                           // 🔧 修复：不再保留return_address (r5)，允许它被分配
+        reserved.insert(calling_convention.stack_pointer);
+        reserved.insert(calling_convention.frame_pointer);
+
+        // x86_64: 硬件 RSP(4) 和 RBP(5) 不能被分配
+        // 即使 CallingConvention 不用它们作为 vm_sp/vm_fp
+        #[cfg(target_arch = "x86_64")]
+        {
+            reserved.insert(4); // RSP - 硬件栈指针
+            reserved.insert(5); // RBP - 硬件帧指针
+        }
+
+        let _ = CallingConvention::standard().get_allocatable_registers();
 
         Self {
             calling_convention,

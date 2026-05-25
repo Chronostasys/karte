@@ -21,6 +21,12 @@ pub struct X86Compiler {
     debug_mode: bool,
     /// 当前函数使用的 callee-saved 寄存器列表
     current_function_used_regs: Vec<u8>,
+    /// 当前函数的栈帧大小（用于 FP 偏移量）
+    current_stack_frame_size: usize,
+    /// 内部函数 epilogue 需要跳过的栈帧大小
+    /// LIR 指令（Sub vm_sp, N）分配帧空间，prologue 不分配，
+    /// 但 epilogue 需要知道帧大小才能正确恢复 callee-saved
+    stack_frame_size_for_epilogue: usize,
 }
 
 impl X86Compiler {
@@ -29,6 +35,8 @@ impl X86Compiler {
         Ok(Self {
             debug_mode: true,
             current_function_used_regs: Vec::new(),
+            current_stack_frame_size: 0,
+            stack_frame_size_for_epilogue: 0,
         })
     }
 
@@ -36,21 +44,16 @@ impl X86Compiler {
     // Physical(4=RSP) → R10 (虚拟栈指针，不能改硬件RSP)
     // Physical(5=RBP) → R11 (虚拟帧指针，不能改硬件RBP)
     // 其他寄存器保持不变
+    /// LIR 物理寄存器到 x86_64 硬件寄存器的映射
+    /// 由于 CallingConvention 现在直接使用 REG_R10 和 REG_R11 作为
+    /// stack_pointer 和 frame_pointer，不再需要重映射
     fn map_register(&self, reg: u8) -> u8 {
-        match reg {
-            4 => 10,  // RSP → R10 (虚拟栈指针)
-            5 => 11,  // RBP → R11 (虚拟帧指针)
-            other => other,
-        }
+        reg  // 1:1 映射，不需要重映射
     }
 
     /// 反向映射：x86_64 硬件寄存器 → LIR Physical 编号
     fn unmap_register(&self, hw_reg: u8) -> u8 {
-        match hw_reg {
-            10 => 4,  // R10 → RSP (虚拟栈指针)
-            11 => 5,  // R11 → RBP (虚拟帧指针)
-            other => other,
-        }
+        hw_reg  // 1:1 映射，不需要重映射
     }
 
     /// 获取物理寄存器编号（映射后的 x86_64 硬件寄存器）
@@ -371,15 +374,53 @@ impl X86Compiler {
     ) -> Result<(), String> {
         let dst_reg = self.get_physical_register(dst)?;
         let rax: u8 = 0; // RAX
+        let rdx: u8 = 2; // RDX
+        let rcx: u8 = 1; // RCX (安全临时寄存器)
 
-        // idiv 要求被除数在 RDX:RAX 中
-        // 先保存 RAX 和 RDX（如果它们不是 dst）
+        // 先处理 src2（除数），因为它可能在 RDX 中，CQO 会覆盖 RDX
+        // 同时需要确保临时寄存器不与 src1 冲突
+        let src1_reg = match src1 {
+            Operand::Register { id } => self.get_physical_register(id)?,
+            _ => 0xFF, // 立即数，不会与寄存器冲突
+        };
+
+        let div_src_reg: u8;
+        match src2 {
+            Operand::Register { id } => {
+                let src2_reg = self.get_physical_register(id)?;
+                if src2_reg == rdx {
+                    // src2 在 RDX 中，CQO 会覆盖它
+                    // 使用 RCX 作为临时寄存器（但如果 src1 在 RCX 中就不能用）
+                    if src1_reg == rcx {
+                        // src1 在 RCX，不能用 RCX 作临时，用 R8 代替
+                        let r8: u8 = 8;
+                        self.emit_mov_reg_reg(code_builder, r8, rdx);
+                        div_src_reg = r8;
+                    } else {
+                        self.emit_mov_reg_reg(code_builder, rcx, rdx);
+                        div_src_reg = rcx;
+                    }
+                } else {
+                    div_src_reg = src2_reg;
+                }
+            }
+            Operand::Immediate { value } => {
+                // 立即数，加载到安全寄存器（不能是 RAX, RDX, src1 寄存器）
+                let temp_reg = if src1_reg == rcx { 8 } else { rcx }; // R8 or RCX
+                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
+                div_src_reg = temp_reg;
+            }
+            _ => {
+                return Err(format!("div指令不支持的src2类型: {:?}", src2));
+            }
+        }
+
         // 将 src1 加载到 RAX
         match src1 {
             Operand::Register { id } => {
-                let src1_reg = self.get_physical_register(id)?;
-                if rax != src1_reg {
-                    self.emit_mov_reg_reg(code_builder, rax, src1_reg);
+                let src1_phys = self.get_physical_register(id)?;
+                if rax != src1_phys {
+                    self.emit_mov_reg_reg(code_builder, rax, src1_phys);
                 }
             }
             Operand::Immediate { value } => {
@@ -391,26 +432,11 @@ impl X86Compiler {
         }
 
         // CQO (将 RAX 符号扩展到 RDX:RAX)
-        // REX.W + 99
         self.emit_rex_prefix(code_builder, true, 0, 0, 0);
         code_builder.emit_byte(0x99);
 
-        // IDIV src2
-        match src2 {
-            Operand::Register { id } => {
-                let src2_reg = self.get_physical_register(id)?;
-                self.emit_idiv_reg(code_builder, src2_reg);
-            }
-            Operand::Immediate { value } => {
-                // 需要临时寄存器
-                let rcx: u8 = 1;
-                self.emit_mov_reg_imm64(code_builder, rcx, *value);
-                self.emit_idiv_reg(code_builder, rcx);
-            }
-            _ => {
-                return Err(format!("div指令不支持的src2类型: {:?}", src2));
-            }
-        }
+        // IDIV div_src_reg
+        self.emit_idiv_reg(code_builder, div_src_reg);
 
         // 商在 RAX，移动到 dst
         if dst_reg != rax {
@@ -520,18 +546,19 @@ impl X86Compiler {
             self.emit_main_function_epilogue(code_builder)?;
         } else {
             // 内部函数尾声：恢复 callee-saved，加载返回地址并跳转
+            // 注意：与 AArch64 保持一致，callee 不弹出返回地址（caller 负责弹出）
             self.emit_internal_function_epilogue(code_builder)?;
 
-            // 加载返回地址
-            // 返回地址在虚拟栈顶 [vm_sp + 0]
-            // cc.return_address = REG_R10 = 10
-            let vm_sp: u8 = 10; // 映射后的虚拟栈指针
-            let return_addr_reg: u8 = 10; // R10 = 返回地址寄存器
-            self.emit_mov_reg_mem(code_builder, return_addr_reg, vm_sp, 0);
-            // 弹出返回地址
-            self.emit_add_reg_imm32(code_builder, vm_sp, 16);
+            // 此时 vm_sp 指向返回地址所在的栈位置
+            // 使用 RCX 作为临时寄存器加载返回地址（不能和 vm_sp 一样用 R10）
+            let vm_sp: u8 = 10; // R10 = 虚拟栈指针
+            let tmp_reg: u8 = 1;  // RCX = 临时寄存器
+            // 先保存返回值（RAX），因为 RCX 可能被用作参数
+            // 但返回值已经在 RAX 中了，RCX 可以安全使用
+            self.emit_mov_reg_mem(code_builder, tmp_reg, vm_sp, 0);
+            // 不弹出返回地址！caller 的 lower_call 会负责 add vm_sp, 16
             // 跳转到返回地址
-            self.emit_jmp_reg(code_builder, return_addr_reg);
+            self.emit_jmp_reg(code_builder, tmp_reg);
         }
 
         Ok(())
@@ -568,8 +595,12 @@ impl X86Compiler {
                 self.emit_mov_mem_imm32(code_builder, addr_reg, offset as i32, *value as i32);
             }
             Operand::Label { id } => {
+                // store64 [addr + offset], label - 存储标签地址到虚拟栈
+                // 1. 用 movabs 将标签地址加载到 RAX（临时寄存器）
+                // 2. 用 mov [addr + offset], rax 存储到目标内存
                 let label_name = format!("label_{}", id.0);
-                code_builder.emit_store_label_address(addr_reg, offset, &label_name);
+                code_builder.emit_movabs_to_rax_with_label(&label_name);
+                self.emit_mov_mem_reg(code_builder, addr_reg, offset as i32, 0); // rax = 0
             }
             _ => {
                 return Err(format!("store64指令不支持的src类型: {:?}", src));
@@ -754,26 +785,30 @@ impl X86Compiler {
         // RDI = 虚拟栈顶地址, RSI = 虚拟栈底地址
         //
         // 虚拟栈架构（与 AArch64 设计相同）：
-        // 1. 保存系统 RBP 和 callee-saved 到系统栈
+        // 1. 保存 callee-saved 到系统栈
         // 2. 将虚拟栈参数移动到虚拟栈指针寄存器
         // 3. 在虚拟栈上保存系统 RSP
         // 4. 为返回值槽分配空间
 
-        let vm_sp: u8 = 10; // R10 = 虚拟栈指针 (映射 Physical(4=RSP) → R10)
-        let vm_fp: u8 = 11; // R11 = 虚拟帧指针 (映射 Physical(5=RBP) → R11)
-
-        // 保存系统 RBP
-        // push rbp (0x55)
-        code_builder.emit_byte(0x55);
-        // mov rbp, rsp (保存系统栈帧基址)
-        self.emit_mov_reg_reg(code_builder, 5, 4); // RBP=5, RSP=4
+        let vm_sp: u8 = 10; // R10 = 虚拟栈指针 (Physical(10))
+        let vm_fp: u8 = 11; // R11 = 虚拟帧指针 (Physical(11))
 
         // 保存 callee-saved 寄存器到系统栈
-        // RBX(3), R12(12), R13(13), R14(14), R15(15)
+        // RBX(3), RBP(5), R12(12), R13(13), R14(14), R15(15)
+        // 注意：必须保存 RBP 因为 System V ABI 要求
+        //
+        // 栈对齐计算：
+        //   入口时 RSP % 16 == 8（caller 的 CALL 压入 8 字节返回地址）
+        //   push rbx → RSP -= 8 → RSP % 16 == 0
+        //   push rbp → RSP -= 8 → RSP % 16 == 8
+        //   sub rsp, N → 需要 N % 16 == 8 才能使最终 RSP % 16 == 0
+        //   所以 sub rsp, 40（总调整量 = 8+8+40 = 56，56%16 == 8 ✓）
         // push rbx
         code_builder.emit_byte(0x53);
-        // 使用 sub rsp 预留空间保存 R12-R15
-        self.emit_sub_reg_imm32(code_builder, 4, 32); // RSP -= 32
+        // push rbp
+        code_builder.emit_byte(0x55);
+        // 使用 sub rsp 预留空间保存 R12-R15（32 字节数据 + 8 字节对齐填充）
+        self.emit_sub_reg_imm32(code_builder, 4, 40); // RSP -= 40
         // mov [rsp+0], r12
         self.emit_mov_mem_reg(code_builder, 4, 0, 12);
         // mov [rsp+8], r13
@@ -805,6 +840,17 @@ impl X86Compiler {
         // mov [vm_sp+0], rax (返回值槽指针，暂时用0占位)
         self.emit_mov_mem_imm32(code_builder, vm_sp, 0, 0);
         self.emit_mov_mem_imm32(code_builder, vm_sp, 8, 0);
+
+        // 设置帧指针：vm_fp = vm_sp + frame_size
+        // StackFrameLayoutPass 使用 FP + 负偏移量访问栈槽
+        // 分配栈帧空间后设置 FP，使得 FP - 8, FP - 16 等位于已分配区域
+        if self.current_stack_frame_size > 0 {
+            self.emit_sub_reg_imm32(code_builder, vm_sp, self.current_stack_frame_size as i32);
+            self.emit_mov_reg_reg(code_builder, vm_fp, vm_sp);
+            self.emit_add_reg_imm32(code_builder, vm_fp, self.current_stack_frame_size as i32);
+        } else {
+            self.emit_mov_reg_reg(code_builder, vm_fp, vm_sp);
+        }
 
         if self.debug_mode {
             log::debug!("x86_64: 主函数序言生成完成");
@@ -844,12 +890,39 @@ impl X86Compiler {
             log::debug!("x86_64: 内部函数序言保存了 {} 个 callee-saved 寄存器", callee_saved.len());
         }
 
+        // 分配栈帧空间（用于 StackFrameLayoutPass 的 FP + 负偏移量访问）
+        // StackFrameLayoutPass 生成 Add dst, FP, -offset 指令
+        // 我们需要确保 FP - offset 位于虚拟栈的已分配区域，不会与函数调用的 push 冲突
+        if self.current_stack_frame_size > 0 {
+            self.emit_sub_reg_imm32(code_builder, vm_sp, self.current_stack_frame_size as i32);
+        }
+
+        // 设置帧指针：vm_fp = vm_sp + frame_size
+        // 这样 FP - 8, FP - 16 等地址位于已分配的栈帧区域，不会被后续的 push 覆盖
+        if self.current_stack_frame_size > 0 {
+            self.emit_mov_reg_reg(code_builder, vm_fp, vm_sp);
+            self.emit_add_reg_imm32(code_builder, vm_fp, self.current_stack_frame_size as i32);
+        } else {
+            self.emit_mov_reg_reg(code_builder, vm_fp, vm_sp);
+        }
+
         Ok(())
     }
 
     /// 生成内部函数尾声
     fn emit_internal_function_epilogue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
         let vm_sp: u8 = 10; // R10 = 虚拟栈指针
+        let tmp: u8 = 1;    // RCX = 临时寄存器
+
+        // 内部函数的虚拟栈布局（从高地址到低地址）：
+        //   [old_sp, old_fp]     ← prologue 保存
+        //   [callee-saved]       ← prologue 保存
+        //   ← vm_sp = vm_fp 在这里（prologue 后的位置）
+        //   [帧空间]             ← LIR Sub/Add vm_sp, N 管理（LIR 自行恢复）
+        //   ← vm_sp 当前位置（LIR 已恢复）
+        //
+        // LIR 指令中有配对的 Sub/Add vm_sp，Return 时 vm_sp 回到 prologue 后位置。
+        // epilogue 直接恢复 callee-saved 和 old_sp/old_fp。
 
         // 恢复 callee-saved 寄存器（逆序）
         let callee_saved = self.get_callee_saved_registers();
@@ -859,12 +932,9 @@ impl X86Compiler {
         }
 
         // 恢复 FP 和 SP
-        // mov vm_sp, [vm_sp + 0]
-        self.emit_mov_reg_mem(code_builder, vm_sp, vm_sp, 0);
-        // mov vm_fp, [vm_sp + 8]
-        self.emit_mov_reg_mem(code_builder, 11, vm_sp, 8); // R11 = vm_fp
-        // add vm_sp, 16
-        self.emit_add_reg_imm32(code_builder, vm_sp, 16);
+        self.emit_mov_reg_mem(code_builder, tmp, vm_sp, 8); // tmp = old_fp
+        self.emit_mov_reg_mem(code_builder, vm_sp, vm_sp, 0); // vm_sp = old_sp
+        self.emit_mov_reg_reg(code_builder, 11, tmp); // vm_fp(R11) = old_fp
 
         Ok(())
     }
@@ -873,42 +943,45 @@ impl X86Compiler {
     fn emit_main_function_epilogue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
         let vm_sp: u8 = 10; // R10 = 虚拟栈指针
 
-        // 注意：此时 RAX 已经包含返回值，不能覆盖它
-        // 使用 RCX(1) 作为临时寄存器
+        // main 函数的虚拟栈布局（从高地址到低地址）：
+        //   [系统RSP, 0]            ← prologue 保存，epilogue 目标位置
+        //   [返回值槽, 16字节]      ← prologue 分配
+        //   [栈帧空间, N字节]       ← LIR 的 Sub/Add vm_sp 管理（LIR 自行恢复）
+        //   ← vm_sp 当前位置（LIR 已恢复帧空间）
+        //
+        // 注意：LIR 指令中有 Sub vm_sp, N 和对应的 Add vm_sp, N，
+        // 所以到 Return 时 vm_sp 已经回到了返回值槽位置。
+        // main epilogue 只需跳过返回值槽即可到达系统RSP保存位置。
 
         // 1. 弹出返回值槽
         self.emit_add_reg_imm32(code_builder, vm_sp, 16);
 
-        // 2. 将返回值暂存到 callee-saved 寄存器 R15(15)
-        //    （R15 在恢复 callee-saved 之前是安全的，因为我们还没恢复它）
-        self.emit_mov_reg_reg(code_builder, 15, 0); // R15 = RAX (保存返回值)
+        // 2. 现在 vm_sp 指向保存系统 RSP 的位置
+        self.emit_mov_mem_reg(code_builder, 4, 32, 0); // [rsp+32] = RAX (保存返回值)
 
-        // 3. 从虚拟栈读取系统 RSP
-        // mov rcx, [vm_sp + 0]
-        self.emit_mov_reg_mem(code_builder, 1, vm_sp, 0); // RCX = 系统RSP
-        // mov rsp, rcx
+        // 3. 从虚拟栈恢复系统 RSP
+        self.emit_mov_reg_mem(code_builder, 1, vm_sp, 0); // RCX = [vm_sp+0] = 系统RSP
         self.emit_mov_reg_reg(code_builder, 4, 1); // RSP = RCX
 
-        // 4. 恢复 callee-saved 寄存器（从系统栈）
-        // mov r14, [rsp+16]
-        self.emit_mov_reg_mem(code_builder, 14, 4, 16);
-        // mov r13, [rsp+8]
-        self.emit_mov_reg_mem(code_builder, 13, 4, 8);
-        // mov r12, [rsp+0]
-        self.emit_mov_reg_mem(code_builder, 12, 4, 0);
-        // add rsp, 32
-        self.emit_add_reg_imm32(code_builder, 4, 32);
+        // 4. 恢复所有 callee-saved 寄存器（从系统栈）
+        self.emit_mov_reg_mem(code_builder, 15, 4, 24); // R15 = [rsp+24]
+        self.emit_mov_reg_mem(code_builder, 14, 4, 16); // R14 = [rsp+16]
+        self.emit_mov_reg_mem(code_builder, 13, 4, 8);  // R13 = [rsp+8]
+        self.emit_mov_reg_mem(code_builder, 12, 4, 0);  // R12 = [rsp+0]
 
-        // 5. pop rbx
-        code_builder.emit_byte(0x5B);
+        // 5. 从 padding 区域读回返回值
+        self.emit_mov_reg_mem(code_builder, 0, 4, 32); // RAX = [rsp+32]
 
-        // 6. pop rbp
+        // 6. 释放 sub rsp, 40 的空间
+        self.emit_add_reg_imm32(code_builder, 4, 40);
+
+        // 7. pop rbp
         code_builder.emit_byte(0x5D);
 
-        // 7. 恢复返回值到 RAX
-        self.emit_mov_reg_reg(code_builder, 0, 15); // RAX = R15 (返回值)
+        // 8. pop rbx
+        code_builder.emit_byte(0x5B);
 
-        // 8. ret
+        // 9. ret
         code_builder.emit_byte(0xC3);
 
         Ok(())
@@ -1194,14 +1267,20 @@ impl X86Compiler {
         }
 
         let stack_space = align_to(regs.len() * 8, 16);
-        // sub rsp, stack_space
-        self.emit_rex_prefix(code_builder, true, 0, 0, 4);
-        code_builder.emit_byte(0x81);
-        self.emit_modrm(code_builder, 0b11, 5, 4); // /5 = SUB
-        code_builder.emit_i32(stack_space as i32);
+        let vm_sp: u8 = 10;
+
+        // 1. 在系统栈上保存 vm_sp（用于恢复 R10，因为 C 函数会破坏它）
+        //    sub rsp, 16（保持对齐）
+        self.emit_sub_reg_imm32(code_builder, 4, 16);
+        //    mov [rsp], vm_sp
+        self.emit_mov_mem_reg(code_builder, 4, 0, vm_sp);
+
+        // 2. 保存所有 caller-saved 寄存器到虚拟栈（GC 可以扫描并更新）
+        //    sub vm_sp, stack_space
+        self.emit_sub_reg_imm32(code_builder, vm_sp, stack_space as i32);
 
         for (idx, reg) in regs.iter().enumerate() {
-            self.emit_mov_mem_reg(code_builder, 4, (idx * 8) as i32, *reg);
+            self.emit_mov_mem_reg(code_builder, vm_sp, (idx * 8) as i32, *reg);
         }
 
         (regs, stack_space)
@@ -1217,20 +1296,51 @@ impl X86Compiler {
             return;
         }
 
+        let vm_sp: u8 = 10;
+
+        // 1. 从系统栈恢复 vm_sp（C 函数可能破坏了 R10）
+        //    mov vm_sp, [rsp]
+        self.emit_mov_reg_mem(code_builder, vm_sp, 4, 0);
+        //    add rsp, 16（释放保存 vm_sp 的空间）
+        self.emit_add_reg_imm32(code_builder, 4, 16);
+
+        // 2. 此时 vm_sp 指向虚拟栈保存区域的起始位置之前（因为保存时 vm_sp 先 sub 了 stack_space，
+        //    保存的值是 sub 之前的 vm_sp 值）。虚拟栈保存区在 vm_sp_saved - stack_space。
+        //    所以需要 sub vm_sp, stack_space 来指向保存区。
+        self.emit_sub_reg_imm32(code_builder, vm_sp, stack_space as i32);
+
+        // 3. 从虚拟栈恢复所有寄存器（GC 可能已更新堆指针）
         for (idx, reg) in regs.iter().enumerate() {
-            self.emit_mov_reg_mem(code_builder, *reg, 4, (idx * 8) as i32);
+            self.emit_mov_reg_mem(code_builder, *reg, vm_sp, (idx * 8) as i32);
         }
 
-        // add rsp, stack_space
-        self.emit_rex_prefix(code_builder, true, 0, 0, 4);
-        code_builder.emit_byte(0x81);
-        self.emit_modrm(code_builder, 0b11, 0, 4); // /0 = ADD
-        code_builder.emit_i32(stack_space as i32);
+        // 4. add vm_sp, stack_space（恢复虚拟栈位置）
+        self.emit_add_reg_imm32(code_builder, vm_sp, stack_space as i32);
     }
 }
 
 fn align_to(value: usize, alignment: usize) -> usize {
     ((value + alignment - 1) / alignment) * alignment
+}
+
+/// 计算函数需要的栈帧空间（从 StackFrameLayoutPass 生成的 Add FP, offset 指令推断）
+fn compute_stack_frame_size(function: &LirFunction, frame_pointer_reg: u8) -> usize {
+    let mut max_offset = 0i64;
+    for inst in &function.instructions {
+        if let Instruction::Add { src1, src2, .. } = inst {
+            if let Operand::Register { id: Register::Physical(fp) } = src1 {
+                if *fp == frame_pointer_reg {
+                    if let Operand::Immediate { value } = src2 {
+                        if *value < 0 {
+                            max_offset = max_offset.max(-*value);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // 对齐到 16 字节
+    align_to(max_offset as usize, 16)
 }
 
 // ============================================================================
@@ -1248,6 +1358,18 @@ impl JitCompiler for X86Compiler {
 
         // 缓存当前函数的 callee-saved 信息
         self.current_function_used_regs = function.get_used_regs().to_vec();
+
+        // 计算栈帧大小
+        // 注意：prologue 不分配帧空间——由 LIR 的 Sub vm_sp, N 指令分配
+        // compute_stack_frame_size 从 Add dst, FP, offset 推断偏移量，
+        // 但这个值不用于 prologue 分配（避免与 LIR 的 Sub vm_sp, N 双重分配）
+        let cc = CallingConvention::standard();
+        let computed_frame = compute_stack_frame_size(function, cc.frame_pointer);
+        self.current_stack_frame_size = 0; // prologue 不分配帧空间
+
+        // epilogue 需要知道帧大小来跳过帧区域
+        // 使用 LIR 的 function.stack_frame_size（这是实际由 LIR 指令分配的量）
+        self.stack_frame_size_for_epilogue = function.stack_frame_size as usize;
 
         let mut code_builder = CodeBuilder::new();
 

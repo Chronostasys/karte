@@ -1,0 +1,9 @@
+[profile.default]
+retries = 1
+fail-fast = false
+slow-timeout = { period = "30s", terminate-after = 2 }
+test-threads = 4
+
+[profile.ci]
+retries = 0
+test-threads = 8

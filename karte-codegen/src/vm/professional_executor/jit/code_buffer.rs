@@ -217,8 +217,10 @@ impl CodeBuilder {
                     self.emit_i32(0); // 占位符，稍后修补
                 }
                 JumpType::Call => {
-                    // call rel32 - E8 <rel32>
-                    self.emit_byte(0xE8);
+                    // Karte 虚拟机使用 Jump 而不是 x86 CALL
+                    // 返回地址已经由 lower_call 通过虚拟栈管理
+                    // 所以这里用 jmp rel32 (E9) 而不是 call rel32 (E8)
+                    self.emit_byte(0xE9);
                     self.emit_i32(0); // 占位符，稍后修补
                 }
             }
@@ -327,6 +329,20 @@ impl CodeBuilder {
             });
         }
         // AArch64下不做任何事，具体展开在aarch64_compiler.rs
+    }
+
+    /// 生成 movabs rax, <label_address> 指令，用于将标签地址加载到 RAX
+    /// 占位符在 finalize 时被修补为实际的标签地址
+    pub fn emit_movabs_to_rax_with_label(&mut self, target_label: &str) {
+        // movabs rax, imm64 = 48 B8 <8 bytes>
+        self.emit_byte(0x48);
+        self.emit_byte(0xB8);
+        let patch_position = self.buffer.position();
+        self.emit_u64(0); // 占位符，稍后修补为标签地址
+        self.pending_label_addresses.push(PendingLabelAddress {
+            patch_position,
+            target_label: target_label.to_string(),
+        });
     }
 
     /// 对齐代码到指定边界
@@ -883,7 +899,7 @@ impl JumpType {
     pub fn instruction_size(&self) -> usize {
         match self {
             JumpType::Unconditional => 5, // E9 + 4字节地址
-            JumpType::Call => 5,          // E8 + 4字节地址
+            JumpType::Call => 5,          // E9 (jmp) + 4字节地址 (使用 jmp 代替 call)
             _ => 6,                       // 0F XX + 4字节地址
         }
     }

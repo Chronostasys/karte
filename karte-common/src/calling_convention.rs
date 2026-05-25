@@ -351,8 +351,9 @@ impl CallingConvention {
     #[cfg(target_arch = "x86_64")]
     pub fn standard() -> Self {
         // x86-64 System V ABI:
-        // Caller-saved (易失): RAX, RCX, RDX, RSI, RDI, R8, R9, R10, R11
-        // Callee-saved (非易失): RBX, RSP, RBP, R12, R13, R14, R15
+        // Caller-saved (易失): RAX, RCX, RDX, RSI, RDI, R8, R9
+        // 注意：R10 和 R11 被 x86 JIT 用作 vm_sp 和 vm_fp，不能作为通用寄存器
+        // Callee-saved (非易失): RBX, RSP, RBP, R10(vm_sp), R11(vm_fp), R12, R13, R14, R15
         // 参数传递: RDI, RSI, RDX, RCX, R8, R9
         // 返回值: RAX
 
@@ -364,14 +365,12 @@ impl CallingConvention {
             REG_RDI,  // 7 - 参数1
             REG_R8,   // 8 - 参数5
             REG_R9,   // 9 - 参数6
-            REG_R10,  // 10 - 临时
-            REG_R11,  // 11 - 临时
         ].into_iter().collect();
 
         let callee_saved: HashSet<PhysicalRegister> = [
-            REG_RBX,  // 3 - callee-saved
-            REG_RSP,  // 4 - 栈指针
-            REG_RBP,  // 5 - 帧指针
+            REG_RBX,  // 3 - callee-saved (也是 effect_resume_temp)
+            REG_R10,  // 10 - vm_sp (由函数 prologue/epilogue 在虚拟栈上管理)
+            REG_R11,  // 11 - vm_fp (由函数 prologue/epilogue 在虚拟栈上管理)
             REG_R12,  // 12 - callee-saved (effect 栈指针)
             REG_R13,  // 13 - callee-saved
             REG_R14,  // 14 - callee-saved
@@ -391,23 +390,32 @@ impl CallingConvention {
             return_register: REG_RAX,
             caller_saved,
             callee_saved,
-            stack_pointer: REG_RSP,
-            frame_pointer: REG_RBP,
-            // x86 用栈存返回地址，但 Karte 虚拟机用寄存器存
-            // 用 R10 作为虚拟返回地址寄存器
-            return_address: REG_R10,
+            // x86_64 System V ABI 调用约定
+            // 关键设计：与 AArch64 保持一致，直接使用 R10 和 R11 作为虚拟机的
+            // stack_pointer 和 frame_pointer，这样 JIT 不需要做寄存器重映射
+            stack_pointer: REG_R10,
+            frame_pointer: REG_R11,
+            // x86_64 使用 CALL/RET，返回地址由硬件自动 push/pop 到系统栈
+            // 此字段在 x86 上不使用，设为 R9 避免与 vm_sp/vm_fp 冲突
+            return_address: REG_R9,
             effect_stack_pointer: REG_R12,
             effect_payload_register: REG_RAX,
-            effect_tag_register: REG_R10,
-            effect_resume_temp: REG_R11,
+            // effect_tag_register: 用于 perform 时临时保存 tag 值进行比较
+            // 不能使用 R10(vm_sp) 或 R11(vm_fp)
+            // 使用 R8（caller-saved），因为 tag 只在 perform 的搜索循环中使用
+            effect_tag_register: REG_R8,
+            // effect_resume_temp: 用于间接调用时暂存函数指针
+            // 不能使用 R10(vm_sp) 或 R11(vm_fp)，使用 RBX（callee-saved）
+            effect_resume_temp: REG_RBX,
             temp_registers: {
                 let mut temps = Vec::new();
                 // 参数寄存器
                 temps.extend_from_slice(&[
                     REG_RDI, REG_RSI, REG_RDX, REG_RCX, REG_R8, REG_R9,
                 ]);
-                // 临时寄存器
-                temps.extend_from_slice(&[REG_R10, REG_R11]);
+                // 注意：R10 和 R11 不能作为通用临时寄存器
+                // x86 JIT 编译器将 Physical(4)=RSP 和 Physical(5)=RBP 重映射到 R10(vm_sp) 和 R11(vm_fp)
+                // 如果 R10/R11 被分配器用于普通变量，会与 vm_sp/vm_fp 冲突
                 // 返回值寄存器也可用作临时
                 temps.push(REG_RAX);
                 // callee-saved 也可临时使用（需要保存/恢复）
@@ -435,17 +443,27 @@ impl CallingConvention {
 
     /// 获取可用于寄存器分配的通用寄存器
     pub fn get_allocatable_registers(&self) -> Vec<PhysicalRegister> {
+        let reserved = [
+            self.return_register,
+            self.return_address,
+            self.stack_pointer,
+            self.frame_pointer,
+            self.effect_stack_pointer,
+            self.effect_payload_register,
+            self.effect_tag_register,
+        ];
+
+        // 额外排除：x86_64 硬件特殊寄存器
+        // RSP(4) 和 RBP(5) 是 x86 硬件栈指针和帧指针，不能用于通用分配
+        // 即使 CallingConvention 不使用它们作为虚拟机的 SP/FP
+        #[cfg(target_arch = "x86_64")]
+        let extra_reserved: &[PhysicalRegister] = &[4, 5]; // RSP, RBP
+        #[cfg(not(target_arch = "x86_64"))]
+        let extra_reserved: &[PhysicalRegister] = &[];
+
         (0..TOTAL_REGISTERS as u8)
             .filter(|&reg| {
-                ![
-                    self.return_register,
-                    self.return_address,
-                    self.stack_pointer,
-                    self.frame_pointer,
-                    self.effect_stack_pointer,
-                    self.effect_payload_register,
-                ]
-                    .contains(&reg)
+                !reserved.contains(&reg) && !extra_reserved.contains(&reg)
             })
             .collect()
     }
@@ -511,6 +529,17 @@ mod tests {
         assert!(!allocatable.contains(&cc.return_address), "返回地址寄存器不应被分配");
         assert!(!allocatable.contains(&cc.effect_stack_pointer), "effect 栈指针不应被分配");
         assert!(!allocatable.contains(&cc.effect_payload_register), "effect payload 不应被分配");
+
+        // x86_64 特有检查
+        #[cfg(target_arch = "x86_64")]
+        {
+            // vm_sp (R10) 和 vm_fp (R11) 不应被分配
+            assert!(!allocatable.contains(&10), "R10(vm_sp) 不应被分配");
+            assert!(!allocatable.contains(&11), "R11(vm_fp) 不应被分配");
+            // 硬件 RSP 和 RBP 也不能分配
+            assert!(!allocatable.contains(&4), "RSP 不应被分配");
+            assert!(!allocatable.contains(&5), "RBP 不应被分配");
+        }
 
         // 验证有足够的可分配寄存器
         assert!(allocatable.len() > 3, "应该包含更多可分配寄存器");

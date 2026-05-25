@@ -630,24 +630,35 @@ impl SsaConstructionPass {
         }
 
         // 步骤4: 递归处理支配树中的子块
-        // 使用支配关系确定处理顺序
-        for &succ_id in &successors {
-            // 检查是否是被当前块直接支配的块
-            if let Some(&idom) = self.dominance_info.immediate_dominators.get(&succ_id) {
-                if idom == block_id {
-                    self.rename_block_recursive(
-                        succ_id,
-                        function,
-                        cfg,
-                        registers_to_rename,
-                        phi_nodes,
-                        block_to_phis,
-                        state,
-                        value_versions,
-                        visited,
-                    )?;
+        // 🔧 修复：使用支配树子节点遍历，而不是 CFG 后继 + idom 检查
+        // 原来的方法只遍历 CFG 后继中 idom == current_block 的块，
+        // 但支配树的子节点不一定是 CFG 直接后继（例如合并块可能是更早块的支配子节点）
+        // 这导致某些块在重命名阶段被遗漏
+        let dom_tree_children: Vec<usize> = self
+            .dominance_info
+            .immediate_dominators
+            .iter()
+            .filter_map(|(&child, &parent)| {
+                if parent == block_id && !visited.contains(&child) {
+                    Some(child)
+                } else {
+                    None
                 }
-            }
+            })
+            .collect();
+
+        for child_id in dom_tree_children {
+            self.rename_block_recursive(
+                child_id,
+                function,
+                cfg,
+                registers_to_rename,
+                phi_nodes,
+                block_to_phis,
+                state,
+                value_versions,
+                visited,
+            )?;
         }
 
         // 步骤5: 退出块时恢复栈状态

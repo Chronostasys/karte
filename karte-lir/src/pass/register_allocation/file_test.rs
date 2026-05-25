@@ -1,7 +1,7 @@
 use super::*;
 use crate::pass::stack_frame_layout::StackFrameLayoutPass;
 use crate::{Instruction, LirFunction, Operand, Register};
-use karte_common::calling_convention::{REG_X0, REG_X1, REG_X2, REG_X29};
+use karte_common::calling_convention::{CallingConvention, TOTAL_REGISTERS, REG_X0, REG_X1, REG_X2};
 use karte_diagnostics::Span;
 use std::collections::HashMap;
 
@@ -285,10 +285,11 @@ L1:
     });
 
     // 验证是否有基于 FP 的栈访问（布局已下沉为 FP+offset）
-    // ARM64 AAPCS64: FP = x29
+    let cc = CallingConvention::standard();
+    let fp_reg = cc.frame_pointer;
     let has_fp_memory_access = function.instructions.iter().any(|inst| match inst {
         Instruction::Load64 { addr, .. } | Instruction::Store64 { addr, .. } => {
-            addr.id() == REG_X29 as usize
+            addr.id() == fp_reg as usize
         }
         _ => false,
     });
@@ -361,9 +362,13 @@ L1:
             //     "函数地址寄存器应该在r0-r4范围内"
             // );
 
-            // 验证参数寄存器在合理范围内
+            // 验证参数寄存器都是物理寄存器且在合法范围内
             for arg in args {
-                assert!(arg.id() <= 4, "参数寄存器应该在r0-r4范围内");
+                assert!(arg.is_physical(), "参数寄存器应该是物理寄存器，实际: {:?}", arg);
+                assert!(
+                    arg.id() < TOTAL_REGISTERS,
+                    "参数寄存器应该在物理寄存器范围内，实际: r{}", arg.id()
+                );
             }
         }
     }

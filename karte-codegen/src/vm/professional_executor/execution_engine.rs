@@ -479,9 +479,29 @@ impl ExecutionEngine {
             .map(|(k, v)| (k.clone(), *v as usize))
             .collect();
 
-        // 第二轮：原地修补跳转地址（不重新编译！）
+          // 第二轮：原地修补跳转地址（不重新编译！）
         for (function_name, (compiled_function, executable_memory)) in &compiled_functions {
-            info!("原地修补函数跳转: {}", function_name);
+          info!("原地修补函数跳转: {}", function_name);
+
+          // DEBUG: 转储 JIT 机器码到文件
+          if std::env::var("KARTE_DUMP_JIT").is_ok() {
+            let code = compiled_function.machine_code();
+            let filename = format!("/tmp/jit_{}.bin", function_name);
+            if let Ok(mut f) = std::fs::File::create(&filename) {
+              use std::io::Write;
+              let _ = f.write_all(code);
+              info!("JIT 代码转储: {} ({} 字节) -> {}", function_name, code.len(), filename);
+            }
+            // 同时转储为文本格式（地址 + 字节）
+            let txt_filename = format!("/tmp/jit_{}.txt", function_name);
+            if let Ok(mut f) = std::fs::File::create(&txt_filename) {
+              use std::io::Write;
+              for (i, byte) in code.iter().enumerate() {
+                let _ = writeln!(f, "{:04X}: {:02X}", i, byte);
+              }
+              info!("JIT 代码文本转储: {} -> {}", function_name, txt_filename);
+            }
+          }
 
             // 确保内存可写
             memory_manager.temporarily_make_writable(function_name)?;

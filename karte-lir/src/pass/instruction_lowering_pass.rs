@@ -187,76 +187,20 @@ impl InstructionLoweringPass {
     /// 获取指定指令位置需要保存的调用者保存寄存器
     fn get_live_caller_saved_registers_at(
         &self,
-        instruction_index: usize,
-        analyses: &AnalysisManager,
+        _instruction_index: usize,
+        _analyses: &AnalysisManager,
     ) -> HashSet<u8> {
-        // 尝试获取生命周期分析和寄存器分配结果
-        let lifetime_result = analyses.get_result::<LifetimeAnalysisResult>("lifetime-analysis");
-        let register_alloc_result =
-            analyses.get_result::<RegisterAllocationResult>("register-allocation");
-
-        if let (Some(lifetimes), Some(allocation)) = (lifetime_result, register_alloc_result) {
-            // 🔧 使用生命周期和寄存器分配信息计算活跃的调用者保存寄存器
-            let mut live_caller_saved = HashSet::new();
-
-            log::debug!("指令 {} 位置活跃寄存器分析:", instruction_index);
-
-            // 遍历所有寄存器生命周期，找出在当前指令位置活跃的寄存器
-            for lifetime in &lifetimes.lifetimes {
-                // 检查寄存器是否在当前指令位置活跃
-                if instruction_index >= lifetime.start && instruction_index <= lifetime.end {
-                    log::debug!(
-                        "  寄存器 {:?} 活跃 (生命周期 [{}, {}])",
-                        lifetime.register,
-                        lifetime.start,
-                        lifetime.end
-                    );
-
-                    // 🔧 关键修复：如果寄存器本身就是物理寄存器，直接使用它的编号
-                    // 否则从寄存器映射表中查找对应的物理寄存器
-                    let physical_reg_opt = match lifetime.register {
-                        Register::Physical(phys_reg) => {
-                            log::debug!("    已经是物理寄存器 #p{}", phys_reg);
-                            Some(phys_reg)
-                        }
-                        Register::Virtual(_) => {
-                            allocation.register_mapping.get(&lifetime.register).copied()
-                        }
-                    };
-
-                    if let Some(physical_reg) = physical_reg_opt {
-                        if let Register::Virtual(_) = lifetime.register {
-                            log::debug!("    映射到物理寄存器 #p{}", physical_reg);
-                        }
-
-                        // 检查该物理寄存器是否是调用者保存寄存器
-                        if self.calling_convention.is_caller_saved(physical_reg) {
-                            // 排除返回值寄存器，因为它会被调用覆盖
-                            if physical_reg != self.calling_convention.return_register {
-                                log::debug!("      ✓ 是caller-saved且非返回值，需要保存");
-                                live_caller_saved.insert(physical_reg);
-                            } else {
-                                log::debug!("      ✗ 是返回值寄存器，不保存");
-                            }
-                        } else {
-                            log::debug!("      ✗ 不是caller-saved寄存器");
-                        }
-                    } else {
-                        log::debug!("    虚拟寄存器未映射到物理寄存器");
-                    }
-                }
-            }
-
-            log::debug!("最终需要保存的caller-saved寄存器: {:?}", live_caller_saved);
-            live_caller_saved
-        } else {
-            // 如果没有生命周期或寄存器分配结果，保守地保存所有调用者保存寄存器
-            self.calling_convention
-                .caller_saved
-                .iter()
-                .cloned()
-                .collect()
-        }
+        // 保守策略：保存所有 caller-saved 寄存器（排除返回值寄存器 RAX）
+        //
+        // 原因：register allocator 会把跨调用存活的变量分配到 caller-saved 寄存器，
+        // 但 lifetime analysis 不能正确识别所有需要保存的寄存器。
+        // 保守策略确保正确性，代价是多保存几个寄存器。
+        self.calling_convention
+            .caller_saved
+            .iter()
+            .filter(|&&reg| reg != self.calling_convention.return_register)
+            .cloned()
+            .collect()
     }
 
     /// 降级Alloc指令

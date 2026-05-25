@@ -299,15 +299,19 @@ impl SimpleStackRegisterAllocation {
                         function_register, ..
                     } = inst
                     {
-                        allocation_map.insert(*function_register, AllocationTarget::Register(5));
-                        used_physical_regs.insert(5);
+                        // CallIndirect 的函数寄存器使用 effect_resume_temp
+                        // 这与 lower_call_indirect 中的临时寄存器一致
+                        let temp_reg = self.calling_convention.effect_resume_temp;
+                        allocation_map.insert(*function_register, AllocationTarget::Register(temp_reg));
+                        used_physical_regs.insert(temp_reg);
                     }
                 }
                 Instruction::JumpRegister {
                     target_register, ..
                 } => {
-                    used_physical_regs.insert(5);
-                    allocation_map.insert(*target_register, AllocationTarget::Register(5));
+                    let temp_reg = self.calling_convention.effect_resume_temp;
+                    used_physical_regs.insert(temp_reg);
+                    allocation_map.insert(*target_register, AllocationTarget::Register(temp_reg));
                     // JumpRegister 也不应该强制参数寄存器
                 }
                 _ => {}

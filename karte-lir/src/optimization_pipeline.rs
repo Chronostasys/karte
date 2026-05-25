@@ -3,6 +3,12 @@ use crate::pass::PipelinePreset;
 use crate::pass::*;
 use crate::LirProgram;
 
+/// 流水线版本号
+///
+/// 每次修改流水线配置（增加/删除/重排 Pass）时必须递增此版本号。
+/// JIT codegen 依赖流水线生成特定模式的 LIR，版本不匹配可能导致运行时崩溃。
+pub const PIPELINE_VERSION: u32 = 1;
+
 /// 优化级别
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptimizationLevel {
