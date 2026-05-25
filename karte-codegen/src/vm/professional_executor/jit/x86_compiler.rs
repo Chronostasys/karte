@@ -67,10 +67,8 @@ impl X86Compiler {
                 }
             }
             Register::Virtual(id) => {
-                // 测试中可能使用 Virtual 寄存器，映射到安全的寄存器编号
-                // 对于单元测试来说，只要不崩溃即可
-                log::warn!("x86_64 JIT 遇到虚拟寄存器 v{}: 应该先完成寄存器分配", id);
-                Ok(self.map_register((*id % 16) as u8))
+                // 虚拟寄存器不应出现在 JIT 阶段，寄存器分配必须在 JIT 之前完成
+                panic!("JIT 编译器遇到虚拟寄存器 Virtual({})，寄存器分配应在 JIT 之前完成", id);
             }
         }
     }

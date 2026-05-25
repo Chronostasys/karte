@@ -422,25 +422,25 @@ fn create_progress_bar(
 fn compile_script_entry(
     entry_path: &Path,
     optimization_level: OptimizationLevel,
-    verbose: bool,
+    verbose: u8,
 ) -> Result<CompilationArtifacts, String> {
     let path_str = entry_path
         .to_str()
         .ok_or_else(|| "入口文件路径不是有效的 UTF-8".to_string())?;
-    compile_entry_file(path_str, optimization_level, verbose, ParserMode::Script)
+    compile_entry_file(path_str, optimization_level, verbose > 0, ParserMode::Script)
         .map_err(|e| e.to_string())
 }
 
 fn build_project_product(
     context: ProjectBuildContext,
     optimization_level: OptimizationLevel,
-    verbose: bool,
+    verbose: u8,
     progress: bool,
     announce: bool,
 ) -> Result<BuildProduct, String> {
     if announce {
         println!("构建计划: {} 个模块", context.total_modules());
-        if verbose {
+        if verbose > 0 {
             for module in &context.plan.sequence {
                 println!("  - {}", module);
             }
@@ -451,7 +451,7 @@ fn build_project_product(
     let progress_bar =
         create_progress_bar(context.total_modules(), context.layer_count(), progress);
     let project =
-        compile_project_with_context(&context, optimization_level, verbose, progress_bar)?;
+        compile_project_with_context(&context, optimization_level, verbose > 0, progress_bar)?;
 
     if announce {
         println!("构建完成！");
@@ -463,7 +463,7 @@ fn build_project_product(
 fn build_script_product(
     entry_path: &Path,
     optimization_level: OptimizationLevel,
-    verbose: bool,
+    verbose: u8,
     announce: bool,
 ) -> Result<BuildProduct, String> {
     if announce {
@@ -480,7 +480,7 @@ fn build_product_for_entry(
     entry_path: &Path,
     input: BuildInput,
     optimization_level: OptimizationLevel,
-    verbose: bool,
+    verbose: u8,
     progress: bool,
     announce: bool,
 ) -> Result<BuildProduct, String> {
@@ -503,14 +503,15 @@ fn build_product_for_entry(
 
 pub fn execute_lir(
     lir_program: &LirProgram,
-    verbose: bool,
+    verbose: u8,
+    emit_asm: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if verbose {
+    if verbose > 0 {
         println!("\n--- Executing LIR ---");
     }
 
-    // 始终尝试使用 JIT 执行；解释器已被移除，因此失败会返回错误
-    if verbose {
+    // 始终尝试使用 JIT 执行
+    if verbose > 0 {
         println!(
             "entry: {}",
             lir_program
@@ -521,13 +522,19 @@ pub fn execute_lir(
         println!("尝试使用 JIT 执行...");
     }
 
-    match ProfessionalExecutor::new_with_jit(verbose) {
+    match ProfessionalExecutor::new_with_jit(verbose > 0) {
         Ok(mut executor) => {
-            if verbose {
+            if verbose > 0 {
                 println!("使用JIT执行器");
+            }
+            if emit_asm {
+                executor.enable_asm_dump();
             }
             match executor.execute_with_jit(lir_program) {
                 Ok(exit_code) => {
+                    if emit_asm {
+                        executor.dump_asm();
+                    }
                     println!("JIT执行完成，退出码: {}", exit_code);
                     Ok(())
                 }
@@ -593,12 +600,13 @@ pub fn write_content_creating_parent<P: AsRef<Path>>(path: P, content: &str) -> 
 pub fn process_file(
     filename: &str,
     optimization_level: OptimizationLevel,
-    verbose: bool,
+    verbose: u8,
     emit_lir: bool,
     output_file: Option<&str>,
     heap_stats: bool,
     mode: ParserMode,
     mode_is_explicit: bool,
+    emit_asm: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let entry_path = Path::new(filename);
     let project_context = ProjectBuildContext::try_new(entry_path)
@@ -655,16 +663,19 @@ pub fn process_file(
         println!("LIR代码已输出到: {}", output_path);
     }
 
+    // 先运行优化 pipeline，再输出/执行
+    let mut pipeline = karte_lir::OptimizationPipeline::new(optimization_level);
+    pipeline
+        .optimize(&mut lir_program)
+        .map_err(|errors| -> Box<dyn std::error::Error> {
+            format!("LIR优化失败: {}", errors.join(", ")).into()
+        })?;
+
     if emit_lir {
+        // 在 pipeline 之后输出优化过的 LIR
         println!("{}", lir_program.to_ir_string());
     } else {
-        let mut pipeline = karte_lir::OptimizationPipeline::new(optimization_level);
-        pipeline
-            .optimize(&mut lir_program)
-            .map_err(|errors| -> Box<dyn std::error::Error> {
-                format!("LIR优化失败: {}", errors.join(", ")).into()
-            })?;
-        execute_lir(&lir_program, verbose)?;
+        execute_lir(&lir_program, verbose, emit_asm)?;
     }
 
     if let Some(before) = before_stats {
@@ -678,13 +689,14 @@ pub fn process_file(
 pub fn process_expression(
     input: &str,
     optimization_level: OptimizationLevel,
-    verbose: bool,
+    verbose: u8,
     emit_lir: bool,
     output_file: Option<&str>,
     heap_stats: bool,
     mode: ParserMode,
+    emit_asm: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut lir_program = compile_to_lir(input, "input", optimization_level, verbose, mode)?;
+    let mut lir_program = compile_to_lir(input, "input", optimization_level, verbose > 0, mode)?;
     let before_stats = heap_stats.then_some(capture_heap_stats());
 
     if let Some(output_path) = output_file {
@@ -693,16 +705,19 @@ pub fn process_expression(
         println!("LIR代码已输出到: {}", output_path);
     }
 
+    // 先运行优化 pipeline，再输出/执行
+    let mut pipeline = karte_lir::OptimizationPipeline::new(optimization_level);
+    pipeline
+        .optimize(&mut lir_program)
+        .map_err(|errors| -> Box<dyn std::error::Error> {
+            format!("LIR优化失败: {}", errors.join(", ")).into()
+        })?;
+
     if emit_lir {
+        // 在 pipeline 之后输出优化过的 LIR
         println!("{}", lir_program.to_ir_string());
     } else {
-        let mut pipeline = karte_lir::OptimizationPipeline::new(optimization_level);
-        pipeline
-            .optimize(&mut lir_program)
-            .map_err(|errors| -> Box<dyn std::error::Error> {
-                format!("LIR优化失败: {}", errors.join(", ")).into()
-            })?;
-        execute_lir(&lir_program, verbose)?;
+        execute_lir(&lir_program, verbose, emit_asm)?;
     }
 
     if let Some(before) = before_stats {
@@ -713,7 +728,7 @@ pub fn process_expression(
     Ok(())
 }
 
-pub fn run_repl(optimization_level: OptimizationLevel, verbose: bool) {
+pub fn run_repl(optimization_level: OptimizationLevel, verbose: u8) {
     println!("Karte REPL (JIT 执行)");
     println!("当前优化级别: {:?}", optimization_level);
     println!();
@@ -762,6 +777,7 @@ pub fn run_repl(optimization_level: OptimizationLevel, verbose: bool) {
                         false,
                         ParserMode::Script,
                         true,
+                        false,
                     ) {
                         error!("Error reading file '{}': {}", filename, err);
                     }
@@ -776,6 +792,7 @@ pub fn run_repl(optimization_level: OptimizationLevel, verbose: bool) {
                     None,
                     false,
                     ParserMode::Script,
+                    false,
                 ) {
                     error!("Error: {}", err);
                 }
@@ -792,7 +809,7 @@ pub fn build_project(
     entry_path: &str,
     output_dir: &str,
     optimization_level: OptimizationLevel,
-    verbose: bool,
+    verbose: u8,
     emit_mir: bool,
     progress: bool,
 ) -> Result<(), String> {
@@ -824,7 +841,7 @@ pub fn optimize_with_pipeline(
     pipeline: &str,
     output: Option<&str>,
     debug: bool,
-    verbose: bool,
+    verbose: u8,
 ) -> Result<(), String> {
     use karte_ir_codec::{IrDisplay, IrParse};
     use karte_lir::{LirProgram, OptimizationPipeline};
@@ -837,7 +854,7 @@ pub fn optimize_with_pipeline(
     let mut program =
         LirProgram::parse_ir(&content).map_err(|e| format!("解析LIR失败: {:?}", e))?;
 
-    if verbose {
+    if verbose > 0 {
         println!("输入文件: {}", input);
         println!("Pass管线: {}", pipeline);
     }
@@ -847,7 +864,7 @@ pub fn optimize_with_pipeline(
         .map_err(|errors| format!("优化失败: {}", errors.join(", ")))?;
 
     // 打印统计信息
-    if verbose || debug {
+    if verbose > 0 || debug {
         println!("\n=== 优化统计 ===");
         println!("优化前指令数: {}", stats.instructions_before);
         println!("优化后指令数: {}", stats.instructions_after);

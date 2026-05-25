@@ -39,6 +39,8 @@ pub struct ExecutionEngine {
     calling_convention: CallingConvention,
     /// 调试模式
     debug_mode: bool,
+    /// 是否输出 JIT 反汇编
+    emit_asm: bool,
     /// 调用栈
     call_stack: Vec<CallFrame>,
     /// 堆分配器
@@ -91,10 +93,16 @@ impl ExecutionEngine {
             stack_manager: StackManager::new(calling_convention.clone(), stack_base as i64),
             calling_convention,
             debug_mode,
+            emit_asm: false,
             call_stack: Vec::new(),
             heap_allocator: HeapAllocator::new(heap_start, heap_size),
             virtual_stack,
         }
+    }
+
+    /// 启用 JIT 反汇编输出
+    pub fn enable_asm_dump(&mut self) {
+        self.emit_asm = true;
     }
 
     /// 初始化执行环境
@@ -441,6 +449,29 @@ impl ExecutionEngine {
                 executable_memory.offset(),
                 executable_memory.size()
             );
+
+            // 输出 JIT 反汇编
+            if self.emit_asm {
+                let code = compiled_function.machine_code();
+                let base_addr = executable_memory.address();
+                println!("\n=== 函数 '{}' (0x{:X}, {} bytes) ===", function_name, base_addr as usize, code.len());
+                // 使用内置反汇编：逐字节输出十六进制 + 标签位置
+                let mut offset = 0;
+                let labels = &compiled_function.labels;
+                while offset < code.len() {
+                    // 检查是否有标签在此位置
+                    for (label_name, &label_off) in labels {
+                        if label_off == offset {
+                            println!("{}:", label_name);
+                        }
+                    }
+                    // 每行输出 16 字节
+                    let end = std::cmp::min(offset + 16, code.len());
+                    let hex: Vec<String> = (offset..end).map(|i| format!("{:02x}", code[i])).collect();
+                    println!("  {:04x}: {}", offset, hex.join(" "));
+                    offset = end;
+                }
+            }
 
             // 收集全局标签地址（函数地址）
             global_label_map.insert(

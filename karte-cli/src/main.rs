@@ -24,9 +24,9 @@ struct Cli {
     #[arg(short, long, value_enum, default_value_t = OptimizationArg::Balanced)]
     optimization: OptimizationArg,
 
-    /// 显示详细的编译过程
-    #[arg(short, long)]
-    verbose: bool,
+    /// 显示详细的编译过程 (-v 基本信息/-vv 详细/-vvv 全部)
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    verbose: u8,
 
     /// 解析模式 (script/project)
     #[arg(long, value_enum)]
@@ -43,6 +43,10 @@ struct Cli {
     /// 在执行后输出 heap/RC 统计信息
     #[arg(long)]
     heap_stats: bool,
+
+    /// 输出 JIT 生成的机器码反汇编
+    #[arg(long)]
+    emit_asm: bool,
 
     /// 输入文件或表达式
     input: Option<String>,
@@ -70,6 +74,10 @@ enum Commands {
         /// 在执行后输出 heap/RC 统计信息
         #[arg(long)]
         heap_stats: bool,
+
+        /// 输出 JIT 生成的机器码反汇编
+        #[arg(long)]
+        emit_asm: bool,
     },
 
     /// 运行LIR文件
@@ -193,9 +201,9 @@ fn load_ir_for_execution(
     filename: &str,
     stage: IrStage,
     optimization_level: OptimizationLevel,
-    verbose: bool,
+    verbose: u8,
 ) -> Result<LirProgram, Box<dyn std::error::Error>> {
-    if verbose {
+    if verbose > 0 {
         println!("Loading {} from: {}", stage.label(), filename);
     }
 
@@ -203,26 +211,26 @@ fn load_ir_for_execution(
 
     let mut lir_program = match stage {
         IrStage::Lir => {
-            if verbose {
+            if verbose > 0 {
                 println!("解析 LIR...");
             }
             parse_ir_content::<LirProgram>(&content, "LIR")?
         }
         IrStage::Mir => {
-            if verbose {
+            if verbose > 0 {
                 println!("解析 MIR...");
             }
             let mir_program = parse_ir_content::<MirProgram>(&content, "MIR")?;
-            if verbose {
+            if verbose > 0 {
                 println!("MIR 解析完成，降级到未优化LIR");
             }
-            lower_mir_to_unoptimized_lir(&mir_program, verbose)?
+            lower_mir_to_unoptimized_lir(&mir_program, verbose > 0)?
         }
     };
 
     // 智能优化：检测是否需要优化
     if lir_program.contains_virtual_registers() {
-        if verbose {
+        if verbose > 0 {
             println!("检测到虚拟寄存器，应用优化管道...");
         }
         let mut pipeline = karte_lir::OptimizationPipeline::new(optimization_level);
@@ -231,11 +239,11 @@ fn load_ir_for_execution(
             .map_err(|errors| -> Box<dyn std::error::Error> {
                 format!("LIR优化失败: {}", errors.join(", ")).into()
             })?;
-        if verbose {
+        if verbose > 0 {
             println!("优化完成");
         }
     } else {
-        if verbose {
+        if verbose > 0 {
             println!("LIR已优化（仅包含物理寄存器），直接执行");
         }
     }
@@ -247,10 +255,10 @@ fn load_and_execute_ir(
     filename: &str,
     stage: IrStage,
     optimization_level: OptimizationLevel,
-    verbose: bool,
+    verbose: u8,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let lir_program = load_ir_for_execution(filename, stage, optimization_level, verbose)?;
-    runner::execute_lir(&lir_program, verbose)
+    runner::execute_lir(&lir_program, verbose, false)
 }
 
 #[cfg(test)]
@@ -332,6 +340,7 @@ fn main() {
             output,
             heap_stats,
             mode,
+            emit_asm,
         }) => match input {
             Some(ref input_str) => {
                 let (mode, mode_is_explicit) = if let Some(m) = mode {
@@ -351,6 +360,7 @@ fn main() {
                         heap_stats,
                         mode,
                         mode_is_explicit,
+                        emit_asm,
                     ) {
                         error!("Error: {}", err);
                         std::process::exit(1);
@@ -363,6 +373,7 @@ fn main() {
                     output.as_deref(),
                     heap_stats,
                     mode,
+                    emit_asm,
                 ) {
                     error!("Error: {}", err);
                     std::process::exit(1);
@@ -442,6 +453,7 @@ fn main() {
                         cli.heap_stats,
                         default_mode,
                         default_mode_is_explicit,
+                        cli.emit_asm,
                     ) {
                         error!("Error: {}", err);
                         std::process::exit(1);
@@ -454,6 +466,7 @@ fn main() {
                     cli.output.as_deref(),
                     cli.heap_stats,
                     default_mode,
+                    cli.emit_asm,
                 ) {
                     error!("Error: {}", err);
                     std::process::exit(1);

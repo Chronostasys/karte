@@ -148,24 +148,6 @@ impl AArch64Compiler {
 
     /// 初始化寄存器映射
     fn initialize_register_mapping(&mut self) {
-        // 虚拟寄存器到物理寄存器的映射
-        // 简化映射，避免复杂的栈指针管理
-        for i in 0..8 {
-            let virtual_reg = Register::Virtual(i);
-            let physical_reg = match i {
-                0 => AArch64Register::X0 as u8, // r0 -> x0 (返回值寄存器)
-                1 => AArch64Register::X1 as u8, // r1 -> x1
-                2 => AArch64Register::X2 as u8, // r2 -> x2
-                3 => AArch64Register::X3 as u8, // r3 -> x3
-                4 => AArch64Register::X4 as u8, // r4 -> x4
-                5 => AArch64Register::X5 as u8, // r5 -> x5
-                6 => AArch64Register::X6 as u8, // r6 -> x6 (简化：不再用作虚拟栈指针)
-                7 => AArch64Register::X7 as u8, // r7 -> x7 (简化：不再用作虚拟帧指针)
-                _ => AArch64Register::X9 as u8, // 其他使用临时寄存器
-            };
-            self.register_mapping.insert(virtual_reg, physical_reg);
-        }
-
         // 物理寄存器直接映射
         for i in 0..32 {
             let physical_reg = Register::Physical(i);
@@ -211,10 +193,18 @@ impl AArch64Compiler {
 
     /// 获取寄存器的物理编号
     fn get_physical_register(&self, reg: &Register) -> Result<u8, String> {
-        self.register_mapping
-            .get(reg)
-            .copied()
-            .ok_or_else(|| format!("未映射的寄存器: {:?}", reg))
+        match reg {
+            Register::Virtual(id) => {
+                // 虚拟寄存器不应出现在 JIT 阶段，寄存器分配必须在 JIT 之前完成
+                panic!("JIT 编译器遇到虚拟寄存器 Virtual({})，寄存器分配应在 JIT 之前完成", id);
+            }
+            _ => {
+                self.register_mapping
+                    .get(reg)
+                    .copied()
+                    .ok_or_else(|| format!("未映射的寄存器: {:?}", reg))
+            }
+        }
     }
 
     /// 编译单个指令

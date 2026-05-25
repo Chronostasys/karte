@@ -85,6 +85,16 @@ impl ProfessionalExecutor {
         self.execution_engine.compile_and_execute_with_jit(program)
     }
 
+    /// 启用 JIT 反汇编输出
+    pub fn enable_asm_dump(&mut self) {
+        self.execution_engine.enable_asm_dump();
+    }
+
+    /// 输出 JIT 生成的机器码反汇编（在编译阶段已输出）
+    pub fn dump_asm(&self) {
+        // 反汇编在 JIT 编译阶段已通过 enable_asm_dump 输出
+    }
+
     /// 获取执行统计信息
     pub fn get_execution_stats(&self) -> ExecutionStats {
         ExecutionStats {
