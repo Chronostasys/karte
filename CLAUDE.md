@@ -617,6 +617,12 @@ Store { target = %10000, value = %2 }
 - 禁止任何时间对项目进行release编译，除非我要求
 - **x86_64 GOTCHA**: `effect_tag_register`、`return_address` 等专用寄存器绝不能与 `vm_sp(R10)` 或 `vm_fp(R11)` 冲突，否则 EffectPerform 会直接破坏虚拟栈指针
 - **SSA GOTCHA**: SSA rename_block_recursive 必须使用支配树子节点遍历（而不是 CFG 后继 + idom 检查），否则合并块会被遗漏导致寄存器使用未重命名
+- **⚠️ 测试铁律**：
+  - **禁止使用 `cargo test`**，必须且只能使用 `cargo nextest run` 运行测试
+  - nextest 会为每个测试创建独立进程，SIGSEGV 不会中断整个测试套件，能真实反映所有失败
+  - `cargo test` 在 SIGSEGV 时直接崩溃，grep 过滤 SEGV 后说"测试通过"是完全错误的
+  - **任何代码修改后必须 `cargo nextest run` 全部通过后才能 commit**
+  - 如果 nextest 有任何 FAIL 或 SIGSEGV，必须修复后才能提交，绝不许跳过
 
 ## Knowledge Files
 
