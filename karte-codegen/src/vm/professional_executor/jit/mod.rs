@@ -49,7 +49,7 @@ pub struct JitManager {
 
 impl JitManager {
     /// 创建新的JIT管理器
-    pub fn new(target_arch: TargetArchitecture, debug_mode: bool) -> Result<Self, String> {
+    pub fn new(target_arch: TargetArchitecture, debug_mode: bool) -> crate::Result<Self> {
         let compiler: Box<dyn JitCompiler> = match target_arch {
             TargetArchitecture::X86_64 => Box::new(X86Compiler::new(debug_mode)?),
             TargetArchitecture::AArch64 => Box::new(AArch64Compiler::new(debug_mode)?),
@@ -79,7 +79,7 @@ impl JitManager {
         &mut self,
         function: &LirFunction,
         program: &LirProgram,
-    ) -> Result<CompiledFunction, String> {
+    ) -> crate::Result<CompiledFunction> {
         // 检查缓存
         if let Some(cached) = self.code_cache.get(&function.name) {
             if self.debug_mode {

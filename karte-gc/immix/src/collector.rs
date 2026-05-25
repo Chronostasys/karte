@@ -442,21 +442,20 @@ impl Collector {
                     self.id, gc_cycle, body_ptr, body_size, body_size / 8, is_forwarded
                 );
 
-                // 🔧 关键检查：如果对象已被 forwarded，不应该扫描它的字段
-                // 因为字段中的第一个 8 字节现在是 forward pointer，不是实际数据
+                // 🔧 关键修复：如果对象已被 forwarded，需要跟随 forward pointer
+                // 到新对象，扫描新对象的字段。
+                // 在并行 GC 中，一个线程可能将对象入队，而另一个线程在处理前
+                // 已经 evacuate 了这个对象。此时旧对象的 body 已被 forward pointer
+                // 覆盖，不能再扫描旧 body 的字段——否则内部引用会丢失。
                 if is_forwarded {
-                    log::warn!(
-                        "gc {} [Cycle {}]: ⚠️  BUG - Trying to scan FORWARDED object at {:p}! First 8 bytes contain forward pointer, not data!",
-                        self.id, gc_cycle, body_ptr
+                    let forward_ptr = *(body_ptr as *const *mut u8);
+                    log::debug!(
+                        "gc {} [Cycle {}]: mark_conservative - object at {:p} is forwarded, following to {:p}",
+                        self.id, gc_cycle, body_ptr, forward_ptr
                     );
-                    // 读取并打印 forward pointer
-                    let forward_ptr = *(body_ptr as *const u64);
-                    log::warn!(
-                        "gc {} [Cycle {}]: ⚠️  Forward pointer value: 0x{:X}",
-                        self.id,
-                        gc_cycle,
-                        forward_ptr
-                    );
+                    // 递归调用 mark_conservative，扫描新对象
+                    self.mark_conservative(forward_ptr);
+                    return;
                 }
 
                 for i in 0..body_size / 8 {

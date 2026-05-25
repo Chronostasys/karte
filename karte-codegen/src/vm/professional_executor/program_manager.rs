@@ -48,7 +48,7 @@ impl ProgramManager {
     }
 
     /// 加载LIR程序
-    pub fn load_program(&mut self, program: &LirProgram) -> Result<(), String> {
+    pub fn load_program(&mut self, program: &LirProgram) -> crate::Result<()> {
         // 清空之前的状态
         self.instructions.clear();
         self.label_map.clear();
@@ -65,7 +65,7 @@ impl ProgramManager {
     }
 
     /// 构建指令序列和标签映射
-    fn build_instruction_sequence(&mut self, program: &LirProgram) -> Result<(), String> {
+    fn build_instruction_sequence(&mut self, program: &LirProgram) -> crate::Result<()> {
         let mut current_pc = 0;
 
         // 按照固定顺序处理函数（主函数优先）
@@ -127,7 +127,7 @@ impl ProgramManager {
     }
 
     /// 设置主函数信息
-    fn setup_main_function(&mut self, program: &LirProgram) -> Result<(), String> {
+    fn setup_main_function(&mut self, program: &LirProgram) -> crate::Result<()> {
         let main_name = program
             .main_function
             .as_ref()
@@ -157,25 +157,25 @@ impl ProgramManager {
     }
 
     /// 获取主函数信息
-    pub fn get_main_function_info(&self) -> Result<&MainFunctionInfo, String> {
+    pub fn get_main_function_info(&self) -> crate::Result<&MainFunctionInfo> {
         self.main_function
             .as_ref()
-            .ok_or_else(|| "Main function not loaded".to_string())
+            .ok_or_else(|| "Main function not loaded".into())
     }
 
     /// 获取指定PC处的指令
-    pub fn get_instruction_at_pc(&self, pc: usize) -> Result<&Instruction, String> {
+    pub fn get_instruction_at_pc(&self, pc: usize) -> crate::Result<&Instruction> {
         self.instructions
             .get(pc)
-            .ok_or_else(|| format!("Invalid PC: {}", pc))
+            .ok_or_else(|| format!("Invalid PC: {}", pc).into())
     }
 
     /// 获取标签对应的PC
-    pub fn get_label_pc(&self, label: &LabelId) -> Result<usize, String> {
+    pub fn get_label_pc(&self, label: &LabelId) -> crate::Result<usize> {
         self.label_map
             .get(label)
             .copied()
-            .ok_or_else(|| format!("Unknown label: {:?}", label))
+            .ok_or_else(|| format!("Unknown label: {:?}", label).into())
     }
 
     /// 获取指令总数

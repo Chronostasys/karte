@@ -18,7 +18,7 @@ pub trait JitCompiler: std::fmt::Debug {
         &mut self,
         function: &LirFunction,
         program: &LirProgram,
-    ) -> Result<CompiledFunction, String>;
+    ) -> crate::Result<CompiledFunction>;
 
     /// 获取目标架构名称
     fn target_architecture(&self) -> &'static str;
@@ -200,7 +200,7 @@ impl MachineCodeBuffer {
     }
 
     /// 设置为可执行
-    pub fn make_executable(&mut self) -> Result<(), String> {
+    pub fn make_executable(&mut self) -> crate::Result<()> {
         if self.executable {
             return Ok(());
         }
@@ -222,7 +222,7 @@ impl MachineCodeBuffer {
     }
 
     /// 在指定位置写入字节
-    pub fn write_at(&mut self, position: usize, byte: u8) -> Result<(), String> {
+    pub fn write_at(&mut self, position: usize, byte: u8) -> crate::Result<()> {
         if position < self.code.len() {
             self.code[position] = byte;
             Ok(())
@@ -231,12 +231,12 @@ impl MachineCodeBuffer {
                 "写入位置 {} 超出缓冲区范围 {}",
                 position,
                 self.code.len()
-            ))
+            ).into())
         }
     }
 
     /// 在指定位置写入多个字节
-    pub fn write_bytes_at(&mut self, position: usize, bytes: &[u8]) -> Result<(), String> {
+    pub fn write_bytes_at(&mut self, position: usize, bytes: &[u8]) -> crate::Result<()> {
         if position + bytes.len() <= self.code.len() {
             self.code[position..position + bytes.len()].copy_from_slice(bytes);
             Ok(())
@@ -246,7 +246,7 @@ impl MachineCodeBuffer {
                 position,
                 bytes.len(),
                 self.code.len()
-            ))
+            ).into())
         }
     }
 }

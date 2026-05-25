@@ -23,7 +23,7 @@ pub use professional_executor::*;
 pub use stack_manager::*;
 
 /// 创建标准配置的专业虚拟机
-pub fn create_professional_vm() -> Result<VirtualMachine, String> {
+pub fn create_professional_vm() -> crate::Result<VirtualMachine> {
     let mut vm = VirtualMachine::new();
     let calling_convention = CallingConvention::standard();
 
@@ -61,14 +61,14 @@ pub struct CompatibilityVMManager {
 
 impl ProfessionalVMManager {
     /// 创建新的专业虚拟机管理器
-    pub fn new(debug_mode: bool) -> Result<Self, String> {
+    pub fn new(debug_mode: bool) -> crate::Result<Self> {
         Ok(Self {
             executor: ProfessionalExecutor::new(debug_mode)?,
         })
     }
 
     /// 执行 LIR 程序
-    pub fn execute_program(&mut self, program: &karte_lir::LirProgram) -> Result<i64, String> {
+    pub fn execute_program(&mut self, program: &karte_lir::LirProgram) -> crate::Result<i64> {
         self.executor.execute(program)
     }
 
@@ -90,7 +90,7 @@ impl ProfessionalVMManager {
 
 impl CompatibilityVMManager {
     /// 创建新的兼容性虚拟机管理器
-    pub fn new() -> Result<Self, String> {
+    pub fn new() -> crate::Result<Self> {
         let calling_convention = CallingConvention::standard();
         let stack_base = (MEMORY_SIZE - STACK_SIZE) as i64;
 
@@ -102,7 +102,7 @@ impl CompatibilityVMManager {
     }
 
     /// 重置虚拟机状态
-    pub fn reset(&mut self) -> Result<(), String> {
+    pub fn reset(&mut self) -> crate::Result<()> {
         self.vm.reset();
         let stack_base = (MEMORY_SIZE - STACK_SIZE) as i64;
         self.stack_manager = StackManager::new(self.calling_convention.clone(), stack_base);

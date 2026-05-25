@@ -25,7 +25,7 @@ impl InstructionProcessor {
         instruction: &Instruction,
         engine: &mut ExecutionEngine,
         program_manager: &ProgramManager,
-    ) -> Result<InstructionResult, String> {
+    ) -> crate::Result<InstructionResult> {
         match instruction {
             // 数据移动指令
             Instruction::Move { dst, src, .. } => self.handle_move(dst, src, engine),
@@ -126,7 +126,7 @@ impl InstructionProcessor {
             // 统一使用 JumpIndirect
 
             // 其他指令暂时返回错误
-            _ => Err(format!("Unsupported instruction: {:?}", instruction)),
+            _ => Err(format!("Unsupported instruction: {:?}", instruction).into()),
         }
     }
 
@@ -136,7 +136,7 @@ impl InstructionProcessor {
         dst: &Register,
         src: &Operand,
         engine: &mut ExecutionEngine,
-    ) -> Result<InstructionResult, String> {
+    ) -> crate::Result<InstructionResult> {
         // 检查是否是特殊的存储操作
         // 如果src是特殊标记寄存器(999)，这表示是一个存储操作
         if let Operand::Register { id } = src {
@@ -166,7 +166,7 @@ impl InstructionProcessor {
         src1: &Operand,
         src2: &Operand,
         engine: &mut ExecutionEngine,
-    ) -> Result<InstructionResult, String> {
+    ) -> crate::Result<InstructionResult> {
         let val1 = engine.get_operand_value(src1)?;
         let val2 = engine.get_operand_value(src2)?;
         engine.set_register(dst, val1 + val2)?;
@@ -180,7 +180,7 @@ impl InstructionProcessor {
         src1: &Operand,
         src2: &Operand,
         engine: &mut ExecutionEngine,
-    ) -> Result<InstructionResult, String> {
+    ) -> crate::Result<InstructionResult> {
         let val1 = engine.get_operand_value(src1)?;
         let val2 = engine.get_operand_value(src2)?;
         engine.set_register(dst, val1 - val2)?;
@@ -194,7 +194,7 @@ impl InstructionProcessor {
         src1: &Operand,
         src2: &Operand,
         engine: &mut ExecutionEngine,
-    ) -> Result<InstructionResult, String> {
+    ) -> crate::Result<InstructionResult> {
         let val1 = engine.get_operand_value(src1)?;
         let val2 = engine.get_operand_value(src2)?;
         engine.set_register(dst, val1 * val2)?;
@@ -208,11 +208,11 @@ impl InstructionProcessor {
         src1: &Operand,
         src2: &Operand,
         engine: &mut ExecutionEngine,
-    ) -> Result<InstructionResult, String> {
+    ) -> crate::Result<InstructionResult> {
         let val1 = engine.get_operand_value(src1)?;
         let val2 = engine.get_operand_value(src2)?;
         if val2 == 0 {
-            return Err("Division by zero".to_string());
+            return Err("Division by zero".into());
         }
         engine.set_register(dst, val1 / val2)?;
         Ok(InstructionResult::Continue)
@@ -224,7 +224,7 @@ impl InstructionProcessor {
         src1: &Operand,
         src2: &Operand,
         engine: &mut ExecutionEngine,
-    ) -> Result<InstructionResult, String> {
+    ) -> crate::Result<InstructionResult> {
         let val1 = engine.get_operand_value(src1)?;
         let val2 = engine.get_operand_value(src2)?;
         engine.compare(val1, val2);
@@ -236,7 +236,7 @@ impl InstructionProcessor {
         &mut self,
         target: &LabelId,
         program_manager: &ProgramManager,
-    ) -> Result<InstructionResult, String> {
+    ) -> crate::Result<InstructionResult> {
         let target_pc = program_manager.get_label_pc(target)?;
         Ok(InstructionResult::Jump(target_pc))
     }
@@ -247,7 +247,7 @@ impl InstructionProcessor {
         target: &LabelId,
         condition: bool,
         program_manager: &ProgramManager,
-    ) -> Result<InstructionResult, String> {
+    ) -> crate::Result<InstructionResult> {
         if condition {
             let target_pc = program_manager.get_label_pc(target)?;
             Ok(InstructionResult::Jump(target_pc))
@@ -264,7 +264,7 @@ impl InstructionProcessor {
         result: Option<&Register>,
         engine: &mut ExecutionEngine,
         program_manager: &ProgramManager,
-    ) -> Result<InstructionResult, String> {
+    ) -> crate::Result<InstructionResult> {
         // 1. 准备参数 - 将参数值传递到参数寄存器
         let mut arg_values = Vec::new();
         for (i, arg_reg) in args.iter().enumerate() {
@@ -295,7 +295,7 @@ impl InstructionProcessor {
         function_register: &Register,
         engine: &mut ExecutionEngine,
         program_manager: &ProgramManager,
-    ) -> Result<InstructionResult, String> {
+    ) -> crate::Result<InstructionResult> {
         let function_address = engine.get_register(function_register)?;
         let target_label = karte_lir::LabelId(function_address as usize);
         let target_pc = program_manager.get_label_pc(&target_label)?;
@@ -314,7 +314,7 @@ impl InstructionProcessor {
         result: Option<&Register>,
         engine: &mut ExecutionEngine,
         program_manager: &ProgramManager,
-    ) -> Result<InstructionResult, String> {
+    ) -> crate::Result<InstructionResult> {
         // 🔧 实现完整的间接函数调用机制
 
         // 1. 获取函数地址（标签ID）
@@ -358,7 +358,7 @@ impl InstructionProcessor {
                 return Err(format!(
                     "Function address {:?} not found: {}",
                     target_label, e
-                ));
+                ).into());
             }
         };
 
@@ -378,7 +378,7 @@ impl InstructionProcessor {
         &mut self,
         value: Option<&Register>,
         engine: &mut ExecutionEngine,
-    ) -> Result<InstructionResult, String> {
+    ) -> crate::Result<InstructionResult> {
         let return_value = if let Some(reg) = value {
             engine.get_register(reg)?
         } else {
@@ -395,7 +395,7 @@ impl InstructionProcessor {
         offset: i64,
         src: &Operand,
         engine: &mut ExecutionEngine,
-    ) -> Result<InstructionResult, String> {
+    ) -> crate::Result<InstructionResult> {
         let base_addr = engine.get_register(addr)? as usize;
         let store_addr = (base_addr as i64 + offset) as usize;
         let value = engine.get_operand_value(src)?;
@@ -416,7 +416,7 @@ impl InstructionProcessor {
         addr: &Register,
         offset: i64,
         engine: &mut ExecutionEngine,
-    ) -> Result<InstructionResult, String> {
+    ) -> crate::Result<InstructionResult> {
         let base_addr = engine.get_register(addr)? as usize;
         let load_addr = (base_addr as i64 + offset) as usize;
         let value = engine.load_memory(load_addr)?;
@@ -437,7 +437,7 @@ impl InstructionProcessor {
         size: usize,
         _alignment: usize,
         engine: &mut ExecutionEngine,
-    ) -> Result<InstructionResult, String> {
+    ) -> crate::Result<InstructionResult> {
         // 简化的内存分配：使用递增地址
         static mut NEXT_ADDR: usize = 1048544; // 从栈之后开始分配
 
@@ -460,7 +460,7 @@ impl InstructionProcessor {
         struct_addr: &Register,
         field_offset: usize,
         engine: &mut ExecutionEngine,
-    ) -> Result<InstructionResult, String> {
+    ) -> crate::Result<InstructionResult> {
         // 获取结构体的基地址
         let base_addr = engine.get_register(struct_addr)? as usize;
 

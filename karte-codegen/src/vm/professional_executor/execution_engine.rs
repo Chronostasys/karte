@@ -106,7 +106,7 @@ impl ExecutionEngine {
     }
 
     /// 初始化执行环境
-    pub fn initialize(&mut self, _program_manager: &ProgramManager) -> Result<(), String> {
+    pub fn initialize(&mut self, _program_manager: &ProgramManager) -> crate::Result<()> {
         // 注意：GC初始化和虚拟栈注册已经在 new() 中完成
         // 这里只需要重置虚拟机状态
 
@@ -169,7 +169,7 @@ impl ExecutionEngine {
     }
 
     /// 设置虚拟寄存器的值
-    pub fn set_register(&mut self, reg: &Register, value: i64) -> Result<(), String> {
+    pub fn set_register(&mut self, reg: &Register, value: i64) -> crate::Result<()> {
         if self.debug_mode {
             println!(
                 "设置寄存器 {:?} = {}, 映射状态: {:?}",
@@ -182,7 +182,7 @@ impl ExecutionEngine {
     }
 
     /// 获取虚拟寄存器的值
-    pub fn get_register(&self, reg: &Register) -> Result<i64, String> {
+    pub fn get_register(&self, reg: &Register) -> crate::Result<i64> {
         let value = self.vm.get_virtual_register(reg)?;
         if self.debug_mode {
             println!(
@@ -196,7 +196,7 @@ impl ExecutionEngine {
     }
 
     /// 获取操作数的值
-    pub fn get_operand_value(&self, operand: &Operand) -> Result<i64, String> {
+    pub fn get_operand_value(&self, operand: &Operand) -> crate::Result<i64> {
         match operand {
             Operand::Register { id } => self.get_register(id),
             Operand::Immediate { value } => Ok(*value),
@@ -206,11 +206,11 @@ impl ExecutionEngine {
                 if addr < self.vm.memory.len() {
                     Ok(self.vm.memory[addr])
                 } else {
-                    Err("Memory access out of bounds".to_string())
+                    Err("Memory access out of bounds".into())
                 }
             }
             Operand::Label { id } => Ok(id.0 as i64),
-            _ => Err(format!("Unsupported operand type: {:?}", operand)),
+            _ => Err(format!("Unsupported operand type: {:?}", operand).into()),
         }
     }
 
@@ -245,33 +245,33 @@ impl ExecutionEngine {
     }
 
     /// 设置返回值寄存器
-    pub fn set_return_value(&mut self, value: i64) -> Result<(), String> {
+    pub fn set_return_value(&mut self, value: i64) -> crate::Result<()> {
         self.vm
             .set_physical_register(self.calling_convention.return_register, value)
     }
 
     /// 获取返回值寄存器的值
-    pub fn get_return_value(&self) -> Result<i64, String> {
+    pub fn get_return_value(&self) -> crate::Result<i64> {
         self.vm
             .get_physical_register(self.calling_convention.return_register)
     }
 
     /// 存储值到内存
-    pub fn store_memory(&mut self, addr: usize, value: i64) -> Result<(), String> {
+    pub fn store_memory(&mut self, addr: usize, value: i64) -> crate::Result<()> {
         if addr < self.vm.memory.len() {
             self.vm.memory[addr] = value;
             Ok(())
         } else {
-            Err("Memory store out of bounds".to_string())
+            Err("Memory store out of bounds".into())
         }
     }
 
     /// 从内存加载值
-    pub fn load_memory(&self, addr: usize) -> Result<i64, String> {
+    pub fn load_memory(&self, addr: usize) -> crate::Result<i64> {
         if addr < self.vm.memory.len() {
             Ok(self.vm.memory[addr])
         } else {
-            Err("Memory load out of bounds".to_string())
+            Err("Memory load out of bounds".into())
         }
     }
 
@@ -300,7 +300,7 @@ impl ExecutionEngine {
         &mut self,
         return_pc: usize,
         result_register: Option<Register>,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let frame = CallFrame {
             return_pc,
             result_register,
@@ -319,7 +319,7 @@ impl ExecutionEngine {
     }
 
     /// 弹出调用栈帧
-    pub fn pop_call_frame(&mut self) -> Result<Option<CallFrame>, String> {
+    pub fn pop_call_frame(&mut self) -> crate::Result<Option<CallFrame>> {
         let frame = self.call_stack.pop();
 
         if self.debug_mode {
@@ -337,13 +337,13 @@ impl ExecutionEngine {
     }
 
     /// 分配闭包环境
-    pub fn allocate_closure_env(&mut self, field_count: usize) -> Result<i64, String> {
+    pub fn allocate_closure_env(&mut self, field_count: usize) -> crate::Result<i64> {
         let addr = self.heap_allocator.allocate_closure_env(field_count)?;
         Ok(addr as i64)
     }
 
     /// 分配堆内存
-    pub fn allocate_heap(&mut self, size: usize, object_type: &str) -> Result<i64, String> {
+    pub fn allocate_heap(&mut self, size: usize, object_type: &str) -> crate::Result<i64> {
         let addr = match object_type {
             "closure_env" => {
                 // 计算字段数量（每个字段8字节，减去8字节头部）
@@ -361,23 +361,23 @@ impl ExecutionEngine {
     }
 
     /// 存储值到堆地址
-    pub fn store_heap(&mut self, address: i64, offset: usize, value: i64) -> Result<(), String> {
+    pub fn store_heap(&mut self, address: i64, offset: usize, value: i64) -> crate::Result<()> {
         let heap_addr = address as usize + offset;
         if heap_addr < self.vm.memory.len() {
             self.vm.memory[heap_addr] = value;
             Ok(())
         } else {
-            Err(format!("堆地址越界: 0x{:x}", heap_addr))
+            Err(format!("堆地址越界: 0x{:x}", heap_addr).into())
         }
     }
 
     /// 从堆地址加载值
-    pub fn load_heap(&self, address: i64, offset: usize) -> Result<i64, String> {
+    pub fn load_heap(&self, address: i64, offset: usize) -> crate::Result<i64> {
         let heap_addr = address as usize + offset;
         if heap_addr < self.vm.memory.len() {
             Ok(self.vm.memory[heap_addr])
         } else {
-            Err(format!("堆地址越界: 0x{:x}", heap_addr))
+            Err(format!("堆地址越界: 0x{:x}", heap_addr).into())
         }
     }
 
@@ -411,7 +411,7 @@ impl ExecutionEngine {
     }
 
     /// 编译并执行程序（JIT版本）
-    pub fn compile_and_execute_with_jit(&mut self, program: &LirProgram) -> Result<i64, String> {
+    pub fn compile_and_execute_with_jit(&mut self, program: &LirProgram) -> crate::Result<i64> {
         info!("专业执行器: 开始JIT编译并执行程序 (连续内存架构)");
         info!("JIT执行器: 开始编译程序 (使用连续内存架构)");
 
@@ -436,7 +436,7 @@ impl ExecutionEngine {
                 let mut compiler = X86Compiler::new(self.debug_mode)?;
                 compiler.compile_function(function, program)?
             } else {
-                return Err("不支持的目标架构".to_string());
+                return Err("不支持的目标架构".into());
             };
 
             // 🔧 新架构：使用连续内存分配
@@ -569,12 +569,12 @@ impl ExecutionEngine {
 
             // 设置虚拟机参数
             if self.virtual_stack.is_empty() {
-                return Err("虚拟栈未初始化".to_string());
+                return Err("虚拟栈未初始化".into());
             }
 
             let element_size = std::mem::size_of::<i64>();
             if self.virtual_stack.is_empty() {
-                return Err("虚拟栈未初始化".to_string());
+                return Err("虚拟栈未初始化".into());
             }
 
             let element_size = std::mem::size_of::<i64>();
@@ -603,7 +603,7 @@ impl ExecutionEngine {
                 Ok(result)
             }
         } else {
-            Err("未找到main函数".to_string())
+            Err("未找到main函数".into())
         }
     }
 }

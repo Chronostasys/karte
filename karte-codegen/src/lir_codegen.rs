@@ -23,7 +23,7 @@ use log::{info, warn};
 ///
 /// # 错误
 /// 如果程序执行过程中发生错误，返回错误信息
-pub fn execute(program: &LirProgram) -> Result<i64, String> {
+pub fn execute(program: &LirProgram) -> crate::Result<i64> {
     execute_professional(program, false)
 }
 
@@ -38,7 +38,7 @@ pub fn execute(program: &LirProgram) -> Result<i64, String> {
 ///
 /// # 错误
 /// 如果程序执行过程中发生错误，返回错误信息
-pub fn execute_with_debug(program: &LirProgram, debug: bool) -> Result<i64, String> {
+pub fn execute_with_debug(program: &LirProgram, debug: bool) -> crate::Result<i64> {
     execute_professional(program, debug)
 }
 
@@ -58,7 +58,7 @@ pub fn execute_with_debug(program: &LirProgram, debug: bool) -> Result<i64, Stri
 ///
 /// # 错误
 /// 如果程序执行过程中发生错误，返回错误信息
-pub fn execute_professional(program: &LirProgram, debug: bool) -> Result<i64, String> {
+pub fn execute_professional(program: &LirProgram, debug: bool) -> crate::Result<i64> {
     let mut executor = ProfessionalExecutor::new(debug)?;
 
     if debug {
@@ -88,7 +88,7 @@ pub fn execute_professional(program: &LirProgram, debug: bool) -> Result<i64, St
 /// 使用专业虚拟机管理器执行LIR程序
 ///
 /// 这提供了更高级的接口，包装了专业执行器
-pub fn execute_with_professional_vm(program: &LirProgram, debug: bool) -> Result<i64, String> {
+pub fn execute_with_professional_vm(program: &LirProgram, debug: bool) -> crate::Result<i64> {
     let mut vm_manager = ProfessionalVMManager::new(debug)?;
     vm_manager.execute_program(program)
 }

@@ -258,6 +258,29 @@ impl From<serde_json::Error> for KarteError {
     }
 }
 
+// 从String自动转换（映射为内部错误）
+// 提供向后兼容性，允许 Err(msg.into()) 从 String 错误迁移
+impl From<String> for KarteError {
+    fn from(msg: String) -> Self {
+        KarteError::Internal {
+            message: msg,
+            file: "<unknown>",
+            line: 0,
+        }
+    }
+}
+
+// 从&str自动转换
+impl From<&str> for KarteError {
+    fn from(msg: &str) -> Self {
+        KarteError::Internal {
+            message: msg.to_string(),
+            file: "<unknown>",
+            line: 0,
+        }
+    }
+}
+
 /// Karte Result类型别名
 ///
 /// 在整个编译器中使用此类型简化错误处理

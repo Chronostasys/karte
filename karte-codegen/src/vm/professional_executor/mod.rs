@@ -50,7 +50,7 @@ pub struct ProfessionalExecutor {
 
 impl ProfessionalExecutor {
     /// 创建新的专业执行器
-    pub fn new(debug_mode: bool) -> Result<Self, String> {
+    pub fn new(debug_mode: bool) -> crate::Result<Self> {
         Ok(Self {
             execution_engine: ExecutionEngine::new(debug_mode),
             debug_mode,
@@ -58,7 +58,7 @@ impl ProfessionalExecutor {
     }
 
     /// 创建支持JIT的专业执行器
-    pub fn new_with_jit(debug_mode: bool) -> Result<Self, String> {
+    pub fn new_with_jit(debug_mode: bool) -> crate::Result<Self> {
         Ok(Self {
             execution_engine: ExecutionEngine::new(debug_mode),
             debug_mode,
@@ -66,7 +66,7 @@ impl ProfessionalExecutor {
     }
 
     /// 执行程序（解释执行）
-    pub fn execute(&mut self, program: &LirProgram) -> Result<i64, String> {
+    pub fn execute(&mut self, program: &LirProgram) -> crate::Result<i64> {
         if self.debug_mode {
             info!("专业执行器: 开始解释执行程序");
         }
@@ -77,7 +77,7 @@ impl ProfessionalExecutor {
     }
 
     /// 使用JIT编译并执行程序（新架构）
-    pub fn execute_with_jit(&mut self, program: &LirProgram) -> Result<i64, String> {
+    pub fn execute_with_jit(&mut self, program: &LirProgram) -> crate::Result<i64> {
         if self.debug_mode {
             info!("专业执行器: 开始JIT编译并执行程序 (连续内存架构)");
         }

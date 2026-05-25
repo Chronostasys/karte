@@ -31,7 +31,7 @@ pub struct X86Compiler {
 
 impl X86Compiler {
     /// 创建新的x86编译器
-    pub fn new(debug_mode: bool) -> Result<Self, String> {
+    pub fn new(debug_mode: bool) -> crate::Result<Self> {
         Ok(Self {
             debug_mode: true,
             current_function_used_regs: Vec::new(),
@@ -57,11 +57,11 @@ impl X86Compiler {
     }
 
     /// 获取物理寄存器编号（映射后的 x86_64 硬件寄存器）
-    fn get_physical_register(&self, reg: &Register) -> Result<u8, String> {
+    fn get_physical_register(&self, reg: &Register) -> crate::Result<u8> {
         match reg {
             Register::Physical(id) => {
                 if *id >= 16 {
-                    Err(format!("x86_64 不支持寄存器编号 {}: 最多16个通用寄存器", id))
+                    Err(format!("x86_64 不支持寄存器编号 {}: 最多16个通用寄存器", id).into())
                 } else {
                     Ok(self.map_register(*id))
                 }
@@ -74,17 +74,17 @@ impl X86Compiler {
     }
 
     /// 获取未映射的 LIR 物理寄存器编号
-    fn get_lir_register(&self, reg: &Register) -> Result<u8, String> {
+    fn get_lir_register(&self, reg: &Register) -> crate::Result<u8> {
         match reg {
             Register::Physical(id) => {
                 if *id >= 16 {
-                    Err(format!("x86_64 不支持寄存器编号 {}", id))
+                    Err(format!("x86_64 不支持寄存器编号 {}", id).into())
                 } else {
                     Ok(*id)
                 }
             }
             Register::Virtual(id) => {
-                Err(format!("x86_64 JIT 遇到虚拟寄存器 v{}", id))
+                Err(format!("x86_64 JIT 遇到虚拟寄存器 v{}", id).into())
             }
         }
     }
@@ -96,7 +96,7 @@ impl X86Compiler {
         code_builder: &mut CodeBuilder,
         _program: &LirProgram,
         is_main_function: bool,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         if self.debug_mode {
             log::debug!("x86 编译指令: {:?}", instruction);
         }
@@ -188,24 +188,24 @@ impl X86Compiler {
             }
             Instruction::StructAlloc { .. } => {
                 // StructAlloc 在指令降级后应该是 Alloc
-                Err("StructAlloc 应该已经被降级为 Alloc".to_string())
+                Err("StructAlloc 应该已经被降级为 Alloc".into())
             }
             Instruction::StructFieldLoad { .. }
             | Instruction::StructFieldStore { .. }
             | Instruction::StructFieldAddr { .. } => {
                 // 这些应该已经被降级为 Load64/Store64
-                Err(format!("Struct 操作应该已经被降级: {:?}", instruction))
+                Err(format!("Struct 操作应该已经被降级: {:?}", instruction).into())
             }
             Instruction::MemCopy { .. } => {
                 // MemCopy 应该已经被降级为多条 Load64/Store64
-                Err("MemCopy 应该已经被降级".to_string())
+                Err("MemCopy 应该已经被降级".into())
             }
             Instruction::Phi { .. } => {
                 // Phi 应该已经被消除
                 log::warn!("Phi 指令出现在 JIT 编译阶段，这表明 SSA 降级不完整");
                 Ok(())
             }
-            _ => Err(format!("不支持的指令类型: {:?}", instruction)),
+            _ => Err(format!("不支持的指令类型: {:?}", instruction).into()),
         }
     }
 }
@@ -219,7 +219,7 @@ impl X86Compiler {
         dst: &Register,
         src: &Operand,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let dst_reg = self.get_physical_register(dst)?;
 
         match src {
@@ -240,7 +240,7 @@ impl X86Compiler {
                 self.emit_mov_reg_rip_rel(code_builder, dst_reg, 0);
             }
             _ => {
-                return Err(format!("mov指令不支持的操作数类型: {:?}", src));
+                return Err(format!("mov指令不支持的操作数类型: {:?}", src).into());
             }
         }
         Ok(())
@@ -252,7 +252,7 @@ impl X86Compiler {
         src1: &Operand,
         src2: &Operand,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let dst_reg = self.get_physical_register(dst)?;
 
         match src1 {
@@ -266,7 +266,7 @@ impl X86Compiler {
                 self.emit_mov_reg_imm64(code_builder, dst_reg, *value);
             }
             _ => {
-                return Err(format!("add指令不支持的src1类型: {:?}", src1));
+                return Err(format!("add指令不支持的src1类型: {:?}", src1).into());
             }
         }
 
@@ -279,7 +279,7 @@ impl X86Compiler {
                 self.emit_add_reg_imm32(code_builder, dst_reg, *value as i32);
             }
             _ => {
-                return Err(format!("add指令不支持的src2类型: {:?}", src2));
+                return Err(format!("add指令不支持的src2类型: {:?}", src2).into());
             }
         }
         Ok(())
@@ -291,7 +291,7 @@ impl X86Compiler {
         src1: &Operand,
         src2: &Operand,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let dst_reg = self.get_physical_register(dst)?;
 
         match src1 {
@@ -305,7 +305,7 @@ impl X86Compiler {
                 self.emit_mov_reg_imm64(code_builder, dst_reg, *value);
             }
             _ => {
-                return Err(format!("sub指令不支持的src1类型: {:?}", src1));
+                return Err(format!("sub指令不支持的src1类型: {:?}", src1).into());
             }
         }
 
@@ -318,7 +318,7 @@ impl X86Compiler {
                 self.emit_sub_reg_imm32(code_builder, dst_reg, *value as i32);
             }
             _ => {
-                return Err(format!("sub指令不支持的src2类型: {:?}", src2));
+                return Err(format!("sub指令不支持的src2类型: {:?}", src2).into());
             }
         }
         Ok(())
@@ -330,7 +330,7 @@ impl X86Compiler {
         src1: &Operand,
         src2: &Operand,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let dst_reg = self.get_physical_register(dst)?;
 
         match src1 {
@@ -344,7 +344,7 @@ impl X86Compiler {
                 self.emit_mov_reg_imm64(code_builder, dst_reg, *value);
             }
             _ => {
-                return Err(format!("mul指令不支持的src1类型: {:?}", src1));
+                return Err(format!("mul指令不支持的src1类型: {:?}", src1).into());
             }
         }
 
@@ -357,7 +357,7 @@ impl X86Compiler {
                 self.emit_imul_reg_imm32(code_builder, dst_reg, *value as i32);
             }
             _ => {
-                return Err(format!("mul指令不支持的src2类型: {:?}", src2));
+                return Err(format!("mul指令不支持的src2类型: {:?}", src2).into());
             }
         }
         Ok(())
@@ -369,7 +369,7 @@ impl X86Compiler {
         src1: &Operand,
         src2: &Operand,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let dst_reg = self.get_physical_register(dst)?;
         let rax: u8 = 0; // RAX
         let rdx: u8 = 2; // RDX
@@ -409,7 +409,7 @@ impl X86Compiler {
                 div_src_reg = temp_reg;
             }
             _ => {
-                return Err(format!("div指令不支持的src2类型: {:?}", src2));
+                return Err(format!("div指令不支持的src2类型: {:?}", src2).into());
             }
         }
 
@@ -425,7 +425,7 @@ impl X86Compiler {
                 self.emit_mov_reg_imm64(code_builder, rax, *value);
             }
             _ => {
-                return Err(format!("div指令不支持的src1类型: {:?}", src1));
+                return Err(format!("div指令不支持的src1类型: {:?}", src1).into());
             }
         }
 
@@ -448,7 +448,7 @@ impl X86Compiler {
         src1: &Operand,
         src2: &Operand,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         match (src1, src2) {
             (Operand::Register { id: id1 }, Operand::Register { id: id2 }) => {
                 let reg1 = self.get_physical_register(id1)?;
@@ -463,7 +463,7 @@ impl X86Compiler {
                 return Err(format!(
                     "compare指令不支持的操作数组合: {:?}, {:?}",
                     src1, src2
-                ));
+                ).into());
             }
         }
         Ok(())
@@ -473,7 +473,7 @@ impl X86Compiler {
         &self,
         target: &karte_lir::LabelId,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let label_name = format!("label_{}", target.0);
         code_builder.emit_jump(JumpType::Unconditional, &label_name);
         Ok(())
@@ -484,7 +484,7 @@ impl X86Compiler {
         jump_type: JumpType,
         target: &karte_lir::LabelId,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let label_name = format!("label_{}", target.0);
         code_builder.emit_jump(jump_type, &label_name);
         Ok(())
@@ -494,7 +494,7 @@ impl X86Compiler {
         &self,
         target: &karte_lir::LabelId,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let label_name = format!("label_{}", target.0);
         code_builder.emit_jump(JumpType::Call, &label_name);
         Ok(())
@@ -505,7 +505,7 @@ impl X86Compiler {
         &self,
         function_register: &Register,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let reg = self.get_physical_register(function_register)?;
         self.emit_jmp_reg(code_builder, reg);
         Ok(())
@@ -516,7 +516,7 @@ impl X86Compiler {
         &self,
         target_register: &Register,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let reg = self.get_physical_register(target_register)?;
         self.emit_jmp_reg(code_builder, reg);
         Ok(())
@@ -527,7 +527,7 @@ impl X86Compiler {
         value: Option<&Register>,
         code_builder: &mut CodeBuilder,
         is_main_function: bool,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         // 将返回值移动到 RAX
         if let Some(reg) = value {
             let src_reg = self.get_physical_register(reg)?;
@@ -568,7 +568,7 @@ impl X86Compiler {
         addr: &Register,
         offset: i64,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let dst_reg = self.get_physical_register(dst)?;
         let addr_reg = self.get_physical_register(addr)?;
         self.emit_mov_reg_mem(code_builder, dst_reg, addr_reg, offset as i32);
@@ -581,7 +581,7 @@ impl X86Compiler {
         offset: i64,
         src: &Operand,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let addr_reg = self.get_physical_register(addr)?;
 
         match src {
@@ -601,7 +601,7 @@ impl X86Compiler {
                 self.emit_mov_mem_reg(code_builder, addr_reg, offset as i32, 0); // rax = 0
             }
             _ => {
-                return Err(format!("store64指令不支持的src类型: {:?}", src));
+                return Err(format!("store64指令不支持的src类型: {:?}", src).into());
             }
         }
         Ok(())
@@ -615,7 +615,7 @@ impl X86Compiler {
         src1: &Register,
         src2: &Register,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         // store64 [addr + offset], src1
         self.compile_store64(
             addr,
@@ -640,7 +640,7 @@ impl X86Compiler {
         addr: &Register,
         offset: i64,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         // load64 dst1, [addr + offset]
         self.compile_load64(dst1, addr, offset, code_builder)?;
         // load64 dst2, [addr + offset + 8]
@@ -654,7 +654,7 @@ impl X86Compiler {
         alignment: usize,
         allocation_type: &karte_lir::AllocationType,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         match allocation_type {
             karte_lir::AllocationType::Heap => {
                 let call = RuntimeCall::alloc(size, alignment);
@@ -663,7 +663,7 @@ impl X86Compiler {
             _ => Err(format!(
                 "Alloc instruction with unsupported allocation type: {:?}",
                 allocation_type
-            )),
+            ).into()),
         }
     }
 
@@ -671,7 +671,7 @@ impl X86Compiler {
         &self,
         addr: &Register,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let call = RuntimeCall::free(*addr);
         self.emit_runtime_call(code_builder, call, None)
     }
@@ -680,7 +680,7 @@ impl X86Compiler {
         &self,
         value: &Register,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let call = RuntimeCall::retain(*value);
         self.emit_runtime_call(code_builder, call, None)
     }
@@ -689,12 +689,12 @@ impl X86Compiler {
         &self,
         value: &Register,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let call = RuntimeCall::release(*value);
         self.emit_runtime_call(code_builder, call, None)
     }
 
-    fn compile_safepoint(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+    fn compile_safepoint(&self, code_builder: &mut CodeBuilder) -> crate::Result<()> {
         let call = RuntimeCall::gc_safepoint();
         self.emit_runtime_call(code_builder, call, None)
     }
@@ -704,7 +704,7 @@ impl X86Compiler {
         code_builder: &mut CodeBuilder,
         call: RuntimeCall,
         result: Option<&Register>,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let return_reg: u8 = 0; // RAX
         let exclude: Vec<u8> = if result.is_some() && call.expects_result() {
             vec![return_reg]
@@ -723,7 +723,7 @@ impl X86Compiler {
                     "runtime call {} 超过支持的参数数量(最多 {})",
                     call.intrinsic.name(),
                     arg_regs.len()
-                ));
+                ).into());
             }
             let target_reg = arg_regs[idx];
             match arg {
@@ -777,7 +777,7 @@ impl X86Compiler {
     }
 
     /// 生成主函数序言
-    fn emit_main_function_prologue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+    fn emit_main_function_prologue(&self, code_builder: &mut CodeBuilder) -> crate::Result<()> {
         // x86-64 System V ABI 入口:
         // 参数通过 RDI(7), RSI(6) 传递
         // RDI = 虚拟栈顶地址, RSI = 虚拟栈底地址
@@ -858,7 +858,7 @@ impl X86Compiler {
     }
 
     /// 生成内部函数序言（用于虚拟机内部函数调用）
-    fn emit_internal_function_prologue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+    fn emit_internal_function_prologue(&self, code_builder: &mut CodeBuilder) -> crate::Result<()> {
         // 内部函数使用虚拟栈，保存 callee-saved 到虚拟栈
         let vm_sp: u8 = 10; // R10 = 虚拟栈指针
         let vm_fp: u8 = 11; // R11 = 虚拟帧指针
@@ -908,7 +908,7 @@ impl X86Compiler {
     }
 
     /// 生成内部函数尾声
-    fn emit_internal_function_epilogue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+    fn emit_internal_function_epilogue(&self, code_builder: &mut CodeBuilder) -> crate::Result<()> {
         let vm_sp: u8 = 10; // R10 = 虚拟栈指针
         let tmp: u8 = 1;    // RCX = 临时寄存器
 
@@ -938,7 +938,7 @@ impl X86Compiler {
     }
 
     /// 生成主函数尾声（恢复系统栈并返回）
-    fn emit_main_function_epilogue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+    fn emit_main_function_epilogue(&self, code_builder: &mut CodeBuilder) -> crate::Result<()> {
         let vm_sp: u8 = 10; // R10 = 虚拟栈指针
 
         // main 函数的虚拟栈布局（从高地址到低地址）：
@@ -1349,7 +1349,7 @@ impl JitCompiler for X86Compiler {
         &mut self,
         function: &LirFunction,
         program: &LirProgram,
-    ) -> Result<CompiledFunction, String> {
+    ) -> crate::Result<CompiledFunction> {
         if self.debug_mode {
             log::debug!("x86_64: 开始编译函数 '{}'", function.name);
         }

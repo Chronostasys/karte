@@ -106,9 +106,9 @@ impl CodeBuilder {
     }
 
     /// 定义标签
-    pub fn define_label(&mut self, label: &str) -> Result<(), String> {
+    pub fn define_label(&mut self, label: &str) -> crate::Result<()> {
         if self.labels.contains_key(label) {
-            return Err(format!("标签 '{}' 已经定义", label));
+            return Err(format!("标签 '{}' 已经定义", label).into());
         }
 
         let position = self.buffer.position();
@@ -358,7 +358,7 @@ impl CodeBuilder {
     }
 
     /// 完成代码生成（不修补标签，仅返回机器码）
-    pub fn finalize(self) -> Result<MachineCodeBuffer, String> {
+    pub fn finalize(self) -> crate::Result<MachineCodeBuffer> {
         // 直接返回机器码，不修补任何标签引用
         Ok(self.buffer)
     }
@@ -368,7 +368,7 @@ impl CodeBuilder {
         mut self,
         global_addresses: Option<&std::collections::HashMap<String, *const u8>>,
         exec_base: usize,
-    ) -> Result<MachineCodeBuffer, String> {
+    ) -> crate::Result<MachineCodeBuffer> {
         log::debug!("🔧 开始修补跳转，exec_base: 0x{:016X}", exec_base);
 
         // 修补所有待处理的跳转
@@ -423,7 +423,7 @@ impl CodeBuilder {
                     JumpType::Unconditional | JumpType::Call => {
                         // B/BL指令：26位偏移（指令为4字节对齐）
                         if !(-(1 << 25)..(1 << 25)).contains(&relative_offset) {
-                            return Err(format!("跳转距离太远: {} 字节", relative_offset << 2));
+                            return Err(format!("跳转距离太远: {} 字节", relative_offset << 2).into());
                         }
 
                         // 获取原始指令并修补偏移
@@ -447,7 +447,7 @@ impl CodeBuilder {
                     _ => {
                         // 条件跳转指令：19位偏移
                         if !(-(1 << 18)..(1 << 18)).contains(&relative_offset) {
-                            return Err(format!("条件跳转距离太远: {} 字节", relative_offset << 2));
+                            return Err(format!("条件跳转距离太远: {} 字节", relative_offset << 2).into());
                         }
 
                         let mut instruction = original_instruction;
@@ -494,7 +494,7 @@ impl CodeBuilder {
 
                 // 检查偏移是否在32位范围内
                 if relative_offset < i32::MIN as i64 || relative_offset > i32::MAX as i64 {
-                    return Err(format!("跳转距离太远: {}", relative_offset));
+                    return Err(format!("跳转距离太远: {}", relative_offset).into());
                 }
 
                 // 将偏移写入代码
@@ -549,7 +549,7 @@ impl CodeBuilder {
                         return Err(format!(
                             "ADRP页偏移超出范围: {} (应在 ±1M 范围内)",
                             page_offset
-                        ));
+                        ).into());
                     }
 
                     let bytes = self.buffer.as_bytes();
@@ -693,7 +693,7 @@ impl CodeBuilder {
                     }
                 }
                 _ => {
-                    return Err(format!("不支持的地址修补类型: {:?}", pending.patch_type));
+                    return Err(format!("不支持的地址修补类型: {:?}", pending.patch_type).into());
                 }
             }
         }
@@ -705,7 +705,7 @@ impl CodeBuilder {
     pub fn finalize_with_global_addresses(
         self,
         global_addresses: Option<&std::collections::HashMap<String, *const u8>>,
-    ) -> Result<MachineCodeBuffer, String> {
+    ) -> crate::Result<MachineCodeBuffer> {
         // 调用新方法，使用0作为可执行内存基址（兼容旧代码）
         self.finalize_with_global_addresses_and_exec_base(global_addresses, 0)
     }
@@ -715,7 +715,7 @@ impl CodeBuilder {
         &self,
         label_name: &str,
         global_addresses: Option<&std::collections::HashMap<String, *const u8>>,
-    ) -> Result<usize, String> {
+    ) -> crate::Result<usize> {
         if let Some(global) = global_addresses {
             if let Some(&addr) = global.get(label_name) {
                 return Ok(addr as usize);
@@ -726,7 +726,7 @@ impl CodeBuilder {
     }
 
     /// 查找标签位置（先查找本地标签，再查找全局标签）
-    fn find_label_position(&self, label_name: &str) -> Result<usize, String> {
+    fn find_label_position(&self, label_name: &str) -> crate::Result<usize> {
         // 首先查找本地标签
         if let Some(&position) = self.labels.get(label_name) {
             return Ok(position);
@@ -739,7 +739,7 @@ impl CodeBuilder {
             }
         }
 
-        Err(format!("未定义的标签: {}", label_name))
+        Err(format!("未定义的标签: {}", label_name).into())
     }
 
     /// 添加源代码行号信息
@@ -971,11 +971,11 @@ pub fn patch_executable_memory(
     pending_jumps: &[PendingJump],
     pending_adrs: &[PendingAdr],
     pending_label_addresses: &[PendingLabelAddress],
-) -> Result<(), String> {
+) -> crate::Result<()> {
     log::debug!("🔧 开始原地修补，exec_base: 0x{:016X}", exec_base);
 
     // 辅助函数：查找 label 地址
-    let find_label_address = |label_name: &str| -> Result<usize, String> {
+    let find_label_address = |label_name: &str| -> crate::Result<usize> {
         // 优先查找全局标签表（绝对地址）
         if let Some(&addr) = global_labels.get(label_name) {
             return Ok(addr);
@@ -984,7 +984,7 @@ pub fn patch_executable_memory(
         if let Some(&offset) = labels.get(label_name) {
             return Ok(exec_base + offset);
         }
-        Err(format!("未定义的标签: {}", label_name))
+        Err(format!("未定义的标签: {}", label_name).into())
     };
 
     // 1. 修补所有待处理的跳转
@@ -1021,7 +1021,7 @@ pub fn patch_executable_memory(
                 JumpType::Unconditional | JumpType::Call => {
                     // B/BL指令：26位偏移
                     if !(-(1 << 25)..(1 << 25)).contains(&relative_offset) {
-                        return Err(format!("跳转距离太远: {} 字节", relative_offset << 2));
+                        return Err(format!("跳转距离太远: {} 字节", relative_offset << 2).into());
                     }
 
                     let mut instruction = original_instruction;
@@ -1039,7 +1039,7 @@ pub fn patch_executable_memory(
                 _ => {
                     // 条件跳转指令：19位偏移
                     if !(-(1 << 18)..(1 << 18)).contains(&relative_offset) {
-                        return Err(format!("条件跳转距离太远: {} 字节", relative_offset << 2));
+                        return Err(format!("条件跳转距离太远: {} 字节", relative_offset << 2).into());
                     }
 
                     let mut instruction = original_instruction;
@@ -1065,7 +1065,7 @@ pub fn patch_executable_memory(
             let relative_offset = (target_addr as i64) - (current_pos as i64);
 
             if relative_offset < i32::MIN as i64 || relative_offset > i32::MAX as i64 {
-                return Err(format!("跳转距离太远: {}", relative_offset));
+                return Err(format!("跳转距离太远: {}", relative_offset).into());
             }
 
             let offset_bytes = (relative_offset as i32).to_le_bytes();
@@ -1123,7 +1123,7 @@ pub fn patch_executable_memory(
                         return Err(format!(
                             "ADRP页偏移超出范围: {} (应在 ±1M 范围内)",
                             page_offset
-                        ));
+                        ).into());
                     }
 
                     let mut instruction =

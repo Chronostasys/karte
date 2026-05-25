@@ -70,7 +70,7 @@ enum AArch64Register {
 
 impl AArch64Compiler {
     /// 创建新的AArch64编译器
-    pub fn new(debug_mode: bool) -> Result<Self, String> {
+    pub fn new(debug_mode: bool) -> crate::Result<Self> {
         let mut compiler = Self {
             register_mapping: HashMap::new(),
             ffi_calling_convention: Self::create_calling_convention(),
@@ -192,7 +192,7 @@ impl AArch64Compiler {
     }
 
     /// 获取寄存器的物理编号
-    fn get_physical_register(&self, reg: &Register) -> Result<u8, String> {
+    fn get_physical_register(&self, reg: &Register) -> crate::Result<u8> {
         match reg {
             Register::Virtual(id) => {
                 // 虚拟寄存器不应出现在 JIT 阶段，寄存器分配必须在 JIT 之前完成
@@ -202,7 +202,7 @@ impl AArch64Compiler {
                 self.register_mapping
                     .get(reg)
                     .copied()
-                    .ok_or_else(|| format!("未映射的寄存器: {:?}", reg))
+                    .ok_or_else(|| format!("未映射的寄存器: {:?}", reg).into())
             }
         }
     }
@@ -215,7 +215,7 @@ impl AArch64Compiler {
         is_main_function: bool,
         instruction_index: usize,
         function: &LirFunction,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         if self.debug_mode {
             log::debug!("编译AArch64指令: {}", instruction);
         }
@@ -325,7 +325,7 @@ impl AArch64Compiler {
                 self.emit_nop(code_builder);
                 Ok(())
             }
-            _ => Err(format!("不支持的AArch64指令类型: {:?}", instruction)),
+            _ => Err(format!("不支持的AArch64指令类型: {:?}", instruction).into()),
         }
     }
 
@@ -335,7 +335,7 @@ impl AArch64Compiler {
         dst: &Register,
         src: &Operand,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let dst_reg = self.get_physical_register(dst)?;
 
         match src {
@@ -360,7 +360,7 @@ impl AArch64Compiler {
                 code_builder.emit_add_reg_label(dst_reg, &label_name);
             }
             _ => {
-                return Err(format!("不支持的移动操作数类型: {:?}", src));
+                return Err(format!("不支持的移动操作数类型: {:?}", src).into());
             }
         }
         Ok(())
@@ -373,7 +373,7 @@ impl AArch64Compiler {
         src1: &Operand,
         src2: &Operand,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let dst_reg = self.get_physical_register(dst)?;
 
         match (src1, src2) {
@@ -389,7 +389,7 @@ impl AArch64Compiler {
                 self.emit_add_reg_reg_imm(code_builder, dst_reg, src1_reg, *value as i32);
             }
             _ => {
-                return Err(format!("不支持的加法操作数组合: {:?}, {:?}", src1, src2));
+                return Err(format!("不支持的加法操作数组合: {:?}, {:?}", src1, src2).into());
             }
         }
         Ok(())
@@ -402,7 +402,7 @@ impl AArch64Compiler {
         src1: &Operand,
         src2: &Operand,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let dst_reg = self.get_physical_register(dst)?;
 
         match (src1, src2) {
@@ -432,7 +432,7 @@ impl AArch64Compiler {
                 self.emit_mov_reg_imm64(code_builder, dst_reg, result);
             }
             _ => {
-                return Err(format!("不支持的减法操作数组合: {:?}, {:?}", src1, src2));
+                return Err(format!("不支持的减法操作数组合: {:?}, {:?}", src1, src2).into());
             }
         }
         Ok(())
@@ -445,7 +445,7 @@ impl AArch64Compiler {
         src1: &Operand,
         src2: &Operand,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let dst_reg = self.get_physical_register(dst)?;
 
         match (src1, src2) {
@@ -464,7 +464,7 @@ impl AArch64Compiler {
                 self.emit_mul_reg_reg_reg(code_builder, dst_reg, src1_reg, temp_reg);
             }
             _ => {
-                return Err(format!("不支持的乘法操作数组合: {:?}, {:?}", src1, src2));
+                return Err(format!("不支持的乘法操作数组合: {:?}, {:?}", src1, src2).into());
             }
         }
         Ok(())
@@ -477,7 +477,7 @@ impl AArch64Compiler {
         src1: &Operand,
         src2: &Operand,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let dst_reg = self.get_physical_register(dst)?;
 
         match (src1, src2) {
@@ -496,7 +496,7 @@ impl AArch64Compiler {
                 self.emit_div_reg_reg_reg(code_builder, dst_reg, src1_reg, temp_reg);
             }
             _ => {
-                return Err(format!("不支持的除法操作数组合: {:?}, {:?}", src1, src2));
+                return Err(format!("不支持的除法操作数组合: {:?}, {:?}", src1, src2).into());
             }
         }
         Ok(())
@@ -508,7 +508,7 @@ impl AArch64Compiler {
         src1: &Operand,
         src2: &Operand,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         match (src1, src2) {
             (Operand::Register { id: src1_id }, Operand::Register { id: src2_id }) => {
                 let src1_reg = self.get_physical_register(src1_id)?;
@@ -522,7 +522,7 @@ impl AArch64Compiler {
                 self.emit_cmp_reg_imm(code_builder, src1_reg, *value as i32);
             }
             _ => {
-                return Err(format!("不支持的比较操作数组合: {:?}, {:?}", src1, src2));
+                return Err(format!("不支持的比较操作数组合: {:?}, {:?}", src1, src2).into());
             }
         }
         Ok(())
@@ -533,7 +533,7 @@ impl AArch64Compiler {
         &mut self,
         target: &karte_lir::LabelId,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let label_name = format!("label_{}", target.0);
         code_builder.emit_jump(JumpType::Unconditional, &label_name);
         Ok(())
@@ -545,7 +545,7 @@ impl AArch64Compiler {
         jump_type: JumpType,
         target: &karte_lir::LabelId,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let label_name = format!("label_{}", target.0);
         code_builder.emit_jump(jump_type, &label_name);
         Ok(())
@@ -556,7 +556,7 @@ impl AArch64Compiler {
         &mut self,
         target: &karte_lir::LabelId,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let label_name = format!("label_{}", target.0);
 
         // 🔧 优化：在连续内存架构中，优先使用相对跳转（BL指令）
@@ -571,7 +571,7 @@ impl AArch64Compiler {
         &mut self,
         function_register: &Register,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let function_reg = self.get_physical_register(function_register)?;
 
         // 🔧 修复：使用 BR 而不是 BLR
@@ -601,7 +601,7 @@ impl AArch64Compiler {
         &mut self,
         target_register: &Register,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let reg = self.get_physical_register(target_register)? as u32;
         // BR Xn: 1101 0110 0001 1111 0000 0000 0000 0000 | Rn(5)
         let instr = 0xD61F0000u32 | (reg << 5);
@@ -615,7 +615,7 @@ impl AArch64Compiler {
         value: Option<&Register>,
         code_builder: &mut CodeBuilder,
         is_main_function: bool,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         // 1. 将返回值移动到X0寄存器
         if let Some(return_reg) = value {
             let src_reg = self.get_physical_register(return_reg)?;
@@ -668,7 +668,7 @@ impl AArch64Compiler {
         addr: &Register,
         offset: i64,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let dst_reg = self.get_physical_register(dst)?;
         let addr_reg = self.get_physical_register(addr)?;
 
@@ -684,7 +684,7 @@ impl AArch64Compiler {
         offset: i64,
         src: &Operand,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let addr_reg = self.get_physical_register(addr)?;
 
         match src {
@@ -709,7 +709,7 @@ impl AArch64Compiler {
                 self.emit_str_reg_mem(code_builder, 16, addr_reg, offset as i32);
             }
             _ => {
-                return Err(format!("不支持的存储操作数类型: {:?}", src));
+                return Err(format!("不支持的存储操作数类型: {:?}", src).into());
             }
         }
         Ok(())
@@ -723,7 +723,7 @@ impl AArch64Compiler {
         src1: &Register,
         src2: &Register,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let base_reg = self.get_physical_register(addr)?;
         let reg1 = self.get_physical_register(src1)?;
         let reg2 = self.get_physical_register(src2)?;
@@ -734,7 +734,7 @@ impl AArch64Compiler {
             return Err(format!(
                 "StorePair offset must be 8-byte aligned, got: {}",
                 offset
-            ));
+            ).into());
         }
 
         // 🔧 修复：如果操作SP，确保使用16字节对齐
@@ -752,7 +752,7 @@ impl AArch64Compiler {
                 return Err(format!(
                     "StorePair offset out of range (±32KB): {}",
                     scaled_offset
-                ));
+                ).into());
             }
 
             self.emit_stp_offset(code_builder, reg1, reg2, base_reg, aligned_offset as i32);
@@ -763,7 +763,7 @@ impl AArch64Compiler {
                 return Err(format!(
                     "StorePair offset out of range (±32KB): {}",
                     scaled_offset
-                ));
+                ).into());
             }
 
             self.emit_stp_offset(code_builder, reg1, reg2, base_reg, offset as i32);
@@ -779,7 +779,7 @@ impl AArch64Compiler {
         addr: &Register,
         offset: i64,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let base_reg = self.get_physical_register(addr)?;
         let reg1 = self.get_physical_register(dst1)?;
         let reg2 = self.get_physical_register(dst2)?;
@@ -790,7 +790,7 @@ impl AArch64Compiler {
             return Err(format!(
                 "LoadPair offset must be 8-byte aligned, got: {}",
                 offset
-            ));
+            ).into());
         }
 
         // 🔧 修复：如果操作SP，确保使用16字节对齐
@@ -808,7 +808,7 @@ impl AArch64Compiler {
                 return Err(format!(
                     "LoadPair offset out of range (±32KB): {}",
                     scaled_offset
-                ));
+                ).into());
             }
 
             self.emit_ldp_offset(code_builder, reg1, reg2, base_reg, aligned_offset as i32);
@@ -819,7 +819,7 @@ impl AArch64Compiler {
                 return Err(format!(
                     "LoadPair offset out of range (±32KB): {}",
                     scaled_offset
-                ));
+                ).into());
             }
 
             self.emit_ldp_offset(code_builder, reg1, reg2, base_reg, offset as i32);
@@ -836,7 +836,7 @@ impl AArch64Compiler {
         code_builder: &mut CodeBuilder,
         instruction_index: usize,
         function: &LirFunction,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         match allocation_type {
             karte_lir::AllocationType::Heap => {
                 let call = RuntimeCall::alloc(size, alignment);
@@ -845,7 +845,7 @@ impl AArch64Compiler {
             _ => Err(format!(
                 "Alloc instruction with unsupported allocation type: {:?}",
                 allocation_type
-            )),
+            ).into()),
         }
     }
 
@@ -855,7 +855,7 @@ impl AArch64Compiler {
         code_builder: &mut CodeBuilder,
         instruction_index: usize,
         function: &LirFunction,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let call = RuntimeCall::free(*addr);
         self.emit_runtime_call(code_builder, call, None, instruction_index, function)
     }
@@ -866,7 +866,7 @@ impl AArch64Compiler {
         code_builder: &mut CodeBuilder,
         instruction_index: usize,
         function: &LirFunction,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let call = RuntimeCall::retain(*value);
         self.emit_runtime_call(code_builder, call, None, instruction_index, function)
     }
@@ -877,7 +877,7 @@ impl AArch64Compiler {
         code_builder: &mut CodeBuilder,
         instruction_index: usize,
         function: &LirFunction,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let call = RuntimeCall::release(*value);
         self.emit_runtime_call(code_builder, call, None, instruction_index, function)
     }
@@ -887,7 +887,7 @@ impl AArch64Compiler {
         code_builder: &mut CodeBuilder,
         instruction_index: usize,
         function: &LirFunction,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         // GC 安全点：调用运行时函数
         let call = RuntimeCall::gc_safepoint();
         self.emit_runtime_call(code_builder, call, None, instruction_index, function)
@@ -900,7 +900,7 @@ impl AArch64Compiler {
         result: Option<&Register>,
         instruction_index: usize,
         function: &LirFunction,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let return_reg = AArch64Register::X0 as u8;
 
         // 🔧 关键修复：排除当前指令定义的目标寄存器
@@ -959,7 +959,7 @@ impl AArch64Compiler {
                     "runtime call {} 超出支持的参数数量(最多 {})",
                     call.intrinsic.name(),
                     arg_regs.len()
-                ));
+                ).into());
             }
             let target_reg = arg_regs[idx];
             match arg {
@@ -1590,7 +1590,7 @@ impl AArch64Compiler {
     }
 
     /// 生成函数序言
-    fn emit_function_prologue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+    fn emit_function_prologue(&self, code_builder: &mut CodeBuilder) -> crate::Result<()> {
         // AArch64 AAPCS64调用约定：X0和X1为前两个参数
         // 参考x86实现，将参数移动到虚拟机寄存器
         let x0 = AArch64Register::X0 as u8; // 第一个参数：虚拟栈顶地址
@@ -1683,7 +1683,7 @@ impl AArch64Compiler {
     fn emit_internal_function_prologue(
         &self,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         // 首先存fp sp，然后保存callee-saved寄存器
         // 获取虚拟栈指针寄存器
         let vm_sp_reg = self.vm_calling_convention.stack_pointer;
@@ -1732,7 +1732,7 @@ impl AArch64Compiler {
     fn emit_internal_function_epilogue(
         &self,
         code_builder: &mut CodeBuilder,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let vm_sp_reg = self.vm_calling_convention.stack_pointer;
         let vm_fp_reg = self.vm_calling_convention.frame_pointer;
 
@@ -1764,7 +1764,7 @@ impl AArch64Compiler {
     }
 
     /// 生成主函数尾声（用于与宿主环境交互的main函数）
-    fn emit_function_epilogue(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+    fn emit_function_epilogue(&self, code_builder: &mut CodeBuilder) -> crate::Result<()> {
         // AAPCS64 标准尾声：按照序言的逆序恢复寄存器
         // 注意：进入尾声时，SP指向虚拟栈，X29可能也指向虚拟栈
 
@@ -2021,7 +2021,7 @@ impl AArch64Compiler {
     }
 
     /// 保存 callee-saved 寄存器
-    fn save_callee_saved_registers(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+    fn save_callee_saved_registers(&self, code_builder: &mut CodeBuilder) -> crate::Result<()> {
         let callee_saved = &self.get_c_ffi_callee_saved_registers();
         if callee_saved.is_empty() {
             return Ok(());
@@ -2109,7 +2109,7 @@ impl AArch64Compiler {
     }
 
     /// 恢复 callee-saved 寄存器
-    fn restore_callee_saved_registers(&self, code_builder: &mut CodeBuilder) -> Result<(), String> {
+    fn restore_callee_saved_registers(&self, code_builder: &mut CodeBuilder) -> crate::Result<()> {
         let callee_saved = &self.get_c_ffi_callee_saved_registers();
         if callee_saved.is_empty() {
             return Ok(());
@@ -2196,7 +2196,7 @@ impl JitCompiler for AArch64Compiler {
         &mut self,
         function: &LirFunction,
         program: &LirProgram,
-    ) -> Result<CompiledFunction, String> {
+    ) -> crate::Result<CompiledFunction> {
         if self.debug_mode {
             log::debug!("AArch64: 开始编译函数 '{}'", function.name);
         }
@@ -2229,7 +2229,7 @@ impl JitCompiler for AArch64Compiler {
         if let Some(Instruction::Label { id, .. }) = function.instructions.first() {
             code_builder.define_label(&format!("label_{}", id.0))?;
         } else {
-            return Err(format!("函数 '{}' 的第一个指令必须是label", function.name));
+            return Err(format!("函数 '{}' 的第一个指令必须是label", function.name).into());
         }
         if !is_main_function {
             // 简化序言：用于内部函数调用
