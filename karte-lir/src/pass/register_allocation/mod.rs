@@ -1162,6 +1162,200 @@ mod tests;
 #[cfg(test)]
 mod simple_stack_tests;
 
+/// 线性扫描寄存器分配 Pass
+///
+/// 优先使用 LinearScanAllocator 进行寄存器分配，
+/// 如果线性扫描失败（如寄存器压力过大），则自动回退到 SimpleStackRegisterAllocation。
+pub struct LinearScanRegisterAllocation {
+    /// 回退用的简单栈式分配器
+    fallback: SimpleStackRegisterAllocation,
+}
+
+impl Default for LinearScanRegisterAllocation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LinearScanRegisterAllocation {
+    pub fn new() -> Self {
+        Self {
+            fallback: SimpleStackRegisterAllocation::new(),
+        }
+    }
+
+    /// 尝试使用线性扫描分配器
+    ///
+    /// 返回 Some((allocation_map, allocation_result)) 如果成功，
+    /// 返回 None 如果需要回退。
+    fn try_linear_scan(
+        &self,
+        function: &LirFunction,
+    ) -> Option<(HashMap<Register, AllocationTarget>, RegisterAllocationResult)> {
+        use lifetime_analysis::LifetimeAnalyzer;
+        use std::panic::AssertUnwindSafe;
+
+        // 第一步：进行生命周期分析
+        let lifetime_analyzer = LifetimeAnalyzer::new(types::CallingConvention::standard());
+        let (lifetimes, register_types) = lifetime_analyzer.analyze_simple(function);
+
+        // 第二步：使用线性扫描分配器（捕获 panic 以支持回退）
+        let mut allocator =
+            LinearScanAllocator::new(types::CallingConvention::standard());
+        let result = match std::panic::catch_unwind(AssertUnwindSafe(|| {
+            allocator.allocate(lifetimes, register_types)
+        })) {
+            Ok(result) => result,
+            Err(_) => {
+                info!("⚠️ 线性扫描分配器发生 panic，回退到简单分配器");
+                return None;
+            }
+        };
+
+        // 第三步：检查分配结果质量
+        // 如果溢出比例过高（超过 50%），回退到简单分配器
+        let total = result.stats.total_virtual_registers;
+        let spilled = result.stats.spilled_registers;
+        if total > 0 && spilled > 0 {
+            let spill_ratio = spilled as f64 / total as f64;
+            if spill_ratio > 0.5 {
+                info!(
+                    "线性扫描分配器溢出比例过高 ({:.1}%)，回退到简单分配器",
+                    spill_ratio * 100.0
+                );
+                return None;
+            }
+        }
+
+        // 第四步：将 RegisterAllocationResult 转换为 allocation_map
+        let mut allocation_map = HashMap::new();
+
+        for (virtual_reg, physical_reg) in &result.register_mapping {
+            allocation_map.insert(*virtual_reg, AllocationTarget::Register(*physical_reg));
+        }
+
+        for (virtual_reg, spill_slot) in &result.spilled_registers {
+            allocation_map.insert(*virtual_reg, AllocationTarget::Spill(spill_slot.slot_id));
+        }
+
+        // 确保所有虚拟寄存器都有分配
+        let virtual_registers: HashSet<Register> = function
+            .instructions
+            .iter()
+            .flat_map(|inst| {
+                let mut regs = Vec::new();
+                if let Some(def) = inst.get_def_register() {
+                    regs.push(def);
+                }
+                regs.extend(inst.get_used_registers());
+                regs
+            })
+            .filter(|reg| !reg.is_physical())
+            .collect();
+
+        for reg in &virtual_registers {
+            if !allocation_map.contains_key(reg) {
+                // 线性扫描未覆盖的寄存器，标记为溢出
+                let max_slot = allocation_map
+                    .values()
+                    .filter_map(|t| {
+                        if let AllocationTarget::Spill(s) = t {
+                            Some(*s)
+                        } else {
+                            None
+                        }
+                    })
+                    .max()
+                    .unwrap_or(0)
+                    + 1;
+                allocation_map.insert(*reg, AllocationTarget::Spill(max_slot));
+            }
+        }
+
+        Some((allocation_map, result))
+    }
+
+    /// 使用线性扫描的结果执行分配（重用 SimpleStack 的重写逻辑）
+    fn apply_linear_scan_result(
+        &mut self,
+        function: &mut LirFunction,
+        allocation_map: &HashMap<Register, AllocationTarget>,
+        allocation_result: &RegisterAllocationResult,
+        analyses: &mut AnalysisManager,
+    ) -> PassResult {
+        // 记录栈地址寄存器（从分配结果中获取）
+        self.fallback.stack_address_registers = allocation_result
+            .register_types
+            .iter()
+            .filter_map(|(reg, ty)| {
+                if *ty == RegisterType::StackAddress {
+                    Some(*reg)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // 应用分配和溢出处理（重用 SimpleStack 的重写逻辑）
+        let result = self.fallback.apply_allocation_with_spilling(function, allocation_map);
+
+        match result {
+            PassResult::Unchanged | PassResult::Changed => {
+                // 分析使用的寄存器
+                let used_registers = self.fallback.analyze_register_usage(function, allocation_map);
+                function.set_used_regs(used_registers);
+
+                // 存储分配结果到 AnalysisManager
+                analyses.store_result(
+                    "register-allocation".to_string(),
+                    Box::new(allocation_result.clone()),
+                );
+
+                result
+            }
+            PassResult::Failed(_) => result,
+        }
+    }
+}
+
+impl FunctionPass for LinearScanRegisterAllocation {
+    fn name(&self) -> &str {
+        "linear-scan-register-allocation"
+    }
+
+    fn description(&self) -> &str {
+        "线性扫描寄存器分配 - 高效的线性扫描算法，失败时回退到简单栈分配"
+    }
+
+    fn run_on_function(
+        &mut self,
+        function: &mut LirFunction,
+        analyses: &mut AnalysisManager,
+    ) -> PassResult {
+        info!("🎯 开始线性扫描寄存器分配：{}", function.name);
+
+        // 尝试使用线性扫描分配器
+        match self.try_linear_scan(function) {
+            Some((allocation_map, allocation_result)) => {
+                info!("✅ 线性扫描分配成功，应用结果");
+                self.apply_linear_scan_result(function, &allocation_map, &allocation_result, analyses)
+            }
+            None => {
+                info!("⚠️ 线性扫描分配失败，回退到简单栈分配");
+                self.fallback.run_on_function(function, analyses)
+            }
+        }
+    }
+
+    fn required_analyses(&self) -> Vec<&'static str> {
+        vec![]
+    }
+
+    fn invalidated_analyses(&self) -> Vec<&'static str> {
+        vec!["cfg", "def-use"]
+    }
+}
+
 /// 运行简单栈式寄存器分配的公共函数
 pub fn run_simple_stack_register_allocation(function: &mut LirFunction) -> PassResult {
     let mut pass = SimpleStackRegisterAllocation::new();
