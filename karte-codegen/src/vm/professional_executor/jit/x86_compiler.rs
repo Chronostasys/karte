@@ -11,7 +11,7 @@ use super::code_buffer::{CodeBuilder, JumpType};
 use super::compiler_trait::*;
 use super::ffi::{RuntimeArg, RuntimeCall};
 use karte_common::calling_convention::{CallingConvention, CC};
-use karte_lir::{Instruction, LirFunction, LirProgram, Operand, Register};
+use karte_lir::{ComparisonCondition, Instruction, LirFunction, LirProgram, Operand, Register};
 use std::collections::HashMap;
 
 /// x86-64编译器
@@ -135,6 +135,9 @@ impl X86Compiler {
             }
             Instruction::Compare { src1, src2, .. } => {
                 self.compile_compare(src1, src2, code_builder)
+            }
+            Instruction::CompareSet { dst, condition, src1, src2, .. } => {
+                self.compile_compare_set(dst, condition, src1, src2, code_builder)
             }
             Instruction::Jump { target, .. } => self.compile_jump(target, code_builder),
             Instruction::JumpEqual { target, .. } => {
@@ -499,6 +502,66 @@ impl X86Compiler {
                 ).into());
             }
         }
+        Ok(())
+    }
+
+    /// 编译 CompareSet 指令：cmp src1, src2; setcc dst_byte; movzbq dst, dst_byte
+    /// 直接从比较条件产生 0/1 值到 dst 寄存器，不产生分支。
+    fn compile_compare_set(
+        &self,
+        dst: &Register,
+        condition: &ComparisonCondition,
+        src1: &Operand,
+        src2: &Operand,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+
+        // ⚠️ 先 XOR 清零 dst（必须在 CMP 之前，否则 XOR 会破坏 CMP 的 flags）
+        if dst_reg >= 8 {
+            code_builder.emit_byte(0x49); // REX.W + REX.B
+        } else {
+            code_builder.emit_byte(0x48); // REX.W
+        }
+        code_builder.emit_byte(0x31); // XOR r/m, reg
+        code_builder.emit_byte(0xC0 | ((dst_reg & 0x07) << 3) | (dst_reg & 0x07));
+
+        // CMP 设置 flags
+        match (src1, src2) {
+            (Operand::Register { id: id1 }, Operand::Register { id: id2 }) => {
+                let reg1 = self.get_physical_register(id1)?;
+                let reg2 = self.get_physical_register(id2)?;
+                self.emit_cmp_reg_reg(code_builder, reg1, reg2);
+            }
+            (Operand::Register { id }, Operand::Immediate { value }) => {
+                let reg = self.get_physical_register(id)?;
+                self.emit_cmp_reg_imm32(code_builder, reg, *value as i32);
+            }
+            _ => {
+                return Err(format!(
+                    "setcc指令不支持的操作数组合: {:?}, {:?}",
+                    src1, src2
+                ).into());
+            }
+        }
+
+        // SETcc dst_byte: 根据条件设置低位字节为 0 或 1
+        let opcode2: u8 = match condition {
+            ComparisonCondition::Equal => 0x94,        // SETE
+            ComparisonCondition::NotEqual => 0x95,     // SETNE
+            ComparisonCondition::LessThan => 0x9C,     // SETL
+            ComparisonCondition::LessEqual => 0x9E,    // SETLE
+            ComparisonCondition::GreaterThan => 0x9F,  // SETG
+            ComparisonCondition::GreaterEqual => 0x9D, // SETGE
+        };
+        // REX.B 前缀用于扩展寄存器 (R8-R15 = 编码 8-15)
+        if dst_reg >= 8 {
+            code_builder.emit_byte(0x41); // REX.B
+        }
+        code_builder.emit_byte(0x0F);
+        code_builder.emit_byte(opcode2);
+        code_builder.emit_byte(0xC0 | (dst_reg & 0x07)); // ModRM: mod=11, reg=0, r/m=dst
+
         Ok(())
     }
 
@@ -1042,20 +1105,22 @@ impl X86Compiler {
             Operand::Register { id } => {
                 let src_reg = self.get_physical_register(id)?;
                 // MOV byte [addr + disp32], r8
-                // 使用 REX prefix 确保 64-bit 模式下的正确编码
-                if src_reg < 8 && addr_reg < 8 {
-                    code_builder.emit_bytes(&[
-                        0x88,
-                        0x80 | (src_reg << 3) | addr_reg,
-                    ]);
-                } else {
-                    let rex = 0x48
+                // x86_64: SPL/BPL/SIL/DIL (reg 4-7) 需要 REX prefix
+                // 没有 REX 时 reg 4-7 是 AH/CH/DH/BH，有 REX 时是 SPL/BPL/SIL/DIL
+                let need_rex = src_reg >= 4 || addr_reg >= 8 || src_reg >= 8;
+                if need_rex {
+                    let rex = 0x40  // REX base (不需要 REX.W，byte 操作)
                         | if src_reg >= 8 { 0x04 } else { 0 }
                         | if addr_reg >= 8 { 0x01 } else { 0 };
                     code_builder.emit_bytes(&[
                         rex,
                         0x88,
                         0x80 | ((src_reg & 7) << 3) | (addr_reg & 7),
+                    ]);
+                } else {
+                    code_builder.emit_bytes(&[
+                        0x88,
+                        0x80 | (src_reg << 3) | addr_reg,
                     ]);
                 }
                 code_builder.emit_i32(offset as i32);

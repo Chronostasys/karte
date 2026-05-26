@@ -7,6 +7,7 @@ use super::analysis::ControlFlowGraph;
 use super::instruction_transformer::IndexInstructionTransformer;
 use super::{AnalysisManager, FunctionPass, PassResult};
 use crate::{Instruction, LirFunction};
+use karte_diagnostics::Span;
 use log::{debug, error, info};
 
 /// φ指令消除Pass
@@ -47,20 +48,18 @@ impl PhiEliminationPass {
 
                 // 为每个incoming值在对应的前驱块末尾插入mov指令
                 for (source_label, operand) in incoming {
-                    // 使用CFG分析结果找到对应的基本块
                     if let Some(&source_block_id) = cfg.label_to_block.get(source_label) {
-                        // 注意：使用 get_node_by_id 而不是 nodes.get()，因为 block_id 可能不等于数组索引
                         if let Some(source_block) = cfg.get_node_by_id(source_block_id) {
-                            // 在源基本块的末尾插入mov指令
                             let insert_position = self.find_insertion_point(function, source_block);
+                            // 使用 usize::MAX 作为 span 标记，标识这是 phi elimination 生成的 Move
                             let move_instruction = Instruction::Move {
                                 dst: *dst,
                                 src: operand.clone(),
-                                span: *span,
+                                span: Span { start: usize::MAX, end: usize::MAX },
                             };
                             transformer.insert(insert_position, move_instruction);
                             debug!(
-                                "🔧 在位置 {} 插入 mov {:?}, {:?}",
+                                "🔧 在位置 {} 插入 phi mov {:?}, {:?}",
                                 insert_position, dst, operand
                             );
                         }
@@ -138,6 +137,7 @@ impl FunctionPass for PhiEliminationPass {
                 return PassResult::Failed("Missing CFG analysis".to_string());
             }
         };
+
         match self.eliminate_phi_instructions(function, cfg) {
             Ok(()) => {
                 info!("✅ φ指令消除完成");

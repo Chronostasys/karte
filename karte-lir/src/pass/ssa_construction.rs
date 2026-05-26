@@ -424,6 +424,31 @@ impl SsaConstructionPass {
             .is_some_and(|node| node.predecessors.len() > 1)
     }
 
+    /// 静态版本的 get_defined_register
+    fn get_defined_register_static(instruction: &Instruction) -> Option<Register> {
+        match instruction {
+            Instruction::Move { dst, .. }
+            | Instruction::Add { dst, .. }
+            | Instruction::Sub { dst, .. }
+            | Instruction::Mul { dst, .. }
+            | Instruction::Div { dst, .. }
+            | Instruction::Load64 { dst, .. } => Some(*dst),
+            Instruction::Call {
+                result: Some(dst), ..
+            } => Some(*dst),
+            Instruction::Alloc { dst, .. }
+            | Instruction::StructAlloc { dst, .. }
+            | Instruction::StructFieldLoad { dst, .. }
+            | Instruction::StructFieldAddr { dst, .. } => Some(*dst),
+            Instruction::CallIndirect {
+                result: Some(dst), ..
+            } => Some(*dst),
+            Instruction::Phi { dst, .. } => Some(*dst),
+            Instruction::CompareSet { dst, .. } => Some(*dst),
+            _ => None,
+        }
+    }
+
     /// 执行变量重命名并插入 phi 指令
     ///
     /// 🔧 重构：完整实现 SSA 重命名算法

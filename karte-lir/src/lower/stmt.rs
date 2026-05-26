@@ -4,7 +4,7 @@
 
 use super::helpers::value_to_key;
 use super::types::LirLoweringContext;
-use crate::{AllocationType, Instruction, Operand};
+use crate::{AllocationType, ComparisonCondition, Instruction, Operand};
 use karte_mir::{BinaryOperator, Statement, UnaryOperator, Value};
 
 pub(super) fn lower_statement(
@@ -120,7 +120,8 @@ pub(super) fn lower_statement(
                     span: *span,
                 },
 
-                // For logical operations, we handle them differently and return a move instruction
+                // 逻辑和比较操作：在下面的第二个 match 中处理
+                // 这里返回一个占位指令（会被丢弃）
                 BinaryOperator::And
                 | BinaryOperator::Or
                 | BinaryOperator::Equal
@@ -129,6 +130,8 @@ pub(super) fn lower_statement(
                 | BinaryOperator::LessEqual
                 | BinaryOperator::GreaterThan
                 | BinaryOperator::GreaterEqual => {
+                    // CompareSet 在下面的第二个 match 中通过 ctx.add_instruction 添加，
+                    // 这里返回一个无副作用的占位指令（会被覆盖）
                     Instruction::Move {
                         dst: temp_register,
                         src: Operand::Immediate { value: 0 },
@@ -177,71 +180,23 @@ pub(super) fn lower_statement(
                 | BinaryOperator::LessEqual
                 | BinaryOperator::GreaterThan
                 | BinaryOperator::GreaterEqual => {
-                    // 🔧 修复：确保False case的结果被正确设置
-                    // 先添加比较指令
-                    ctx.add_instruction(Instruction::Compare {
-                        src1: src1_clone,
-                        src2: src2_clone,
-                        span: *span,
-                    });
-
-                    let true_label = ctx.next_internal_label("cmp_true");
-                    let end_label = ctx.next_internal_label("cmp_end");
-
-                    let jump_instr = match op {
-                        BinaryOperator::Equal => Instruction::JumpEqual {
-                            target: true_label,
-                            span: *span,
-                        },
-                        BinaryOperator::NotEqual => Instruction::JumpNotEqual {
-                            target: true_label,
-                            span: *span,
-                        },
-                        BinaryOperator::LessThan => Instruction::JumpLess {
-                            target: true_label,
-                            span: *span,
-                        },
-                        BinaryOperator::LessEqual => Instruction::JumpLessEqual {
-                            target: true_label,
-                            span: *span,
-                        },
-                        BinaryOperator::GreaterThan => Instruction::JumpGreater {
-                            target: true_label,
-                            span: *span,
-                        },
-                        BinaryOperator::GreaterEqual => Instruction::JumpGreaterEqual {
-                            target: true_label,
-                            span: *span,
-                        },
+                    // 使用 CompareSet 指令：直接从比较条件产生 0/1 值，不产生分支
+                    // x86: cmp src1, src2; setcc dst; movzbq dst, dst
+                    // AArch64: cmp src1, src2; cset dst, condition
+                    let condition = match op {
+                        BinaryOperator::Equal => ComparisonCondition::Equal,
+                        BinaryOperator::NotEqual => ComparisonCondition::NotEqual,
+                        BinaryOperator::LessThan => ComparisonCondition::LessThan,
+                        BinaryOperator::LessEqual => ComparisonCondition::LessEqual,
+                        BinaryOperator::GreaterThan => ComparisonCondition::GreaterThan,
+                        BinaryOperator::GreaterEqual => ComparisonCondition::GreaterEqual,
                         _ => unreachable!(),
                     };
-                    ctx.add_instruction(jump_instr);
-
-                    // 🔧 关键修复：False case - 显式设置结果为0
-                    ctx.add_instruction(Instruction::Move {
+                    ctx.add_instruction(Instruction::CompareSet {
                         dst: temp_register,
-                        src: Operand::Immediate { value: 0 },
-                        span: *span,
-                    });
-                    ctx.add_instruction(Instruction::Jump {
-                        target: end_label,
-                        span: *span,
-                    });
-
-                    // True case
-                    ctx.add_instruction(Instruction::Label {
-                        id: true_label,
-                        span: *span,
-                    });
-                    ctx.add_instruction(Instruction::Move {
-                        dst: temp_register,
-                        src: Operand::Immediate { value: 1 },
-                        span: *span,
-                    });
-
-                    // End - 🔧 关键修复：确保end_label在正确位置
-                    ctx.add_instruction(Instruction::Label {
-                        id: end_label,
+                        condition,
+                        src1: src1_clone,
+                        src2: src2_clone,
                         span: *span,
                     });
                 }

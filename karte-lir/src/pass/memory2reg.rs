@@ -625,8 +625,8 @@ impl Memory2RegPass {
 
                     if phi_result_reg.id() != 998 {
                         info!(
-                            "🎯   - 替换load为move: {:?} = {:?} -> {:?} = {:?}",
-                            dst, addr, dst, phi_result_reg
+                            "M2R 替换load为move: load64 dst: {:?}, addr: {:?} -> mov dst: {:?}, src: {:?} (phi_result) at instr {}",
+                            dst, addr, dst, phi_result_reg, i
                         );
                         let new_move = Instruction::Move {
                             dst: *dst,
@@ -636,33 +636,36 @@ impl Memory2RegPass {
                         transformer.replace(i, new_move);
                         found_loads += 1;
                     } else {
-                        // 尝试使用块中以及前序block的最后一个 目标为原地址的 store的 src
-                        // 🔧 修复：使用 load_to_block 映射查找当前 load 所在的块
+                        // 尝试使用块中以及前序block的最后一个 store 的 src
+                        // 重要：只在线性路径上搜索（每个块只有一个前驱时才继续）
+                        // 不跨越分支汇合点，否则会从错误的分支获取 Store 值
                         let mut last_store = None;
                         if let Some(&current_block_id) = slot.load_to_block.get(&i) {
-                            let mut new_bbs = vec![];
-                            let mut bbs = vec![current_block_id];
-                            while !bbs.is_empty() {
-                                for bb in &bbs {
-                                    if let Some(block) = basic_blocks.get(bb) {
-                                        if let Some((_, src)) = block_last_store.get(bb) {
-                                            info!(
-                                                "🎯   - 使用块 {} 中最后一个store的值",
-                                                block.label.unwrap_or(LabelId(0))
-                                            );
-                                            last_store = Some(src.clone());
-                                            break;
-                                        } else {
-                                            new_bbs.extend_from_slice(&block.predecessors);
-                                        }
-                                    }
+                            let mut current_bb = current_block_id;
+                            loop {
+                                // 检查当前块是否有 store
+                                if let Some((_, src)) = block_last_store.get(&current_bb) {
+                                    last_store = Some(src.clone());
+                                    break;
                                 }
-                                bbs.clear();
-                                bbs.extend_from_slice(&new_bbs);
-                                new_bbs.clear();
+                                // 只在当前块只有一个前驱时继续向上搜索
+                                if let Some(block) = basic_blocks.get(&current_bb) {
+                                    if block.predecessors.len() == 1 {
+                                        current_bb = block.predecessors[0];
+                                    } else {
+                                        // 多个前驱（分支汇合点），停止搜索
+                                        break;
+                                    }
+                                } else {
+                                    break;
+                                }
                             }
                         }
                         if let Some(src) = last_store {
+                            info!(
+                                "M2R 替换load为move(fallback): load64 dst: {:?}, addr: {:?} -> mov dst: {:?}, src: {:?} at instr {}",
+                                dst, addr, dst, src, i
+                            );
                             let new_move = Instruction::Move {
                                 dst: *dst,
                                 src: src.clone(),
@@ -753,7 +756,7 @@ impl Memory2RegPass {
         for phi in phi_insertions.iter().rev() {
             if phi.variable == slot.address_register && phi.block_id == block_id {
                 if let Some(actual_dst) = phi.actual_dst_register {
-                    info!(
+                info!(
                         "✅ 在当前块 {} 找到phi节点，使用结果寄存器 {:?}",
                         block_id, actual_dst
                     );
@@ -762,48 +765,31 @@ impl Memory2RegPass {
             }
         }
 
-        // 3. 在支配链上向上查找phi节点
-        if let Some(dom_info) = dominance_info {
-            let mut current_id = block_id;
-            while let Some(&idom) = dom_info.immediate_dominators.get(&current_id) {
-                if idom == current_id {
-                    break;
-                }
+        // 3. 不在支配链上向上查找 phi 节点
+        // 
+        // 注意：之前的实现在支配链上查找 Phi 并使用其结果寄存器，
+        // 但这会导致错误：Phi 的结果是"在 Phi 所在块开头选择的值"，
+        // 而 load 需要的是"在 load 所在位置最近的定义"。
+        // 如果 Phi 和 load 之间有其他定义（Store/Move），Phi 的结果可能已过时。
+        // 
+        // 只有在 load 和 Phi 在同一个块中时，才能安全地使用 Phi 结果（这在步骤1已处理）。
+        // 对于跨块的 Phi 查找，由于存在跨分支错误关联的风险，这里不执行。
 
-                debug!("🔍 在支配块 {} 中查找phi节点", idom);
-                for phi in phi_insertions.iter().rev() {
-                    if phi.variable == slot.address_register && phi.block_id == idom {
-                        if let Some(actual_dst) = phi.actual_dst_register {
-                            info!(
-                                "✅ 在支配块 {} 找到phi节点，使用结果寄存器 {:?}",
-                                idom, actual_dst
-                            );
-                            return actual_dst;
-                        }
-                    }
-                }
-                current_id = idom;
-            }
-        }
-
-        // 4. 如果找不到phi节点，尝试找到最近的store指令的值
+        // 4. 如果找不到phi节点，尝试在当前块中找到最近的store指令的值
+        //    注意：只使用当前块中的 Store，不跨块查找。
+        //    跨块使用 Store 值可能导致错误——不同分支中的 Store 值可能不同，
+        //    load 应该通过 Phi 选择正确的值，而不是直接使用某个分支的 Store。
         let mut nearest_store = None;
         let mut nearest_distance = usize::MAX;
 
-        // 修复：确保store指令在同一个基本块或支配块中
         for &store_pos in &slot.stores {
             if store_pos < load_pos && load_pos - store_pos < nearest_distance {
                 if let Some(store_block) = slot.store_to_block.get(&store_pos) {
-                    if let Some(dom_info) = dominance_info {
-                        if dom_info
-                            .dominators
-                            .get(&block_id)
-                            .is_some_and(|doms| doms.contains(store_block))
-                        {
-                            nearest_store = Some(store_pos);
-                            nearest_distance = load_pos - store_pos;
-                            debug!("🔍 找到支配块 {} 中的store指令", store_block);
-                        }
+                    // 只使用当前块中的 Store
+                    if *store_block == block_id {
+                        nearest_store = Some(store_pos);
+                        nearest_distance = load_pos - store_pos;
+                        debug!("🔍 找到当前块 {} 中的store指令", store_block);
                     }
                 }
             }
@@ -1674,6 +1660,9 @@ impl Memory2RegPass {
 
     /// 🔧 新增：递归查找到达定义
     /// 从指定块开始，沿着控制流逆向查找最近一次store指令
+    /// 
+    /// 重要：只在"线性"路径上搜索——每个块只有一个前驱时才继续向上查找。
+    /// 不跨越分支汇合点（有多个前驱的块），否则会从错误的分支获取 Store 值。
     fn find_reaching_definition_on_path(
         &self,
         start_block_id: usize,
@@ -1697,31 +1686,7 @@ impl Memory2RegPass {
             return Some(last_store);
         }
 
-        // 2. 如果当前块没有store，递归检查其前驱块
-        if let Some(block) = basic_blocks.get(&start_block_id) {
-            for &pred_id in &block.predecessors {
-                // 避免循环依赖：确保前驱块不是目标块的后继
-                if pred_id == target_block_id {
-                    continue;
-                }
-
-                // 递归查找前驱块的到达定义
-                if let Some(value) = self.find_reaching_definition_on_path(
-                    pred_id,
-                    target_block_id,
-                    slot,
-                    function,
-                    basic_blocks,
-                    phi_blocks,
-                    phi_block_to_register,
-                ) {
-                    info!("🔍 通过前驱块{}找到到达定义: {:?}", pred_id, value);
-                    return Some(value);
-                }
-            }
-        }
-
-        // 3. 如果前驱块有phi节点，使用phi节点的结果
+        // 2. 如果当前块有phi节点，使用phi节点的结果
         if phi_blocks.contains(&start_block_id) {
             if let Some(&phi_result_register) = phi_block_to_register.get(&start_block_id) {
                 info!(
@@ -1734,6 +1699,26 @@ impl Memory2RegPass {
             }
         }
 
+        // 3. 如果当前块只有一个前驱（线性路径），沿前驱继续向上查找
+        //    如果有多个前驱（分支汇合点），停止搜索——避免从错误分支获取值
+        if let Some(block) = basic_blocks.get(&start_block_id) {
+            if block.predecessors.len() == 1 {
+                let pred_id = block.predecessors[0];
+                if pred_id != target_block_id && pred_id != start_block_id {
+                    return self.find_reaching_definition_on_path(
+                        pred_id,
+                        target_block_id,
+                        slot,
+                        function,
+                        basic_blocks,
+                        phi_blocks,
+                        phi_block_to_register,
+                    );
+                }
+            }
+        }
+
+        info!("🔍 在块{}没有找到到达定义（停止搜索）", start_block_id);
         None
     }
 

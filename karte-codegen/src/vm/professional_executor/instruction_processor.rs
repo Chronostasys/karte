@@ -3,7 +3,7 @@
 //! 负责处理所有LIR指令的执行，提供完整的指令集支持
 
 use super::{ExecutionEngine, InstructionResult, ProgramManager};
-use karte_lir::{Instruction, LabelId, Operand, Register};
+use karte_lir::{ComparisonCondition, Instruction, LabelId, Operand, Register};
 
 /// 指令处理器
 ///
@@ -46,6 +46,9 @@ impl InstructionProcessor {
 
             // 比较指令
             Instruction::Compare { src1, src2, .. } => self.handle_compare(src1, src2, engine),
+            Instruction::CompareSet { dst, condition, src1, src2, .. } => {
+                self.handle_compare_set(dst, condition, src1, src2, engine)
+            }
 
             // 跳转指令
             Instruction::Jump { target, .. } => self.handle_jump(target, program_manager),
@@ -228,6 +231,32 @@ impl InstructionProcessor {
         let val1 = engine.get_operand_value(src1)?;
         let val2 = engine.get_operand_value(src2)?;
         engine.compare(val1, val2);
+        Ok(InstructionResult::Continue)
+    }
+
+    /// 处理 CompareSet 指令：比较并设置布尔结果
+    fn handle_compare_set(
+        &mut self,
+        dst: &Register,
+        condition: &ComparisonCondition,
+        src1: &Operand,
+        src2: &Operand,
+        engine: &mut ExecutionEngine,
+    ) -> crate::Result<InstructionResult> {
+        let val1 = engine.get_operand_value(src1)?;
+        let val2 = engine.get_operand_value(src2)?;
+
+        // 执行比较并产生布尔结果
+        let result = match condition {
+            ComparisonCondition::Equal => (val1 == val2) as i64,
+            ComparisonCondition::NotEqual => (val1 != val2) as i64,
+            ComparisonCondition::LessThan => (val1 < val2) as i64,
+            ComparisonCondition::LessEqual => (val1 <= val2) as i64,
+            ComparisonCondition::GreaterThan => (val1 > val2) as i64,
+            ComparisonCondition::GreaterEqual => (val1 >= val2) as i64,
+        };
+
+        engine.set_register(dst, result)?;
         Ok(InstructionResult::Continue)
     }
 

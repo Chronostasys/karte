@@ -247,7 +247,8 @@ impl BlockLayoutPass {
             | Instruction::Sub { src1, src2, .. }
             | Instruction::Mul { src1, src2, .. }
             | Instruction::Div { src1, src2, .. }
-            | Instruction::Compare { src1, src2, .. } => {
+            | Instruction::Compare { src1, src2, .. }
+            | Instruction::CompareSet { src1, src2, .. } => {
                 operands.push(src1);
                 operands.push(src2);
             }

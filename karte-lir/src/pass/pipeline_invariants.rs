@@ -287,7 +287,8 @@ fn check_instruction_operands_no_virtual(instr: &Instruction, fn_name: &str, idx
                 );
             }
         }
-        Instruction::Compare { src1, src2, .. } => {
+        Instruction::Compare { src1, src2, .. }
+        | Instruction::CompareSet { src1, src2, .. } => {
             check_operand(src1, "Cmp src1");
             check_operand(src2, "Cmp src2");
         }
@@ -498,6 +499,7 @@ fn instr_name(instr: &Instruction) -> &'static str {
         Instruction::Mul { .. } => "mul",
         Instruction::Div { .. } => "div",
         Instruction::Compare { .. } => "cmp",
+        Instruction::CompareSet { .. } => "setcc",
         Instruction::Jump { .. } => "Jump",
         Instruction::JumpEqual { .. } => "je",
         Instruction::JumpNotEqual { .. } => "jne",

@@ -427,6 +427,11 @@ impl DefUseAnalysis {
                 self.analyze_operand_uses(src1, &mut uses);
                 self.analyze_operand_uses(src2, &mut uses);
             }
+            Instruction::CompareSet { dst, src1, src2, .. } => {
+                defs.push(*dst);
+                self.analyze_operand_uses(src1, &mut uses);
+                self.analyze_operand_uses(src2, &mut uses);
+            }
             Instruction::Load64 { dst, addr, .. } => {
                 defs.push(*dst);
                 uses.push(*addr);

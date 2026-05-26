@@ -35,6 +35,30 @@ pub struct StructLayout {
     pub alignment: usize,
 }
 
+/// 比较条件类型
+/// 用于 CompareSet 指令，指定比较的方式
+#[derive(Debug, Clone, PartialEq, Eq, Hash, IrCodec)]
+pub enum ComparisonCondition {
+    /// 等于 (x86: SETE, AArch64: EQ)
+    #[ir_codec(token = "eq")]
+    Equal,
+    /// 不等于 (x86: SETNE, AArch64: NE)
+    #[ir_codec(token = "ne")]
+    NotEqual,
+    /// 小于 (x86: SETL, AArch64: LT)
+    #[ir_codec(token = "lt")]
+    LessThan,
+    /// 小于等于 (x86: SETLE, AArch64: LE)
+    #[ir_codec(token = "le")]
+    LessEqual,
+    /// 大于 (x86: SETG, AArch64: GT)
+    #[ir_codec(token = "gt")]
+    GreaterThan,
+    /// 大于等于 (x86: SETGE, AArch64: GE)
+    #[ir_codec(token = "ge")]
+    GreaterEqual,
+}
+
 /// 内存分配类型
 #[derive(Debug, Clone, PartialEq, IrCodec)]
 pub enum AllocationType {
@@ -260,9 +284,27 @@ pub enum Instruction {
         span: Span,
     },
 
-    /// 比较指令：cmp src1, src2
+    /// 比较指令：cmp src1, src2（只设置 flags，不写结果）
     #[ir_codec(token = "cmp")]
     Compare {
+        #[ir_codec(args)]
+        src1: Operand,
+        #[ir_codec(args)]
+        src2: Operand,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 比较并设置布尔结果：setcc dst, condition, src1, src2
+    /// 直接从比较条件产生 0/1 值到 dst 寄存器，不产生分支。
+    /// x86: cmp src1, src2; setcc dst_byte; movzbq dst, dst_byte
+    /// AArch64: cmp src1, src2; cset dst, condition
+    #[ir_codec(token = "setcc")]
+    CompareSet {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        condition: ComparisonCondition,
         #[ir_codec(args)]
         src1: Operand,
         #[ir_codec(args)]
@@ -600,7 +642,8 @@ impl Instruction {
             | Instruction::StructFieldLoad { dst, .. }
             | Instruction::StructFieldAddr { dst, .. }
             | Instruction::Alloc { dst, .. }
-            | Instruction::MemCopy { dst, .. } => Some(*dst),
+            | Instruction::MemCopy { dst, .. }
+            | Instruction::CompareSet { dst, .. } => Some(*dst),
             Instruction::LoadPair { dst1, .. } => Some(*dst1),
             Instruction::Call { result, .. } | Instruction::CallIndirect { result, .. } => *result,
             Instruction::Phi { dst, .. } => Some(*dst),
@@ -632,7 +675,8 @@ impl Instruction {
             | Instruction::StructFieldLoad { dst, .. }
             | Instruction::StructFieldAddr { dst, .. }
             | Instruction::Alloc { dst, .. }
-            | Instruction::MemCopy { dst, .. } => {
+            | Instruction::MemCopy { dst, .. }
+            | Instruction::CompareSet { dst, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
                 }
@@ -693,6 +737,10 @@ impl Instruction {
                 self.add_operand_registers(src, &mut used);
             }
             Instruction::Compare { src1, src2, .. } => {
+                self.add_operand_registers(src1, &mut used);
+                self.add_operand_registers(src2, &mut used);
+            }
+            Instruction::CompareSet { src1, src2, .. } => {
                 self.add_operand_registers(src1, &mut used);
                 self.add_operand_registers(src2, &mut used);
             }
@@ -857,6 +905,13 @@ impl Instruction {
                 Self::replace_operand_register(src, old_reg, new_reg);
             }
             Instruction::Compare { src1, src2, .. } => {
+                Self::replace_operand_register(src1, old_reg, new_reg);
+                Self::replace_operand_register(src2, old_reg, new_reg);
+            }
+            Instruction::CompareSet { dst, src1, src2, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
                 Self::replace_operand_register(src1, old_reg, new_reg);
                 Self::replace_operand_register(src2, old_reg, new_reg);
             }
@@ -1112,6 +1167,7 @@ impl Instruction {
             | Instruction::Store64 { span, .. }
             | Instruction::Load64 { span, .. }
             | Instruction::Compare { span, .. }
+            | Instruction::CompareSet { span, .. }
             | Instruction::CallIndirect { span, .. }
             | Instruction::Call { span, .. }
             | Instruction::StructFieldStore { span, .. }
@@ -1189,6 +1245,15 @@ impl Instruction {
                 if let Operand::Register { id } = src2 {
                     used.push(*id);
                 }
+            }
+            Instruction::CompareSet { src1, src2, dst, .. } => {
+                if let Operand::Register { id } = src1 {
+                    used.push(*id);
+                }
+                if let Operand::Register { id } = src2 {
+                    used.push(*id);
+                }
+                defined.push(*dst);
             }
             Instruction::Return { value, .. } => {
                 if let Some(reg) = value {

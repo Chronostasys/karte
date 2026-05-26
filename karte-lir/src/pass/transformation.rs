@@ -130,6 +130,7 @@ impl DeadCodeElimination {
             Instruction::JumpGreater { .. } => true,
             Instruction::JumpGreaterEqual { .. } => true,
             Instruction::Compare { .. } => true,
+            Instruction::CompareSet { .. } => true,
             Instruction::Label { .. } => true,
             // JumpRegister 已合并为 JumpIndirect
             Instruction::EffectPushHandler { .. }
@@ -194,7 +195,8 @@ impl DeadCodeElimination {
             Instruction::BitNot { src, .. } => {
                 self.add_operand_registers(src, &mut used);
             }
-            Instruction::Compare { src1, src2, .. } => {
+            Instruction::Compare { src1, src2, .. }
+            | Instruction::CompareSet { src1, src2, .. } => {
                 self.add_operand_registers(src1, &mut used);
                 self.add_operand_registers(src2, &mut used);
             }

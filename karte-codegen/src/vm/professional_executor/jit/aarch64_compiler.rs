@@ -6,7 +6,7 @@ use super::code_buffer::{CodeBuilder, JumpType};
 use super::compiler_trait::*;
 use super::ffi::{RuntimeArg, RuntimeCall, RuntimeIntrinsic};
 use karte_common::calling_convention::{CallingConvention, PhysicalRegister, CC};
-use karte_lir::{Instruction, LirFunction, LirProgram, Operand, Register};
+use karte_lir::{ComparisonCondition, Instruction, LirFunction, LirProgram, Operand, Register};
 use std::collections::HashMap;
 
 /// AArch64编译器
@@ -236,6 +236,9 @@ impl AArch64Compiler {
             } => self.compile_div(dst, src1, src2, code_builder),
             Instruction::Compare { src1, src2, .. } => {
                 self.compile_compare(src1, src2, code_builder)
+            }
+            Instruction::CompareSet { dst, condition, src1, src2, .. } => {
+                self.compile_compare_set(dst, condition, src1, src2, code_builder)
             }
             Instruction::Jump { target, .. } => self.compile_jump(target, code_builder),
             Instruction::JumpEqual { target, .. } => {
@@ -525,6 +528,64 @@ impl AArch64Compiler {
                 return Err(format!("不支持的比较操作数组合: {:?}, {:?}", src1, src2).into());
             }
         }
+        Ok(())
+    }
+
+    /// 编译 CompareSet 指令：cmp src1, src2; cset dst, condition
+    /// 直接从比较条件产生 0/1 值到 dst 寄存器，不产生分支。
+    fn compile_compare_set(
+        &mut self,
+        dst: &Register,
+        condition: &ComparisonCondition,
+        src1: &Operand,
+        src2: &Operand,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        // 先执行 CMP 设置 flags
+        match (src1, src2) {
+            (Operand::Register { id: src1_id }, Operand::Register { id: src2_id }) => {
+                let src1_reg = self.get_physical_register(src1_id)?;
+                let src2_reg = self.get_physical_register(src2_id)?;
+                self.emit_cmp_reg_reg(code_builder, src1_reg, src2_reg);
+            }
+            (Operand::Register { id: src1_id }, Operand::Immediate { value }) => {
+                let src1_reg = self.get_physical_register(src1_id)?;
+                self.emit_cmp_reg_imm(code_builder, src1_reg, *value as i32);
+            }
+            _ => {
+                return Err(format!("不支持的setcc操作数组合: {:?}, {:?}", src1, src2).into());
+            }
+        }
+
+        let dst_reg = self.get_physical_register(dst)?;
+
+        // CSET dst, condition
+        // CSET 是 CSINC 的别名：CSET Xd, cond = CSINC Xd, XZR, XZR, invert(cond)
+        let aarch64_cond = match condition {
+            ComparisonCondition::Equal => 0x0,        // EQ
+            ComparisonCondition::NotEqual => 0x1,     // NE
+            ComparisonCondition::LessThan => 0xB,     // LT
+            ComparisonCondition::LessEqual => 0xD,    // LE
+            ComparisonCondition::GreaterThan => 0xC,  // GT
+            ComparisonCondition::GreaterEqual => 0xA, // GE
+        };
+        let inverted_cond = aarch64_cond ^ 1; // 反转条件
+
+        let dst_enc = dst_reg as u32;
+        let xzr = 31u32; // XZR 在 AArch64 中编码为 31
+
+        // CSINC Xd, XZR, XZR, invert(cond)
+        let instr: u32 = (1u32 << 31)     // sf = 1 (64-bit)
+            | (0b01 << 29)                // opc = 01
+            | (0b01010 << 24)             // fixed
+            | (0 << 23)                   // S = 0
+            | (0 << 22)                   // fixed
+            | (xzr << 16)                 // Rm = XZR (31)
+            | (inverted_cond << 12)       // condition (inverted)
+            | (xzr << 5)                  // Rn = XZR (31)
+            | (dst_enc & 0x1F);           // Rd
+
+        code_builder.emit_u32(instr);
         Ok(())
     }
 

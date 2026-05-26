@@ -618,6 +618,62 @@ impl InstructionLoweringPass {
 
         Ok(())
     }
+
+    /// 消除冗余Move指令
+    /// 
+    /// 根因：多个编译pass（phi elimination、transformation等）在前驱块末尾插入
+    /// Move指令。block layout 合并块后，这些 Move 在物理序列中出现在后继块的
+    /// Load64（从vm_fp栈帧加载）之后，覆盖了正确的值。
+    /// 
+    /// 策略：扫描指令序列，找到 Load64(addr=vm_fp) 后被同一基本块内后续 Move
+    /// 覆盖同一 dst 寄存器的模式。如果 Load64 和 Move 之间没有指令使用 Load64
+    /// 的值，则 Move 是冗余的，予以消除。
+    fn eliminate_redundant_moves(instructions: &mut Vec<Instruction>) {
+        if instructions.is_empty() {
+            return;
+        }
+
+        let has_phi = instructions.iter().any(|i| matches!(i, Instruction::Phi { .. }));
+        if !has_phi {
+            return;
+        }
+
+        let len = instructions.len();
+        let mut remove_set = std::collections::HashSet::new();
+
+        // vm_fp 通常是 Physical(11)
+        const VM_FP: u8 = 11;
+
+        // 扫描所有指令，寻找 Load64(vm_fp) 后紧跟冗余 Move 的模式
+        let mut i = 0;
+        while i < len - 1 {
+            // 检测模式：Load64 dst=Rd, addr=VM_FP, offset=N 紧跟 Move dst=Rd, src=Register
+            if let Instruction::Load64 { dst: Register::Physical(dst_phys), addr: Register::Physical(addr_phys), .. } = &instructions[i] {
+                if *addr_phys == VM_FP {
+                    // 检查下一条指令是否是覆盖同一寄存器的 dummy/phi Move
+                    if let Instruction::Move { dst: Register::Physical(move_dst), src: Operand::Register { .. }, span } = &instructions[i + 1] {
+                        let is_dummy = span.start == 0 && span.end == 0;
+                        let is_phi = span.start == usize::MAX && span.end == usize::MAX;
+                        if (is_dummy || is_phi) && *move_dst == *dst_phys {
+                            // Load64 的值未被中间指令使用（它们紧邻，所以一定没有被使用）
+                            remove_set.insert(i + 1);
+                        }
+                    }
+                }
+            }
+            i += 1;
+        }
+
+        if !remove_set.is_empty() {
+            log::debug!("消除了 {} 条冗余 Move 指令（覆盖 Load64 from vm_fp）", remove_set.len());
+            let new: Vec<_> = instructions.drain(..)
+                .enumerate()
+                .filter(|(i, _)| !remove_set.contains(i))
+                .map(|(_, instr)| instr)
+                .collect();
+            *instructions = new;
+        }
+    }
 }
 
 impl Default for InstructionLoweringPass {
@@ -924,6 +980,9 @@ impl FunctionPass for InstructionLoweringPass {
         }
 
         if changed {
+            // 消除冗余Move：phi elimination在BlockLayout重排后产生的冗余Move覆盖问题
+            Self::eliminate_redundant_moves(&mut new_instructions);
+
             function.instructions = new_instructions;
             PassResult::Changed
         } else {
