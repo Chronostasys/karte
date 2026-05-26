@@ -928,4 +928,320 @@ fn main() -> number {
             exit_code
         );
     }
+
+    /// AOT 测试辅助函数: 编译代码 → AOT 二进制 → 执行 → 检查退出码
+    fn compile_and_run_aot(code: &str, expected_exit_code: i64, test_name: &str) {
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "{}: Parsing failed: {:?}",
+            test_name,
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        // 应用逃逸分析优化 (与 JIT 测试一致)
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        // AOT 编译
+        let aot_compiler = karte_aot::AotCompiler::new(false);
+        let binary = aot_compiler
+            .compile_to_bytes(&lir)
+            .expect("AOT compilation failed");
+
+        // 写入临时文件并执行
+        let temp_dir = std::env::temp_dir();
+        let binary_path = temp_dir.join(format!("karte_aot_test_{}.bin", test_name));
+        std::fs::write(&binary_path, &binary).expect("Failed to write binary");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&binary_path, std::fs::Permissions::from_mode(0o755))
+                .expect("Failed to set permissions");
+        }
+
+        let output = std::process::Command::new(&binary_path)
+            .output()
+            .expect("Failed to execute binary");
+
+        let exit_code = output.status.code().unwrap_or(-1);
+        assert_eq!(
+            exit_code as i64,
+            expected_exit_code,
+            "{}: Expected exit code {}, got {}. stderr: {}",
+            test_name,
+            expected_exit_code,
+            exit_code,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        // 清理
+        let _ = std::fs::remove_file(&binary_path);
+    }
+
+    // ================ AOT 版本的所有集成测试 ================
+
+    #[test]
+    fn aot_test_function_as_value() {
+        let code = r#"
+fn add(x: number, y: number) -> number {
+    x + y
+}
+
+fn main() -> number {
+    let f = add;
+    f(10, 20)
+}
+"#;
+        compile_and_run_aot(code, 30, "function_as_value");
+    }
+
+    #[test]
+    fn aot_test_function_multiple_assignment() {
+        let code = r#"
+fn multiply(x: number, y: number) -> number {
+    x * y
+}
+
+fn main() -> number {
+    let f = multiply;
+    let g = f;
+    g(6, 7)
+}
+"#;
+        compile_and_run_aot(code, 42, "function_multiple_assignment");
+    }
+
+    #[test]
+    fn aot_test_identity_closure_returns_function() {
+        let code = r#"
+fn return_one() -> number {
+    1
+}
+
+fn main() -> number {
+    let a = |d| {d};
+    let f = a(return_one);
+    f()
+}
+"#;
+        compile_and_run_aot(code, 1, "identity_closure_returns_function");
+    }
+
+    #[test]
+    fn aot_test_function_chain_assignment() {
+        let code = r#"
+fn add(x: number, y: number) -> number {
+    x + y
+}
+
+fn multiply(x: number, y: number) -> number {
+    x * y
+}
+
+fn main() -> number {
+    let f1 = add;
+    let result1 = f1(5, 3);
+
+    let f2 = multiply;
+    let f3 = f2;
+    let result2 = f3(4, 7);
+
+    result1 + result2
+}
+"#;
+        compile_and_run_aot(code, 36, "function_chain_assignment");
+    }
+
+    #[test]
+    fn aot_test_plain_function_as_higher_order_param() {
+        let code = r#"
+fn add_one(n:number) -> number { n + 1 }
+
+fn main() -> number {
+    let apply = |f, x| { f(x) };
+    apply(add_one, 5)
+}
+"#;
+        compile_and_run_aot(code, 6, "plain_function_as_higher_order_param");
+    }
+
+    #[test]
+    fn aot_test_closure_as_higher_order_param() {
+        let code = r#"
+fn main() -> number {
+    let apply = |f, x| { f(x) };
+    let add_one = |n| { n + 1 };
+    apply(add_one, 5)
+}
+"#;
+        compile_and_run_aot(code, 6, "closure_as_higher_order_param");
+    }
+
+    #[test]
+    fn aot_test_mixed_function_and_closure_params() {
+        let code = r#"
+fn double(x:number) -> number { x * 2 }
+
+fn main() -> number {
+    let apply = |f, x| { f(x) };
+    let triple = |n| { n * 3 };
+
+    let result1 = apply(double, 5);
+    let result2 = apply(triple, 4);
+
+    result1 + result2
+}
+"#;
+        compile_and_run_aot(code, 22, "mixed_function_and_closure_params");
+    }
+
+    #[test]
+    fn aot_test_typed_function_param() {
+        let code = r#"
+fn wrong_return(n:number) -> number { n + 1 }
+
+fn main() -> number {
+    let apply = |f, x| { f(x) };
+    apply(wrong_return, 5)
+}
+"#;
+        compile_and_run_aot(code, 6, "typed_function_param");
+    }
+
+    #[test]
+    fn aot_test_register_allocation_bug_multiple_closure_calls() {
+        let code = r#"
+fn double(x:number) -> number { x * 2 }
+
+fn main() -> number {
+    let apply = |f, x| { f(x) };
+    let triple = |n| { n * 3 };
+
+    let result1 = apply(double, 5);
+    let result2 = apply(triple, 4);
+
+    result1 + result2
+}
+"#;
+        compile_and_run_aot(code, 22, "register_allocation_bug");
+    }
+
+    #[test]
+    fn aot_test_allocate_many_stack_refs() {
+        let code = r#"
+fn allocate_many() -> & &number {
+    let d = 1;
+    &(&d)
+}
+
+fn main() -> number {
+    let a = allocate_many();
+    let b = allocate_many();
+    let c = allocate_many();
+    let d = allocate_many();
+    let e = allocate_many();
+    let f = allocate_many();
+    let g = allocate_many();
+    let h = allocate_many();
+    let i = allocate_many();
+    let j = allocate_many();
+    *(*a) + *(*b) + *(*c) + *(*d) + *(*e) + *(*f) + *(*g) + *(*h) + *(*i) + *(*j)
+}
+"#;
+        compile_and_run_aot(code, 10, "allocate_many_stack_refs");
+    }
+
+    #[test]
+    fn aot_test_escape_after_deep_stack_usage() {
+        let code = r#"
+fn escape() -> &number {
+    let d = 42;
+    (&d)
+}
+
+fn deep_stack_usage(n: number) -> number {
+    if n == 0 {
+        1
+    } else {
+        let x = n;
+        let y = n + 1;
+        let z = n + 2;
+        x + y + z + deep_stack_usage(n - 1)
+    }
+}
+
+fn main() -> number {
+    let ptr = escape();
+    deep_stack_usage(10);
+    *ptr
+}
+"#;
+        compile_and_run_aot(code, 42, "escape_after_deep_stack_usage");
+    }
+
+    #[test]
+    fn aot_test_compile_and_run_project_mode() {
+        let mut entry_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        entry_path.pop();
+        entry_path.push("test_project");
+        entry_path.push("src");
+        entry_path.push("main.karte");
+
+        let mir_program = compile_project_to_mir(&entry_path);
+
+        let mut lir_program = lower_mir_to_lir(&mir_program).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir_program).expect("Optimization failed");
+
+        let aot_compiler = karte_aot::AotCompiler::new(false);
+        let binary = aot_compiler
+            .compile_to_bytes(&lir_program)
+            .expect("AOT compilation failed");
+
+        let temp_dir = std::env::temp_dir();
+        let binary_path = temp_dir.join("karte_aot_test_project_mode.bin");
+        std::fs::write(&binary_path, &binary).expect("Failed to write binary");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&binary_path, std::fs::Permissions::from_mode(0o755))
+                .expect("Failed to set permissions");
+        }
+
+        let output = std::process::Command::new(&binary_path)
+            .output()
+            .expect("Failed to execute binary");
+
+        let exit_code = output.status.code().unwrap_or(-1);
+        assert_eq!(
+            exit_code as i64, 30,
+            "AOT project mode: Expected exit code 30 (10 + 20), got {}",
+            exit_code
+        );
+
+        let _ = std::fs::remove_file(&binary_path);
+    }
 }

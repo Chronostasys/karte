@@ -1,0 +1,12 @@
+[package]
+name = "karte-aot"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+karte-lir = { path = "../karte-lir" }
+karte-codegen = { path = "../karte-codegen" }
+karte-common = { path = "../karte-common" }
+karte-syscall = { path = "../karte-syscall" }
+karte-rt = { path = "../karte-rt" }
+log = { workspace = true }

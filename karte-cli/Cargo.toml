@@ -30,5 +30,6 @@ karte-rt = { path = "../karte-rt" }
 rayon = "1.11.0"
 serde_json = "1.0"
 karte-module-system = { path = "../karte-module-system" }
+karte-aot = { path = "../karte-aot" }
 indicatif = "0.17"
 

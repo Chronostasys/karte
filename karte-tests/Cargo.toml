@@ -23,6 +23,7 @@ karte-common = { path = "../karte-common" }
 karte-module-system = { path = "../karte-module-system" }
 karte-escape-analysis = { path = "../karte-escape-analysis" }
 karte-gc = { path = "../karte-gc" }
+karte-aot = { path = "../karte-aot" }
 log.workspace = true
 env_logger = "0.11"
 

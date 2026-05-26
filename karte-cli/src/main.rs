@@ -132,6 +132,20 @@ enum Commands {
         #[arg(long)]
         debug: bool,
     },
+
+    /// AOT 编译：生成独立可执行文件（不依赖 glibc）
+    Aot {
+        /// 输入文件
+        input: String,
+
+        /// 输出文件名
+        #[arg(short, long)]
+        output: Option<String>,
+
+        /// 解析模式 (script/project)
+        #[arg(long, value_enum)]
+        mode: Option<ModeArg>,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -438,6 +452,16 @@ fn main() {
                 cli.verbose,
             ) {
                 error!("Optimization failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Some(Commands::Aot { input, output, mode }) => {
+            let mode = mode.map(|m| m.into()).unwrap_or_else(|| {
+                if default_mode_is_explicit { default_mode } else { ParserMode::Script }
+            });
+            let output_path = output.unwrap_or_else(|| "a.out".to_string());
+            if let Err(e) = runner::aot_compile(&input, &output_path, optimization_level, mode, cli.verbose) {
+                error!("AOT 编译失败: {}", e);
                 std::process::exit(1);
             }
         }

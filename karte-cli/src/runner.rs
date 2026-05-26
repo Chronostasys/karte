@@ -686,6 +686,53 @@ pub fn process_file(
     Ok(())
 }
 
+/// AOT 编译: 将 Karte 源码编译为独立可执行文件
+pub fn aot_compile(
+    input: &str,
+    output_path: &str,
+    optimization_level: OptimizationLevel,
+    mode: ParserMode,
+    verbose: u8,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    // 1. 读取源码 (input 可能是文件路径或内联表达式)
+    let source = if std::path::Path::new(input).exists() {
+        fs::read_to_string(input)?
+    } else {
+        input.to_string()
+    };
+
+    // 1. 编译到 LIR
+    let mut lir_program = compile_to_lir(&source, "aot", optimization_level, verbose > 0, mode)?;
+
+    // 2. 优化
+    let mut pipeline = karte_lir::OptimizationPipeline::new(optimization_level);
+    pipeline.optimize(&mut lir_program).map_err(|errors| -> Box<dyn std::error::Error> {
+        format!("LIR优化失败: {}", errors.join(", ")).into()
+    })?;
+
+    if verbose > 0 {
+        eprintln!("AOT: LIR 优化完成, {} 个函数", lir_program.functions.len());
+    }
+
+    // 3. AOT 编译
+    let aot_compiler = karte_aot::AotCompiler::new(verbose > 0);
+    let binary = aot_compiler.compile_to_bytes(&lir_program)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+
+    // 4. 写入输出文件
+    fs::write(output_path, &binary)?;
+    
+    // 5. 设置可执行权限
+    let perms = std::fs::Permissions::from_mode(0o755);
+    fs::set_permissions(output_path, perms)?;
+
+    println!("AOT: 已生成可执行文件: {} ({} 字节)", output_path, binary.len());
+
+    Ok(())
+}
+
 pub fn process_expression(
     input: &str,
     optimization_level: OptimizationLevel,

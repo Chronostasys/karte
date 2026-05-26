@@ -960,12 +960,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "karte-aot"
+version = "0.1.0"
+dependencies = [
+ "karte-codegen",
+ "karte-common",
+ "karte-lir",
+ "karte-rt",
+ "karte-syscall",
+ "log",
+]
+
+[[package]]
 name = "karte-cli"
 version = "0.1.0"
 dependencies = [
  "clap 4.5.40",
  "env_logger 0.10.2",
  "indicatif",
+ "karte-aot",
  "karte-codegen",
  "karte-diagnostics",
  "karte-hir",
@@ -1177,11 +1190,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "karte-syscall"
+version = "0.1.0"
+
+[[package]]
 name = "karte-tests"
 version = "0.1.0"
 dependencies = [
  "criterion 0.5.1",
  "env_logger 0.11.8",
+ "karte-aot",
  "karte-codegen",
  "karte-common",
  "karte-diagnostics",

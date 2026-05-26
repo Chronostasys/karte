@@ -1,0 +1,10 @@
+[package]
+name = "karte-syscall"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+
+[features]
+default = []
+std = []

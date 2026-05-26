@@ -6,13 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Karte is a functional programming language compiler implemented in Rust. It's a multi-stage compiler with a rich type system, supporting features like algebraic data types, pattern matching, references, and a module system.
 
-The project uses a Rust workspace with 16 crates, implementing a complete compiler pipeline from lexing through type checking to code generation (JIT compilation).
+The project uses a Rust workspace with 18 crates, implementing a complete compiler pipeline from lexing through type checking to code generation (JIT and AOT compilation).
 
 **Main Crates**:
 - `karte-lexer`, `karte-parser`, `karte-hir`, `karte-mir`, `karte-lir`, `karte-codegen` - Compilation pipeline
 - `karte-module-system` - Multi-module compilation and caching
 - `karte-escape-analysis` - Compile-time memory optimization
 - `karte-rt` - Runtime and JIT memory management
+- `karte-aot` - AOT compilation (generates standalone ELF executables, no glibc dependency)
+- `karte-syscall` - Raw syscall wrappers (x86_64 + AArch64, no libc)
 - `karte-cli` - Command-line interface
 - `karte-tests` - Integration test suite
 - `karte-ir-codec`, `karte-ir-derive` - IR serialization infrastructure
@@ -42,6 +44,11 @@ cargo run -- export "let x = 2; x * 3" --stage mir
 # Execute from IR files
 cargo run -- execute --stage mir demo.mir
 cargo run -- execute demo.lir
+
+# AOT compile to standalone executable (no glibc dependency)
+cargo run -- aot "42" -o test_binary
+cargo run -- aot input.karte -o output_binary
+./test_binary  # Run directly, returns exit code as result
 ```
 
 ### Testing
@@ -628,3 +635,80 @@ Store { target = %10000, value = %2 }
 
 - `docs/agent/x86-jit-codegen.md` — x86_64 JIT register conventions, save/restore, effect handler compilation
 - `docs/agent/ssa-construction.md` — SSA construction pass, dominator tree traversal
+- `docs/agent/aot-compilation.md` — AOT compilation architecture, ELF generation, runtime, syscall wrappers
+
+## AOT Compilation Architecture
+
+### Overview
+
+The `karte-aot` crate generates standalone ELF64 executables from compiled Karte programs. The generated binaries have **no glibc dependency** — they use raw Linux syscalls for all OS operations.
+
+### Architecture
+
+```
+Source → Lexer → Parser → HIR → MIR → LIR → [JIT: Execute] / [AOT: ELF Binary]
+                                                      ↑                 ↑
+                                              karte-codegen       karte-aot
+                                              (compiles LIR        (packages into
+                                               to machine code)    ELF executable)
+```
+
+**Key Design Decisions**:
+1. **Reuses existing JIT backends** — `X86Compiler`/`AArch64Compiler` compile LIR to machine code, same as JIT
+2. **Minimal runtime** — `_start` entry point, bump allocator, no-GC (for now), all using raw syscalls
+3. **Direct ELF generation** — No external linker needed, writes ELF64 directly
+4. **Cross-platform foundation** — `karte-syscall` provides raw syscall wrappers for both x86_64 and AArch64
+
+### karte-syscall
+
+Raw syscall wrappers with **no libc dependency**:
+- `sys_write(fd, buf, count)` — write to file descriptor
+- `sys_read(fd, buf, count)` — read from file descriptor
+- `sys_exit(code)` — exit process
+- `sys_mmap(...)` — memory mapping (used for virtual stack and heap)
+- `sys_munmap(addr, len)` — unmap memory
+- `sys_brk(addr)` — set program break
+- x86_64: Uses `syscall` instruction
+- AArch64: Uses `svc #0` instruction
+
+### karte-aot
+
+**Files**:
+- `elf.rs` — ELF64 executable writer (headers, program headers, code/data segments)
+- `runtime_x86.rs` — x86_64 runtime code generator (_start, bump allocator, runtime stubs)
+- `runtime_aarch64.rs` — AArch64 runtime (placeholder)
+- `compiler.rs` — AOT compiler orchestration (compile LIR → machine code → patch → ELF)
+
+**Runtime Functions** (generated as raw machine code bytes):
+- `_start` — Entry point: mmaps virtual stack (64KB) + heap (4MB), sets R10=vm_sp/R11=vm_fp, calls main, exits
+- `__karte_alloc_aligned(size, align)` — Bump allocator using pre-mapped heap
+- `__karte_free` — No-op (GC manages memory lifecycle)
+- `__karte_retain/release/gc_safepoint/update_stack_top` — No-ops
+
+**Compilation Flow**:
+1. Generate runtime machine code (hand-coded x86_64 bytes)
+2. Compile each Karte function using `X86Compiler` (same backend as JIT)
+3. Patch runtime calls (replace JIT function pointers with AOT runtime addresses)
+4. Patch cross-function jumps (resolve pending_jumps with absolute addresses)
+5. Patch label addresses (resolve pending_label_addresses)
+6. Patch _start's CALL main (set rel32 to main function offset)
+7. Generate ELF with code segment (R+W+X) containing runtime + Karte functions
+
+**ELF Layout**:
+```
+ELF Header (64 bytes)
+Program Headers (1-2 PT_LOAD entries)
+Padding to page boundary (0x1000)
+Code Segment:
+  Runtime code (_start, alloc, free, ...)
+  Runtime global data (bump_ptr, heap_limit)
+  Karte function code (main, add, ...)
+```
+
+### AOT Gotchas
+
+- **AOT 跳转修补**: `emit_jump(Call)` 使用 JMP (E9) 而不是 CALL (E8) — Karte 的调用约定通过虚拟栈管理返回地址
+- **运行时调用修补**: JIT 生成的运行时调用使用 `MOV RAX, imm64; CALL RAX` 模式 — 扫描并替换为 AOT 运行时地址
+- **R10/R11 保存**: 第二个 mmap (堆) 会覆盖 R10/R11 (vm_sp/vm_fp) — 必须在 mmap 之间 push/pop
+- **代码段必须可写**: 运行时全局变量 (bump_ptr) 使用 RIP-relative 寻址存储在代码段中
+- **Extended registers**: R8-R15 需要 REX.B 前缀 — 运行时代码生成必须正确处理扩展寄存器编码
