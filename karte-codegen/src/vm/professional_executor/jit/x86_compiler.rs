@@ -760,6 +760,21 @@ impl X86Compiler {
         Ok(())
     }
 
+    /// 编码 ModRM byte，处理扩展寄存器 (r8-r15) 的 REX.B 前缀
+    /// base_modrm: 基础 ModRM byte（不含 rm 字段的低位）
+    /// reg: 寄存器编号 (0-15)
+    /// 返回 (rex_byte, modrm_byte)，rex_byte 为 0 表示不需要额外 REX 前缀
+    fn encode_modrm_reg_extension(&self, base_modrm: u8, reg: u8) -> (u8, u8) {
+        let modrm = base_modrm | (reg & 0x07);
+        if reg >= 8 {
+            // 需要 REX.B=1。由于外层已经有 0x48 (REX.W)，合并为 0x49 (REX.WB)
+            // 返回 0x49 让调用者替换 0x48 为 0x49
+            (0x49, modrm)
+        } else {
+            (0, modrm)
+        }
+    }
+
     fn compile_shift_left(
         &self,
         dst: &Register,
@@ -788,22 +803,21 @@ impl X86Compiler {
         match src2 {
             Operand::Register { id } if *id == Register::Physical(1) || *id == Register::Physical(0) => {
                 let src2_reg = self.get_physical_register(id)?;
-                // SHL r64, CL: 0x48 0xD3 ModRM(0xE0 + reg)
-                code_builder.emit_bytes(&[0x48, 0xD3, 0xE0 | dst_reg]);
-                // 注意：CL 是 RCX 的低 8 位
+                let (rex, modrm) = self.encode_modrm_reg_extension(0xE0, dst_reg);
+                code_builder.emit_bytes(&[if rex != 0 { rex } else { 0x48 }, 0xD3, modrm]);
             }
             Operand::Immediate { value } => {
-                // SHL r64, imm8: 0x48 0xC1 ModRM(0xE0 + reg) imm8
-                code_builder.emit_bytes(&[0x48, 0xC1, 0xE0 | dst_reg]);
+                let (rex, modrm) = self.encode_modrm_reg_extension(0xE0, dst_reg);
+                code_builder.emit_bytes(&[if rex != 0 { rex } else { 0x48 }, 0xC1, modrm]);
                 code_builder.emit_bytes(&[(*value as u8) & 0x3F]);
             }
             Operand::Register { id } => {
                 let src2_reg = self.get_physical_register(id)?;
-                // 如果不是 CL，先移到 RCX
                 if src2_reg != 1 {
-                    self.emit_mov_reg_reg(code_builder, 1, src2_reg); // mov rcx, src2_reg
+                    self.emit_mov_reg_reg(code_builder, 1, src2_reg);
                 }
-                code_builder.emit_bytes(&[0x48, 0xD3, 0xE0 | dst_reg]);
+                let (rex, modrm) = self.encode_modrm_reg_extension(0xE0, dst_reg);
+                code_builder.emit_bytes(&[if rex != 0 { rex } else { 0x48 }, 0xD3, modrm]);
             }
             _ => return Err(format!("shl不支持的src2: {:?}", src2).into()),
         }
@@ -838,8 +852,8 @@ impl X86Compiler {
         }
         match src2 {
             Operand::Immediate { value } => {
-                // SHR r64, imm8: 0x48 0xC1 ModRM(0xE8 + reg) imm8
-                code_builder.emit_bytes(&[0x48, 0xC1, 0xE8 | dst_reg]);
+                let (rex, modrm) = self.encode_modrm_reg_extension(0xE8, dst_reg);
+                code_builder.emit_bytes(&[if rex != 0 { rex } else { 0x48 }, 0xC1, modrm]);
                 code_builder.emit_bytes(&[(*value as u8) & 0x3F]);
             }
             Operand::Register { id } => {
@@ -847,8 +861,8 @@ impl X86Compiler {
                 if src2_reg != 1 {
                     self.emit_mov_reg_reg(code_builder, 1, src2_reg);
                 }
-                // SHR r64, CL: 0x48 0xD3 ModRM(0xE8 + reg)
-                code_builder.emit_bytes(&[0x48, 0xD3, 0xE8 | dst_reg]);
+                let (rex, modrm) = self.encode_modrm_reg_extension(0xE8, dst_reg);
+                code_builder.emit_bytes(&[if rex != 0 { rex } else { 0x48 }, 0xD3, modrm]);
             }
             _ => return Err(format!("shr不支持的src2: {:?}", src2).into()),
         }
