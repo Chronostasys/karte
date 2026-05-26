@@ -1294,23 +1294,23 @@ pub(super) fn lower_statement(
             Ok(())
         }
 
-        Statement::RuntimeHeapBase { target, span } => {
+        Statement::RuntimeGlobal { target, global_name, span } => {
             // 获取 target 的栈地址
             let target_lvalue = ctx.lower_to_lvalue(target);
             let addr_reg = match target_lvalue {
                 Operand::Register { id } => id,
                 _ => {
                     return Err(vec![format!(
-                        "RuntimeHeapBase: target lvalue 不是寄存器: {:?}",
+                        "RuntimeGlobal: target lvalue 不是寄存器: {:?}",
                         target_lvalue
                     )]);
                 }
             };
-            // 分配临时寄存器，从全局数据区加载 heap_start 值
+            // 分配临时寄存器，从全局数据区加载值
             let temp_reg = ctx.current_function_mut().new_register();
             ctx.add_instruction(Instruction::LoadGlobal {
                 dst: temp_reg,
-                name: "heap_start".to_string(),
+                name: global_name.clone(),
                 span: *span,
             });
             // 把结果存回 target 的栈 slot

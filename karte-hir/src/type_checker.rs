@@ -1553,7 +1553,7 @@ impl TypeChecker {
                 Type::Number
             }
 
-            Expr::RuntimeHeapBase { span: _ } => {
+            Expr::RuntimeGlobal { span: _, .. } => {
                 Type::Number
             }
 

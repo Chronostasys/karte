@@ -239,7 +239,7 @@ fn canonicalize_statement(statement: &mut Statement, symbols: &HashMap<String, S
             canonicalize_value(addr, symbols);
             canonicalize_value(value, symbols);
         }
-        Statement::RuntimeHeapBase { .. } => {
+        Statement::RuntimeGlobal { .. } => {
             // 无需 canonicalize
         }
     }

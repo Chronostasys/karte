@@ -828,9 +828,10 @@ pub(crate) fn lower_expression(
             });
         }
 
-        Expr::RuntimeHeapBase { span } => {
-            ctx.add_statement(Statement::RuntimeHeapBase {
+        Expr::RuntimeGlobal { name, span } => {
+            ctx.add_statement(Statement::RuntimeGlobal {
                 target: destination.clone(),
+                global_name: name.clone(),
                 span: *span,
             });
         }

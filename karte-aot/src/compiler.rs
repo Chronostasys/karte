@@ -264,7 +264,13 @@ impl AotCompiler {
                 
                 // 处理 __global_* 标签 - 从 runtime 全局数据区获取地址
                 if let Some(global_name) = target_label.strip_prefix("__global_") {
-                    let runtime_global_name = format!("__{}", global_name);
+                    // 映射 Karte 全局名到 runtime 全局名
+                    let runtime_global_name = match global_name {
+                        "heap_base" => "__heap_start".to_string(),
+                        "heap_limit" => "__heap_limit".to_string(),
+                        "stack_bottom" => "__vstack_bottom".to_string(),
+                        _ => format!("__{}", global_name),
+                    };
                     if let Some(global_offset) = runtime.find_offset(&runtime_global_name) {
                         let global_addr = code_base + global_offset as u64;
                         let patch_pos = func_offset + pending.patch_position;

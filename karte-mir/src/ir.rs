@@ -407,11 +407,13 @@ pub enum Statement {
         #[ir_codec(skip)]
         span: Span,
     },
-    /// runtime 内建函数 - 返回堆基地址
-    #[ir_codec(token = "runtime_heap_base")]
-    RuntimeHeapBase {
+    /// runtime 内建函数 - 读取 runtime 全局变量
+    #[ir_codec(token = "runtime_global")]
+    RuntimeGlobal {
         #[ir_codec(args, target)]
         target: Value,
+        #[ir_codec(args)]
+        global_name: String,
         #[ir_codec(skip)]
         span: Span,
     },

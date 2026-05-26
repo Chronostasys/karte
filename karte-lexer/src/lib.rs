@@ -155,6 +155,10 @@ pub enum Token {
     // runtime 内建函数
     #[token("runtime_heap_base")]
     RuntimeHeapBase,
+    #[token("runtime_heap_limit")]
+    RuntimeHeapLimit,
+    #[token("runtime_stack_bottom")]
+    RuntimeStackBottom,
 
     // 跳过空白字符
     #[regex(r"[ \t\n\f]+", logos::skip)]
@@ -209,6 +213,8 @@ impl fmt::Display for Token {
             Token::UnsafeLoad32 => write!(f, "unsafe_load32"),
             Token::UnsafeStore32 => write!(f, "unsafe_store32"),
             Token::RuntimeHeapBase => write!(f, "runtime_heap_base"),
+            Token::RuntimeHeapLimit => write!(f, "runtime_heap_limit"),
+            Token::RuntimeStackBottom => write!(f, "runtime_stack_bottom"),
             Token::DoubleColon => write!(f, "::"),
             Token::Underscore => write!(f, "_"),
             Token::KwPerform => write!(f, "perform"),
