@@ -1208,23 +1208,33 @@ pub(super) fn lower_statement(
         } => {
             let addr_operand = ctx.lower_to_rvalue(addr);
             let addr_reg = ctx.ensure_register_from_operand(addr_operand, *span);
-            let target_operand = ctx.lower_to_rvalue(target);
-            let target_reg = ctx.ensure_register_from_operand(target_operand, *span);
+            // 获取 target 的栈地址，用于写回结果
+            let target_lvalue = ctx.lower_to_lvalue(target);
+            let target_addr_reg = match target_lvalue {
+                Operand::Register { id } => id,
+                _ => {
+                    return Err(vec![format!(
+                        "UnsafeLoad: target lvalue 不是寄存器: {:?}",
+                        target_lvalue
+                    )]);
+                }
+            };
+            let temp_reg = ctx.current_function_mut().new_register();
             match byte_size {
                 8 => ctx.add_instruction(Instruction::Load64 {
-                    dst: target_reg,
+                    dst: temp_reg,
                     addr: addr_reg,
                     offset: 0,
                     span: *span,
                 }),
                 4 => ctx.add_instruction(Instruction::Load32 {
-                    dst: target_reg,
+                    dst: temp_reg,
                     addr: addr_reg,
                     offset: 0,
                     span: *span,
                 }),
                 1 => ctx.add_instruction(Instruction::Load8 {
-                    dst: target_reg,
+                    dst: temp_reg,
                     addr: addr_reg,
                     offset: 0,
                     span: *span,
@@ -1236,6 +1246,13 @@ pub(super) fn lower_statement(
                     )]);
                 }
             }
+            // 把结果写回 target 的栈 slot
+            ctx.add_instruction(Instruction::Store64 {
+                addr: target_addr_reg,
+                offset: 0,
+                src: Operand::Register { id: temp_reg },
+                span: *span,
+            });
             Ok(())
         }
 
@@ -1274,6 +1291,35 @@ pub(super) fn lower_statement(
                     )]);
                 }
             }
+            Ok(())
+        }
+
+        Statement::RuntimeHeapBase { target, span } => {
+            // 获取 target 的栈地址
+            let target_lvalue = ctx.lower_to_lvalue(target);
+            let addr_reg = match target_lvalue {
+                Operand::Register { id } => id,
+                _ => {
+                    return Err(vec![format!(
+                        "RuntimeHeapBase: target lvalue 不是寄存器: {:?}",
+                        target_lvalue
+                    )]);
+                }
+            };
+            // 分配临时寄存器，从全局数据区加载 heap_start 值
+            let temp_reg = ctx.current_function_mut().new_register();
+            ctx.add_instruction(Instruction::LoadGlobal {
+                dst: temp_reg,
+                name: "heap_start".to_string(),
+                span: *span,
+            });
+            // 把结果存回 target 的栈 slot
+            ctx.add_instruction(Instruction::Store64 {
+                addr: addr_reg,
+                offset: 0,
+                src: Operand::Register { id: temp_reg },
+                span: *span,
+            });
             Ok(())
         }
 

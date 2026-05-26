@@ -261,6 +261,22 @@ impl AotCompiler {
             // 修补 pending label addresses (64-bit absolute address loads)
             for pending in &compiled.pending_label_addresses {
                 let target_label = &pending.target_label;
+                
+                // 处理 __global_* 标签 - 从 runtime 全局数据区获取地址
+                if let Some(global_name) = target_label.strip_prefix("__global_") {
+                    let runtime_global_name = format!("__{}", global_name);
+                    if let Some(global_offset) = runtime.find_offset(&runtime_global_name) {
+                        let global_addr = code_base + global_offset as u64;
+                        let patch_pos = func_offset + pending.patch_position;
+                        if self.debug {
+                            eprintln!("AOT: 修补全局变量 '{}' in '{}': patch_pos={}, addr=0x{:X}",
+                                global_name, func_name, patch_pos, global_addr);
+                        }
+                        karte_code[patch_pos..patch_pos + 8].copy_from_slice(&global_addr.to_le_bytes());
+                        continue;
+                    }
+                }
+                
                 if let Some(&target_addr) = global_labels.get(target_label) {
                     let patch_pos = func_offset + pending.patch_position;
                     if self.debug {

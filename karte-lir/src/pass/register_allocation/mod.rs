@@ -615,6 +615,11 @@ impl SimpleStackRegisterAllocation {
                         return true;
                     }
                 }
+                Instruction::LoadGlobal { dst, .. } => {
+                    if *dst == register {
+                        return true;
+                    }
+                }
                 Instruction::Store64 { addr, src, .. }
                 | Instruction::Store32 { addr, src, .. }
                 | Instruction::Store8 { addr, src, .. } => {

@@ -366,8 +366,8 @@ impl X86Runtime {
     //
     // 全局数据在 _start 末尾，布局:
     //   Offset 0:  bump_ptr       (u64) 当前分配位置
-    //   Offset 8:  heap_limit     (u64) 堆上限
-    //   Offset 16: heap_start     (u64) 堆起始地址
+    //   Offset 8:  heap_start     (u64) 堆起始地址
+    //   Offset 16: heap_limit     (u64) 堆上限
     //   Offset 24: vstack_bottom  (u64) 虚拟栈底
     //   Offset 32: alloc_count    (u64) 分配计数
     //   Offset 40: gc_threshold   (u64) GC 触发阈值
@@ -418,16 +418,16 @@ impl X86Runtime {
         self.pop(11); self.pop(10); // 恢复 vm_sp/vm_fp
 
         // 存储全局变量 (占位, 修补 RIP-relative)
+        // bump_ptr = heap_base (mmap 返回值)
         let bump_store = self.code.len();
         self.mov_rip_store(0, 0);
+        // heap_start = heap_base (在 RAX 被覆盖之前先存)
+        let heap_start_store = self.code.len();
+        self.mov_rip_store(0, 0);
+        // heap_limit = heap_base + 4MB
         self.mov_rr(1, 0); self.mov_ri(0, 4*1024*1024); self.add_rr(1, 0);
         let limit_store = self.code.len();
         self.mov_rip_store(1, 0);
-
-        // 存储额外全局变量 (占位)
-        // heap_start = bump_ptr 初始值 (即 heap_base)
-        let heap_start_store = self.code.len();
-        self.mov_rip_store(0, 0); // 存 RAX (heap_base)
 
         // vstack_bottom = R12
         self.mov_rr(0, 12);
@@ -458,15 +458,15 @@ impl X86Runtime {
         while self.code.len() % 8 != 0 { self.nop(); }
         let g = self.code.len();
         self.u64(0);                    // bump_ptr
-        self.u64(0);                    // heap_limit
         self.u64(0);                    // heap_start
+        self.u64(0);                    // heap_limit
         self.u64(0);                    // vstack_bottom
         self.u64(0);                    // alloc_count
         self.u64(0);                    // gc_threshold
 
         self.functions.push(RuntimeFunction { name: "__bump_ptr".into(), offset: g, size: 8 });
-        self.functions.push(RuntimeFunction { name: "__heap_limit".into(), offset: g+8, size: 8 });
-        self.functions.push(RuntimeFunction { name: "__heap_start".into(), offset: g+16, size: 8 });
+        self.functions.push(RuntimeFunction { name: "__heap_start".into(), offset: g+8, size: 8 });
+        self.functions.push(RuntimeFunction { name: "__heap_limit".into(), offset: g+16, size: 8 });
         self.functions.push(RuntimeFunction { name: "__vstack_bottom".into(), offset: g+24, size: 8 });
         self.functions.push(RuntimeFunction { name: "__alloc_count".into(), offset: g+32, size: 8 });
         self.functions.push(RuntimeFunction { name: "__gc_threshold".into(), offset: g+40, size: 8 });
@@ -478,8 +478,8 @@ impl X86Runtime {
             code[store_pos+3..store_pos+7].copy_from_slice(&disp.to_le_bytes());
         }
         patch_rip_store(&mut self.code, bump_store, g);
-        patch_rip_store(&mut self.code, limit_store, g+8);
-        patch_rip_store(&mut self.code, heap_start_store, g+16);
+        patch_rip_store(&mut self.code, heap_start_store, g+8);
+        patch_rip_store(&mut self.code, limit_store, g+16);
         patch_rip_store(&mut self.code, vstack_bottom_store, g+24);
         patch_rip_store(&mut self.code, alloc_count_store, g+32);
         patch_rip_store(&mut self.code, threshold_store, g+40);

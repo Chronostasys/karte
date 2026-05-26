@@ -230,6 +230,9 @@ impl X86Compiler {
                 // MemCopy 应该已经被降级为多条 Load64/Store64
                 Err("MemCopy 应该已经被降级".into())
             }
+            Instruction::LoadGlobal { dst, name, .. } => {
+                self.compile_load_global(dst, name, code_builder)
+            }
             Instruction::Phi { .. } => {
                 // Phi 应该已经被消除
                 log::warn!("Phi 指令出现在 JIT 编译阶段，这表明 SSA 降级不完整");
@@ -589,6 +592,29 @@ impl X86Compiler {
             self.emit_jmp_reg(code_builder, tmp_reg);
         }
 
+        Ok(())
+    }
+
+    /// 编译 LoadGlobal 指令 - 从 runtime 全局数据区加载值
+    /// 生成: movabs rax, <global_addr>  (占位，AOT 修补)
+    ///       mov dst, rax
+    ///       mov dst, [dst]              (从地址加载值)
+    fn compile_load_global(
+        &self,
+        dst: &Register,
+        name: &str,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+        
+        // 生成占位 movabs rax, <global_addr>
+        let global_label = format!("__global_{}", name);
+        code_builder.emit_movabs_to_rax_with_label(&global_label);
+        // mov dst, rax (dst = 全局变量的地址)
+        self.emit_mov_reg_reg(code_builder, dst_reg, 0);
+        // mov dst, [dst] (从地址加载值)
+        self.emit_mov_reg_mem(code_builder, dst_reg, dst_reg, 0);
+        
         Ok(())
     }
 

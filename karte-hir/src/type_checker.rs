@@ -1553,6 +1553,10 @@ impl TypeChecker {
                 Type::Number
             }
 
+            Expr::RuntimeHeapBase { span: _ } => {
+                Type::Number
+            }
+
             Expr::Assignment {
                 target,
                 value,

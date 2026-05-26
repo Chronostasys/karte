@@ -1200,6 +1200,9 @@ impl Memory2RegPass {
                 Instruction::Load64 { dst, .. } if *dst == register => {
                     definitions.push(i);
                 }
+                Instruction::LoadGlobal { dst, .. } if *dst == register => {
+                    definitions.push(i);
+                }
                 Instruction::Add { dst, .. }
                 | Instruction::Sub { dst, .. }
                 | Instruction::Mul { dst, .. }
@@ -1255,6 +1258,11 @@ impl Memory2RegPass {
                         // 从非栈地址加载，无法追踪
                         return None;
                     }
+                }
+                Instruction::LoadGlobal { dst, .. } if *dst == register => {
+                    debug!("🔍 找到LoadGlobal定义: {:?}", dst);
+                    // LoadGlobal 加载全局变量，无法简单追踪
+                    return None;
                 }
                 Instruction::StructFieldLoad {
                     dst, struct_addr, ..

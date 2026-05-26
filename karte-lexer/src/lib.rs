@@ -152,6 +152,10 @@ pub enum Token {
     #[token("unsafe_store32")]
     UnsafeStore32,
 
+    // runtime 内建函数
+    #[token("runtime_heap_base")]
+    RuntimeHeapBase,
+
     // 跳过空白字符
     #[regex(r"[ \t\n\f]+", logos::skip)]
     // Error token - handled automatically by Logos 0.13+
@@ -204,6 +208,7 @@ impl fmt::Display for Token {
             Token::UnsafeStore8 => write!(f, "unsafe_store8"),
             Token::UnsafeLoad32 => write!(f, "unsafe_load32"),
             Token::UnsafeStore32 => write!(f, "unsafe_store32"),
+            Token::RuntimeHeapBase => write!(f, "runtime_heap_base"),
             Token::DoubleColon => write!(f, "::"),
             Token::Underscore => write!(f, "_"),
             Token::KwPerform => write!(f, "perform"),

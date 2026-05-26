@@ -150,6 +150,7 @@ impl DeadCodeElimination {
             Instruction::Load64 { .. } => false,
             Instruction::Load32 { .. } => false,
             Instruction::Load8 { .. } => false,
+            Instruction::LoadGlobal { .. } => false,
             Instruction::Store32 { .. } => true,
             Instruction::Store8 { .. } => true,
             Instruction::LoadPair { .. } => false,
@@ -201,6 +202,8 @@ impl DeadCodeElimination {
             | Instruction::Load32 { addr, .. }
             | Instruction::Load8 { addr, .. } => {
                 used.push(*addr);
+            }
+            Instruction::LoadGlobal { .. } => {
             }
             Instruction::Store64 { addr, src, .. }
             | Instruction::Store32 { addr, src, .. }
@@ -322,6 +325,7 @@ impl DeadCodeElimination {
             | Instruction::Load64 { dst, .. }
             | Instruction::Load32 { dst, .. }
             | Instruction::Load8 { dst, .. }
+            | Instruction::LoadGlobal { dst, .. }
             | Instruction::Alloc { dst, .. }
             | Instruction::StructAlloc { dst, .. }
             | Instruction::StructFieldLoad { dst, .. }

@@ -299,6 +299,9 @@ fn check_instruction_operands_no_virtual(instr: &Instruction, fn_name: &str, idx
                 );
             }
         }
+        Instruction::LoadGlobal { dst, .. } => {
+            // LoadGlobal 不使用地址寄存器，只有 dst
+        }
         Instruction::Store64 { addr, src, .. } => {
             if addr.is_virtual() {
                 log::warn!(
@@ -524,6 +527,7 @@ fn instr_name(instr: &Instruction) -> &'static str {
         Instruction::Release { .. } => "Release",
         Instruction::Safepoint { .. } => "Safepoint",
         Instruction::Load64 { .. } => "Load64",
+        Instruction::LoadGlobal { .. } => "LoadGlobal",
         Instruction::Store64 { .. } => "Store64",
         Instruction::Load32 { .. } => "Load32",
         Instruction::Store32 { .. } => "Store32",

@@ -407,6 +407,14 @@ pub enum Statement {
         #[ir_codec(skip)]
         span: Span,
     },
+    /// runtime 内建函数 - 返回堆基地址
+    #[ir_codec(token = "runtime_heap_base")]
+    RuntimeHeapBase {
+        #[ir_codec(args, target)]
+        target: Value,
+        #[ir_codec(skip)]
+        span: Span,
+    },
     /// Phi 节点 - SSA 形式中的值选择
     Phi {
         target: Value,

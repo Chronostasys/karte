@@ -222,6 +222,11 @@ pub enum Expr {
         span: Span,
     },
 
+    /// runtime 内建函数 - 返回堆基地址
+    RuntimeHeapBase {
+        span: Span,
+    },
+
     /// 赋值表达式 - 为变量或字段赋值
     Assignment {
         target: Box<Expr>,
@@ -674,6 +679,9 @@ impl fmt::Display for Expr {
             Expr::UnsafeStore { addr, value, byte_size, .. } => {
                 write!(f, "unsafe_store{}({}, {})", byte_size, addr, value)
             }
+            Expr::RuntimeHeapBase { .. } => {
+                write!(f, "runtime_heap_base()")
+            }
             Expr::Assignment { target, value, .. } => {
                 write!(f, "{} = {}", target, value)
             }
@@ -728,6 +736,7 @@ impl Expr {
             Expr::Release { span, .. } => *span,
             Expr::UnsafeLoad { span, .. } => *span,
             Expr::UnsafeStore { span, .. } => *span,
+            Expr::RuntimeHeapBase { span, .. } => *span,
             Expr::Assignment { span, .. } => *span,
             Expr::EffectPerform { span, .. } => *span,
             Expr::EffectResume { span, .. } => *span,

@@ -1304,4 +1304,77 @@ fn main() -> number {
 "#;
         compile_and_run_aot(code, 255, "bitnot_operation");
     }
+
+    #[test]
+    fn test_runtime_heap_base_store_load() {
+        let code = r#"
+fn main() -> number {
+    let heap = runtime_heap_base();
+    unsafe_store(heap, 99);
+    let val = unsafe_load(heap);
+    val
+}
+"#;
+        compile_and_run_aot(code, 99, "runtime_heap_base_store_load");
+    }
+
+    #[test]
+    fn test_bump_allocator() {
+        let code = r#"
+fn bump_init() -> number {
+    let heap = runtime_heap_base();
+    unsafe_store(heap, heap + 8);
+    heap
+}
+
+fn bump_alloc(ctx: number, size: number) -> number {
+    let state = unsafe_load(ctx);
+    let result = state;
+    unsafe_store(ctx, state + size);
+    result
+}
+
+fn main() -> number {
+    let ctx = bump_init();
+    let p1 = bump_alloc(ctx, 16);
+    let p2 = bump_alloc(ctx, 16);
+    unsafe_store(p1, 10);
+    unsafe_store(p2, 20);
+    let v1 = unsafe_load(p1);
+    let v2 = unsafe_load(p2);
+    v1 + v2
+}
+"#;
+        compile_and_run_aot(code, 30, "bump_allocator");
+    }
+
+    #[test]
+    fn test_bump_allocator_addresses() {
+        let code = r#"
+fn bump_init() -> number {
+    let heap = runtime_heap_base();
+    unsafe_store(heap, heap + 8);
+    heap
+}
+
+fn bump_alloc(ctx: number, size: number) -> number {
+    let state = unsafe_load(ctx);
+    let result = state;
+    unsafe_store(ctx, state + size);
+    result
+}
+
+fn main() -> number {
+    let ctx = bump_init();
+    let p1 = bump_alloc(ctx, 16);
+    let p2 = bump_alloc(ctx, 16);
+    if p2 == p1 + 16 {
+        1
+    } else {
+        0
+    }
+}
+"#;
+        compile_and_run_aot(code, 1, "bump_allocator_addresses");
+    }
 }

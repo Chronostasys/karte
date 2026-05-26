@@ -537,6 +537,18 @@ pub enum Instruction {
         span: Span,
     },
 
+    /// 加载 runtime 全局变量 (通过名称)
+    /// 在 AOT 中被编译为 RIP-relative load
+    #[ir_codec(token = "load_global")]
+    LoadGlobal {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        name: String,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
     /// φ(Phi)节点 - SSA形式的控制流汇合
     /// 在控制流汇合点选择来自不同前驱块的值
     Phi {
@@ -583,6 +595,7 @@ impl Instruction {
             | Instruction::Load64 { dst, .. }
             | Instruction::Load32 { dst, .. }
             | Instruction::Load8 { dst, .. }
+            | Instruction::LoadGlobal { dst, .. }
             | Instruction::StructAlloc { dst, .. }
             | Instruction::StructFieldLoad { dst, .. }
             | Instruction::StructFieldAddr { dst, .. }
@@ -591,6 +604,7 @@ impl Instruction {
             Instruction::LoadPair { dst1, .. } => Some(*dst1),
             Instruction::Call { result, .. } | Instruction::CallIndirect { result, .. } => *result,
             Instruction::Phi { dst, .. } => Some(*dst),
+            Instruction::LoadGlobal { dst, .. } => Some(*dst),
             // EffectPerform 的 result 是定义寄存器（如果存在）
             Instruction::EffectPerform { result, .. } => *result,
             _ => None,
@@ -854,6 +868,11 @@ impl Instruction {
                 }
                 if *addr == old_reg {
                     *addr = new_reg;
+                }
+            }
+            Instruction::LoadGlobal { dst, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
                 }
             }
             Instruction::Store64 { addr, src, .. }
@@ -1159,6 +1178,9 @@ impl Instruction {
             | Instruction::Load8 { dst, addr, .. } => {
                 defined.push(*dst);
                 used.push(*addr);
+            }
+            Instruction::LoadGlobal { dst, .. } => {
+                defined.push(*dst);
             }
             Instruction::Compare { src1, src2, .. } => {
                 if let Operand::Register { id } = src1 {

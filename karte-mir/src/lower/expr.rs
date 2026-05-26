@@ -828,6 +828,13 @@ pub(crate) fn lower_expression(
             });
         }
 
+        Expr::RuntimeHeapBase { span } => {
+            ctx.add_statement(Statement::RuntimeHeapBase {
+                target: destination.clone(),
+                span: *span,
+            });
+        }
+
         Expr::Assignment {
             target,
             value,

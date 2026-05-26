@@ -459,6 +459,16 @@ impl<'a> Parser<'a> {
                 _ => {}
             }
 
+            // runtime 内建函数
+            if let Token::RuntimeHeapBase = &token.token {
+                let start_span = token.span;
+                self.advance();
+                self.expect_token(Token::LeftParen)?;
+                self.expect_token(Token::RightParen)?;
+                let span = Span::new(start_span.start, self.current_span().end);
+                return Ok(Expr::RuntimeHeapBase { span });
+            }
+
             // len 内建函数（Identifier 分支）
             if let Token::Identifier(name) = &token.token {
                 if name == "len" {
