@@ -554,9 +554,14 @@ impl X86Compiler {
             ComparisonCondition::GreaterThan => 0x9F,  // SETG
             ComparisonCondition::GreaterEqual => 0x9D, // SETGE
         };
-        // REX.B 前缀用于扩展寄存器 (R8-R15 = 编码 8-15)
+        // x86-64 字节寄存器编码陷阱：
+        // 无 REX 前缀时，r/m 字段 4-7 映射到 AH/CH/DH/BH（高字节）
+        // 加 REX 前缀后，r/m 字段 4-7 映射到 SPL/BPL/SIL/DIL（低字节）
+        // SETcc 操作数是字节寄存器，必须确保使用正确的低字节
         if dst_reg >= 8 {
-            code_builder.emit_byte(0x41); // REX.B
+            code_builder.emit_byte(0x41); // REX.B（扩展 R8-R15）
+        } else if dst_reg >= 4 {
+            code_builder.emit_byte(0x40); // REX（无扩展位，仅启用 SPL/BPL/SIL/DIL）
         }
         code_builder.emit_byte(0x0F);
         code_builder.emit_byte(opcode2);
