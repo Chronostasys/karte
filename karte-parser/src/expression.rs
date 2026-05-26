@@ -103,13 +103,13 @@ impl<'a> Parser<'a> {
 
     // comparison = additive (('==' | '>=' | '<=' | '>' | '<') additive)*
     pub(crate) fn parse_comparison(&mut self) -> Result<Expr, ParseError> {
-        let mut left = self.parse_additive()?;
+        let mut left = self.parse_bitwise_or()?;
 
         while let Some(token) = self.peek() {
             match token.token {
                 Token::EqualEqual => {
                     self.advance();
-                    let right = self.parse_additive()?;
+                    let right = self.parse_bitwise_or()?;
                     let span = Span::new(left.span().start, right.span().end);
                     left = Expr::BinaryOp {
                         left: Box::new(left),
@@ -118,9 +118,20 @@ impl<'a> Parser<'a> {
                         span,
                     };
                 }
+                Token::NotEqual => {
+                    self.advance();
+                    let right = self.parse_bitwise_or()?;
+                    let span = Span::new(left.span().start, right.span().end);
+                    left = Expr::BinaryOp {
+                        left: Box::new(left),
+                        op: BinaryOperator::NotEqual,
+                        right: Box::new(right),
+                        span,
+                    };
+                }
                 Token::GreaterEqual => {
                     self.advance();
-                    let right = self.parse_additive()?;
+                    let right = self.parse_bitwise_or()?;
                     let span = Span::new(left.span().start, right.span().end);
                     left = Expr::BinaryOp {
                         left: Box::new(left),
@@ -131,7 +142,7 @@ impl<'a> Parser<'a> {
                 }
                 Token::LessEqual => {
                     self.advance();
-                    let right = self.parse_additive()?;
+                    let right = self.parse_bitwise_or()?;
                     let span = Span::new(left.span().start, right.span().end);
                     left = Expr::BinaryOp {
                         left: Box::new(left),
@@ -142,7 +153,7 @@ impl<'a> Parser<'a> {
                 }
                 Token::Greater => {
                     self.advance();
-                    let right = self.parse_additive()?;
+                    let right = self.parse_bitwise_or()?;
                     let span = Span::new(left.span().start, right.span().end);
                     left = Expr::BinaryOp {
                         left: Box::new(left),
@@ -153,7 +164,7 @@ impl<'a> Parser<'a> {
                 }
                 Token::Less => {
                     self.advance();
-                    let right = self.parse_additive()?;
+                    let right = self.parse_bitwise_or()?;
                     let span = Span::new(left.span().start, right.span().end);
                     left = Expr::BinaryOp {
                         left: Box::new(left),
@@ -166,6 +177,102 @@ impl<'a> Parser<'a> {
             }
         }
 
+        Ok(left)
+    }
+
+    // bitwise_or = bitwise_xor (bitor bitwise_xor)*
+    pub(crate) fn parse_bitwise_or(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_bitwise_xor()?;
+        while let Some(token) = self.peek() {
+            if token.token == Token::BitOr {
+                self.advance();
+                let right = self.parse_bitwise_xor()?;
+                let span = Span::new(left.span().start, right.span().end);
+                left = Expr::BinaryOp {
+                    left: Box::new(left),
+                    op: BinaryOperator::BitOr,
+                    right: Box::new(right),
+                    span,
+                };
+            } else {
+                break;
+            }
+        }
+        Ok(left)
+    }
+
+    // bitwise_xor = bitwise_and (bitxor bitwise_and)*
+    pub(crate) fn parse_bitwise_xor(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_bitwise_and()?;
+        while let Some(token) = self.peek() {
+            if token.token == Token::BitXor {
+                self.advance();
+                let right = self.parse_bitwise_and()?;
+                let span = Span::new(left.span().start, right.span().end);
+                left = Expr::BinaryOp {
+                    left: Box::new(left),
+                    op: BinaryOperator::BitXor,
+                    right: Box::new(right),
+                    span,
+                };
+            } else {
+                break;
+            }
+        }
+        Ok(left)
+    }
+
+    // bitwise_and = shift (bitand shift)*
+    pub(crate) fn parse_bitwise_and(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_shift()?;
+        while let Some(token) = self.peek() {
+            if token.token == Token::BitAnd {
+                self.advance();
+                let right = self.parse_shift()?;
+                let span = Span::new(left.span().start, right.span().end);
+                left = Expr::BinaryOp {
+                    left: Box::new(left),
+                    op: BinaryOperator::BitAnd,
+                    right: Box::new(right),
+                    span,
+                };
+            } else {
+                break;
+            }
+        }
+        Ok(left)
+    }
+
+    // shift = additive ((shl | shr) additive)*
+    pub(crate) fn parse_shift(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_additive()?;
+        while let Some(token) = self.peek() {
+            match token.token {
+                Token::ShiftLeft => {
+                    self.advance();
+                    let right = self.parse_additive()?;
+                    let span = Span::new(left.span().start, right.span().end);
+                    left = Expr::BinaryOp {
+                        left: Box::new(left),
+                        op: BinaryOperator::ShiftLeft,
+                        right: Box::new(right),
+                        span,
+                    };
+                }
+                Token::ShiftRight => {
+                    self.advance();
+                    let right = self.parse_additive()?;
+                    let span = Span::new(left.span().start, right.span().end);
+                    left = Expr::BinaryOp {
+                        left: Box::new(left),
+                        op: BinaryOperator::ShiftRight,
+                        right: Box::new(right),
+                        span,
+                    };
+                }
+                _ => break,
+            }
+        }
         Ok(left)
     }
 
@@ -290,9 +397,73 @@ impl<'a> Parser<'a> {
                         pointer: Box::new(pointer),
                         span,
                     });
-                } else if name == "len" {
+                }
+            }
+
+            // bitnot 一元运算符
+            if token.token == Token::BitNot {
+                let start_span = token.span;
+                self.advance();
+                let operand = self.parse_factor()?;
+                let span = Span::new(start_span.start, operand.span().end);
+                return Ok(Expr::UnaryOp {
+                    op: UnaryOperator::BitNot,
+                    operand: Box::new(operand),
+                    span,
+                });
+            }
+
+            // unsafe 内存操作内建函数
+            match &token.token {
+                Token::UnsafeLoad | Token::UnsafeLoad8 | Token::UnsafeLoad32 => {
+                    let byte_size = match &token.token {
+                        Token::UnsafeLoad => 8,
+                        Token::UnsafeLoad8 => 1,
+                        Token::UnsafeLoad32 => 4,
+                        _ => unreachable!(),
+                    };
                     let start_span = token.span;
-                    self.advance(); // consume 'len'
+                    self.advance();
+                    self.expect_token(Token::LeftParen)?;
+                    let addr = self.parse_expression()?;
+                    self.expect_token(Token::RightParen)?;
+                    let span = Span::new(start_span.start, self.current_span().end);
+                    return Ok(Expr::UnsafeLoad {
+                        addr: Box::new(addr),
+                        byte_size,
+                        span,
+                    });
+                }
+                Token::UnsafeStore | Token::UnsafeStore8 | Token::UnsafeStore32 => {
+                    let byte_size = match &token.token {
+                        Token::UnsafeStore => 8,
+                        Token::UnsafeStore8 => 1,
+                        Token::UnsafeStore32 => 4,
+                        _ => unreachable!(),
+                    };
+                    let start_span = token.span;
+                    self.advance();
+                    self.expect_token(Token::LeftParen)?;
+                    let addr = self.parse_expression()?;
+                    self.expect_token(Token::Comma)?;
+                    let value = self.parse_expression()?;
+                    self.expect_token(Token::RightParen)?;
+                    let span = Span::new(start_span.start, self.current_span().end);
+                    return Ok(Expr::UnsafeStore {
+                        addr: Box::new(addr),
+                        value: Box::new(value),
+                        byte_size,
+                        span,
+                    });
+                }
+                _ => {}
+            }
+
+            // len 内建函数（Identifier 分支）
+            if let Token::Identifier(name) = &token.token {
+                if name == "len" {
+                    let start_span = token.span;
+                    self.advance();
                     let array = self.parse_primary()?;
                     let span = Span::new(start_span.start, array.span().end);
                     return Ok(Expr::ArrayLen {

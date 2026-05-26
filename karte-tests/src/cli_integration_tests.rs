@@ -1244,4 +1244,64 @@ fn main() -> number {
 
         let _ = std::fs::remove_file(&binary_path);
     }
+
+    // === 新特性测试（JIT 路径）===
+
+    #[test]
+    fn test_not_equal_operator() {
+        let code = r#"
+fn main() -> number {
+    if 5 != 3 {
+        1
+    } else {
+        0
+    }
+}
+"#;
+        compile_and_run_aot(code, 1, "not_equal_operator");
+    }
+
+    #[test]
+    fn test_bitwise_operations() {
+        let code = r#"
+fn main() -> number {
+    let a = 12;
+    let b = 10;
+    let c = a bitand b;
+    let d = a bitor b;
+    let e = a bitxor b;
+    c + d + e
+}
+"#;
+        // 8 + 14 + 6 = 28
+        compile_and_run_aot(code, 28, "bitwise_operations");
+    }
+
+    #[test]
+    fn test_shift_operations() {
+        let code = r#"
+fn main() -> number {
+    let a = 1;
+    let b = 4;
+    let c = a shl b;
+    let d = 16;
+    let e = 2;
+    let f = d shr e;
+    c + f
+}
+"#;
+        // 16 + 4 = 20
+        compile_and_run_aot(code, 20, "shift_operations");
+    }
+    #[test]
+    fn test_bitnot_operation() {
+        let code = r#"
+fn main() -> number {
+    let x = bitnot 0;
+    let y = x bitand 255;
+    y
+}
+"#;
+        compile_and_run_aot(code, 255, "bitnot_operation");
+    }
 }

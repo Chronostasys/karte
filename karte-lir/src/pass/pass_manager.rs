@@ -3,7 +3,7 @@ use super::{
     lifetime_analysis_pass::LifetimeAnalysisPass,
     AnalysisManager, AnalysisPass, FunctionPass, PassResult, PassStats, ProgramPass,
 };
-use crate::{KarteError, LirFunction, LirProgram};
+use crate::{Instruction, KarteError, LirFunction, LirProgram};
 use log::{debug, info, trace};
 use once_cell::sync::Lazy;
 use std::time::Instant;

@@ -525,9 +525,19 @@ fn instr_name(instr: &Instruction) -> &'static str {
         Instruction::Safepoint { .. } => "Safepoint",
         Instruction::Load64 { .. } => "Load64",
         Instruction::Store64 { .. } => "Store64",
+        Instruction::Load32 { .. } => "Load32",
+        Instruction::Store32 { .. } => "Store32",
+        Instruction::Load8 { .. } => "Load8",
+        Instruction::Store8 { .. } => "Store8",
         Instruction::StorePair { .. } => "StorePair",
         Instruction::LoadPair { .. } => "LoadPair",
         Instruction::Phi { .. } => "Phi",
+        Instruction::BitAnd { .. } => "bitand",
+        Instruction::BitOr { .. } => "bitor",
+        Instruction::BitXor { .. } => "bitxor",
+        Instruction::ShiftLeft { .. } => "shl",
+        Instruction::ShiftRight { .. } => "shr",
+        Instruction::BitNot { .. } => "bitnot",
     }
 }
 

@@ -155,6 +155,31 @@ impl<'a> Parser<'a> {
         }
     }
 
+    pub(crate) fn expect_token(&mut self, expected: Token) -> Result<(), ParseError> {
+        if let Some(token) = self.peek() {
+            if token.token == expected {
+                self.advance();
+                return Ok(());
+            }
+            return Err(ParseError::UnexpectedToken {
+                expected: format!("{:?}", expected),
+                found: token.token.clone(),
+                span: token.span,
+            });
+        }
+        Err(ParseError::UnexpectedEof {
+            expected: format!("{:?}", expected),
+        })
+    }
+
+    pub(crate) fn current_span(&self) -> Span {
+        if self.position > 0 && self.position <= self.tokens.len() {
+            self.tokens[self.position - 1].span
+        } else {
+            Span::new(0, 0)
+        }
+    }
+
     /// 错误恢复：跳过当前token并尝试继续解析
     fn recover_from_error(&mut self) {
         // 跳过当前错误的token

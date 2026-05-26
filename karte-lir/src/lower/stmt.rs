@@ -129,14 +129,44 @@ pub(super) fn lower_statement(
                 | BinaryOperator::LessEqual
                 | BinaryOperator::GreaterThan
                 | BinaryOperator::GreaterEqual => {
-                    // Handle these complex operations separately after the match
-                    // For now, return a simple move to avoid type mismatch
                     Instruction::Move {
                         dst: temp_register,
                         src: Operand::Immediate { value: 0 },
                         span: *span,
                     }
                 }
+
+                // 位运算指令
+                BinaryOperator::BitAnd => Instruction::BitAnd {
+                    dst: temp_register,
+                    src1,
+                    src2,
+                    span: *span,
+                },
+                BinaryOperator::BitOr => Instruction::BitOr {
+                    dst: temp_register,
+                    src1,
+                    src2,
+                    span: *span,
+                },
+                BinaryOperator::BitXor => Instruction::BitXor {
+                    dst: temp_register,
+                    src1,
+                    src2,
+                    span: *span,
+                },
+                BinaryOperator::ShiftLeft => Instruction::ShiftLeft {
+                    dst: temp_register,
+                    src1,
+                    src2,
+                    span: *span,
+                },
+                BinaryOperator::ShiftRight => Instruction::ShiftRight {
+                    dst: temp_register,
+                    src1,
+                    src2,
+                    span: *span,
+                },
             };
 
             // 处理复杂的逻辑运算和比较运算
@@ -383,6 +413,21 @@ pub(super) fn lower_statement(
 
                     // Subtract src from 1: result = 1 - src
                     ctx.add_instruction(Instruction::Sub {
+                        dst: temp_register,
+                        src1: Operand::Register { id: temp_reg },
+                        src2: src,
+                        span: *span,
+                    });
+                }
+                UnaryOperator::BitNot => {
+                    // ~x: bitwise NOT = XOR with -1 (all 1s)
+                    let temp_reg = ctx.current_function_mut().new_register();
+                    ctx.add_instruction(Instruction::Move {
+                        dst: temp_reg,
+                        src: Operand::Immediate { value: -1 },
+                        span: *span,
+                    });
+                    ctx.add_instruction(Instruction::BitXor {
                         dst: temp_register,
                         src1: Operand::Register { id: temp_reg },
                         src2: src,
@@ -1152,6 +1197,83 @@ pub(super) fn lower_statement(
             });
 
             log::debug!("🔧 Store: 将 {:?} 存储到地址 {:?}", value, target);
+            Ok(())
+        }
+
+        Statement::UnsafeLoad {
+            target,
+            addr,
+            byte_size,
+            span,
+        } => {
+            let addr_operand = ctx.lower_to_rvalue(addr);
+            let addr_reg = ctx.ensure_register_from_operand(addr_operand, *span);
+            let target_operand = ctx.lower_to_rvalue(target);
+            let target_reg = ctx.ensure_register_from_operand(target_operand, *span);
+            match byte_size {
+                8 => ctx.add_instruction(Instruction::Load64 {
+                    dst: target_reg,
+                    addr: addr_reg,
+                    offset: 0,
+                    span: *span,
+                }),
+                4 => ctx.add_instruction(Instruction::Load32 {
+                    dst: target_reg,
+                    addr: addr_reg,
+                    offset: 0,
+                    span: *span,
+                }),
+                1 => ctx.add_instruction(Instruction::Load8 {
+                    dst: target_reg,
+                    addr: addr_reg,
+                    offset: 0,
+                    span: *span,
+                }),
+                _ => {
+                    return Err(vec![format!(
+                        "Unsupported byte_size for unsafe_load: {}",
+                        byte_size
+                    )]);
+                }
+            }
+            Ok(())
+        }
+
+        Statement::UnsafeStore {
+            addr,
+            value,
+            byte_size,
+            span,
+        } => {
+            let addr_operand = ctx.lower_to_rvalue(addr);
+            let addr_reg = ctx.ensure_register_from_operand(addr_operand, *span);
+            let val_operand = ctx.lower_to_rvalue(value);
+            match byte_size {
+                8 => ctx.add_instruction(Instruction::Store64 {
+                    addr: addr_reg,
+                    offset: 0,
+                    src: val_operand,
+                    span: *span,
+                }),
+                4 => ctx.add_instruction(Instruction::Store32 {
+                    addr: addr_reg,
+                    offset: 0,
+                    src: val_operand,
+                    span: *span,
+                }),
+                1 => ctx.add_instruction(Instruction::Store8 {
+                    addr: addr_reg,
+                    offset: 0,
+                    src: val_operand,
+                    span: *span,
+                }),
+                _ => {
+                    return Err(vec![format!(
+                        "Unsupported byte_size for unsafe_store: {}",
+                        byte_size
+                    )]);
+                }
+            }
             Ok(())
         }
 

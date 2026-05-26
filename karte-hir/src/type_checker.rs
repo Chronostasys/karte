@@ -877,16 +877,21 @@ impl TypeChecker {
                     | BinaryOperator::Multiply
                     | BinaryOperator::Divide
                     | BinaryOperator::Equal
+                    | BinaryOperator::NotEqual
                     | BinaryOperator::GreaterEqual
                     | BinaryOperator::LessEqual
                     | BinaryOperator::Greater
-                    | BinaryOperator::Less => {
-                        // 数字运算和比较运算：左右操作数都必须是数字类型
+                    | BinaryOperator::Less
+                    | BinaryOperator::BitAnd
+                    | BinaryOperator::BitOr
+                    | BinaryOperator::BitXor
+                    | BinaryOperator::ShiftLeft
+                    | BinaryOperator::ShiftRight => {
+                        // 数字运算、比较运算、位运算：左右操作数都必须是数字类型
                         self.add_constraint(left_type, Type::Number, left.span());
                         self.add_constraint(right_type, Type::Number, right.span());
                     }
                     BinaryOperator::LogicalAnd | BinaryOperator::LogicalOr => {
-                        // 逻辑运算：左右操作数都必须是布尔类型
                         self.add_constraint(left_type, Type::bool(), left.span());
                         self.add_constraint(right_type, Type::bool(), right.span());
                     }
@@ -897,8 +902,14 @@ impl TypeChecker {
                     BinaryOperator::Add
                     | BinaryOperator::Subtract
                     | BinaryOperator::Multiply
-                    | BinaryOperator::Divide => Type::Number,
+                    | BinaryOperator::Divide
+                    | BinaryOperator::BitAnd
+                    | BinaryOperator::BitOr
+                    | BinaryOperator::BitXor
+                    | BinaryOperator::ShiftLeft
+                    | BinaryOperator::ShiftRight => Type::Number,
                     BinaryOperator::Equal
+                    | BinaryOperator::NotEqual
                     | BinaryOperator::GreaterEqual
                     | BinaryOperator::LessEqual
                     | BinaryOperator::Greater
@@ -912,14 +923,16 @@ impl TypeChecker {
 
                 match op {
                     UnaryOperator::Plus | UnaryOperator::Minus => {
-                        // 数字运算：操作数必须是数字类型
                         self.add_constraint(Type::Number, operand_type, operand.span());
                         Type::Number
                     }
                     UnaryOperator::LogicalNot => {
-                        // 逻辑非：操作数必须是布尔类型
                         self.add_constraint(Type::bool(), operand_type, operand.span());
                         Type::bool()
+                    }
+                    UnaryOperator::BitNot => {
+                        self.add_constraint(Type::Number, operand_type, operand.span());
+                        Type::Number
                     }
                 }
             }
@@ -1506,6 +1519,38 @@ impl TypeChecker {
                         Type::Unit
                     }
                 }
+            }
+
+            Expr::UnsafeLoad { addr, byte_size, span } => {
+                let addr_type = self.infer_expr(addr, env);
+                if addr_type != Type::Number {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: addr_type,
+                        span: *span,
+                    });
+                }
+                Type::Number
+            }
+
+            Expr::UnsafeStore { addr, value, byte_size, span } => {
+                let addr_type = self.infer_expr(addr, env);
+                if addr_type != Type::Number {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: addr_type,
+                        span: *span,
+                    });
+                }
+                let val_type = self.infer_expr(value, env);
+                if val_type != Type::Number {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: val_type,
+                        span: *span,
+                    });
+                }
+                Type::Number
             }
 
             Expr::Assignment {

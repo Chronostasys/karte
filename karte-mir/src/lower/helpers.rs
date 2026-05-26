@@ -33,12 +33,18 @@ pub(crate) fn convert_binary_op(op: &HirBinaryOp) -> MirBinaryOp {
         HirBinaryOp::Multiply => MirBinaryOp::Multiply,
         HirBinaryOp::Divide => MirBinaryOp::Divide,
         HirBinaryOp::Equal => MirBinaryOp::Equal,
+        HirBinaryOp::NotEqual => MirBinaryOp::NotEqual,
         HirBinaryOp::GreaterEqual => MirBinaryOp::GreaterEqual,
         HirBinaryOp::LessEqual => MirBinaryOp::LessEqual,
         HirBinaryOp::Greater => MirBinaryOp::GreaterThan,
         HirBinaryOp::Less => MirBinaryOp::LessThan,
         HirBinaryOp::LogicalAnd => MirBinaryOp::And,
         HirBinaryOp::LogicalOr => MirBinaryOp::Or,
+        HirBinaryOp::BitAnd => MirBinaryOp::BitAnd,
+        HirBinaryOp::BitOr => MirBinaryOp::BitOr,
+        HirBinaryOp::BitXor => MirBinaryOp::BitXor,
+        HirBinaryOp::ShiftLeft => MirBinaryOp::ShiftLeft,
+        HirBinaryOp::ShiftRight => MirBinaryOp::ShiftRight,
     }
 }
 
@@ -48,6 +54,7 @@ pub(crate) fn convert_unary_op(op: &HirUnaryOp) -> MirUnaryOp {
         HirUnaryOp::Plus => MirUnaryOp::Plus,
         HirUnaryOp::Minus => MirUnaryOp::Minus,
         HirUnaryOp::LogicalNot => MirUnaryOp::Not,
+        HirUnaryOp::BitNot => MirUnaryOp::BitNot,
     }
 }
 

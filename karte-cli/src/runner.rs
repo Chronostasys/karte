@@ -231,6 +231,14 @@ fn canonicalize_statement(statement: &mut Statement, symbols: &HashMap<String, S
         Statement::StackAllocate { target, .. } => {
             canonicalize_value(target, symbols);
         }
+        Statement::UnsafeLoad { target, addr, .. } => {
+            canonicalize_value(target, symbols);
+            canonicalize_value(addr, symbols);
+        }
+        Statement::UnsafeStore { addr, value, .. } => {
+            canonicalize_value(addr, symbols);
+            canonicalize_value(value, symbols);
+        }
     }
 }
 

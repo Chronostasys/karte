@@ -802,6 +802,32 @@ pub(crate) fn lower_expression(
             });
         }
 
+        Expr::UnsafeLoad { addr, byte_size, span } => {
+            let addr_value = lower_expression_to_temp(ctx, addr)?;
+            ctx.add_statement(Statement::UnsafeLoad {
+                target: destination.clone(),
+                addr: addr_value,
+                byte_size: *byte_size,
+                span: *span,
+            });
+        }
+
+        Expr::UnsafeStore { addr, value, byte_size, span } => {
+            let addr_value = lower_expression_to_temp(ctx, addr)?;
+            let val_value = lower_expression_to_temp(ctx, value)?;
+            ctx.add_statement(Statement::UnsafeStore {
+                addr: addr_value,
+                value: val_value,
+                byte_size: *byte_size,
+                span: *span,
+            });
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: Value::Unit,
+                span: *span,
+            });
+        }
+
         Expr::Assignment {
             target,
             value,

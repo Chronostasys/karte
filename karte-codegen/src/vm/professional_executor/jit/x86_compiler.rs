@@ -115,6 +115,24 @@ impl X86Compiler {
             Instruction::Div { dst, src1, src2, .. } => {
                 self.compile_div(dst, src1, src2, code_builder)
             }
+            Instruction::BitAnd { dst, src1, src2, .. } => {
+                self.compile_bitand(dst, src1, src2, code_builder)
+            }
+            Instruction::BitOr { dst, src1, src2, .. } => {
+                self.compile_bitor(dst, src1, src2, code_builder)
+            }
+            Instruction::BitXor { dst, src1, src2, .. } => {
+                self.compile_bitxor(dst, src1, src2, code_builder)
+            }
+            Instruction::ShiftLeft { dst, src1, src2, .. } => {
+                self.compile_shift_left(dst, src1, src2, code_builder)
+            }
+            Instruction::ShiftRight { dst, src1, src2, .. } => {
+                self.compile_shift_right(dst, src1, src2, code_builder)
+            }
+            Instruction::BitNot { dst, src, .. } => {
+                self.compile_bitnot(dst, src, code_builder)
+            }
             Instruction::Compare { src1, src2, .. } => {
                 self.compile_compare(src1, src2, code_builder)
             }
@@ -165,6 +183,18 @@ impl X86Compiler {
             }
             Instruction::Store64 { addr, offset, src, .. } => {
                 self.compile_store64(addr, *offset, src, code_builder)
+            }
+            Instruction::Load32 { dst, addr, offset, .. } => {
+                self.compile_load32(dst, addr, *offset, code_builder)
+            }
+            Instruction::Store32 { addr, offset, src, .. } => {
+                self.compile_store32(addr, *offset, src, code_builder)
+            }
+            Instruction::Load8 { dst, addr, offset, .. } => {
+                self.compile_load8(dst, addr, *offset, code_builder)
+            }
+            Instruction::Store8 { addr, offset, src, .. } => {
+                self.compile_store8(addr, *offset, src, code_builder)
             }
             // StorePair 拆分为两条 Store64
             Instruction::StorePair { addr, offset, src1, src2, .. } => {
@@ -593,9 +623,6 @@ impl X86Compiler {
                 self.emit_mov_mem_imm32(code_builder, addr_reg, offset as i32, *value as i32);
             }
             Operand::Label { id } => {
-                // store64 [addr + offset], label - 存储标签地址到虚拟栈
-                // 1. 用 movabs 将标签地址加载到 RAX（临时寄存器）
-                // 2. 用 mov [addr + offset], rax 存储到目标内存
                 let label_name = format!("label_{}", id.0);
                 code_builder.emit_movabs_to_rax_with_label(&label_name);
                 self.emit_mov_mem_reg(code_builder, addr_reg, offset as i32, 0); // rax = 0
@@ -603,6 +630,407 @@ impl X86Compiler {
             _ => {
                 return Err(format!("store64指令不支持的src类型: {:?}", src).into());
             }
+        }
+        Ok(())
+    }
+
+    // === 位运算编译函数 ===
+
+    fn compile_bitand(
+        &self,
+        dst: &Register,
+        src1: &Operand,
+        src2: &Operand,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+        // 编译期常量折叠：两个都是 immediate 时直接算结果
+        if let (Operand::Immediate { value: v1 }, Operand::Immediate { value: v2 }) = (src1, src2)
+        {
+            self.emit_mov_reg_imm64(code_builder, dst_reg, v1 & v2);
+            return Ok(());
+        }
+        match src1 {
+            Operand::Register { id } => {
+                let src1_reg = self.get_physical_register(id)?;
+                if dst_reg != src1_reg {
+                    self.emit_mov_reg_reg(code_builder, dst_reg, src1_reg);
+                }
+            }
+            Operand::Immediate { value } => {
+                self.emit_mov_reg_imm64(code_builder, dst_reg, *value);
+            }
+            _ => return Err(format!("bitand不支持的src1: {:?}", src1).into()),
+        }
+        match src2 {
+            Operand::Register { id } => {
+                let src2_reg = self.get_physical_register(id)?;
+                // AND r64, r64: 0x48 0x21 ModRM
+                code_builder.emit_bytes(&[0x48, 0x21, 0xC0 | (src2_reg << 3) | dst_reg]);
+            }
+            Operand::Immediate { value } => {
+                // AND r64, imm32: 0x48 0x81 ModRM(0xE0 + reg) imm32
+                code_builder.emit_bytes(&[0x48, 0x81, 0xE0 | dst_reg]);
+                code_builder.emit_i32(*value as i32);
+            }
+            _ => return Err(format!("bitand不支持的src2: {:?}", src2).into()),
+        }
+        Ok(())
+    }
+
+    fn compile_bitor(
+        &self,
+        dst: &Register,
+        src1: &Operand,
+        src2: &Operand,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+        if let (Operand::Immediate { value: v1 }, Operand::Immediate { value: v2 }) = (src1, src2)
+        {
+            self.emit_mov_reg_imm64(code_builder, dst_reg, v1 | v2);
+            return Ok(());
+        }
+        match src1 {
+            Operand::Register { id } => {
+                let src1_reg = self.get_physical_register(id)?;
+                if dst_reg != src1_reg {
+                    self.emit_mov_reg_reg(code_builder, dst_reg, src1_reg);
+                }
+            }
+            Operand::Immediate { value } => {
+                self.emit_mov_reg_imm64(code_builder, dst_reg, *value);
+            }
+            _ => return Err(format!("bitor不支持的src1: {:?}", src1).into()),
+        }
+        match src2 {
+            Operand::Register { id } => {
+                let src2_reg = self.get_physical_register(id)?;
+                // OR r64, r64: 0x48 0x09 ModRM
+                code_builder.emit_bytes(&[0x48, 0x09, 0xC0 | (src2_reg << 3) | dst_reg]);
+            }
+            Operand::Immediate { value } => {
+                // OR r64, imm32: 0x48 0x81 ModRM(0xC8 + reg) imm32
+                code_builder.emit_bytes(&[0x48, 0x81, 0xC8 | dst_reg]);
+                code_builder.emit_i32(*value as i32);
+            }
+            _ => return Err(format!("bitor不支持的src2: {:?}", src2).into()),
+        }
+        Ok(())
+    }
+
+    fn compile_bitxor(
+        &self,
+        dst: &Register,
+        src1: &Operand,
+        src2: &Operand,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+        if let (Operand::Immediate { value: v1 }, Operand::Immediate { value: v2 }) = (src1, src2)
+        {
+            self.emit_mov_reg_imm64(code_builder, dst_reg, v1 ^ v2);
+            return Ok(());
+        }
+        match src1 {
+            Operand::Register { id } => {
+                let src1_reg = self.get_physical_register(id)?;
+                if dst_reg != src1_reg {
+                    self.emit_mov_reg_reg(code_builder, dst_reg, src1_reg);
+                }
+            }
+            Operand::Immediate { value } => {
+                self.emit_mov_reg_imm64(code_builder, dst_reg, *value);
+            }
+            _ => return Err(format!("bitxor不支持的src1: {:?}", src1).into()),
+        }
+        match src2 {
+            Operand::Register { id } => {
+                let src2_reg = self.get_physical_register(id)?;
+                // XOR r64, r64: 0x48 0x31 ModRM
+                code_builder.emit_bytes(&[0x48, 0x31, 0xC0 | (src2_reg << 3) | dst_reg]);
+            }
+            Operand::Immediate { value } => {
+                // XOR r64, imm32: 0x48 0x81 ModRM(0xF0 + reg) imm32
+                code_builder.emit_bytes(&[0x48, 0x81, 0xF0 | dst_reg]);
+                code_builder.emit_i32(*value as i32);
+            }
+            _ => return Err(format!("bitxor不支持的src2: {:?}", src2).into()),
+        }
+        Ok(())
+    }
+
+    fn compile_shift_left(
+        &self,
+        dst: &Register,
+        src1: &Operand,
+        src2: &Operand,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+        if let (Operand::Immediate { value: v1 }, Operand::Immediate { value: v2 }) = (src1, src2)
+        {
+            self.emit_mov_reg_imm64(code_builder, dst_reg, v1 << (v2 & 63));
+            return Ok(());
+        }
+        match src1 {
+            Operand::Register { id } => {
+                let src1_reg = self.get_physical_register(id)?;
+                if dst_reg != src1_reg {
+                    self.emit_mov_reg_reg(code_builder, dst_reg, src1_reg);
+                }
+            }
+            Operand::Immediate { value } => {
+                self.emit_mov_reg_imm64(code_builder, dst_reg, *value);
+            }
+            _ => return Err(format!("shl不支持的src1: {:?}", src1).into()),
+        }
+        match src2 {
+            Operand::Register { id } if *id == Register::Physical(1) || *id == Register::Physical(0) => {
+                let src2_reg = self.get_physical_register(id)?;
+                // SHL r64, CL: 0x48 0xD3 ModRM(0xE0 + reg)
+                code_builder.emit_bytes(&[0x48, 0xD3, 0xE0 | dst_reg]);
+                // 注意：CL 是 RCX 的低 8 位
+            }
+            Operand::Immediate { value } => {
+                // SHL r64, imm8: 0x48 0xC1 ModRM(0xE0 + reg) imm8
+                code_builder.emit_bytes(&[0x48, 0xC1, 0xE0 | dst_reg]);
+                code_builder.emit_bytes(&[(*value as u8) & 0x3F]);
+            }
+            Operand::Register { id } => {
+                let src2_reg = self.get_physical_register(id)?;
+                // 如果不是 CL，先移到 RCX
+                if src2_reg != 1 {
+                    self.emit_mov_reg_reg(code_builder, 1, src2_reg); // mov rcx, src2_reg
+                }
+                code_builder.emit_bytes(&[0x48, 0xD3, 0xE0 | dst_reg]);
+            }
+            _ => return Err(format!("shl不支持的src2: {:?}", src2).into()),
+        }
+        Ok(())
+    }
+
+    fn compile_shift_right(
+        &self,
+        dst: &Register,
+        src1: &Operand,
+        src2: &Operand,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+        if let (Operand::Immediate { value: v1 }, Operand::Immediate { value: v2 }) = (src1, src2)
+        {
+            // 无符号右移（逻辑右移）
+            self.emit_mov_reg_imm64(code_builder, dst_reg, ((*v1 as u64) >> (*v2 as u64 & 63)) as i64);
+            return Ok(());
+        }
+        match src1 {
+            Operand::Register { id } => {
+                let src1_reg = self.get_physical_register(id)?;
+                if dst_reg != src1_reg {
+                    self.emit_mov_reg_reg(code_builder, dst_reg, src1_reg);
+                }
+            }
+            Operand::Immediate { value } => {
+                self.emit_mov_reg_imm64(code_builder, dst_reg, *value);
+            }
+            _ => return Err(format!("shr不支持的src1: {:?}", src1).into()),
+        }
+        match src2 {
+            Operand::Immediate { value } => {
+                // SHR r64, imm8: 0x48 0xC1 ModRM(0xE8 + reg) imm8
+                code_builder.emit_bytes(&[0x48, 0xC1, 0xE8 | dst_reg]);
+                code_builder.emit_bytes(&[(*value as u8) & 0x3F]);
+            }
+            Operand::Register { id } => {
+                let src2_reg = self.get_physical_register(id)?;
+                if src2_reg != 1 {
+                    self.emit_mov_reg_reg(code_builder, 1, src2_reg);
+                }
+                // SHR r64, CL: 0x48 0xD3 ModRM(0xE8 + reg)
+                code_builder.emit_bytes(&[0x48, 0xD3, 0xE8 | dst_reg]);
+            }
+            _ => return Err(format!("shr不支持的src2: {:?}", src2).into()),
+        }
+        Ok(())
+    }
+
+    fn compile_bitnot(
+        &self,
+        dst: &Register,
+        src: &Operand,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+        if let Operand::Immediate { value } = src {
+            self.emit_mov_reg_imm64(code_builder, dst_reg, !value);
+            return Ok(());
+        }
+        match src {
+            Operand::Register { id } => {
+                let src_reg = self.get_physical_register(id)?;
+                if dst_reg != src_reg {
+                    self.emit_mov_reg_reg(code_builder, dst_reg, src_reg);
+                }
+            }
+            Operand::Immediate { value } => {
+                self.emit_mov_reg_imm64(code_builder, dst_reg, *value);
+            }
+            _ => return Err(format!("bitnot不支持的src: {:?}", src).into()),
+        }
+        // NOT r64: 0x48 0xF7 ModRM(0xD0 + reg)
+        code_builder.emit_bytes(&[0x48, 0xF7, 0xD0 | dst_reg]);
+        Ok(())
+    }
+
+    // === Load/Store 变体 (32-bit, 8-bit) ===
+
+    fn compile_load32(
+        &self,
+        dst: &Register,
+        addr: &Register,
+        offset: i64,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+        let addr_reg = self.get_physical_register(addr)?;
+        // MOV r32, [addr + offset]: 使用 32-bit 操作数（自动零扩展到 64 位）
+        // 0x8B ModRM(disp32) or REX prefix for extended regs
+        let offset_bytes = (offset as i32).to_le_bytes();
+        if dst_reg < 8 && addr_reg < 8 {
+            code_builder.emit_bytes(&[
+                0x8B,
+                0x80 | (dst_reg << 3) | addr_reg,
+            ]);
+        } else {
+            // REX prefix needed
+            let rex = 0x48
+                | if dst_reg >= 8 { 0x04 } else { 0 }
+                | if addr_reg >= 8 { 0x01 } else { 0 };
+            code_builder.emit_bytes(&[
+                rex,
+                0x8B,
+                0x80 | ((dst_reg & 7) << 3) | (addr_reg & 7),
+            ]);
+        }
+        code_builder.emit_bytes(&offset_bytes);
+        Ok(())
+    }
+
+    fn compile_store32(
+        &self,
+        addr: &Register,
+        offset: i64,
+        src: &Operand,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let addr_reg = self.get_physical_register(addr)?;
+        match src {
+            Operand::Register { id } => {
+                let src_reg = self.get_physical_register(id)?;
+                // MOV [addr + disp32], r32
+                if src_reg < 8 && addr_reg < 8 {
+                    code_builder.emit_bytes(&[
+                        0x89,
+                        0x80 | (src_reg << 3) | addr_reg,
+                    ]);
+                } else {
+                    let rex = 0x48
+                        | if src_reg >= 8 { 0x04 } else { 0 }
+                        | if addr_reg >= 8 { 0x01 } else { 0 };
+                    code_builder.emit_bytes(&[
+                        rex,
+                        0x89,
+                        0x80 | ((src_reg & 7) << 3) | (addr_reg & 7),
+                    ]);
+                }
+                code_builder.emit_i32(offset as i32);
+            }
+            Operand::Immediate { value } => {
+                // MOV [addr + disp32], imm32
+                if addr_reg < 8 {
+                    code_builder.emit_bytes(&[0xC7, 0x80 | addr_reg]);
+                } else {
+                    code_builder.emit_bytes(&[0x41, 0xC7, 0x80 | (addr_reg & 7)]);
+                }
+                code_builder.emit_i32(offset as i32);
+                code_builder.emit_i32(*value as i32);
+            }
+            _ => return Err(format!("store32不支持的src: {:?}", src).into()),
+        }
+        Ok(())
+    }
+
+    fn compile_load8(
+        &self,
+        dst: &Register,
+        addr: &Register,
+        offset: i64,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+        let addr_reg = self.get_physical_register(addr)?;
+        // MOVZX r64, byte [addr + disp32]: 0x0F 0xB6 ModRM
+        let offset_bytes = (offset as i32).to_le_bytes();
+        if dst_reg < 8 && addr_reg < 8 {
+            code_builder.emit_bytes(&[
+                0x0F, 0xB6,
+                0x80 | (dst_reg << 3) | addr_reg,
+            ]);
+        } else {
+            let rex = 0x48
+                | if dst_reg >= 8 { 0x04 } else { 0 }
+                | if addr_reg >= 8 { 0x01 } else { 0 };
+            code_builder.emit_bytes(&[
+                rex, 0x0F, 0xB6,
+                0x80 | ((dst_reg & 7) << 3) | (addr_reg & 7),
+            ]);
+        }
+        code_builder.emit_bytes(&offset_bytes);
+        Ok(())
+    }
+
+    fn compile_store8(
+        &self,
+        addr: &Register,
+        offset: i64,
+        src: &Operand,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let addr_reg = self.get_physical_register(addr)?;
+        match src {
+            Operand::Register { id } => {
+                let src_reg = self.get_physical_register(id)?;
+                // MOV byte [addr + disp32], r8
+                // 使用 REX prefix 确保 64-bit 模式下的正确编码
+                if src_reg < 8 && addr_reg < 8 {
+                    code_builder.emit_bytes(&[
+                        0x88,
+                        0x80 | (src_reg << 3) | addr_reg,
+                    ]);
+                } else {
+                    let rex = 0x48
+                        | if src_reg >= 8 { 0x04 } else { 0 }
+                        | if addr_reg >= 8 { 0x01 } else { 0 };
+                    code_builder.emit_bytes(&[
+                        rex,
+                        0x88,
+                        0x80 | ((src_reg & 7) << 3) | (addr_reg & 7),
+                    ]);
+                }
+                code_builder.emit_i32(offset as i32);
+            }
+            Operand::Immediate { value } => {
+                // MOV byte [addr + disp32], imm8
+                if addr_reg < 8 {
+                    code_builder.emit_bytes(&[0xC6, 0x80 | addr_reg]);
+                } else {
+                    code_builder.emit_bytes(&[0x41, 0xC6, 0x80 | (addr_reg & 7)]);
+                }
+                code_builder.emit_i32(offset as i32);
+                code_builder.emit_bytes(&[(*value as u8) & 0xFF]);
+            }
+            _ => return Err(format!("store8不支持的src: {:?}", src).into()),
         }
         Ok(())
     }

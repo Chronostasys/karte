@@ -601,27 +601,26 @@ impl SimpleStackRegisterAllocation {
     fn has_non_address_usage(&self, register: Register, function: &LirFunction) -> bool {
         for instruction in &function.instructions {
             match instruction {
-                Instruction::Load64 { addr, dst, .. } => {
-                    // 作为地址使用，这是地址用途
+                Instruction::Load64 { addr, dst, .. }
+                | Instruction::Load32 { addr, dst, .. }
+                | Instruction::Load8 { addr, dst, .. } => {
                     if *addr == register {
                         continue;
                     }
-                    // 作为目标寄存器使用，这是非地址用途
                     if *dst == register {
                         return true;
                     }
-                    // 检查是否作为其他操作数使用
                     let used_regs = instruction.get_used_registers();
                     if used_regs.contains(&register) {
-                        return true; // 作为非地址操作数使用
+                        return true;
                     }
                 }
-                Instruction::Store64 { addr, src, .. } => {
-                    // 作为地址使用，这是地址用途
+                Instruction::Store64 { addr, src, .. }
+                | Instruction::Store32 { addr, src, .. }
+                | Instruction::Store8 { addr, src, .. } => {
                     if *addr == register {
                         continue;
                     }
-                    // 作为存储的数据使用，这是非地址用途
                     if let Operand::Register { id } = src {
                         if *id == register {
                             return true;

@@ -208,6 +208,20 @@ pub enum Expr {
         span: Span,
     },
 
+    /// unsafe 内存读取 - 从任意地址读取指定字节数的值
+    UnsafeLoad {
+        addr: Box<Expr>,
+        byte_size: u8, // 1, 4, or 8
+        span: Span,
+    },
+    /// unsafe 内存写入 - 向任意地址写入指定字节数的值
+    UnsafeStore {
+        addr: Box<Expr>,
+        value: Box<Expr>,
+        byte_size: u8, // 1, 4, or 8
+        span: Span,
+    },
+
     /// 赋值表达式 - 为变量或字段赋值
     Assignment {
         target: Box<Expr>,
@@ -378,6 +392,7 @@ pub enum BinaryOperator {
     Multiply,
     Divide,
     Equal,
+    NotEqual,
     GreaterEqual,
     LessEqual,
     Greater,
@@ -385,6 +400,12 @@ pub enum BinaryOperator {
     // 逻辑运算符
     LogicalAnd,
     LogicalOr,
+    // 位运算符
+    BitAnd,
+    BitOr,
+    BitXor,
+    ShiftLeft,
+    ShiftRight,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -393,6 +414,8 @@ pub enum UnaryOperator {
     Minus,
     // 逻辑非运算符
     LogicalNot,
+    // 位非运算符
+    BitNot,
 }
 
 impl fmt::Display for BinaryOperator {
@@ -403,12 +426,18 @@ impl fmt::Display for BinaryOperator {
             BinaryOperator::Multiply => write!(f, "*"),
             BinaryOperator::Divide => write!(f, "/"),
             BinaryOperator::Equal => write!(f, "=="),
+            BinaryOperator::NotEqual => write!(f, "!="),
             BinaryOperator::GreaterEqual => write!(f, ">="),
             BinaryOperator::LessEqual => write!(f, "<="),
             BinaryOperator::Greater => write!(f, ">"),
             BinaryOperator::Less => write!(f, "<"),
             BinaryOperator::LogicalAnd => write!(f, "&&"),
             BinaryOperator::LogicalOr => write!(f, "||"),
+            BinaryOperator::BitAnd => write!(f, "bitand"),
+            BinaryOperator::BitOr => write!(f, "bitor"),
+            BinaryOperator::BitXor => write!(f, "bitxor"),
+            BinaryOperator::ShiftLeft => write!(f, "shl"),
+            BinaryOperator::ShiftRight => write!(f, "shr"),
         }
     }
 }
@@ -419,6 +448,7 @@ impl fmt::Display for UnaryOperator {
             UnaryOperator::Plus => write!(f, "+"),
             UnaryOperator::Minus => write!(f, "-"),
             UnaryOperator::LogicalNot => write!(f, "!"),
+            UnaryOperator::BitNot => write!(f, "bitnot"),
         }
     }
 }
@@ -638,6 +668,12 @@ impl fmt::Display for Expr {
             Expr::Release { pointer, .. } => {
                 write!(f, "release {}", pointer)
             }
+            Expr::UnsafeLoad { addr, byte_size, .. } => {
+                write!(f, "unsafe_load{}({})", byte_size, addr)
+            }
+            Expr::UnsafeStore { addr, value, byte_size, .. } => {
+                write!(f, "unsafe_store{}({}, {})", byte_size, addr, value)
+            }
             Expr::Assignment { target, value, .. } => {
                 write!(f, "{} = {}", target, value)
             }
@@ -690,6 +726,8 @@ impl Expr {
             Expr::HeapFree { span, .. } => *span,
             Expr::Retain { span, .. } => *span,
             Expr::Release { span, .. } => *span,
+            Expr::UnsafeLoad { span, .. } => *span,
+            Expr::UnsafeStore { span, .. } => *span,
             Expr::Assignment { span, .. } => *span,
             Expr::EffectPerform { span, .. } => *span,
             Expr::EffectResume { span, .. } => *span,

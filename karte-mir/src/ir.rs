@@ -379,7 +379,31 @@ pub enum Statement {
         #[ir_codec(args)]
         alignment: usize,
         #[ir_codec(skip)]
-        offset: Option<isize>, // 栈偏移（由后端计算）
+        offset: Option<isize>,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+    /// unsafe 内存读取 - 从任意地址读取指定字节大小
+    #[ir_codec(token = "unsafe_load")]
+    UnsafeLoad {
+        #[ir_codec(args, target)]
+        target: Value,
+        #[ir_codec(args)]
+        addr: Value,
+        #[ir_codec(args)]
+        byte_size: u8,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+    /// unsafe 内存写入 - 向任意地址写入指定字节大小
+    #[ir_codec(token = "unsafe_store")]
+    UnsafeStore {
+        #[ir_codec(args)]
+        addr: Value,
+        #[ir_codec(args)]
+        value: Value,
+        #[ir_codec(args)]
+        byte_size: u8,
         #[ir_codec(skip)]
         span: Span,
     },
@@ -747,6 +771,17 @@ pub enum BinaryOperator {
     And,
     #[ir_codec(token = "||")]
     Or,
+    // 位运算符
+    #[ir_codec(token = "bitand")]
+    BitAnd,
+    #[ir_codec(token = "bitor")]
+    BitOr,
+    #[ir_codec(token = "bitxor")]
+    BitXor,
+    #[ir_codec(token = "shl")]
+    ShiftLeft,
+    #[ir_codec(token = "shr")]
+    ShiftRight,
 }
 
 /// 一元运算符
@@ -758,4 +793,6 @@ pub enum UnaryOperator {
     Minus,
     #[ir_codec(token = "!")]
     Not,
+    #[ir_codec(token = "bitnot")]
+    BitNot,
 }

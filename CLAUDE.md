@@ -712,3 +712,63 @@ Code Segment:
 - **R10/R11 保存**: 第二个 mmap (堆) 会覆盖 R10/R11 (vm_sp/vm_fp) — 必须在 mmap 之间 push/pop
 - **代码段必须可写**: 运行时全局变量 (bump_ptr) 使用 RIP-relative 寻址存储在代码段中
 - **Extended registers**: R8-R15 需要 REX.B 前缀 — 运行时代码生成必须正确处理扩展寄存器编码
+
+## Debugging Best Practices
+
+### ⚠️ 遇到 AOT/JIT 执行结果不正确时，用 GDB 或反汇编工具看机器码，不要凭空推理
+
+**原则**：当程序返回错误值时，不要猜测"可能是某个 pass 做了错误优化"或"可能是 x86 编码有问题"。直接反汇编 AOT binary 看实际生成的机器码。
+
+**工具**：
+```bash
+# AOT binary 反汇编（ELF 无标准 section header，需要 capstone/ndisasm）
+python3 -c "
+from capstone import Cs, CS_ARCH_X86, CS_MODE_64
+data = open('/tmp/test_bin','rb').read()
+# 代码在 offset 0x1000, vaddr 0x401000
+code = data[0x1000:0x1000+0x430]
+md = Cs(CS_ARCH_X86, CS_MODE_64)
+for i in md.disasm(code, 0x401000):
+    print(f'0x{i.address:x}:  {i.mnemonic}  {i.op_str}')
+"
+
+# 找到 main 函数：在 _start 中搜索 call 指令
+python3 -c "
+from capstone import Cs, CS_ARCH_X86, CS_MODE_64
+data = open('/tmp/test_bin','rb').read()
+code = data[0x1000:0x1000+0x430]
+md = Cs(CS_ARCH_X86, CS_MODE_64)
+instrs = list(md.disasm(code, 0x401000))
+for i in instrs:
+    if i.mnemonic == 'call':
+        target = int(i.op_str, 16)
+        target_off = target - 0x401000
+        print(f'main at 0x{target:x}')
+        for j in md.disasm(code[target_off:target_off+128], target):
+            print(f'0x{j.address:x}:  {j.mnemonic}  {j.op_str}')
+        break
+"
+```
+
+### Case Study: Bitwise AND 返回错误值 (2025-05-26)
+
+**问题**: `12 bitand 10` 返回 10 而不是 8。
+
+**错误方法（耗时 2 小时）**：
+1. ❌ 猜测 ConstantFolding 没有正确工作，加了多个 debug print
+2. ❌ 猜测 x86 AND 指令编码错误，反复检查 opcode
+3. ❌ 在多个文件中加 eprintln! 追踪 ConstantFolding 的输入
+4. ❌ 在 LIR optimization pipeline 中查找问题
+
+**正确方法（耗时 5 分钟）**：
+1. ✅ `aot` 编译生成 binary
+2. ✅ 用 capstone 反汇编 main 函数
+3. ✅ 直接看到问题：四条 `movabs rcx, imm` 全部写到 RCX（同一寄存器），然后 `and rcx, rcx`
+4. ✅ 对比 `5 + 3` 的正确代码：`movabs rcx, 5` / `movabs rdx, 3` — src1/src2 在不同寄存器
+5. ✅ 结论：SimpleStack fallback allocator 把 BitAnd 的两个操作数分配到了同一物理寄存器
+
+**教训**：
+- **反汇编是 debugging 机器码问题的第一工具**，不是最后手段
+- 不要猜测编译器 pass 的行为——直接看最终生成的机器码
+- 对比正确和错误的 case（Add 正确 vs BitAnd 错误）可以快速定位差异
+- AOT binary 没有 section header，`objdump` 无法工作——用 capstone 或 ndisasm 的 raw 模式

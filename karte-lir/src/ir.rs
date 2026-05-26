@@ -184,6 +184,82 @@ pub enum Instruction {
         span: Span,
     },
 
+    /// 位与指令：bitand dst, src1, src2
+    #[ir_codec(token = "bitand")]
+    BitAnd {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        src1: Operand,
+        #[ir_codec(args)]
+        src2: Operand,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 位或指令：bitor dst, src1, src2
+    #[ir_codec(token = "bitor")]
+    BitOr {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        src1: Operand,
+        #[ir_codec(args)]
+        src2: Operand,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 位异或指令：bitxor dst, src1, src2
+    #[ir_codec(token = "bitxor")]
+    BitXor {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        src1: Operand,
+        #[ir_codec(args)]
+        src2: Operand,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 左移指令：shl dst, src1, src2
+    #[ir_codec(token = "shl")]
+    ShiftLeft {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        src1: Operand,
+        #[ir_codec(args)]
+        src2: Operand,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 右移指令：shr dst, src1, src2
+    #[ir_codec(token = "shr")]
+    ShiftRight {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        src1: Operand,
+        #[ir_codec(args)]
+        src2: Operand,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 位非指令：bitnot dst, src
+    #[ir_codec(token = "bitnot")]
+    BitNot {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        src: Operand,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
     /// 比较指令：cmp src1, src2
     #[ir_codec(token = "cmp")]
     Compare {
@@ -354,18 +430,80 @@ pub enum Instruction {
     },
 
     /// 加载内存值（8字节）
+    #[ir_codec(token = "load64")]
     Load64 {
+        #[ir_codec(args)]
         dst: Register,
+        #[ir_codec(args)]
         addr: Register,
+        #[ir_codec(args)]
         offset: i64,
+        #[ir_codec(skip)]
         span: Span,
     },
 
     /// 存储内存值（8字节）
+    #[ir_codec(token = "store64")]
     Store64 {
+        #[ir_codec(args)]
         addr: Register,
+        #[ir_codec(args)]
         offset: i64,
+        #[ir_codec(args)]
         src: Operand,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 加载内存值（4字节）
+    #[ir_codec(token = "load32")]
+    Load32 {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        addr: Register,
+        #[ir_codec(args)]
+        offset: i64,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 存储内存值（4字节）
+    #[ir_codec(token = "store32")]
+    Store32 {
+        #[ir_codec(args)]
+        addr: Register,
+        #[ir_codec(args)]
+        offset: i64,
+        #[ir_codec(args)]
+        src: Operand,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 加载内存值（1字节）
+    #[ir_codec(token = "load8")]
+    Load8 {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        addr: Register,
+        #[ir_codec(args)]
+        offset: i64,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 存储内存值（1字节）
+    #[ir_codec(token = "store8")]
+    Store8 {
+        #[ir_codec(args)]
+        addr: Register,
+        #[ir_codec(args)]
+        offset: i64,
+        #[ir_codec(args)]
+        src: Operand,
+        #[ir_codec(skip)]
         span: Span,
     },
 
@@ -436,7 +574,15 @@ impl Instruction {
             | Instruction::Sub { dst, .. }
             | Instruction::Mul { dst, .. }
             | Instruction::Div { dst, .. }
+            | Instruction::BitAnd { dst, .. }
+            | Instruction::BitOr { dst, .. }
+            | Instruction::BitXor { dst, .. }
+            | Instruction::ShiftLeft { dst, .. }
+            | Instruction::ShiftRight { dst, .. }
+            | Instruction::BitNot { dst, .. }
             | Instruction::Load64 { dst, .. }
+            | Instruction::Load32 { dst, .. }
+            | Instruction::Load8 { dst, .. }
             | Instruction::StructAlloc { dst, .. }
             | Instruction::StructFieldLoad { dst, .. }
             | Instruction::StructFieldAddr { dst, .. }
@@ -459,7 +605,15 @@ impl Instruction {
             | Instruction::Sub { dst, .. }
             | Instruction::Mul { dst, .. }
             | Instruction::Div { dst, .. }
+            | Instruction::BitAnd { dst, .. }
+            | Instruction::BitOr { dst, .. }
+            | Instruction::BitXor { dst, .. }
+            | Instruction::ShiftLeft { dst, .. }
+            | Instruction::ShiftRight { dst, .. }
+            | Instruction::BitNot { dst, .. }
             | Instruction::Load64 { dst, .. }
+            | Instruction::Load32 { dst, .. }
+            | Instruction::Load8 { dst, .. }
             | Instruction::StructAlloc { dst, .. }
             | Instruction::StructFieldLoad { dst, .. }
             | Instruction::StructFieldAddr { dst, .. }
@@ -512,18 +666,30 @@ impl Instruction {
             Instruction::Add { src1, src2, .. }
             | Instruction::Sub { src1, src2, .. }
             | Instruction::Mul { src1, src2, .. }
-            | Instruction::Div { src1, src2, .. } => {
+            | Instruction::Div { src1, src2, .. }
+            | Instruction::BitAnd { src1, src2, .. }
+            | Instruction::BitOr { src1, src2, .. }
+            | Instruction::BitXor { src1, src2, .. }
+            | Instruction::ShiftLeft { src1, src2, .. }
+            | Instruction::ShiftRight { src1, src2, .. } => {
                 self.add_operand_registers(src1, &mut used);
                 self.add_operand_registers(src2, &mut used);
+            }
+            Instruction::BitNot { src, .. } => {
+                self.add_operand_registers(src, &mut used);
             }
             Instruction::Compare { src1, src2, .. } => {
                 self.add_operand_registers(src1, &mut used);
                 self.add_operand_registers(src2, &mut used);
             }
-            Instruction::Load64 { addr, .. } => {
+            Instruction::Load64 { addr, .. }
+            | Instruction::Load32 { addr, .. }
+            | Instruction::Load8 { addr, .. } => {
                 used.push(*addr);
             }
-            Instruction::Store64 { addr, src, .. } => {
+            Instruction::Store64 { addr, src, .. }
+            | Instruction::Store32 { addr, src, .. }
+            | Instruction::Store8 { addr, src, .. } => {
                 used.push(*addr);
                 self.add_operand_registers(src, &mut used);
             }
@@ -648,20 +814,41 @@ impl Instruction {
             }
             | Instruction::Div {
                 dst, src1, src2, ..
+            }
+            | Instruction::BitAnd {
+                dst, src1, src2, ..
+            }
+            | Instruction::BitOr {
+                dst, src1, src2, ..
+            }
+            | Instruction::BitXor {
+                dst, src1, src2, ..
+            }
+            | Instruction::ShiftLeft {
+                dst, src1, src2, ..
+            }
+            | Instruction::ShiftRight {
+                dst, src1, src2, ..
             } => {
-                // 🔧 关键修复：替换目标寄存器
                 if *dst == old_reg {
                     *dst = new_reg;
                 }
                 Self::replace_operand_register(src1, old_reg, new_reg);
                 Self::replace_operand_register(src2, old_reg, new_reg);
             }
+            Instruction::BitNot { dst, src, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                Self::replace_operand_register(src, old_reg, new_reg);
+            }
             Instruction::Compare { src1, src2, .. } => {
                 Self::replace_operand_register(src1, old_reg, new_reg);
                 Self::replace_operand_register(src2, old_reg, new_reg);
             }
-            Instruction::Load64 { dst, addr, .. } => {
-                // 🔧 关键修复：替换目标寄存器
+            Instruction::Load64 { dst, addr, .. }
+            | Instruction::Load32 { dst, addr, .. }
+            | Instruction::Load8 { dst, addr, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
                 }
@@ -669,7 +856,9 @@ impl Instruction {
                     *addr = new_reg;
                 }
             }
-            Instruction::Store64 { addr, src, .. } => {
+            Instruction::Store64 { addr, src, .. }
+            | Instruction::Store32 { addr, src, .. }
+            | Instruction::Store8 { addr, src, .. } => {
                 if *addr == old_reg {
                     *addr = new_reg;
                 }
@@ -935,16 +1124,39 @@ impl Instruction {
             }
             | Instruction::Div {
                 dst, src1, src2, ..
+            }
+            | Instruction::BitAnd {
+                dst, src1, src2, ..
+            }
+            | Instruction::BitOr {
+                dst, src1, src2, ..
+            }
+            | Instruction::BitXor {
+                dst, src1, src2, ..
+            }
+            | Instruction::ShiftLeft {
+                dst, src1, src2, ..
+            }
+            | Instruction::ShiftRight {
+                dst, src1, src2, ..
             } => {
                 defined.push(*dst);
                 self.add_operand_registers(src1, &mut used);
                 self.add_operand_registers(src2, &mut used);
             }
-            Instruction::Store64 { addr, src, .. } => {
+            Instruction::BitNot { dst, src, .. } => {
+                defined.push(*dst);
+                self.add_operand_registers(src, &mut used);
+            }
+            Instruction::Store64 { addr, src, .. }
+            | Instruction::Store32 { addr, src, .. }
+            | Instruction::Store8 { addr, src, .. } => {
                 used.push(*addr);
                 self.add_operand_registers(src, &mut used);
             }
-            Instruction::Load64 { dst, addr, .. } => {
+            Instruction::Load64 { dst, addr, .. }
+            | Instruction::Load32 { dst, addr, .. }
+            | Instruction::Load8 { dst, addr, .. } => {
                 defined.push(*dst);
                 used.push(*addr);
             }

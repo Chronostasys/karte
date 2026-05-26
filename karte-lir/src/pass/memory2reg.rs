@@ -1204,6 +1204,12 @@ impl Memory2RegPass {
                 | Instruction::Sub { dst, .. }
                 | Instruction::Mul { dst, .. }
                 | Instruction::Div { dst, .. }
+                | Instruction::BitAnd { dst, .. }
+                | Instruction::BitOr { dst, .. }
+                | Instruction::BitXor { dst, .. }
+                | Instruction::ShiftLeft { dst, .. }
+                | Instruction::ShiftRight { dst, .. }
+                | Instruction::BitNot { dst, .. }
                     if *dst == register =>
                 {
                     definitions.push(i);
@@ -1271,9 +1277,28 @@ impl Memory2RegPass {
                 }
                 | Instruction::Div {
                     dst, src1, src2, ..
+                }
+                | Instruction::BitAnd {
+                    dst, src1, src2, ..
+                }
+                | Instruction::BitOr {
+                    dst, src1, src2, ..
+                }
+                | Instruction::BitXor {
+                    dst, src1, src2, ..
+                }
+                | Instruction::ShiftLeft {
+                    dst, src1, src2, ..
+                }
+                | Instruction::ShiftRight {
+                    dst, src1, src2, ..
                 } if *dst == register => {
                     debug!("🔍 找到算术定义: {:?} = {:?} op {:?}", dst, src1, src2);
                     // 算术运算的结果无法简单追踪
+                    return None;
+                }
+                Instruction::BitNot { dst, src, .. } if *dst == register => {
+                    debug!("🔍 找到位非定义: {:?} = bitnot {:?}", dst, src);
                     return None;
                 }
                 _ => {

@@ -29,6 +29,9 @@ pub enum Token {
     #[token("==")]
     EqualEqual,
 
+    #[token("!=")]
+    NotEqual,
+
     #[token(">=")]
     GreaterEqual,
 
@@ -121,6 +124,34 @@ pub enum Token {
     #[token("in")]
     KwIn,
 
+    // 位运算关键字（避免与 & | 符号冲突）
+    #[token("bitand")]
+    BitAnd,
+    #[token("bitor")]
+    BitOr,
+    #[token("bitxor")]
+    BitXor,
+    #[token("bitnot")]
+    BitNot,
+    #[token("shl")]
+    ShiftLeft,
+    #[token("shr")]
+    ShiftRight,
+
+    // unsafe 内存操作内建函数
+    #[token("unsafe_load")]
+    UnsafeLoad,
+    #[token("unsafe_store")]
+    UnsafeStore,
+    #[token("unsafe_load8")]
+    UnsafeLoad8,
+    #[token("unsafe_store8")]
+    UnsafeStore8,
+    #[token("unsafe_load32")]
+    UnsafeLoad32,
+    #[token("unsafe_store32")]
+    UnsafeStore32,
+
     // 跳过空白字符
     #[regex(r"[ \t\n\f]+", logos::skip)]
     // Error token - handled automatically by Logos 0.13+
@@ -137,6 +168,7 @@ impl fmt::Display for Token {
             Token::Divide => write!(f, "/"),
             Token::Equal => write!(f, "="),
             Token::EqualEqual => write!(f, "=="),
+            Token::NotEqual => write!(f, "!="),
             Token::GreaterEqual => write!(f, ">="),
             Token::LessEqual => write!(f, "<="),
             Token::Greater => write!(f, ">"),
@@ -158,6 +190,20 @@ impl fmt::Display for Token {
             Token::LogicalAnd => write!(f, "&&"),
             Token::LogicalOr => write!(f, "||"),
             Token::LogicalNot => write!(f, "!"),
+
+            Token::BitAnd => write!(f, "bitand"),
+            Token::BitOr => write!(f, "bitor"),
+            Token::BitXor => write!(f, "bitxor"),
+            Token::BitNot => write!(f, "bitnot"),
+            Token::ShiftLeft => write!(f, "shl"),
+            Token::ShiftRight => write!(f, "shr"),
+
+            Token::UnsafeLoad => write!(f, "unsafe_load"),
+            Token::UnsafeStore => write!(f, "unsafe_store"),
+            Token::UnsafeLoad8 => write!(f, "unsafe_load8"),
+            Token::UnsafeStore8 => write!(f, "unsafe_store8"),
+            Token::UnsafeLoad32 => write!(f, "unsafe_load32"),
+            Token::UnsafeStore32 => write!(f, "unsafe_store32"),
             Token::DoubleColon => write!(f, "::"),
             Token::Underscore => write!(f, "_"),
             Token::KwPerform => write!(f, "perform"),
