@@ -317,9 +317,15 @@ impl Memory2RegPass {
         let phi_insertions = Vec::new();
 
         // 收集可提升的栈槽
-        for (addr_reg, slot) in &stack_slots {
-            if slot.promotable && !slot.stores.is_empty() {
-                promotable_slots.push(*addr_reg);
+        // 🔧 修复：按确定性顺序遍历 stack_slots，避免 HashMap 遍历顺序不确定
+        // 导致的虚拟寄存器 ID 分配不确定性
+        let mut addr_regs: Vec<Register> = stack_slots.keys().cloned().collect();
+        addr_regs.sort_by_key(|r| r.id());
+        for addr_reg in &addr_regs {
+            if let Some(slot) = stack_slots.get(addr_reg) {
+                if slot.promotable && !slot.stores.is_empty() {
+                    promotable_slots.push(*addr_reg);
+                }
             }
         }
 
@@ -399,7 +405,11 @@ impl Memory2RegPass {
         // let mut all_instructions_to_remove = Vec::new();
         // let mut all_instructions_to_modify = Vec::new();
 
-        for (slot_id, slot) in &analysis.stack_slots {
+        // 🔧 修复：按确定性顺序遍历 stack_slots
+        let mut sorted_slots: Vec<_> = analysis.stack_slots.iter().collect();
+        sorted_slots.sort_by_key(|(slot_id, _)| slot_id.id());
+
+        for (slot_id, slot) in &sorted_slots {
             if slot.promotable {
                 if self.has_phi_support_for_slot(slot, &phi_insertions) {
                     debug!("🎯 使用φ节点支持变换栈槽 {:?}", slot_id);
@@ -480,7 +490,7 @@ impl Memory2RegPass {
         // 为每个块插入phi节点
         let mut phi_instructions = Vec::new();
 
-        // 🔧 修复：按块ID排序遍历 phi_by_block，确保 new_register() 的调用顺序确定
+        // 🔧 修复：按块ID排序遍历 phi_by_block，确保 new_register() 调用顺序确定
         let mut sorted_block_ids: Vec<usize> = phi_by_block.keys().copied().collect();
         sorted_block_ids.sort();
 
