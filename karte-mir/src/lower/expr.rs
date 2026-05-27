@@ -442,17 +442,23 @@ pub(crate) fn lower_expression(
             lower_expression(ctx, body, &temp_body_result)?;
 
             // 收集循环体中变量更新后的值（用于 phi incoming）
+            // 遍历所有作用域，因为 if-else 的 phi 更新可能在内层作用域
             let final_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
-                ctx.current_scope()
-                    .bindings
+                ctx.scopes
                     .iter()
-                    .map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
+                    .rev()
+                    .flat_map(|scope| {
+                        scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
+                    })
                     .collect();
 
             ctx.set_terminator(Terminator::Goto {
                 target: loop_head,
                 span: body.span(),
             });
+
+            // 记录 Goto 终结符所在的基本块（可能是 if-else 的 merge_block）
+            let loop_back_edge_block = ctx.current_block();
 
             // === 第五步：生成循环头（包含 phi 节点）===
             ctx.set_current_block(loop_head);
@@ -467,7 +473,7 @@ pub(crate) fn lower_expression(
                     target: phi_temp,
                     incoming: vec![
                         (pre_loop_block, initial_value.clone()),
-                        (loop_body, final_value),
+                        (loop_back_edge_block, final_value),
                     ],
                     span: *span,
                 });

@@ -139,6 +139,23 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
         // MIR Phi 节点收集：
         // 在前驱块的 terminator 之前插入 Store64，把 phi incoming 值写入 phi target 的栈地址
         let mut phi_store_map: std::collections::HashMap<BasicBlockId, Vec<(Register, Value)>> = std::collections::HashMap::new();
+        for block in mir_function.basic_blocks.values() {
+            for statement in &block.statements {
+                if let Statement::Phi { target, incoming, .. } = statement {
+                    let phi_addr = match context.lower_to_lvalue(target) {
+                        Operand::Register { id } => id,
+                        _ => continue,
+                    };
+                    for (pred_block, pred_value) in incoming {
+                        phi_store_map.entry(*pred_block).or_default().push((phi_addr, pred_value.clone()));
+                    }
+                }
+            }
+        }
+
+        // MIR Phi 节点收集：
+        // 在前驱块的 terminator 之前插入 Store64，把 phi incoming 值写入 phi target 的栈地址
+        let mut phi_store_map: std::collections::HashMap<BasicBlockId, Vec<(Register, Value)>> = std::collections::HashMap::new();
         for (block_id, block) in &mir_function.basic_blocks {
             for statement in &block.statements {
                 if let Statement::Phi {
