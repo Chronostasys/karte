@@ -759,12 +759,16 @@ impl X86Compiler {
         match src2 {
             Operand::Register { id } => {
                 let src2_reg = self.get_physical_register(id)?;
-                // AND r64, r64: 0x48 0x21 ModRM
-                code_builder.emit_bytes(&[0x48, 0x21, 0xC0 | (src2_reg << 3) | dst_reg]);
+                // AND r64, r64: REX 0x21 ModRM — 使用 emit_rex_prefix 处理扩展寄存器
+                self.emit_rex_prefix(code_builder, true, src2_reg, 0, dst_reg);
+                code_builder.emit_byte(0x21);
+                self.emit_modrm(code_builder, 0b11, src2_reg, dst_reg);
             }
             Operand::Immediate { value } => {
-                // AND r64, imm32: 0x48 0x81 ModRM(0xE0 + reg) imm32
-                code_builder.emit_bytes(&[0x48, 0x81, 0xE0 | dst_reg]);
+                // AND r64, imm32: REX 0x81 ModRM imm32
+                self.emit_rex_prefix(code_builder, true, 0, 0, dst_reg);
+                code_builder.emit_byte(0x81);
+                self.emit_modrm(code_builder, 0b11, 4, dst_reg); // /4 = AND
                 code_builder.emit_i32(*value as i32);
             }
             _ => return Err(format!("bitand不支持的src2: {:?}", src2).into()),
@@ -800,12 +804,16 @@ impl X86Compiler {
         match src2 {
             Operand::Register { id } => {
                 let src2_reg = self.get_physical_register(id)?;
-                // OR r64, r64: 0x48 0x09 ModRM
-                code_builder.emit_bytes(&[0x48, 0x09, 0xC0 | (src2_reg << 3) | dst_reg]);
+                // OR r64, r64: REX 0x09 ModRM — 使用 emit_rex_prefix 处理扩展寄存器
+                self.emit_rex_prefix(code_builder, true, src2_reg, 0, dst_reg);
+                code_builder.emit_byte(0x09);
+                self.emit_modrm(code_builder, 0b11, src2_reg, dst_reg);
             }
             Operand::Immediate { value } => {
-                // OR r64, imm32: 0x48 0x81 ModRM(0xC8 + reg) imm32
-                code_builder.emit_bytes(&[0x48, 0x81, 0xC8 | dst_reg]);
+                // OR r64, imm32: REX 0x81 ModRM imm32
+                self.emit_rex_prefix(code_builder, true, 0, 0, dst_reg);
+                code_builder.emit_byte(0x81);
+                self.emit_modrm(code_builder, 0b11, 1, dst_reg); // /1 = OR
                 code_builder.emit_i32(*value as i32);
             }
             _ => return Err(format!("bitor不支持的src2: {:?}", src2).into()),
@@ -841,12 +849,16 @@ impl X86Compiler {
         match src2 {
             Operand::Register { id } => {
                 let src2_reg = self.get_physical_register(id)?;
-                // XOR r64, r64: 0x48 0x31 ModRM
-                code_builder.emit_bytes(&[0x48, 0x31, 0xC0 | (src2_reg << 3) | dst_reg]);
+                // XOR r64, r64: REX 0x31 ModRM — 使用 emit_rex_prefix 处理扩展寄存器
+                self.emit_rex_prefix(code_builder, true, src2_reg, 0, dst_reg);
+                code_builder.emit_byte(0x31);
+                self.emit_modrm(code_builder, 0b11, src2_reg, dst_reg);
             }
             Operand::Immediate { value } => {
-                // XOR r64, imm32: 0x48 0x81 ModRM(0xF0 + reg) imm32
-                code_builder.emit_bytes(&[0x48, 0x81, 0xF0 | dst_reg]);
+                // XOR r64, imm32: REX 0x81 ModRM imm32
+                self.emit_rex_prefix(code_builder, true, 0, 0, dst_reg);
+                code_builder.emit_byte(0x81);
+                self.emit_modrm(code_builder, 0b11, 6, dst_reg); // /6 = XOR
                 code_builder.emit_i32(*value as i32);
             }
             _ => return Err(format!("bitxor不支持的src2: {:?}", src2).into()),

@@ -342,24 +342,38 @@ impl X86Runtime {
     fn syscall(&mut self) { self.bs(&[0x0F, 0x05]); }
     fn nop(&mut self) { self.b(0x90); }
 
-    /// MOV [base], r64 (indirect store, handles RSP/RBP special cases)
+    /// MOV [base], r64 (indirect store, handles RSP/RBP/R13 special cases)
     fn mov_indirect_store(&mut self, base: u8, src: u8) {
         self.rex(Self::reg_ext(src), false, Self::reg_ext(base));
         self.b(0x89);
-        let modrm = 0x00 | ((src & 7) << 3) | (base & 7);
-        self.b(modrm);
-        if (base & 7) == 5 { self.b(0x00); } // RBP needs disp8=0
-        if (base & 7) == 4 { self.b(0x24); } // RSP needs SIB
+        if (base & 7) == 5 {
+            // RBP/R13: mod=01 + disp8=0（mod=00+r/m=5 会被解释为 RIP-relative）
+            self.b(0x40 | ((src & 7) << 3) | (base & 7));
+            self.b(0x00);
+        } else if (base & 7) == 4 {
+            // RSP/R12: 需要 SIB 字节
+            self.b(0x00 | ((src & 7) << 3) | (base & 7));
+            self.b(0x24);
+        } else {
+            self.b(0x00 | ((src & 7) << 3) | (base & 7));
+        }
     }
 
-    /// MOV r64, [base] (indirect load)
+    /// MOV r64, [base] (indirect load, handles RSP/RBP/R13 special cases)
     fn mov_indirect_load(&mut self, dst: u8, base: u8) {
         self.rex(Self::reg_ext(dst), false, Self::reg_ext(base));
         self.b(0x8B);
-        let modrm = 0x00 | ((dst & 7) << 3) | (base & 7);
-        self.b(modrm);
-        if (base & 7) == 5 { self.b(0x00); }
-        if (base & 7) == 4 { self.b(0x24); }
+        if (base & 7) == 5 {
+            // RBP/R13: mod=01 + disp8=0
+            self.b(0x40 | ((dst & 7) << 3) | (base & 7));
+            self.b(0x00);
+        } else if (base & 7) == 4 {
+            // RSP/R12: 需要 SIB 字节
+            self.b(0x00 | ((dst & 7) << 3) | (base & 7));
+            self.b(0x24);
+        } else {
+            self.b(0x00 | ((dst & 7) << 3) | (base & 7));
+        }
     }
 
     // ================ 全局数据偏移管理 ================
