@@ -15,6 +15,7 @@ const ELFOSABI_NONE: u8 = 0;
 const ET_EXEC: u16 = 2;
 const EM_X86_64: u16 = 62;
 const EM_AARCH64: u16 = 183;
+const EM_RISCV: u16 = 243;
 
 const PT_LOAD: u32 = 1;
 const PF_X: u32 = 1;
@@ -58,6 +59,7 @@ struct Elf64Phdr {
 pub enum ElfArch {
     X86_64,
     AArch64,
+    Riscv64,
 }
 
 /// ELF 生成器
@@ -170,6 +172,13 @@ impl ElfWriter {
         let e_machine = match self.arch {
             ElfArch::X86_64 => EM_X86_64,
             ElfArch::AArch64 => EM_AARCH64,
+            ElfArch::Riscv64 => EM_RISCV,
+        };
+
+        // RISC-V 特殊 flags: 0x0 = RV64I, 0x5 = RVC (压缩指令)
+        let e_flags = match self.arch {
+            ElfArch::Riscv64 => 0x0,
+            _ => 0,
         };
 
         // 构建 ELF header
@@ -181,7 +190,7 @@ impl ElfWriter {
             e_entry: entry_vaddr,
             e_phoff: phdr_offset as u64,
             e_shoff: 0, // 无段头
-            e_flags: 0,
+            e_flags,
             e_ehsize: ehdr_size as u16,
             e_phentsize: phdr_size as u16,
             e_phnum: num_phdrs as u16,

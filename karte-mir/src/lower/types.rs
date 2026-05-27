@@ -94,4 +94,7 @@ pub struct LoweringContext<'a> {
     pub(crate) temp_types: HashMap<crate::TempId, karte_hir::Type>,
     /// 表达式类型映射（从HIR type checker传递）
     pub(crate) expr_types: HashMap<usize, karte_hir::Type>,
+    /// 预分析模式：while 循环预分析时不生成 Phi 节点
+    /// 仅用于收集变量更新信息
+    pub(crate) analysis_mode: bool,
 }

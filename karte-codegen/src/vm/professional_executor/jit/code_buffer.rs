@@ -6,6 +6,14 @@ use crate::vm::{VariableInfo, VariableLocation};
 
 use super::compiler_trait::MachineCodeBuffer;
 
+/// 目标架构（用于交叉编译时选择正确的指令编码）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TargetArch {
+    #[default]
+    Host,
+    Riscv64,
+}
+
 /// 高级代码缓冲区
 ///
 /// 在基础MachineCodeBuffer之上提供更多便利功能
@@ -13,6 +21,9 @@ use super::compiler_trait::MachineCodeBuffer;
 pub struct CodeBuilder {
     /// 底层代码缓冲区
     buffer: MachineCodeBuffer,
+
+    /// 目标架构（交叉编译用）
+    target_arch: TargetArch,
 
     /// 标签表 (标签名 -> 代码位置)
     labels: std::collections::HashMap<String, usize>,
@@ -38,6 +49,21 @@ impl CodeBuilder {
     pub fn new() -> Self {
         Self {
             buffer: MachineCodeBuffer::new(),
+            target_arch: TargetArch::Host,
+            labels: std::collections::HashMap::new(),
+            global_labels: None,
+            pending_jumps: Vec::new(),
+            pending_label_addresses: Vec::new(),
+            pending_adrs: Vec::new(),
+            debug_info: None,
+        }
+    }
+
+    /// 创建指定目标架构的代码构建器
+    pub fn with_target_arch(arch: TargetArch) -> Self {
+        Self {
+            buffer: MachineCodeBuffer::new(),
+            target_arch: arch,
             labels: std::collections::HashMap::new(),
             global_labels: None,
             pending_jumps: Vec::new(),
@@ -51,6 +77,7 @@ impl CodeBuilder {
     pub fn with_debug_info() -> Self {
         Self {
             buffer: MachineCodeBuffer::new(),
+            target_arch: TargetArch::Host,
             labels: std::collections::HashMap::new(),
             global_labels: None,
             pending_jumps: Vec::new(),
@@ -125,103 +152,108 @@ impl CodeBuilder {
     pub fn emit_jump(&mut self, jump_type: JumpType, target_label: &str) {
         let patch_position = self.buffer.position();
 
-        // 🔧 修复：根据目标架构生成正确的跳转指令
-        // 在macOS AArch64上，需要生成AArch64指令而不是x86指令
-        #[cfg(target_arch = "aarch64")]
-        {
+        if self.target_arch == TargetArch::Riscv64 {
+            // RISC-V 跳转指令（交叉编译用）
             match jump_type {
                 JumpType::Unconditional => {
-                    // B <label> - 无条件分支
-                    // 31|30|29 28|27 26|25                     0
-                    // 0 |0 |0  1 |0  1 |imm26 (26位相对偏移)
-                    self.emit_u32(0x14000000); // B指令，偏移=0（稍后修补）
+                    // JAL x0, offset — 无条件跳转 (21-bit signed)
+                    self.emit_u32(0x0000006F); // JAL x0, 0
                 }
                 JumpType::ConditionalEqual => {
-                    // B.EQ <label> - 条件分支（相等）
-                    // 31|30 29|28 25|24|23   5|4   0
-                    // 0 |1  0 |1  0  0 |1|imm19|cond
-                    // cond=0000 (EQ)
-                    self.emit_u32(0x54000000); // B.EQ指令，偏移=0（稍后修补）
+                    // BEQ rs1, rs2, offset — 需要知道寄存器...
+                    // 问题：我们不知道要比较哪些寄存器！
+                    // RISC-V 条件分支需要两个寄存器操作数
+                    // 方案：用 "比较并分支" 模式，在 compile_conditional_jump 中处理
+                    // 这里生成占位 BEQ x0, x0, 0（总是跳转）
+                    self.emit_u32(0x00000063); // BEQ x0, x0, 0
                 }
                 JumpType::ConditionalNotEqual => {
-                    // B.NE <label> - 条件分支（不相等）
-                    // cond=0001 (NE)
-                    self.emit_u32(0x54000001); // B.NE指令
+                    self.emit_u32(0x00001063); // BNE x0, x0, 0
                 }
                 JumpType::ConditionalLess => {
-                    // B.LT <label> - 条件分支（小于）
-                    // cond=1011 (LT)
-                    self.emit_u32(0x5400000B); // B.LT指令
+                    self.emit_u32(0x00004063); // BLT x0, x0, 0
                 }
                 JumpType::ConditionalGreater => {
-                    // B.GT <label> - 条件分支（大于）
-                    // cond=1100 (GT)
-                    self.emit_u32(0x5400000C); // B.GT指令
+                    self.emit_u32(0x00005063); // BGE x0, x0, 0
                 }
                 JumpType::ConditionalLessEqual => {
-                    // B.LE <label> - 条件分支（小于等于）
-                    // cond=1101 (LE)
-                    self.emit_u32(0x5400000D); // B.LE指令
+                    self.emit_u32(0x00006063); // BLTU x0, x0, 0
                 }
                 JumpType::ConditionalGreaterEqual => {
-                    // B.GE <label> - 条件分支（大于等于）
-                    // cond=1010 (GE)
-                    self.emit_u32(0x5400000A); // B.GE指令
+                    self.emit_u32(0x00007063); // BGEU x0, x0, 0
                 }
                 JumpType::Call => {
-                    // BL <label> - 分支并链接（函数调用）
-                    // 31|30|29 28|27 26|25                     0
-                    // 1 |0 |0  1 |0  1 |imm26
-                    self.emit_u32(0x94000000); // BL指令
+                    // AUIPC ra, %hi(offset); JALR ra, ra, %lo(offset)
+                    // 简化：用 AUIPC+LD+JALR 模式（通过 pending_label_address 加载目标地址）
+                    // 发射 AUIPC ra, 0 (占位)
+                    self.emit_u32(0x00000097); // AUIPC ra, 0
+                    // LD ra, 0(ra) (占位) — 从代码段加载 64 位地址
+                    self.emit_u32(0x0000B083); // LD ra, 0(ra)
+                    // JALR x0, ra, 0 — 跳转
+                    self.emit_u32(0x00008067); // JALR x0, ra, 0
+                    // 占位 64 位地址数据
+                    self.emit_u64(0);
+                    // 标记需要通过 pending_label_address 修补
+                    let addr_patch_pos = patch_position + 12; // 3 条指令后
+                    self.pending_label_addresses.push(PendingLabelAddress {
+                        patch_position: addr_patch_pos,
+                        target_label: target_label.to_string(),
+                    });
+                    // 不需要 pending_jump，因为地址通过 pending_label_address 修补
+                    return;
                 }
             }
-        }
+        } else {
+            // 原有实现：x86 或 AArch64（主机架构）
+            #[cfg(target_arch = "aarch64")]
+            {
+                match jump_type {
+                    JumpType::Unconditional => { self.emit_u32(0x14000000); }
+                    JumpType::ConditionalEqual => { self.emit_u32(0x54000000); }
+                    JumpType::ConditionalNotEqual => { self.emit_u32(0x54000001); }
+                    JumpType::ConditionalLess => { self.emit_u32(0x5400000B); }
+                    JumpType::ConditionalGreater => { self.emit_u32(0x5400000C); }
+                    JumpType::ConditionalLessEqual => { self.emit_u32(0x5400000D); }
+                    JumpType::ConditionalGreaterEqual => { self.emit_u32(0x5400000A); }
+                    JumpType::Call => { self.emit_u32(0x94000000); }
+                }
+            }
 
-        #[cfg(not(target_arch = "aarch64"))]
-        {
-            // x86/x64跳转指令（原有实现）
-            match jump_type {
-                JumpType::Unconditional => {
-                    // jmp rel32 - E9 <rel32>
-                    self.emit_byte(0xE9);
-                    self.emit_i32(0); // 占位符，稍后修补
-                }
-                JumpType::ConditionalEqual => {
-                    // je rel32 - 0F 84 <rel32>
-                    self.emit_bytes(&[0x0F, 0x84]);
-                    self.emit_i32(0); // 占位符，稍后修补
-                }
-                JumpType::ConditionalNotEqual => {
-                    // jne rel32 - 0F 85 <rel32>
-                    self.emit_bytes(&[0x0F, 0x85]);
-                    self.emit_i32(0); // 占位符，稍后修补
-                }
-                JumpType::ConditionalLess => {
-                    // jl rel32 - 0F 8C <rel32>
-                    self.emit_bytes(&[0x0F, 0x8C]);
-                    self.emit_i32(0); // 占位符，稍后修补
-                }
-                JumpType::ConditionalGreater => {
-                    // jg rel32 - 0F 8F <rel32>
-                    self.emit_bytes(&[0x0F, 0x8F]);
-                    self.emit_i32(0); // 占位符，稍后修补
-                }
-                JumpType::ConditionalLessEqual => {
-                    // jle rel32 - 0F 8E <rel32>
-                    self.emit_bytes(&[0x0F, 0x8E]);
-                    self.emit_i32(0); // 占位符，稍后修补
-                }
-                JumpType::ConditionalGreaterEqual => {
-                    // jge rel32 - 0F 8D <rel32>
-                    self.emit_bytes(&[0x0F, 0x8D]);
-                    self.emit_i32(0); // 占位符，稍后修补
-                }
-                JumpType::Call => {
-                    // Karte 虚拟机使用 Jump 而不是 x86 CALL
-                    // 返回地址已经由 lower_call 通过虚拟栈管理
-                    // 所以这里用 jmp rel32 (E9) 而不是 call rel32 (E8)
-                    self.emit_byte(0xE9);
-                    self.emit_i32(0); // 占位符，稍后修补
+            #[cfg(not(target_arch = "aarch64"))]
+            {
+                match jump_type {
+                    JumpType::Unconditional => {
+                        self.emit_byte(0xE9);
+                        self.emit_i32(0);
+                    }
+                    JumpType::ConditionalEqual => {
+                        self.emit_bytes(&[0x0F, 0x84]);
+                        self.emit_i32(0);
+                    }
+                    JumpType::ConditionalNotEqual => {
+                        self.emit_bytes(&[0x0F, 0x85]);
+                        self.emit_i32(0);
+                    }
+                    JumpType::ConditionalLess => {
+                        self.emit_bytes(&[0x0F, 0x8C]);
+                        self.emit_i32(0);
+                    }
+                    JumpType::ConditionalGreater => {
+                        self.emit_bytes(&[0x0F, 0x8F]);
+                        self.emit_i32(0);
+                    }
+                    JumpType::ConditionalLessEqual => {
+                        self.emit_bytes(&[0x0F, 0x8E]);
+                        self.emit_i32(0);
+                    }
+                    JumpType::ConditionalGreaterEqual => {
+                        self.emit_bytes(&[0x0F, 0x8D]);
+                        self.emit_i32(0);
+                    }
+                    JumpType::Call => {
+                        self.emit_byte(0xE9);
+                        self.emit_i32(0);
+                    }
                 }
             }
         }
@@ -773,6 +805,14 @@ impl CodeBuilder {
     /// 导出所有待修补的跳转
     pub fn exported_pending_jumps(&self) -> &Vec<PendingJump> {
         &self.pending_jumps
+    }
+    /// 手动添加一个 pending jump（用于 RISC-V 等架构直接生成分支指令后记录）
+    pub fn add_pending_jump_raw(&mut self, patch_position: usize, target_label: String, jump_type: JumpType) {
+        self.pending_jumps.push(PendingJump {
+            patch_position,
+            target_label,
+            jump_type,
+        });
     }
     /// 导出所有待修补的标签地址
     pub fn exported_pending_label_addresses(&self) -> &Vec<PendingLabelAddress> {

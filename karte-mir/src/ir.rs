@@ -649,6 +649,10 @@ impl MirFunction {
         id
     }
 
+    pub fn remove_block(&mut self, id: BasicBlockId) {
+        self.basic_blocks.remove(&id);
+    }
+
     pub fn new_temp(&mut self) -> TempId {
         let id = TempId(self.next_temp_id);
         self.next_temp_id += 1;

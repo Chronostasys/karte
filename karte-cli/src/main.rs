@@ -145,6 +145,10 @@ enum Commands {
         /// 解析模式 (script/project)
         #[arg(long, value_enum)]
         mode: Option<ModeArg>,
+
+        /// 目标架构 (x86_64/riscv64)
+        #[arg(long, default_value = "x86_64")]
+        target: String,
     },
 }
 
@@ -455,12 +459,21 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        Some(Commands::Aot { input, output, mode }) => {
+        Some(Commands::Aot { input, output, mode, target }) => {
             let mode = mode.map(|m| m.into()).unwrap_or_else(|| {
                 if default_mode_is_explicit { default_mode } else { ParserMode::Script }
             });
             let output_path = output.unwrap_or_else(|| "a.out".to_string());
-            if let Err(e) = runner::aot_compile(&input, &output_path, optimization_level, mode, cli.verbose) {
+            let aot_target = match target.as_str() {
+                "x86_64" | "x86" => karte_aot::AotTarget::X86_64,
+                "riscv64" | "rv64" => karte_aot::AotTarget::Riscv64,
+                "aarch64" | "arm64" => karte_aot::AotTarget::AArch64,
+                _ => {
+                    error!("不支持的目标架构: {} (支持: x86_64, riscv64, aarch64)", target);
+                    std::process::exit(1);
+                }
+            };
+            if let Err(e) = runner::aot_compile(&input, &output_path, optimization_level, mode, cli.verbose, aot_target) {
                 error!("AOT 编译失败: {}", e);
                 std::process::exit(1);
             }

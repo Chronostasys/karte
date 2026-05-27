@@ -1,0 +1,23 @@
+fn gc_init() -> number {
+    let heap = runtime_heap_base();
+    unsafe_store(heap, heap + 16);
+    heap
+}
+
+fn gc_alloc(state: number, size: number) -> number {
+    let align_mask = 0 - 16;
+    let total_size = (size + 16 + 15) bitand align_mask;
+    let bump = unsafe_load(state);
+    let new_bump = bump + total_size;
+    unsafe_store(state, new_bump);
+    unsafe_store(bump, 0);
+    unsafe_store(bump + 8, total_size);
+    bump + 16
+}
+
+fn main() -> number {
+    let state = gc_init();
+    let p1 = gc_alloc(state, 8);
+    unsafe_store(p1, 42);
+    unsafe_load(p1)
+}

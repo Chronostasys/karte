@@ -57,18 +57,11 @@ impl LinearScanAllocator {
     /// @param lifetimes - 所有虚拟寄存器的生命周期信息。
     /// @param register_types - 寄存器类型映射。
     /// @returns 分配结果。
-    pub fn allocate(
+        pub fn allocate(
         &mut self,
         mut lifetimes: Vec<RegisterLifetime>,
         register_types: HashMap<Register, RegisterType>,
     ) -> RegisterAllocationResult {
-        println!("==== StackAddress RegisterLifetime ====");
-        for lt in &lifetimes {
-            if lt.register_type == RegisterType::StackAddress {
-                println!("{:?}", lt);
-            }
-        }
-        println!("=======================================");
         lifetimes.sort_by(|a, b| a.start.cmp(&b.start));
 
         let mut register_mapping = HashMap::new();
@@ -108,7 +101,6 @@ impl LinearScanAllocator {
 
         // 🔧 修复：StackAddress寄存器也需要分配物理寄存器
         // 因为它们在StackFrameLowering后变成了add指令的目标寄存器
-        println!("🔍 StackAddress寄存器也需要分配物理寄存器");
 
         for current_lifetime in &lifetimes {
             if current_lifetime.is_function_parameter {

@@ -1,0 +1,55 @@
+fn gc_init() -> number {
+    let heap = runtime_heap_base();
+    unsafe_store(heap, heap + 16);
+    heap
+}
+
+fn gc_alloc(state: number, size: number) -> number {
+    let align_mask = 0 - 16;
+    let total_size = (size + 16 + 15) bitand align_mask;
+    let bump = unsafe_load(state);
+    let new_bump = bump + total_size;
+    unsafe_store(state, new_bump);
+    unsafe_store(bump, 0);
+    unsafe_store(bump + 8, total_size);
+    bump + 16
+}
+
+fn test_sweep() -> number {
+    let state = gc_init();
+    let p1 = gc_alloc(state, 8);
+    unsafe_store(p1, 100);
+    let p2 = gc_alloc(state, 8);
+    unsafe_store(p2, 200);
+    gc_sweep(state);
+    unsafe_load(p1) + unsafe_load(p2)
+}
+
+fn gc_sweep(state: number) -> number {
+    let heap_base = runtime_heap_base();
+    let bump = unsafe_load(state);
+    let ptr = heap_base + 16;
+    let new_bump = heap_base + 16;
+    while ptr < bump {
+        let total_size = unsafe_load(ptr + 8);
+        if total_size < 16 {
+            ptr = bump
+        } else {
+            let header = unsafe_load(ptr);
+            let marked = header bitand 1;
+            if marked != 0 {
+                unsafe_store(ptr, header bitand (0 - 2));
+                new_bump = ptr + total_size;
+                ptr = ptr + total_size
+            } else {
+                ptr = ptr + total_size
+            }
+        }
+    };
+    unsafe_store(state, new_bump);
+    new_bump
+}
+
+fn main() -> number {
+    test_sweep()
+}

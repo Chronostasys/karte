@@ -28,6 +28,7 @@ impl<'a> LoweringContext<'a> {
             function_return_types: std::collections::HashMap::new(),
             temp_types: std::collections::HashMap::new(),
             expr_types: std::collections::HashMap::new(),
+            analysis_mode: false,
         };
         ctx.enter_scope();
         ctx
@@ -140,6 +141,10 @@ impl<'a> LoweringContext<'a> {
         self.current_function_mut().new_block()
     }
 
+    pub(crate) fn remove_block(&mut self, id: BasicBlockId) {
+        self.current_function_mut().remove_block(id);
+    }
+
     /// 创建新的临时变量
     pub(crate) fn new_temp(&mut self) -> Value {
         let id = self.current_function_mut().new_temp();
@@ -168,6 +173,13 @@ impl<'a> LoweringContext<'a> {
     pub(crate) fn current_scope_mut(&mut self) -> &mut ScopeFrame {
         self.scopes
             .last_mut()
+            .expect("at least one scope must exist")
+    }
+
+    /// 获取当前作用域的不可变引用
+    pub(crate) fn current_scope(&self) -> &ScopeFrame {
+        self.scopes
+            .last()
             .expect("at least one scope must exist")
     }
 

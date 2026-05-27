@@ -332,8 +332,6 @@ impl PassRegistry {
             Box::new(PeepholeOptimizer::new()),
             Box::new(InstructionLoweringPass::new()),
             // 🔧 调用位置活跃寄存器标注 - 必须在 InstructionLowering 之后运行
-            // 标注调用位置的活跃寄存器信息到 instruction_metadata
-            // 此时指令序列已稳定，寄存器已分配为物理寄存器
             Box::new(CallsiteLiveRegisterPass::new()),
         ]);
 

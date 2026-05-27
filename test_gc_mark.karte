@@ -1,0 +1,72 @@
+fn gc_init() -> number {
+    let heap = runtime_heap_base();
+    unsafe_store(heap, heap + 16);
+    heap
+}
+
+fn gc_alloc(state: number, size: number) -> number {
+    let align_mask = 0 - 16;
+    let total_size = (size + 16 + 15) bitand align_mask;
+    let bump = unsafe_load(state);
+    let new_bump = bump + total_size;
+    unsafe_store(state, new_bump);
+    unsafe_store(bump, 0);
+    unsafe_store(bump + 8, total_size);
+    bump + 16
+}
+
+fn gc_mark(obj: number, heap_base: number, heap_limit: number, state: number) -> number {
+    if obj < heap_base {
+        0
+    } else {
+        if obj >= heap_limit {
+            0
+        } else {
+            if obj <= state + 16 {
+                0
+            } else {
+                let header_ptr = obj - 16;
+                let header = unsafe_load(header_ptr);
+                if header bitand 1 != 0 {
+                    0
+                } else {
+                    unsafe_store(header_ptr, header bitor 1);
+                    let size_field = unsafe_load(header_ptr + 8);
+                    let data_size = size_field - 16;
+                    let i = 0;
+                    while i < data_size {
+                        let field = unsafe_load(obj + i);
+                        if field >= heap_base {
+                            if field < heap_limit {
+                                if field > state + 16 {
+                                    gc_mark(field, heap_base, heap_limit, state)
+                                } else {
+                                    0
+                                }
+                            } else {
+                                0
+                            }
+                        } else {
+                            0
+                        };
+                        i = i + 8
+                    };
+                    0
+                }
+            }
+        }
+    }
+}
+
+fn test_mark_single() -> number {
+    let state = gc_init();
+    let p1 = gc_alloc(state, 8);
+    unsafe_store(p1, 100);
+    let heap_base = runtime_heap_base();
+    let heap_limit = runtime_heap_limit();
+    gc_mark(p1, heap_base, heap_limit, state)
+}
+
+fn main() -> number {
+    test_mark_single()
+}

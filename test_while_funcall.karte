@@ -1,0 +1,17 @@
+fn test_while_with_funcall() -> number {
+    let i = 0;
+    let sum = 0;
+    while i < 5 {
+        sum = sum + helper(i);
+        i = i + 1
+    };
+    sum
+}
+
+fn helper(x: number) -> number {
+    x * 3
+}
+
+fn main() -> number {
+    test_while_with_funcall()
+}

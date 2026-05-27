@@ -14,6 +14,7 @@ pub mod compiler_trait;
 pub mod execution_mode;
 pub mod ffi;
 pub mod memory_manager;
+pub mod riscv_compiler;
 pub mod runtime;
 pub mod x86_compiler;
 
@@ -24,6 +25,7 @@ pub use compiler_trait::*;
 pub use execution_mode::*;
 pub use ffi::*;
 pub use memory_manager::*;
+pub use riscv_compiler::*;
 pub use runtime::*;
 pub use x86_compiler::*;
 

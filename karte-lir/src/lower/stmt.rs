@@ -1278,6 +1278,11 @@ pub(super) fn lower_statement(
             Ok(())
         }
 
+        Statement::Phi { .. } => {
+            // Phi 节点通过 lower.rs 的 phi_store_map 在前驱块处理
+            Ok(())
+        }
+
         _ => Err(vec![format!(
             "Statement type not yet implemented: {:?}",
             statement

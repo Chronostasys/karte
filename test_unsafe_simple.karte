@@ -1,0 +1,7 @@
+fn main() -> number {
+    let heap = runtime_heap_base();
+    let limit = runtime_heap_limit();
+    let bump = heap + 16;
+    unsafe_store(bump, 42);
+    unsafe_load(bump)
+}

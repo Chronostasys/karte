@@ -43,6 +43,24 @@ impl PhiEliminationPass {
             {
                 debug!("🔧 处理φ指令 {}: dst={:?}, incoming={:?}", i, dst, incoming);
 
+                // 跳过栈地址 Phi（来自 Memory2Reg）
+                // Memory2Reg 为跨块使用的栈槽生成 Phi，其 dst 是 Alloc 分配的栈地址。
+                // phi 值已经通过 lower.rs 的 phi_store_map Store64 传递。
+                // 如果 PhiEliminationPass 再生成 Move dst=addr_reg, src=value，
+                // 会覆盖栈地址寄存器，导致 Store64 写入错误地址。
+                let is_stack_addr_phi = function.instructions.iter().any(|instr| {
+                    if let Instruction::Alloc { dst: alloc_dst, .. } = instr {
+                        alloc_dst == dst
+                    } else {
+                        false
+                    }
+                });
+                if is_stack_addr_phi {
+                    debug!("🔧 跳过栈地址 Phi: dst={:?}", dst);
+                    transformer.remove(i);
+                    continue;
+                }
+
                 // 标记φ指令为需要移除
                 transformer.remove(i);
 

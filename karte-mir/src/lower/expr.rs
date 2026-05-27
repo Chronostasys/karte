@@ -252,6 +252,16 @@ pub(crate) fn lower_expression(
                 span,
             });
 
+            // 保存 if 之前的变量绑定快照（遍历所有作用域）
+            let pre_if_bindings: std::collections::HashMap<String, Value> = ctx
+                .scopes
+                .iter()
+                .rev() // 从内到外遍历，内层优先
+                .flat_map(|scope| {
+                    scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone()))
+                })
+                .collect();
+
             // then 分支
             ctx.set_current_block(then_block);
             lower_expression(ctx, then_branch, destination)?;
@@ -260,8 +270,27 @@ pub(crate) fn lower_expression(
                 span: then_branch.span(),
             });
 
+            // 记录 then 分支后的变量绑定（遍历所有作用域）
+            let then_bindings: std::collections::HashMap<String, Value> = ctx
+                .scopes
+                .iter()
+                .rev()
+                .flat_map(|scope| {
+                    scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone()))
+                })
+                .collect();
+
             // else 分支
             if let Some(else_branch) = else_branch {
+                // 恢复到 if 之前的绑定
+                // 遍历所有作用域，恢复每个作用域中的变量绑定
+                for scope in ctx.scopes.iter_mut() {
+                    for (name, binding) in scope.bindings.iter_mut() {
+                        if let Some(pre_val) = pre_if_bindings.get(name) {
+                            binding.value = pre_val.clone();
+                        }
+                    }
+                }
                 ctx.set_current_block(else_block);
                 lower_expression(ctx, else_branch, destination)?;
                 ctx.set_terminator(Terminator::Goto {
@@ -282,7 +311,44 @@ pub(crate) fn lower_expression(
                 });
             }
 
-            ctx.set_current_block(merge_block);
+            // 记录 else 分支后的变量绑定（遍历所有作用域）
+            let else_bindings: std::collections::HashMap<String, Value> = ctx
+                .scopes
+                .iter()
+                .rev()
+                .flat_map(|scope| {
+                    scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone()))
+                })
+                .collect();
+
+            // 在 merge 块中为被修改的变量插入 Phi 节点
+            // 预分析模式不生成 Phi（仅收集变量绑定变化）
+            if !ctx.analysis_mode {
+                ctx.set_current_block(merge_block);
+                ctx.set_current_block(merge_block);
+                for (name, pre_value) in &pre_if_bindings {
+                    let then_value = then_bindings.get(name).cloned().unwrap_or_else(|| pre_value.clone());
+                    let else_value = else_bindings.get(name).cloned().unwrap_or_else(|| pre_value.clone());
+
+                    let then_changed = then_value != *pre_value;
+                    let else_changed = else_value != *pre_value;
+
+                    if then_changed || else_changed {
+                        let phi_temp = ctx.new_temp();
+                        ctx.add_statement(Statement::Phi {
+                            target: phi_temp.clone(),
+                            incoming: vec![
+                                (then_block, then_value),
+                                (else_block, else_value),
+                            ],
+                            span,
+                        });
+                        ctx.update_variable(name, phi_temp, None);
+                    }
+                }
+            } else {
+                ctx.set_current_block(merge_block);
+            }
         }
 
         Expr::While {
@@ -294,29 +360,131 @@ pub(crate) fn lower_expression(
             let loop_body = ctx.new_block();
             let loop_exit = ctx.new_block();
 
-            // Jump to loop head
+            // 记录循环前的块 ID
+            let pre_loop_block = ctx.current_block();
+
+            // 快照当前变量绑定
+            let pre_loop_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
+                ctx.current_scope()
+                    .bindings
+                    .iter()
+                    .map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
+                    .collect();
+
+            // === 第一步：预分析循环体，找出被更新的变量 ===
+            // 先保存当前状态，lower 循环体到临时块来收集变量更新
+            // 预分析模式：不生成 Phi 节点，仅收集变量绑定变化
+            ctx.analysis_mode = true;
+            let pre_analysis_block_count = ctx.current_function_mut().basic_blocks.len();
+            let saved_block = ctx.current_block();
+            let analysis_block = ctx.new_block();
+            ctx.set_current_block(analysis_block);
+            let temp_result = ctx.new_temp();
+            let _ = lower_expression(ctx, body, &temp_result);
+            ctx.analysis_mode = false;
+
+            // 收集循环体中更新的变量
+            let post_loop_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
+                ctx.current_scope()
+                    .bindings
+                    .iter()
+                    .map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
+                    .collect();
+
+            // 清理预分析产生的临时块（包括 if-else 创建的 then/else/merge 块）
+            let all_block_ids: Vec<_> = ctx.current_function_mut().basic_blocks.keys().cloned().collect();
+            let analysis_blocks: Vec<_> = all_block_ids[pre_analysis_block_count..].to_vec();
+            for block_id in &analysis_blocks {
+                ctx.remove_block(*block_id);
+            }
+
+            let mut updated_vars: Vec<(String, Value, Value)> = Vec::new();
+            for (name, (post_value, _)) in &post_loop_bindings {
+                if let Some((pre_value, _)) = pre_loop_bindings.get(name) {
+                    if post_value != pre_value {
+                        updated_vars.push((name.clone(), pre_value.clone(), post_value.clone()));
+                    }
+                }
+            }
+
+            // === 第二步：删除分析用的临时块，恢复状态 ===
+            ctx.remove_block(analysis_block);
+            // 恢复变量绑定到循环前的状态
+            for (name, (value, ownership)) in &pre_loop_bindings {
+                ctx.update_variable(name, value.clone(), *ownership);
+            }
+
+            // === 第三步：创建 phi temp 并更新 context ===
+            // 这样后续 lower 循环体时会使用 phi 结果
+            let mut phi_values: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+            for (name, initial_value, loop_value) in &updated_vars {
+                let phi_temp = ctx.new_temp();
+                phi_values.insert(name.clone(), phi_temp);
+                // 记录 phi 信息：(initial_value, loop_value) 用于后续生成
+                // 注意：先不生成 phi 语句，等循环体 lower 后再生成
+            }
+
+            // 更新 context 中的变量绑定指向 phi temp
+            for (name, phi_val) in &phi_values {
+                ctx.update_variable(name, phi_val.clone(), None);
+            }
+
+            // Jump to loop head (从 pre_loop 块)
+            ctx.set_current_block(saved_block);
             ctx.set_terminator(Terminator::Goto {
                 target: loop_head,
                 span: *span,
             });
 
-            // In loop head, check condition
+            // === 第四步：生成循环体（使用 phi 绑定后的 context）===
+            ctx.set_current_block(loop_body);
+            let temp_body_result = ctx.new_temp();
+            lower_expression(ctx, body, &temp_body_result)?;
+
+            // 收集循环体中变量更新后的值（用于 phi incoming）
+            let final_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
+                ctx.current_scope()
+                    .bindings
+                    .iter()
+                    .map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
+                    .collect();
+
+            ctx.set_terminator(Terminator::Goto {
+                target: loop_head,
+                span: body.span(),
+            });
+
+            // === 第五步：生成循环头（包含 phi 节点）===
             ctx.set_current_block(loop_head);
+
+            for (name, initial_value, _loop_value) in &updated_vars {
+                let phi_temp = phi_values.get(name).unwrap().clone();
+                // 获取循环体更新后的值
+                let final_value = final_bindings.get(name)
+                    .map(|(v, _)| v.clone())
+                    .unwrap_or_else(|| initial_value.clone());
+                ctx.add_statement(Statement::Phi {
+                    target: phi_temp,
+                    incoming: vec![
+                        (pre_loop_block, initial_value.clone()),
+                        (loop_body, final_value),
+                    ],
+                    span: *span,
+                });
+            }
+
+            // 更新 context 指向 phi 结果
+            for (name, phi_val) in &phi_values {
+                ctx.update_variable(name, phi_val.clone(), None);
+            }
+
+            // 条件求值
             let cond_val = lower_expression_to_temp(ctx, condition)?;
             ctx.set_terminator(Terminator::Branch {
                 condition: cond_val,
                 then_block: loop_body,
                 else_block: loop_exit,
                 span: condition.span(),
-            });
-
-            // In loop body, execute and jump back to head
-            ctx.set_current_block(loop_body);
-            let temp_body_result = ctx.new_temp();
-            lower_expression(ctx, body, &temp_body_result)?;
-            ctx.set_terminator(Terminator::Goto {
-                target: loop_head,
-                span: body.span(),
             });
 
             // Continue from exit block

@@ -704,6 +704,7 @@ pub fn aot_compile(
     optimization_level: OptimizationLevel,
     mode: ParserMode,
     verbose: u8,
+    target: karte_aot::AotTarget,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -727,8 +728,18 @@ pub fn aot_compile(
         eprintln!("AOT: LIR 优化完成, {} 个函数", lir_program.functions.len());
     }
 
+    // DEBUG: dump optimized LIR
+    eprintln!("=== OPTIMIZED LIR ===");
+    for (name, func) in &lir_program.functions {
+        eprintln!("--- {} ---", name);
+        for (i, inst) in func.instructions.iter().enumerate() {
+            eprintln!("  [{}] {:?}", i, inst);
+        }
+    }
+    eprintln!("=== END LIR ===");
+
     // 3. AOT 编译
-    let aot_compiler = karte_aot::AotCompiler::new(verbose > 0);
+    let aot_compiler = karte_aot::AotCompiler::new(verbose > 0).with_target(target);
     let binary = aot_compiler.compile_to_bytes(&lir_program)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 

@@ -136,6 +136,31 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
             context.allocate_label_for_block(block_id);
         }
 
+        // MIR Phi 节点收集：
+        // 在前驱块的 terminator 之前插入 Store64，把 phi incoming 值写入 phi target 的栈地址
+        let mut phi_store_map: std::collections::HashMap<BasicBlockId, Vec<(Register, Value)>> = std::collections::HashMap::new();
+        for (block_id, block) in &mir_function.basic_blocks {
+            for statement in &block.statements {
+                if let Statement::Phi {
+                    target: phi_target,
+                    incoming,
+                    ..
+                } = statement
+                {
+                    let phi_addr = match context.lower_to_lvalue(phi_target) {
+                        Operand::Register { id } => id,
+                        _ => continue,
+                    };
+                    for (pred_block, pred_value) in incoming {
+                        phi_store_map
+                            .entry(*pred_block)
+                            .or_default()
+                            .push((phi_addr, pred_value.clone()));
+                    }
+                }
+            }
+        }
+
         // 转换每个基本块
         // 按ID顺序处理基本块
         let mut block_ids: Vec<_> = mir_function.basic_blocks.keys().copied().collect();
@@ -174,10 +199,26 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
                     });
                 }
 
-                // 转换基本块中的语句
+                // 转换基本块中的语句（跳过 Phi 节点）
                 for statement in &block.statements {
+                    if let Statement::Phi { .. } = statement {
+                        continue;
+                    }
                     if let Err(errors) = lower_statement(&mut context, statement) {
                         context.errors.extend(errors);
+                    }
+                }
+
+                // 在 terminator 之前，为后继块的 phi 节点生成 Store64 指令
+                if let Some(phi_moves) = phi_store_map.get(&block_id) {
+                    for (addr_reg, incoming_value) in phi_moves {
+                        let src = context.lower_to_rvalue(incoming_value);
+                        context.add_instruction(Instruction::Store64 {
+                            addr: *addr_reg,
+                            offset: 0,
+                            src,
+                            span: karte_diagnostics::Span { start: usize::MAX, end: usize::MAX },
+                        });
                     }
                 }
 

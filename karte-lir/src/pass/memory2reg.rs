@@ -201,10 +201,15 @@ impl Memory2RegPass {
                     addr,
                     offset,
                     src: _,
-                    ..
+                    span,
                 } => {
                     if *offset == 0 {
                         if let Some(slot) = stack_slots.get_mut(addr) {
+                            // Phi Store64 使用 span={MAX,MAX} 标记
+                            // 这些 Store64 由 phi_store_map 生成，不能被 Memory2Reg 提升
+                            if span.start == usize::MAX && span.end == usize::MAX {
+                                slot.promotable = false;
+                            }
                             slot.stores.push(i);
                             if let Some(block_id) = current_block {
                                 slot.store_to_block.insert(i, block_id);
