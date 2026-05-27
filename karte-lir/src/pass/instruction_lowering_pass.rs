@@ -190,15 +190,18 @@ impl InstructionLoweringPass {
         _instruction_index: usize,
         _analyses: &AnalysisManager,
     ) -> HashSet<u8> {
-        // 保守策略：保存所有 caller-saved 寄存器（排除返回值寄存器 RAX）
+        // 保守策略：保存所有 caller-saved 寄存器
         //
-        // 原因：register allocator 会把跨调用存活的变量分配到 caller-saved 寄存器，
-        // 但 lifetime analysis 不能正确识别所有需要保存的寄存器。
-        // 保守策略确保正确性，代价是多保存几个寄存器。
+        // 关键：当返回值寄存器同时也是参数寄存器时（如 RISC-V 的 a0），
+        // 必须保存它，否则跨调用后参数值会丢失。
+        // lower_call/lower_call_indirect 会在恢复 caller-saved 之前，
+        // 先将返回值暂存到 vm_sp 下方的安全位置，因此返回值不会丢失。
+        //
+        // 对于 x86，返回值寄存器 RAX (p0) 不是参数寄存器，保存它只是
+        // 多了一对额外的 save/restore，不会影响正确性。
         self.calling_convention
             .caller_saved
             .iter()
-            .filter(|&&reg| reg != self.calling_convention.return_register)
             .cloned()
             .collect()
     }
@@ -438,16 +441,34 @@ impl InstructionLoweringPass {
             span: *span,
         });
 
+        // 将返回值暂存到 vm_sp 下方的安全位置（不改变 vm_sp）。
+        // 这是因为 restore_registers_from_stack 会恢复所有 caller-saved 寄存器
+        // （包括返回值寄存器本身），覆盖调用返回值。
+        // vm_sp 下方的空间在调用期间未被 callee 使用（callee 只使用 vm_sp 上方），
+        // 所以 [vm_sp - 8] 是安全的暂存位置。
+        let return_reg = self.calling_convention.return_register;
+        instructions.push(Instruction::Store64 {
+            addr: self.stack_pointer_reg,
+            offset: -8,
+            src: Operand::Register {
+                id: Register::Physical(return_reg),
+            },
+            span: *span,
+        });
+
         // 恢复caller-saved寄存器，使用LoadPair优化
         self.restore_registers_from_stack(&caller_saved, span, instructions);
 
-        // 处理返回值
+        // 处理返回值：从暂存位置加载到 result 寄存器
+        // restore 后 vm_sp 已恢复到 save 前的位置，暂存位置在 [vm_sp - aligned_size - 8]
         if let Some(result_reg) = result {
-            instructions.push(Instruction::Move {
+            let total_size = caller_saved.len() * 8;
+            let aligned_size = self.align_stack_size(total_size);
+            let restore_offset = -(aligned_size as i64) - 8;
+            instructions.push(Instruction::Load64 {
                 dst: *result_reg,
-                src: Operand::Register {
-                    id: Register::Physical(self.calling_convention.return_register),
-                },
+                addr: self.stack_pointer_reg,
+                offset: restore_offset,
                 span: *span,
             });
         }
@@ -570,16 +591,29 @@ impl InstructionLoweringPass {
             span: *span,
         });
 
+        // 将返回值暂存到 vm_sp 下方的安全位置（不改变 vm_sp）
+        let return_reg = self.calling_convention.return_register;
+        instructions.push(Instruction::Store64 {
+            addr: self.stack_pointer_reg,
+            offset: -8,
+            src: Operand::Register {
+                id: Register::Physical(return_reg),
+            },
+            span: *span,
+        });
+
         // 恢复caller-saved寄存器，使用LoadPair优化
         self.restore_registers_from_stack(&caller_saved, span, instructions);
 
-        // 处理返回值
+        // 处理返回值：从暂存位置加载到 result 寄存器
         if let Some(result_reg) = result {
-            instructions.push(Instruction::Move {
+            let total_size = caller_saved.len() * 8;
+            let aligned_size = self.align_stack_size(total_size);
+            let restore_offset = -(aligned_size as i64) - 8;
+            instructions.push(Instruction::Load64 {
                 dst: *result_reg,
-                src: Operand::Register {
-                    id: Register::Physical(self.calling_convention.return_register),
-                },
+                addr: self.stack_pointer_reg,
+                offset: restore_offset,
                 span: *span,
             });
         }
