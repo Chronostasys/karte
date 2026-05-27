@@ -644,10 +644,38 @@ impl Memory2RegPass {
                         // 尝试使用块中以及前序block的最后一个 store 的 src
                         // 重要：只在线性路径上搜索（每个块只有一个前驱时才继续）
                         // 不跨越分支汇合点，否则会从错误的分支获取 Store 值
+                        // 🔧 同时检查回溯路径上的phi节点：对于跨多块使用的变量，
+                        // phi节点可能在回溯路径的某个块中（而非直接前驱）
                         let mut last_store = None;
                         if let Some(&current_block_id) = slot.load_to_block.get(&i) {
                             let mut current_bb = current_block_id;
                             loop {
+                                // 🔧 先检查当前块是否有phi节点（在回溯路径上）
+                                let mut found_phi = false;
+                                for phi in phi_insertions {
+                                    if phi.variable == slot.address_register
+                                        && phi.block_id == current_bb
+                                    {
+                                        if let Some(actual_dst) = phi.actual_dst_register {
+                                            info!(
+                                                "M2R 替换load为move(fallback+phi): load64 dst: {:?}, addr: {:?} -> mov dst: {:?}, src: {:?} (phi in block {}) at instr {}",
+                                                dst, addr, dst, actual_dst, current_bb, i
+                                            );
+                                            let new_move = Instruction::Move {
+                                                dst: *dst,
+                                                src: Operand::Register { id: actual_dst },
+                                                span: *span,
+                                            };
+                                            transformer.replace(i, new_move);
+                                            found_loads += 1;
+                                            found_phi = true;
+                                        }
+                                        break;
+                                    }
+                                }
+                                if found_phi {
+                                    break;
+                                }
                                 // 检查当前块是否有 store
                                 if let Some((_, src)) = block_last_store.get(&current_bb) {
                                     last_store = Some(src.clone());
@@ -819,6 +847,34 @@ impl Memory2RegPass {
                             return actual_dst;
                         }
                     }
+                }
+            }
+        }
+
+        // 6. 如果前驱也没有phi，沿着支配树向上查找
+        // 这对于跨越多个块的load尤为重要：例如变量在entry定义，
+        // 但load在while循环内部的if-then块中，phi节点在循环头
+        if let Some(dom_info) = dominance_info {
+            let mut current = block_id;
+            loop {
+                if let Some(&idom) = dom_info.immediate_dominators.get(&current) {
+                    if idom == current {
+                        break; // reached root
+                    }
+                    for phi in phi_insertions {
+                        if phi.variable == slot.address_register && phi.block_id == idom {
+                            if let Some(actual_dst) = phi.actual_dst_register {
+                                info!(
+                                    "✅ 沿支配树在块 {} 找到phi节点结果 {:?}",
+                                    idom, actual_dst
+                                );
+                                return actual_dst;
+                            }
+                        }
+                    }
+                    current = idom;
+                } else {
+                    break;
                 }
             }
         }
