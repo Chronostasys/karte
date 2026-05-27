@@ -624,6 +624,8 @@ Store { target = %10000, value = %2 }
 - 禁止任何时间对项目进行release编译，除非我要求
 - **x86_64 GOTCHA**: `effect_tag_register`、`return_address` 等专用寄存器绝不能与 `vm_sp(R10)` 或 `vm_fp(R11)` 冲突，否则 EffectPerform 会直接破坏虚拟栈指针
 - **SSA GOTCHA**: SSA rename_block_recursive 必须使用支配树子节点遍历（而不是 CFG 后继 + idom 检查），否则合并块会被遗漏导致寄存器使用未重命名
+- **PHI GOTCHA**: MIR while/if-else 的 Phi 节点通过 `phi_store_map` 在 LIR 中用 Store64/Load64 传递值（span={MAX,MAX} 标记）。Memory2Reg 的 `transform_with_phi_support` fallback 在回溯 CFG 前驱链时必须在每个块检查已插入的 phi 节点，而非仅仅查找 Store——否则循环头中的 phi target 栈槽不会被正确替换，导致寄存器分配器将地址寄存器映射到值寄存器而 SIGSEGV。while 循环 Phi 的 incoming predecessor 必须是实际持有 Goto 终结符的块（if-else 的 merge_block），而非原始的 loop_body。
+- **IF-ELSE PHI GOTCHA**: if-else 变量变异需要在 merge_block 插入 Phi 节点。预分析（while 循环第一步）期间必须跳过 Phi 生成（analysis_mode=true），且分析完成后必须清理孤立的分析块。变量绑定必须遍历所有作用域（ctx.scopes），因为 if-else 的 phi 更新可能在嵌套作用域中。
 - **⚠️ 测试铁律**：
   - **禁止使用 `cargo test`**，必须且只能使用 `cargo nextest run` 运行测试
   - nextest 会为每个测试创建独立进程，SIGSEGV 不会中断整个测试套件，能真实反映所有失败
