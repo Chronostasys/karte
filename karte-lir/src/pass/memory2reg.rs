@@ -890,85 +890,25 @@ impl Memory2RegPass {
                             );
                             info!("🔧 强制传播值 {:?} 到所有跨基本块的load操作", src);
 
-                            // 🧠 使用智能的基于历史记录的变换系统
-                            info!(
-                                "🧠 使用智能变换系统处理跨基本块的栈槽 {:?}",
-                                slot.address_register
-                            );
-
-                            let mut smart_transformer = HistoryBasedTransformer::new();
-
-                            // 🧠 第一步：收集所有相关指令并分配序号
-                            let mut load_count = 0;
-                            let mut store_count = 0;
-                            let mut alloc_count = 0;
-
-                            // 扫描函数，收集所有相关指令
-                            for (i, instruction) in function.instructions.iter().enumerate() {
-                                match instruction {
-                                    Instruction::Alloc { dst, .. }
-                                        if *dst == slot.address_register =>
-                                    {
-                                        info!(
-                                            "🧠   发现alloc [{}]: {:?}, 分配序号 {}",
-                                            i, instruction, alloc_count
+                            // 第二步：直接应用变换到真实函数
+                            // 移除 Alloc 和 Store64
+                            transformer.remove(slot.alloc_instruction);
+                            transformer.remove(store_pos);
+                            // 将所有 Load64 替换为 Move
+                            for &load_pos in &slot.loads {
+                                if load_pos < function.instructions.len() {
+                                    if let Instruction::Load64 { dst, .. } = &function.instructions[load_pos] {
+                                        transformer.replace(
+                                            load_pos,
+                                            Instruction::Move {
+                                                dst: *dst,
+                                                src: src.clone(),
+                                                span: function.instructions[load_pos].get_span(),
+                                            },
                                         );
-                                        smart_transformer.remove_at(i);
-                                        alloc_count += 1;
                                     }
-                                    Instruction::Store64 { addr, .. }
-                                        if *addr == slot.address_register =>
-                                    {
-                                        info!(
-                                            "🧠   发现store [{}]: {:?}, 分配序号 {}",
-                                            i, instruction, store_count
-                                        );
-                                        smart_transformer.remove_at(i);
-                                        store_count += 1;
-                                    }
-                                    Instruction::Load64 {
-                                        dst, addr, offset, ..
-                                    } if *addr == slot.address_register && *offset == 0 => {
-                                        info!(
-                                            "🧠   发现load [{}]: {:?}, 分配序号 {}",
-                                            i, instruction, load_count
-                                        );
-                                        let new_move = Instruction::Move {
-                                            dst: *dst,
-                                            src: src.clone(),
-                                            span: instruction.get_span(),
-                                        };
-                                        smart_transformer.replace_at(i, new_move);
-                                        load_count += 1;
-                                    }
-                                    _ => {}
                                 }
                             }
-
-                            info!(
-                                "🧠   统计: {} 个load, {} 个store, {} 个alloc",
-                                load_count, store_count, alloc_count
-                            );
-
-                            // 🧠 第二步：将智能变换转换为传统格式（暂时兼容现有系统）
-                            // 注意：由于这里在collect阶段，我们将智能变换记录转换为传统的位置列表
-                            info!("🧠 将智能变换转换为传统格式以兼容现有系统");
-
-                            // 创建临时函数副本用于测试变换
-                            let mut temp_function = function.clone();
-                            let (smart_changed, _, _, _) =
-                                smart_transformer.apply_to_function(&mut temp_function);
-                            if smart_changed {
-                                // 如果智能变换成功，我们比较前后差异并生成传统的变换指令
-                                info!("✅ 智能变换系统模拟成功，生成传统变换指令");
-
-                                // 这里可以添加从temp_function变化到原function的差异分析
-                                // 暂时简化处理，跳过这个复杂的栈槽
-                                return;
-                            } else {
-                                warn!("⚠️ 智能变换系统模拟失败，回退到传统方法");
-                            }
-
                             return;
                         }
                     }
