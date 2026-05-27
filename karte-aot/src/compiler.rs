@@ -95,7 +95,7 @@ impl AotCompiler {
         func_names.sort_by(|a, b| {
             if a == main_name { std::cmp::Ordering::Greater }
             else if b == main_name { std::cmp::Ordering::Less }
-            else { std::cmp::Ordering::Equal }
+            else { a.cmp(b) } // 确定性排序：非main函数按名字排序
         });
 
         for func_name in &func_names {
@@ -386,7 +386,7 @@ impl AotCompiler {
         func_names.sort_by(|a, b| {
             if a == main_name { std::cmp::Ordering::Greater }
             else if b == main_name { std::cmp::Ordering::Less }
-            else { std::cmp::Ordering::Equal }
+            else { a.cmp(b) } // 确定性排序：非main函数按名字排序
         });
 
         for func_name in &func_names {

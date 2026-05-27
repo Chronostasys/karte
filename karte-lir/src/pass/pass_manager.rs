@@ -141,7 +141,11 @@ impl PassManager {
 
         // 2. 为每个函数运行分析和函数级别的 Pass
         let target_arch = program.target().to_string();
-        for (func_name, function) in program.functions.iter_mut() {
+        // 确定性排序：按函数名排序，确保编译结果可复现
+        let mut func_names: Vec<String> = program.functions.keys().cloned().collect();
+        func_names.sort();
+        for func_name in &func_names {
+            let function = program.functions.get_mut(func_name).unwrap();
             if self.debug {
                 info!("处理函数: {}", func_name);
             }

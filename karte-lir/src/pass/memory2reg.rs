@@ -480,7 +480,12 @@ impl Memory2RegPass {
         // 为每个块插入phi节点
         let mut phi_instructions = Vec::new();
 
-        for (block_id, phis) in phi_by_block {
+        // 🔧 修复：按块ID排序遍历 phi_by_block，确保 new_register() 的调用顺序确定
+        let mut sorted_block_ids: Vec<usize> = phi_by_block.keys().copied().collect();
+        sorted_block_ids.sort();
+
+        for block_id in sorted_block_ids {
+            let phis = phi_by_block.remove(&block_id).unwrap();
             // 找到块的开始位置
             let insert_pos = phis
                 .iter()

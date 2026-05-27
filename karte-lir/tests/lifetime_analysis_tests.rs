@@ -29,6 +29,7 @@ mod lifetime_analysis_tests {
             lowered_lifetimes: None,
             lowered_register_mapping: None,
             instruction_metadata: HashMap::new(),
+        target_arch: None,
         }
     }
 

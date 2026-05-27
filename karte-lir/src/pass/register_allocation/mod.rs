@@ -472,7 +472,10 @@ impl SimpleStackRegisterAllocation {
         debug!("  当前寄存器生命周期: [{}, {}]", current_start, current_end);
 
         // 查找所有已分配到该物理寄存器的虚拟寄存器
-        for (allocated_virtual_reg, target) in allocation_map {
+        // 🔧 修复：按确定性顺序遍历，确保结果一致
+        let mut sorted_entries: Vec<_> = allocation_map.iter().collect();
+        sorted_entries.sort_by_key(|(reg, _)| reg.id());
+        for (allocated_virtual_reg, target) in &sorted_entries {
             if let AllocationTarget::Register(allocated_physical_reg) = target {
                 if *allocated_physical_reg == physical_reg {
                     let (allocated_start, allocated_end) = lifetime_map
@@ -572,9 +575,15 @@ impl SimpleStackRegisterAllocation {
         }
 
         // 🔧 应用指令级寄存器替换（针对溢出寄存器）
-        for (index, replacements) in pending_replacements {
+        // 🔧 修复：按指令索引排序，确保确定性
+        let mut sorted_pending: Vec<_> = pending_replacements.into_iter().collect();
+        sorted_pending.sort_by_key(|(idx, _)| *idx);
+        for (index, replacements) in sorted_pending {
             if let Some(instruction) = function.instructions.get_mut(index) {
-                for (old_reg, new_reg) in replacements {
+                // 🔧 修复：按寄存器 ID 排序替换列表，确保确定性
+                let mut sorted_replacements = replacements;
+                sorted_replacements.sort_by_key(|(old, _)| old.id());
+                for (old_reg, new_reg) in sorted_replacements {
                     instruction.replace_register(old_reg, new_reg);
                 }
             }
@@ -667,8 +676,12 @@ impl SimpleStackRegisterAllocation {
     ) -> HashMap<Register, Register> {
         let mut replacements = HashMap::new();
 
+        // 🔧 修复：按确定性顺序遍历 allocation_map
+        let mut sorted_alloc: Vec<_> = allocation_map.iter().collect();
+        sorted_alloc.sort_by_key(|(reg, _)| reg.id());
+
         // 🔧 关键修复：分析寄存器用途，只跳过纯地址用途的寄存器
-        for (virtual_reg, target) in allocation_map {
+        for (virtual_reg, target) in sorted_alloc {
             // 检查栈地址寄存器是否有非地址用途
             if self.stack_address_registers.contains(virtual_reg) {
                 let has_non_address_usage = self.has_non_address_usage(*virtual_reg, function);
@@ -709,14 +722,19 @@ impl SimpleStackRegisterAllocation {
         instruction: &mut Instruction,
         replacements: &HashMap<Register, Register>,
     ) {
+        // 🔧 修复：按确定性顺序遍历替换映射，避免 HashMap 遍历顺序不确定
+        // 导致的链式替换错误（如 Virtual(A)→Physical(B) 和 Virtual(B)→Physical(C)）
+        let mut sorted_replacements: Vec<(&Register, &Register)> = replacements.iter().collect();
+        sorted_replacements.sort_by_key(|(old, _)| old.id());
+
         // 🔧 调试：打印指令替换前的状态
         trace!("🔧 替换前指令: {}", instruction);
 
         // 🔧 性能优化：只对指令中实际存在的虚拟寄存器进行替换
-        for (old_reg, new_reg) in replacements {
-            if self.instruction_contains_register(instruction, *old_reg) {
+        for (old_reg, new_reg) in &sorted_replacements {
+            if self.instruction_contains_register(instruction, **old_reg) {
                 info!("  🔄 替换寄存器 {} -> {}", old_reg, new_reg);
-                instruction.replace_register(*old_reg, *new_reg);
+                instruction.replace_register(**old_reg, **new_reg);
             }
         }
 
@@ -1345,6 +1363,11 @@ impl FunctionPass for LinearScanRegisterAllocation {
         analyses: &mut AnalysisManager,
     ) -> PassResult {
         info!("🎯 开始线性扫描寄存器分配：{}", function.name);
+
+        // 🔧 修复：先从 analyses 获取目标架构的调用约定并更新 fallback，
+        // 确保 try_linear_scan 使用正确的 CC（RISC-V / x86_64 / AArch64），
+        // 而非构造时默认的编译主机 CC。
+        self.fallback.calling_convention = analyses.get_calling_convention();
 
         // 尝试使用线性扫描分配器
         match self.try_linear_scan(function) {

@@ -37,6 +37,7 @@ fn parse_lir_file(content: &str) -> crate::Result<LirFunction> {
         lowered_lifetimes: None,
         lowered_register_mapping: None,
         instruction_metadata: HashMap::new(),
+        target_arch: None,
     };
 
     // 解析指令
@@ -454,6 +455,7 @@ fn test_function_parameter_register_allocation() {
         lowered_lifetimes: None,
         lowered_register_mapping: None,
         instruction_metadata: HashMap::new(),
+        target_arch: None,
     };
 
     info!("🧪 测试前的函数参数: {:?}", function.parameter_registers);
