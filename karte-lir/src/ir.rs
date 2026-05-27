@@ -1406,6 +1406,10 @@ pub struct LirFunction {
     /// 使用侧表而非修改 Instruction enum，保持最小化修改。
     #[ir_codec(skip)]
     pub instruction_metadata: HashMap<usize, InstructionMetadata>,
+    /// 目标架构（用于 cross-compile 时选择正确的调用约定）
+    /// None 表示使用编译主机默认架构
+    #[ir_codec(skip)]
+    pub target_arch: Option<String>,
 }
 
 impl LirFunction {
@@ -1422,6 +1426,7 @@ impl LirFunction {
             lowered_lifetimes: None,
             lowered_register_mapping: None,
             instruction_metadata: HashMap::new(),
+            target_arch: None,
         }
     }
 
@@ -1441,6 +1446,11 @@ impl LirFunction {
         function
     }
 
+    /// 获取目标架构对应的调用约定
+    pub fn get_calling_convention(&self) -> CallingConvention {
+        CallingConvention::for_target(self.target_arch.as_deref().unwrap_or("x86_64"))
+    }
+
     /// 获取实际使用的 callee-saved 寄存器列表
     pub fn get_used_regs(&self) -> &[PhysicalRegister] {
         &self.used_regs
@@ -1451,10 +1461,9 @@ impl LirFunction {
         self.used_regs = regs;
     }
 
-    /// 分配一个新的寄存器，跳过栈指针寄存器(RegisterId(6))、帧指针寄存器(RegisterId(7))和函数参数寄存器
+    /// 分配一个新的寄存器，跳过栈指针寄存器、帧指针寄存器和函数参数寄存器
     pub fn new_register(&mut self) -> Register {
-        // 栈指针寄存器是RegisterId(6)，帧指针寄存器是RegisterId(7)
-        let cc = CallingConvention::standard();
+        let cc = self.get_calling_convention();
         let stack_pointer_reg: usize = cc.stack_pointer as usize;
         let frame_pointer_reg: usize = cc.frame_pointer as usize;
         // 🔧 修复：跳过已分配的函数参数寄存器
@@ -1479,17 +1488,17 @@ impl LirFunction {
 
     /// 专门用于栈操作的寄存器分配（只返回栈指针寄存器）
     pub fn get_stack_pointer_register(&self) -> Register {
-        Register::Physical(CallingConvention::standard().stack_pointer)
+        Register::Physical(self.get_calling_convention().stack_pointer)
     }
 
     /// 检查一个寄存器是否是栈指针寄存器
     pub fn is_stack_pointer_register(&self, reg: &Register) -> bool {
-        reg.id() == CallingConvention::standard().stack_pointer as usize
+        reg.id() == self.get_calling_convention().stack_pointer as usize
     }
 
     /// 检查一个寄存器是否是帧指针寄存器
     pub fn is_frame_pointer_register(&self, reg: &Register) -> bool {
-        reg.id() == CallingConvention::standard().frame_pointer as usize
+        reg.id() == self.get_calling_convention().frame_pointer as usize
     }
 
     /// 验证指令是否违反栈指针寄存器使用规则
@@ -1647,6 +1656,10 @@ pub struct LirProgram {
     pub global_struct_types: HashMap<String, StructLayout>,
     /// 全局变量定义
     pub global_variables: HashMap<String, MemoryId>,
+    /// 目标架构（用于 cross-compile 时选择正确的调用约定）
+    /// 空字符串表示使用编译主机的默认架构
+    #[ir_codec(skip)]
+    pub target: String,
 }
 
 impl Default for LirProgram {
@@ -1664,7 +1677,34 @@ impl LirProgram {
             main_function: None,
             global_struct_types: HashMap::new(),
             global_variables: HashMap::new(),
+            target: String::new(),
         }
+    }
+
+    /// 设置目标架构
+    pub fn set_target(&mut self, target: String) {
+        self.target = target;
+    }
+
+    /// 获取目标架构
+    pub fn target(&self) -> &str {
+        if self.target.is_empty() {
+            // 默认使用编译主机的架构
+            if cfg!(target_arch = "x86_64") {
+                "x86_64"
+            } else if cfg!(target_arch = "aarch64") {
+                "aarch64"
+            } else {
+                "x86_64"
+            }
+        } else {
+            &self.target
+        }
+    }
+
+    /// 获取当前目标架构的调用约定
+    pub fn calling_convention(&self) -> karte_common::calling_convention::CallingConvention {
+        karte_common::calling_convention::CallingConvention::for_target(self.target())
     }
 
     pub fn add_function(&mut self, function: LirFunction) {

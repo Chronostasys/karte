@@ -123,9 +123,15 @@ impl PassManager {
     pub fn run_on_program(&mut self, program: &mut LirProgram) -> crate::Result<()> {
         self.stats.clear();
 
+        // 注入目标架构的调用约定到 AnalysisManager
+        // 各 pass 可以通过 get_calling_convention() 获取正确的 CC
+        let cc = program.calling_convention();
+        self.analysis_manager.store_calling_convention(cc);
+
         if self.debug {
             info!("=== 专业Pass管理器: 开始执行Pass序列 ===");
             info!("程序信息: {} 个函数", program.functions.len());
+            info!("目标架构: {}", program.target());
             info!("严格依赖检查: {}", self.strict_dependency_check);
             info!("失效验证: {}", self.validate_invalidation);
         }
@@ -134,10 +140,18 @@ impl PassManager {
         self.run_program_passes(program)?;
 
         // 2. 为每个函数运行分析和函数级别的 Pass
+        let target_arch = program.target().to_string();
         for (func_name, function) in program.functions.iter_mut() {
             if self.debug {
                 info!("处理函数: {}", func_name);
             }
+
+            // 将程序级目标架构传播到函数级（供 get_calling_convention() 使用）
+            function.target_arch = if target_arch.is_empty() {
+                None
+            } else {
+                Some(target_arch.clone())
+            };
 
             // 运行分析 Pass
             self.run_analysis_passes_on_function(function)?;

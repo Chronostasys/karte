@@ -707,6 +707,11 @@ impl FunctionPass for InstructionLoweringPass {
         function: &mut LirFunction,
         analyses: &mut AnalysisManager,
     ) -> PassResult {
+        // 从 AnalysisManager 获取目标架构的调用约定（支持 cross-compile）
+        self.calling_convention = analyses.get_calling_convention();
+        self.stack_pointer_reg = Register::Physical(self.calling_convention.stack_pointer);
+        self.frame_pointer_reg = Register::Physical(self.calling_convention.frame_pointer);
+
         let mut new_instructions = Vec::new();
         let mut changed = false;
         let instructions_to_process = function.instructions.clone();

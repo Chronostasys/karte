@@ -299,6 +299,19 @@ impl Default for CallingConvention {
 }
 
 impl CallingConvention {
+    /// 根据目标架构名称返回对应的调用约定
+    ///
+    /// 支持的目标: "x86_64", "riscv64", "aarch64"
+    /// 对于未知目标，回退到 standard()（编译时决定）
+    pub fn for_target(target: &str) -> Self {
+        match target {
+            "x86_64" | "x86" => Self::standard_x86_64(),
+            "riscv64" | "rv64" => Self::standard_riscv64(),
+            "aarch64" | "arm64" => Self::standard(),
+            _ => Self::standard(),
+        }
+    }
+
     /// 创建当前目标架构的标准调用约定
     #[cfg(target_arch = "aarch64")]
     pub fn standard() -> Self {
@@ -350,78 +363,124 @@ impl CallingConvention {
     /// 创建当前目标架构的标准调用约定 (x86-64 System V ABI)
     #[cfg(target_arch = "x86_64")]
     pub fn standard() -> Self {
+        Self::standard_x86_64()
+    }
+
+    /// x86-64 System V ABI 调用约定（不依赖 cfg(target_arch)，可跨平台调用）
+    pub fn standard_x86_64() -> Self {
         // x86-64 System V ABI:
         // Caller-saved (易失): RAX, RCX, RDX, RSI, RDI, R8, R9
         // 注意：R10 和 R11 被 x86 JIT 用作 vm_sp 和 vm_fp，不能作为通用寄存器
         // Callee-saved (非易失): RBX, RSP, RBP, R10(vm_sp), R11(vm_fp), R12, R13, R14, R15
         // 参数传递: RDI, RSI, RDX, RCX, R8, R9
         // 返回值: RAX
+        //
+        // 寄存器编号映射（Karte 虚拟编号 → x86_64 硬件寄存器）：
+        // 0→RAX, 1→RCX, 2→RDX, 3→RBX, 4→RSP, 5→RBP, 6→RSI, 7→RDI, 8→R8, 9→R9, 10→R10, 11→R11, 12→R12, 13→R13, 14→R14, 15→R15
 
         let caller_saved: HashSet<PhysicalRegister> = [
-            REG_RAX,  // 0 - 返回值
-            REG_RCX,  // 1 - 参数4
-            REG_RDX,  // 2 - 参数3
-            REG_RSI,  // 6 - 参数2
-            REG_RDI,  // 7 - 参数1
-            REG_R8,   // 8 - 参数5
-            REG_R9,   // 9 - 参数6
+            0u8,  // RAX - 返回值
+            1u8,  // RCX - 参数4
+            2u8,  // RDX - 参数3
+            6u8,  // RSI - 参数2
+            7u8,  // RDI - 参数1
+            8u8,  // R8  - 参数5
+            9u8,  // R9  - 参数6
         ].into_iter().collect();
 
         let callee_saved: HashSet<PhysicalRegister> = [
-            REG_RBX,  // 3 - callee-saved (也是 effect_resume_temp)
-            REG_R10,  // 10 - vm_sp (由函数 prologue/epilogue 在虚拟栈上管理)
-            REG_R11,  // 11 - vm_fp (由函数 prologue/epilogue 在虚拟栈上管理)
-            REG_R12,  // 12 - callee-saved (effect 栈指针)
-            REG_R13,  // 13 - callee-saved
-            REG_R14,  // 14 - callee-saved
-            REG_R15,  // 15 - callee-saved
+            3u8,   // RBX - callee-saved (也是 effect_resume_temp)
+            10u8,  // R10 - vm_sp
+            11u8,  // R11 - vm_fp
+            12u8,  // R12 - callee-saved (effect 栈指针)
+            13u8,  // R13 - callee-saved
+            14u8,  // R14 - callee-saved
+            15u8,  // R15 - callee-saved
         ].into_iter().collect();
 
         Self {
             // System V ABI: RDI, RSI, RDX, RCX, R8, R9
-            argument_registers: vec![
-                REG_RDI, // 参数1 (编号7)
-                REG_RSI, // 参数2 (编号6)
-                REG_RDX, // 参数3 (编号2)
-                REG_RCX, // 参数4 (编号1)
-                REG_R8,  // 参数5 (编号8)
-                REG_R9,  // 参数6 (编号9)
-            ],
-            return_register: REG_RAX,
+            argument_registers: vec![7, 6, 2, 1, 8, 9],
+            return_register: 0,
             caller_saved,
             callee_saved,
-            // x86_64 System V ABI 调用约定
-            // 关键设计：与 AArch64 保持一致，直接使用 R10 和 R11 作为虚拟机的
-            // stack_pointer 和 frame_pointer，这样 JIT 不需要做寄存器重映射
-            stack_pointer: REG_R10,
-            frame_pointer: REG_R11,
-            // x86_64 使用 CALL/RET，返回地址由硬件自动 push/pop 到系统栈
-            // 此字段在 x86 上不使用，设为 R9 避免与 vm_sp/vm_fp 冲突
-            return_address: REG_R9,
-            effect_stack_pointer: REG_R12,
-            effect_payload_register: REG_RAX,
-            // effect_tag_register: 用于 perform 时临时保存 tag 值进行比较
-            // 不能使用 R10(vm_sp) 或 R11(vm_fp)
-            // 使用 R8（caller-saved），因为 tag 只在 perform 的搜索循环中使用
-            effect_tag_register: REG_R8,
-            // effect_resume_temp: 用于间接调用时暂存函数指针
-            // 不能使用 R10(vm_sp) 或 R11(vm_fp)，使用 RBX（callee-saved）
-            effect_resume_temp: REG_RBX,
-            temp_registers: {
-                let mut temps = Vec::new();
-                // 参数寄存器
-                temps.extend_from_slice(&[
-                    REG_RDI, REG_RSI, REG_RDX, REG_RCX, REG_R8, REG_R9,
-                ]);
-                // 注意：R10 和 R11 不能作为通用临时寄存器
-                // x86 JIT 编译器将 Physical(4)=RSP 和 Physical(5)=RBP 重映射到 R10(vm_sp) 和 R11(vm_fp)
-                // 如果 R10/R11 被分配器用于普通变量，会与 vm_sp/vm_fp 冲突
-                // 返回值寄存器也可用作临时
-                temps.push(REG_RAX);
-                // callee-saved 也可临时使用（需要保存/恢复）
-                temps.extend_from_slice(&[REG_RBX, REG_R13, REG_R14, REG_R15]);
-                temps
-            },
+            stack_pointer: 10,  // R10 (vm_sp)
+            frame_pointer: 11,  // R11 (vm_fp)
+            return_address: 9,  // R9
+            effect_stack_pointer: 12,  // R12
+            effect_payload_register: 0,  // RAX
+            effect_tag_register: 8,  // R8
+            effect_resume_temp: 3,  // RBX
+            temp_registers: vec![7, 6, 2, 1, 8, 9, 0, 3, 13, 14, 15],
+            stack_alignment: 16,
+            use_system_stack_pointer: true,
+        }
+    }
+
+    /// RISC-V 64-bit 调用约定（Karte 虚拟编号体系）
+    ///
+    /// Karte 虚拟编号 → RISC-V 硬件寄存器映射（见 riscv_compiler.rs 的 map_register）：
+    ///   0→a0(x10), 1→a1(x11), 2→a2(x12), 3→a3(x13), 4→a4(x14),
+    ///   5→a5(x15), 6→a6(x16), 7→a7(x17), 8→t0(x5), 9→t1(x6),
+    ///   10→sp(x2)=vm_sp, 11→s0/fp(x8)=vm_fp, 12→s1(x9)=effect_sp,
+    ///   13-22→s2-s11(x18-x27)=callee-saved, 23-26→t3-t6(x28-x31)=temp,
+    ///   27→ra(x1)=return_address
+    ///
+    /// RISC-V ABI 参数传递: a0-a7 (Karte 编号 0-7)
+    /// 返回值: a0 (Karte 编号 0)
+    /// Callee-saved: s0-s11 (Karte 编号 11, 12, 13-22)
+    /// Caller-saved: a0-a7, t0-t6, ra (Karte 编号 0-9, 23-27)
+    pub fn standard_riscv64() -> Self {
+        // Caller-saved (易失): a0-a7, t0-t6, ra
+        let caller_saved: HashSet<PhysicalRegister> = [
+            0u8,  // a0 (参数1/返回值)
+            1u8,  // a1 (参数2)
+            2u8,  // a2 (参数3)
+            3u8,  // a3 (参数4)
+            4u8,  // a4 (参数5)
+            5u8,  // a5 (参数6)
+            6u8,  // a6 (参数7)
+            7u8,  // a7 (参数8)
+            8u8,  // t0
+            9u8,  // t1
+            23u8, // t3
+            24u8, // t4
+            25u8, // t5
+            26u8, // t6
+            27u8, // ra
+        ].into_iter().collect();
+
+        // Callee-saved (非易失): s0-s11
+        // 注意: s0=11(vm_fp), s1=12(effect_sp), s2-s11=13-22
+        let callee_saved: HashSet<PhysicalRegister> = [
+            11u8,  // s0/fp (vm_fp)
+            12u8,  // s1 (effect_stack_pointer)
+            13u8,  // s2
+            14u8,  // s3
+            15u8,  // s4
+            16u8,  // s5
+            17u8,  // s6
+            18u8,  // s7
+            19u8,  // s8
+            20u8,  // s9
+            21u8,  // s10
+            22u8,  // s11
+        ].into_iter().collect();
+
+        Self {
+            // RISC-V ABI: a0-a7 (Karte 虚拟编号 0-7)
+            argument_registers: vec![0, 1, 2, 3, 4, 5, 6, 7],
+            return_register: 0,  // a0
+            caller_saved,
+            callee_saved,
+            stack_pointer: 10,   // sp (vm_sp)
+            frame_pointer: 11,   // s0/fp (vm_fp)
+            return_address: 27,  // ra
+            effect_stack_pointer: 12,  // s1
+            effect_payload_register: 0,  // a0
+            effect_tag_register: 8,  // t0
+            effect_resume_temp: 9,  // t1
+            temp_registers: vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 23, 24, 25, 26],
             stack_alignment: 16,
             use_system_stack_pointer: true,
         }
@@ -455,13 +514,24 @@ impl CallingConvention {
 
         // 额外排除：x86_64 硬件特殊寄存器
         // RSP(4) 和 RBP(5) 是 x86 硬件栈指针和帧指针，不能用于通用分配
-        // 即使 CallingConvention 不使用它们作为虚拟机的 SP/FP
-        #[cfg(target_arch = "x86_64")]
-        let extra_reserved: &[PhysicalRegister] = &[4, 5]; // RSP, RBP
-        #[cfg(not(target_arch = "x86_64"))]
-        let extra_reserved: &[PhysicalRegister] = &[];
+        // 仅当目标是 x86_64 时需要排除
+        let extra_reserved: &[PhysicalRegister] =
+            if self.argument_registers == vec![7u8, 6, 2, 1, 8, 9] {
+                &[4, 5] // x86_64 的 RSP, RBP
+            } else {
+                &[]
+            };
 
-        (0..TOTAL_REGISTERS as u8)
+        // 确定最大的寄存器编号：从 callee_saved + caller_saved + temp_registers 中取最大值
+        let max_reg = self.caller_saved.iter()
+            .chain(self.callee_saved.iter())
+            .chain(self.temp_registers.iter())
+            .chain(self.argument_registers.iter())
+            .copied()
+            .max()
+            .unwrap_or(15);
+
+        (0..=max_reg)
             .filter(|&reg| {
                 !reserved.contains(&reg) && !extra_reserved.contains(&reg)
             })

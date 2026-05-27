@@ -61,6 +61,11 @@ impl SimpleStackRegisterAllocation {
             stack_address_registers: std::collections::HashSet::new(),
         }
     }
+
+    /// 获取当前使用的调用约定
+    pub fn calling_convention(&self) -> &CallingConvention {
+        &self.calling_convention
+    }
 }
 
 impl FunctionPass for SimpleStackRegisterAllocation {
@@ -77,6 +82,9 @@ impl FunctionPass for SimpleStackRegisterAllocation {
         function: &mut LirFunction,
         analyses: &mut AnalysisManager,
     ) -> PassResult {
+        // 从 AnalysisManager 获取目标架构的调用约定（支持 cross-compile）
+        self.calling_convention = analyses.get_calling_convention();
+
         info!("🎯 开始遵循调用约定的寄存器分配：{}", function.name);
 
         // 重置状态
@@ -200,9 +208,9 @@ impl SimpleStackRegisterAllocation {
     ) -> HashMap<Register, AllocationTarget> {
         info!("🎯 开始遵循调用约定的寄存器分配：{}", function.name);
 
-        // 🔧 关键修复：首先进行生命周期分析
+        // 🔧 关键修复：首先进行生命周期分析（使用目标架构的调用约定）
         let lifetime_analyzer =
-            lifetime_analysis::LifetimeAnalyzer::new(types::CallingConvention::standard());
+            lifetime_analysis::LifetimeAnalyzer::new(self.calling_convention.clone());
         let (lifetimes, register_types) = lifetime_analyzer.analyze_simple(function);
 
         // 记录所有栈地址寄存器，供后续重写阶段使用
@@ -526,7 +534,7 @@ impl SimpleStackRegisterAllocation {
 
         // 🎯 第一步：使用生命周期分析器获取精确的寄存器活跃度信息
         let lifetime_analyzer =
-            lifetime_analysis::LifetimeAnalyzer::new(types::CallingConvention::standard());
+            lifetime_analysis::LifetimeAnalyzer::new(self.calling_convention.clone());
         let (lifetimes, _register_types) = lifetime_analyzer.analyze_simple(function);
 
         info!("📊 生命周期分析结果:");
@@ -1199,13 +1207,13 @@ impl LinearScanRegisterAllocation {
         use lifetime_analysis::LifetimeAnalyzer;
         use std::panic::AssertUnwindSafe;
 
-        // 第一步：进行生命周期分析
-        let lifetime_analyzer = LifetimeAnalyzer::new(types::CallingConvention::standard());
+        // 第一步：进行生命周期分析（使用目标架构的调用约定）
+        let lifetime_analyzer = LifetimeAnalyzer::new(self.fallback.calling_convention().clone());
         let (lifetimes, register_types) = lifetime_analyzer.analyze_simple(function);
 
         // 第二步：使用线性扫描分配器（捕获 panic 以支持回退）
         let mut allocator =
-            LinearScanAllocator::new(types::CallingConvention::standard());
+            LinearScanAllocator::new(self.fallback.calling_convention().clone());
         let result = match std::panic::catch_unwind(AssertUnwindSafe(|| {
             allocator.allocate(lifetimes, register_types)
         })) {

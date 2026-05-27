@@ -86,10 +86,11 @@ fn gc_sweep(state: number) -> number {
 fn gc_collect(state: number) -> number {
     let heap_base = runtime_heap_base();
     let heap_limit = runtime_heap_limit();
-    let bump = unsafe_load(state);
-    let scan = heap_base + 16;
-    while scan < bump {
-        let val = unsafe_load(scan);
+    let stack_bottom = runtime_stack_bottom();
+    let scan_stack = stack_bottom;
+    let stack_end = stack_bottom + 512;
+    while scan_stack < stack_end {
+        let val = unsafe_load(scan_stack);
         if val >= heap_base {
             if val < heap_limit {
                 if val > state + 16 {
@@ -103,7 +104,7 @@ fn gc_collect(state: number) -> number {
         } else {
             0
         };
-        scan = scan + 8
+        scan_stack = scan_stack + 8
     };
     gc_sweep(state)
 }

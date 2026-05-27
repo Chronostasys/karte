@@ -36,13 +36,13 @@ impl LinearScanAllocator {
 
         // x86_64: 硬件 RSP(4) 和 RBP(5) 不能被分配
         // 即使 CallingConvention 不用它们作为 vm_sp/vm_fp
-        #[cfg(target_arch = "x86_64")]
-        {
+        // 检测方式：如果参数寄存器是 x86 的 [7,6,2,1,8,9]，说明是 x86 目标
+        if calling_convention.argument_registers == vec![7u8, 6, 2, 1, 8, 9] {
             reserved.insert(4); // RSP - 硬件栈指针
             reserved.insert(5); // RBP - 硬件帧指针
         }
 
-        let _ = CallingConvention::standard().get_allocatable_registers();
+        let _ = calling_convention.get_allocatable_registers();
 
         Self {
             calling_convention,

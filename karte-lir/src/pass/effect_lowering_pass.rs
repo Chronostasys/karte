@@ -509,8 +509,11 @@ impl FunctionPass for EffectLoweringPass {
     fn run_on_function(
         &mut self,
         function: &mut LirFunction,
-        _analyses: &mut AnalysisManager,
+        analyses: &mut AnalysisManager,
     ) -> PassResult {
+        // 从 AnalysisManager 获取目标架构的调用约定（支持 cross-compile）
+        self.calling_convention = analyses.get_calling_convention();
+
         let mut new_instructions = Vec::new();
         let mut changed = false;
 

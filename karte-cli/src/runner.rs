@@ -718,6 +718,14 @@ pub fn aot_compile(
     // 1. 编译到 LIR
     let mut lir_program = compile_to_lir(&source, "aot", optimization_level, verbose > 0, mode)?;
 
+    // 设置目标架构（让 LIR pipeline 使用正确的调用约定）
+    let target_str = match target {
+        karte_aot::AotTarget::X86_64 => "x86_64",
+        karte_aot::AotTarget::AArch64 => "aarch64",
+        karte_aot::AotTarget::Riscv64 => "riscv64",
+    };
+    lir_program.set_target(target_str.to_string());
+
     // 2. 优化
     let mut pipeline = karte_lir::OptimizationPipeline::new(optimization_level);
     pipeline.optimize(&mut lir_program).map_err(|errors| -> Box<dyn std::error::Error> {

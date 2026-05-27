@@ -83,6 +83,10 @@ impl AnalysisPass for LifetimeAnalysisPass {
         function: &LirFunction,
         analyses: &AnalysisManager,
     ) -> crate::Result<Box<dyn AnalysisResult>> {
+        // 从 AnalysisManager 获取目标架构的调用约定（支持 cross-compile）
+        let cc = analyses.get_calling_convention();
+        self.calling_convention = cc;
+
         info!("🔍 开始基于CFG的生命周期分析: {}", function.name);
 
         // 🔧 强制要求所有依赖分析，确保使用最精确的生命周期计算

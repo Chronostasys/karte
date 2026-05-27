@@ -1119,7 +1119,8 @@ impl RiscvCompiler {
 
     /// 获取当前函数使用的 callee-saved 寄存器（映射后的 RISC-V 编号）
     fn get_callee_saved_registers(&self) -> Vec<u8> {
-        let cc = CallingConvention::standard();
+        // 使用 RISC-V 目标的调用约定（而不是编译主机的 CallingConvention::standard()）
+        let cc = CallingConvention::standard_riscv64();
         self.current_function_used_regs
             .iter()
             .filter(|&&reg| cc.is_callee_saved(reg) && reg != cc.stack_pointer && reg != cc.frame_pointer)
@@ -1200,7 +1201,8 @@ impl RiscvCompiler {
     fn emit_internal_function_prologue(&self, cb: &mut CodeBuilder) -> crate::Result<()> {
         let vm_sp = self.map_register(10); // x2
         let vm_fp = self.map_register(11); // x8
-        let tmp = self.map_register(0);    // x10(a0) 临时
+        // 使用 t0(x5) 作为临时寄存器，避免覆盖 a0（参数传递寄存器）
+        let tmp = self.map_register(8);    // x5(t0) 临时
 
         // 保存旧 vm_sp
         self.emit_addi(cb, tmp, vm_sp, 0);
@@ -1332,7 +1334,8 @@ impl JitCompiler for RiscvCompiler {
 
         self.current_function_used_regs = function.get_used_regs().to_vec();
 
-        let cc = CallingConvention::standard();
+        // 使用 RISC-V 目标的调用约定（而不是编译主机的 CallingConvention::standard()）
+        let cc = CallingConvention::standard_riscv64();
         let _computed_frame = compute_stack_frame_size(function, cc.frame_pointer);
         self.current_stack_frame_size = 0;
         self.stack_frame_size_for_epilogue = function.stack_frame_size as usize;
