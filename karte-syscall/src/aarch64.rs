@@ -22,13 +22,12 @@ unsafe fn syscall6(n: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64)
     core::arch::asm!(
         "svc #0",
         in("x8") n,
-        in("x0") a0,
+        inlateout("x0") a0 => ret,
         in("x1") a1,
         in("x2") a2,
         in("x3") a3,
         in("x4") a4,
         in("x5") a5,
-        out("x0") ret,
         options(nostack)
     );
     ret
