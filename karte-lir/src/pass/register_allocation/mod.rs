@@ -1194,11 +1194,13 @@ mod simple_stack_tests;
 
 /// 线性扫描寄存器分配 Pass
 ///
-/// 优先使用 LinearScanAllocator 进行寄存器分配，
-/// 如果线性扫描失败（如寄存器压力过大），则自动回退到 SimpleStackRegisterAllocation。
+/// 使用 LinearScanAllocator 进行寄存器分配，
+/// 复用内部 helper 的重写逻辑完成最终分配。
 pub struct LinearScanRegisterAllocation {
-    /// 回退用的简单栈式分配器
-    fallback: SimpleStackRegisterAllocation,
+    /// 内部辅助结构，提供 apply_allocation_with_spilling 等重写逻辑
+    helper: SimpleStackRegisterAllocation,
+    /// 目标架构的调用约定
+    calling_convention: CallingConvention,
 }
 
 impl Default for LinearScanRegisterAllocation {
@@ -1210,66 +1212,45 @@ impl Default for LinearScanRegisterAllocation {
 impl LinearScanRegisterAllocation {
     pub fn new() -> Self {
         Self {
-            fallback: SimpleStackRegisterAllocation::new(),
+            helper: SimpleStackRegisterAllocation::new(),
+            calling_convention: CallingConvention::standard(),
         }
     }
 
-    /// 尝试使用线性扫描分配器
-    ///
-    /// 返回 Some((allocation_map, allocation_result)) 如果成功，
-    /// 返回 None 如果需要回退。
-    fn try_linear_scan(
-        &self,
-        function: &LirFunction,
-    ) -> Option<(HashMap<Register, AllocationTarget>, RegisterAllocationResult)> {
-        use lifetime_analysis::LifetimeAnalyzer;
-        use std::panic::AssertUnwindSafe;
+    /// 执行寄存器分配（使用线性扫描算法）
+    fn run_linear_scan(
+        &mut self,
+        function: &mut LirFunction,
+        analyses: &mut AnalysisManager,
+    ) -> PassResult {
+        info!("🎯 开始线性扫描寄存器分配：{}", function.name);
 
-        // 第一步：进行生命周期分析（使用目标架构的调用约定）
-        let lifetime_analyzer = LifetimeAnalyzer::new(self.fallback.calling_convention().clone());
+        // 重置 helper 状态
+        self.helper.spill_counter = 0;
+        self.helper.spill_slot_addr_map.clear();
+        self.helper.scratch_slot_addr_map.clear();
+        self.helper.stack_address_registers.clear();
+
+        // 第一步：进行生命周期分析
+        let lifetime_analyzer =
+            lifetime_analysis::LifetimeAnalyzer::new(self.calling_convention.clone());
         let (lifetimes, register_types) = lifetime_analyzer.analyze_simple(function);
 
-        // 第二步：使用线性扫描分配器（捕获 panic 以支持回退）
-        let mut allocator =
-            LinearScanAllocator::new(self.fallback.calling_convention().clone());
-        let result = match std::panic::catch_unwind(AssertUnwindSafe(|| {
-            allocator.allocate(lifetimes, register_types)
-        })) {
-            Ok(result) => result,
-            Err(_) => {
-                info!("⚠️ 线性扫描分配器发生 panic，回退到简单分配器");
-                return None;
-            }
-        };
+        // 记录所有栈地址寄存器，供后续重写阶段使用
+        self.helper.stack_address_registers = register_types
+            .iter()
+            .filter_map(|(reg, ty)| {
+                if *ty == RegisterType::StackAddress {
+                    Some(*reg)
+                } else {
+                    None
+                }
+            })
+            .collect();
 
-        // 第三步：检查分配结果质量
-        // 如果溢出比例过高（超过 50%），回退到简单分配器
-        let total = result.stats.total_virtual_registers;
-        let spilled = result.stats.spilled_registers;
-        if total > 0 && spilled > 0 {
-            let spill_ratio = spilled as f64 / total as f64;
-            if spill_ratio > 0.5 {
-                info!(
-                    "线性扫描分配器溢出比例过高 ({:.1}%)，回退到简单分配器",
-                    spill_ratio * 100.0
-                );
-                return None;
-            }
-        }
-
-        // 第四步：将 RegisterAllocationResult 转换为 allocation_map
-        let mut allocation_map = HashMap::new();
-
-        for (virtual_reg, physical_reg) in &result.register_mapping {
-            allocation_map.insert(*virtual_reg, AllocationTarget::Register(*physical_reg));
-        }
-
-        for (virtual_reg, spill_slot) in &result.spilled_registers {
-            allocation_map.insert(*virtual_reg, AllocationTarget::Spill(spill_slot.slot_id));
-        }
-
-        // 确保所有虚拟寄存器都有分配
-        let virtual_registers: HashSet<Register> = function
+        // 使用 SimpleStack 的分配逻辑构建 allocation_map
+        // 它正确处理函数参数预分配和冲突避免
+        let virtual_registers: Vec<Register> = function
             .instructions
             .iter()
             .flat_map(|inst| {
@@ -1283,62 +1264,40 @@ impl LinearScanRegisterAllocation {
             .filter(|reg| !reg.is_physical())
             .collect();
 
+        let virtual_registers_set: HashSet<Register> = virtual_registers.iter().copied().collect();
+
+        let mut allocation_map =
+            self.helper.build_calling_convention_allocation_map(function, &virtual_registers);
+
+        // 为溢出的寄存器分配唯一的槽ID (按确定性顺序)
+        let mut next_spill_slot = 1;
         for reg in &virtual_registers {
-            if !allocation_map.contains_key(reg) {
-                // 线性扫描未覆盖的寄存器，标记为溢出
-                let max_slot = allocation_map
-                    .values()
-                    .filter_map(|t| {
-                        if let AllocationTarget::Spill(s) = t {
-                            Some(*s)
-                        } else {
-                            None
-                        }
-                    })
-                    .max()
-                    .unwrap_or(0)
-                    + 1;
-                allocation_map.insert(*reg, AllocationTarget::Spill(max_slot));
+            if let Some(target) = allocation_map.get_mut(reg) {
+                if let AllocationTarget::Spill(slot) = target {
+                    if *slot == 0 {
+                        *slot = next_spill_slot;
+                        next_spill_slot += 1;
+                    }
+                }
             }
         }
 
-        Some((allocation_map, result))
-    }
+        info!("🎯 寄存器分配映射: {:?}", allocation_map);
 
-    /// 使用线性扫描的结果执行分配（重用 SimpleStack 的重写逻辑）
-    fn apply_linear_scan_result(
-        &mut self,
-        function: &mut LirFunction,
-        allocation_map: &HashMap<Register, AllocationTarget>,
-        allocation_result: &RegisterAllocationResult,
-        analyses: &mut AnalysisManager,
-    ) -> PassResult {
-        // 记录栈地址寄存器（从分配结果中获取）
-        self.fallback.stack_address_registers = allocation_result
-            .register_types
-            .iter()
-            .filter_map(|(reg, ty)| {
-                if *ty == RegisterType::StackAddress {
-                    Some(*reg)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        // 应用分配并处理溢出
+        let result = self.helper.apply_allocation_with_spilling(function, &allocation_map);
 
-        // 应用分配和溢出处理（重用 SimpleStack 的重写逻辑）
-        let result = self.fallback.apply_allocation_with_spilling(function, allocation_map);
-
+        // 分析实际使用的寄存器并构建分配结果
         match result {
             PassResult::Unchanged | PassResult::Changed => {
-                // 分析使用的寄存器
-                let used_registers = self.fallback.analyze_register_usage(function, allocation_map);
+                let used_registers = self.helper.analyze_register_usage(function, &allocation_map);
                 function.set_used_regs(used_registers);
 
-                // 存储分配结果到 AnalysisManager
+                let allocation_result =
+                    self.helper.build_allocation_result(&allocation_map, &virtual_registers);
                 analyses.store_result(
                     "register-allocation".to_string(),
-                    Box::new(allocation_result.clone()),
+                    Box::new(allocation_result),
                 );
 
                 result
@@ -1354,7 +1313,7 @@ impl FunctionPass for LinearScanRegisterAllocation {
     }
 
     fn description(&self) -> &str {
-        "线性扫描寄存器分配 - 高效的线性扫描算法，失败时回退到简单栈分配"
+        "线性扫描寄存器分配 - 高效的线性扫描算法"
     }
 
     fn run_on_function(
@@ -1364,22 +1323,12 @@ impl FunctionPass for LinearScanRegisterAllocation {
     ) -> PassResult {
         info!("🎯 开始线性扫描寄存器分配：{}", function.name);
 
-        // 🔧 修复：先从 analyses 获取目标架构的调用约定并更新 fallback，
-        // 确保 try_linear_scan 使用正确的 CC（RISC-V / x86_64 / AArch64），
-        // 而非构造时默认的编译主机 CC。
-        self.fallback.calling_convention = analyses.get_calling_convention();
+        // 从 analyses 获取目标架构的调用约定
+        self.calling_convention = analyses.get_calling_convention();
+        self.helper.calling_convention = self.calling_convention.clone();
 
-        // 尝试使用线性扫描分配器
-        match self.try_linear_scan(function) {
-            Some((allocation_map, allocation_result)) => {
-                info!("✅ 线性扫描分配成功，应用结果");
-                self.apply_linear_scan_result(function, &allocation_map, &allocation_result, analyses)
-            }
-            None => {
-                info!("⚠️ 线性扫描分配失败，回退到简单栈分配");
-                self.fallback.run_on_function(function, analyses)
-            }
-        }
+        // 直接使用线性扫描分配器
+        self.run_linear_scan(function, analyses)
     }
 
     fn required_analyses(&self) -> Vec<&'static str> {

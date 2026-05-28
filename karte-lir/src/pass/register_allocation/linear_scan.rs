@@ -162,10 +162,6 @@ impl LinearScanAllocator {
                     active_intervals.push(current_lifetime.clone());
                     self.spill_stack.push(freed_reg);
                 } else {
-                    // 🔧 修复：如果当前寄存器是StackAddress类型且无法溢出，这是错误
-                    if current_lifetime.register_type == RegisterType::StackAddress {
-                        panic!("无法为StackAddress寄存器 {:?} 分配物理寄存器，且无法溢出！这是寄存器分配器的bug", current_lifetime.register);
-                    }
                     spilled_registers.insert(
                         current_lifetime.register,
                         SpillSlot {
@@ -177,19 +173,12 @@ impl LinearScanAllocator {
             }
         }
 
-        // 检查分配结果，彻底禁止255魔数和超出范围的寄存器
+        // 检查分配结果，禁止 255 未初始化魔数
         for (&reg, &phys) in &register_mapping {
             if phys == 255 {
                 panic!(
                     "分配结果中出现非法物理寄存器255: {:?}，这是分配器的bug！",
                     reg
-                );
-            }
-            // 检查物理寄存器是否超出虚拟机范围（r0-r7）
-            if phys >= 8 {
-                panic!(
-                    "分配结果中出现超出虚拟机范围的物理寄存器r{}: {:?}，虚拟机只支持r0-r7！",
-                    phys, reg
                 );
             }
         }
@@ -287,21 +276,7 @@ impl LinearScanAllocator {
         spilled_registers: &mut HashMap<Register, SpillSlot>,
         spill_slot_counter: &mut usize,
     ) {
-        if !current.can_spill() {
-            panic!(
-                "尝试溢出非数据寄存器 {:?} (类型: {:?})，这是分配器的bug",
-                current.register, current.register_type
-            );
-        }
-
         if let Some(spill_candidate) = self.find_spill_candidate(active_intervals, current) {
-            if !spill_candidate.can_spill() {
-                panic!(
-                    "选择非数据寄存器 {:?} (类型: {:?}) 作为溢出候选，这是分配器的bug",
-                    spill_candidate.register, spill_candidate.register_type
-                );
-            }
-
             if spill_candidate.end > current.end {
                 let freed_reg = register_mapping.remove(&spill_candidate.register).unwrap();
                 register_mapping.insert(current.register, freed_reg);

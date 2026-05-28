@@ -230,7 +230,7 @@ impl PassRegistry {
             Box::new(ExplicitJumpPass::new()),
             // 基本块布局优化 - 即使是Debug模式也需要，确保生命周期分析正确
             Box::new(BlockLayoutPass::new()),
-            Box::new(SimpleStackRegisterAllocation::new()),
+            Box::new(LinearScanRegisterAllocation::new()),
             Box::new(crate::pass::stack_frame_layout::StackFrameLayoutPass::new()),
             Box::new(InstructionLoweringPass::new()),
             // 🔧 调用位置活跃寄存器标注 - 必须在 InstructionLowering 之后运行
@@ -261,7 +261,7 @@ impl PassRegistry {
             Box::new(ExplicitJumpPass::new()),
             // 基本块布局优化 - 必须在寄存器分配前
             Box::new(BlockLayoutPass::new()),
-            Box::new(SimpleStackRegisterAllocation::new()),
+            Box::new(LinearScanRegisterAllocation::new()),
             Box::new(crate::pass::stack_frame_layout::StackFrameLayoutPass::new()),
             Box::new(InstructionLoweringPass::new()),
             // 🔧 调用位置活跃寄存器标注 - 必须在 InstructionLowering 之后运行
