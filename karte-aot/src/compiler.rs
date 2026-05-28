@@ -71,7 +71,6 @@ impl AotCompiler {
         runtime.patch_internal_calls();
         let runtime_code = runtime.code.clone();
         let runtime_size = runtime_code.len();
-
         if self.debug {
             eprintln!("AOT: 运行时代码大小: {} 字节", runtime_size);
             for f in &runtime.functions {
@@ -438,12 +437,10 @@ impl AotCompiler {
         }
 
         // 4. 修补 pending_label_addresses
-        eprintln!("RV64-DEBUG: compile_riscv64 step 4: compiled_functions count={}", compiled_functions.len());
         for (func_name, compiled) in &compiled_functions {
             let func_offset = function_offsets.get(func_name).unwrap();
             for pending in &compiled.pending_label_addresses {
                 let target_label = &pending.target_label;
-                eprintln!("RV64-PLA: func='{}' label='{}' patch_pos={}", func_name, target_label, pending.patch_position);
                 if let Some(global_name) = target_label.strip_prefix("__global_") {
                     let runtime_global_name = match global_name {
                         "heap_base" => "__heap_start".to_string(),

@@ -198,8 +198,6 @@ impl RiscvRuntime {
 
     /// 修补所有全局变量 AUIPC+LD/SD
     fn patch_globals(&mut self) {
-        eprintln!("patch_globals: {} patches, globals_data_offset={}",
-            self.global_patches.len(), self.globals_data_offset);
         let globals_start = self.globals_data_offset;
         for patch in &self.global_patches {
             let target = globals_start + patch.global_offset;
@@ -210,7 +208,6 @@ impl RiscvRuntime {
             // lower + (upper << 12) = total_off
             let lower = total_off << 20 >> 20; // sign-extend bits[11:0]
             let upper = (total_off.wrapping_sub(lower)) >> 12;
-            eprintln!("    → upper={}, lower={}", upper, lower);
             // 修补 AUIPC 的 imm 字段 (bits[31:12])
             // U-type: imm 字段是完整的 32 位，取 bits[31:12]
             let auipc_word = u32::from_le_bytes(self.code[auipc_pos..auipc_pos+4].try_into().unwrap());
