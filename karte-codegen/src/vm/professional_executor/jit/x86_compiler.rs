@@ -518,8 +518,10 @@ impl X86Compiler {
         let dst_reg = self.get_physical_register(dst)?;
 
         // ⚠️ 先 XOR 清零 dst（必须在 CMP 之前，否则 XOR 会破坏 CMP 的 flags）
+        // XOR dst, dst (opcode 0x31, ModRM = 11 reg r/m)
+        // 当 dst >= 8 时，reg 和 r/m 都需要 REX 扩展，所以需要 REX.R + REX.B
         if dst_reg >= 8 {
-            code_builder.emit_byte(0x49); // REX.W + REX.B
+            code_builder.emit_byte(0x4D); // REX.W + REX.R + REX.B
         } else {
             code_builder.emit_byte(0x48); // REX.W
         }
