@@ -43,4 +43,8 @@ pub struct LirLoweringContext {
     pub(super) struct_value_layouts: HashMap<String, StructLayout>,
     /// 代数效应：handler入口块的参数名映射（用于在块标签处把payload写入变量）
     pub(super) handler_block_param: HashMap<BasicBlockId, String>,
+    /// 已知常量值追踪：记录被赋值为常量的变量/临时变量
+    /// key = value_to_key(value), value = 常量值
+    /// 用于在 BinaryOp 等指令中直接使用立即数，避免通过栈加载导致的寄存器分配冲突
+    pub(super) known_constants: HashMap<String, i64>,
 }

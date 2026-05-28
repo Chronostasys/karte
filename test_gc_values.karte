@@ -43,6 +43,27 @@ fn gc_alloc(size: number) -> number {
     }
 }
 
+fn gc_is_valid_obj(obj: number, heap: number) -> number {
+    let bump = unsafe_load(heap);
+    let ptr = heap + 24;
+    let found = 0;
+    while ptr < bump {
+        let total_size = unsafe_load(ptr + 8);
+        if total_size < 16 {
+            ptr = bump
+        } else {
+            let data_start = ptr + 16;
+            if obj == data_start {
+                found = 1;
+                ptr = bump
+            } else {
+                ptr = ptr + total_size
+            }
+        }
+    };
+    found
+}
+
 fn gc_mark(obj: number, heap: number, heap_limit: number) -> number {
     if obj < heap + 24 {
         0
@@ -113,7 +134,11 @@ fn gc_collect() -> number {
         let val = unsafe_load(scan);
         if val >= heap + 24 {
             if val < heap_limit {
-                gc_mark(val, heap, heap_limit)
+                if gc_is_valid_obj(val, heap) != 0 {
+                    gc_mark(val, heap, heap_limit)
+                } else {
+                    0
+                }
             } else {
                 0
             }
@@ -128,14 +153,14 @@ fn gc_collect() -> number {
 fn main() -> number {
     let state = gc_init();
     let p1 = gc_alloc(8);
-    unsafe_store(p1, 100);
+    unsafe_store(p1, 10);
     let p2 = gc_alloc(8);
-    unsafe_store(p2, 200);
+    unsafe_store(p2, 20);
     let p3 = gc_alloc(16);
-    unsafe_store(p3, 300);
-    unsafe_store(p3 + 8, 400);
+    unsafe_store(p3, 30);
+    unsafe_store(p3 + 8, 40);
     gc_collect();
     let p4 = gc_alloc(8);
-    unsafe_store(p4, 500);
+    unsafe_store(p4, 50);
     unsafe_load(p1) + unsafe_load(p2) + unsafe_load(p3) + unsafe_load(p3 + 8) + unsafe_load(p4)
 }

@@ -152,6 +152,7 @@ impl DeadCodeElimination {
             Instruction::Load32 { .. } => false,
             Instruction::Load8 { .. } => false,
             Instruction::LoadGlobal { .. } => false,
+            Instruction::GcRegOp { .. } => true, // 保存/恢复寄存器有副作用
             Instruction::Store32 { .. } => true,
             Instruction::Store8 { .. } => true,
             Instruction::LoadPair { .. } => false,

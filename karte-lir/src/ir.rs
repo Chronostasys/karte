@@ -591,6 +591,17 @@ pub enum Instruction {
         span: Span,
     },
 
+    /// GC 寄存器保存/恢复 - 把所有 callee-saved 寄存器 dump 到虚拟栈
+    /// gc_push_regs: sub r10, N*8; mov [r10+0], rbx; mov [r10+8], rcx; ...
+    /// gc_pop_regs:  mov rbx, [r10+0]; mov rcx, [r10+8]; ...; add r10, N*8
+    #[ir_codec(token = "gc_reg_op")]
+    GcRegOp {
+        #[ir_codec(args)]
+        is_push: bool, // true = push, false = pop
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
     /// φ(Phi)节点 - SSA形式的控制流汇合
     /// 在控制流汇合点选择来自不同前驱块的值
     Phi {

@@ -1557,6 +1557,10 @@ impl TypeChecker {
                 Type::Number
             }
 
+            Expr::GcRegOp { span: _, .. } => {
+                Type::Number
+            }
+
             Expr::Assignment {
                 target,
                 value,

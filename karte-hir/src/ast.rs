@@ -228,6 +228,12 @@ pub enum Expr {
         span: Span,
     },
 
+    /// GC 寄存器保存/恢复内建函数
+    GcRegOp {
+        is_push: bool, // true = gc_push_regs, false = gc_pop_regs
+        span: Span,
+    },
+
     /// 赋值表达式 - 为变量或字段赋值
     Assignment {
         target: Box<Expr>,
@@ -683,6 +689,13 @@ impl fmt::Display for Expr {
             Expr::RuntimeGlobal { name, .. } => {
                 write!(f, "runtime_{}()", name)
             }
+            Expr::GcRegOp { is_push, .. } => {
+                if *is_push {
+                    write!(f, "gc_push_regs()")
+                } else {
+                    write!(f, "gc_pop_regs()")
+                }
+            }
             Expr::Assignment { target, value, .. } => {
                 write!(f, "{} = {}", target, value)
             }
@@ -738,6 +751,7 @@ impl Expr {
             Expr::UnsafeLoad { span, .. } => *span,
             Expr::UnsafeStore { span, .. } => *span,
             Expr::RuntimeGlobal { span, .. } => *span,
+            Expr::GcRegOp { span, .. } => *span,
             Expr::Assignment { span, .. } => *span,
             Expr::EffectPerform { span, .. } => *span,
             Expr::EffectResume { span, .. } => *span,

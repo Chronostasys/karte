@@ -448,6 +448,13 @@ impl X86Runtime {
         let vstack_bottom_store = self.code.len();
         self.mov_rip_store(0, 0);
 
+        // vstack_top = R12 + 65520 (虚拟栈顶部，用于 GC 扫描)
+        self.mov_rr(0, 12);
+        self.mov_ri(1, 65520);
+        self.add_rr(0, 1);
+        let vstack_top_store = self.code.len();
+        self.mov_rip_store(0, 0);
+
         // alloc_count = 0
         self.xor_rr(0, 0);
         let alloc_count_store = self.code.len();
@@ -457,6 +464,23 @@ impl X86Runtime {
         self.mov_ri(0, GC_THRESHOLD);
         let threshold_store = self.code.len();
         self.mov_rip_store(0, 0);
+
+        // ---- 初始化 heap inline header (gc_init 的功能) ----
+        // heap header: [bump_ptr(8)][alloc_count(8)][threshold(8)]
+        // gc_alloc/gc_collect 通过 unsafe_load/unsafe_store 操作这些字段
+        // RAX = heap_base (需要重新加载)
+        let heap_base_load = self.code.len();
+        self.mov_rip_load(0, 0); // RAX = __heap_start, 占位
+        // [heap+0] = bump_ptr = heap_base + 24 (跳过 header 自身)
+        self.mov_rr(1, 0); // RCX = heap_base
+        self.add_ri8(1, 24); // RCX = heap_base + 24
+        // MOV [RAX], RCX
+        self.bs(&[0x48, 0x89, 0x08]); // MOV [RAX], RCX
+        // [heap+8] = alloc_count = 0 (mmap 保证清零，不需要写)
+        // [heap+16] = threshold = 256
+        self.mov_ri(1, 256);
+        // MOV [RAX+16], RCX
+        self.bs(&[0x48, 0x89, 0x48, 0x10]); // MOV [RAX+16], RCX
 
         // ---- 调用 main ----
         self.mov_rr(7, 10); // RDI = vm_sp
@@ -475,6 +499,7 @@ impl X86Runtime {
         self.u64(0);                    // heap_start
         self.u64(0);                    // heap_limit
         self.u64(0);                    // vstack_bottom
+        self.u64(0);                    // vstack_top
         self.u64(0);                    // alloc_count
         self.u64(0);                    // gc_threshold
 
@@ -482,8 +507,9 @@ impl X86Runtime {
         self.functions.push(RuntimeFunction { name: "__heap_start".into(), offset: g+8, size: 8 });
         self.functions.push(RuntimeFunction { name: "__heap_limit".into(), offset: g+16, size: 8 });
         self.functions.push(RuntimeFunction { name: "__vstack_bottom".into(), offset: g+24, size: 8 });
-        self.functions.push(RuntimeFunction { name: "__alloc_count".into(), offset: g+32, size: 8 });
-        self.functions.push(RuntimeFunction { name: "__gc_threshold".into(), offset: g+40, size: 8 });
+        self.functions.push(RuntimeFunction { name: "__vstack_top".into(), offset: g+32, size: 8 });
+        self.functions.push(RuntimeFunction { name: "__alloc_count".into(), offset: g+40, size: 8 });
+        self.functions.push(RuntimeFunction { name: "__gc_threshold".into(), offset: g+48, size: 8 });
 
         // 修补所有 RIP-relative store
         fn patch_rip_store(code: &mut Vec<u8>, store_pos: usize, target: usize) {
@@ -495,8 +521,18 @@ impl X86Runtime {
         patch_rip_store(&mut self.code, heap_start_store, g+8);
         patch_rip_store(&mut self.code, limit_store, g+16);
         patch_rip_store(&mut self.code, vstack_bottom_store, g+24);
-        patch_rip_store(&mut self.code, alloc_count_store, g+32);
-        patch_rip_store(&mut self.code, threshold_store, g+40);
+        patch_rip_store(&mut self.code, vstack_top_store, g+32);
+        patch_rip_store(&mut self.code, alloc_count_store, g+40);
+        patch_rip_store(&mut self.code, threshold_store, g+48);
+
+        // 修补 heap inline header 初始化中的 heap_base load
+        fn patch_rip_load(code: &mut Vec<u8>, load_pos: usize, target: usize) {
+            let rip_after = (load_pos + 7) as i32;
+            let disp = target as i32 - rip_after;
+            code[load_pos+3..load_pos+7].copy_from_slice(&disp.to_le_bytes());
+        }
+        let g_heap_start = g + 8;
+        patch_rip_load(&mut self.code, heap_base_load, g_heap_start);
 
         self.fn_end();
     }

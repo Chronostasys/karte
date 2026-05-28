@@ -53,6 +53,20 @@ pub(super) fn lower_statement(
                 src_rvalue
             );
 
+            // 🔧 常量追踪：如果源值是立即数，记录到 known_constants 中
+            // 这样后续 lower_to_rvalue 可以直接使用立即数，避免通过栈加载
+            {
+                use super::helpers::value_to_key;
+                let target_key = value_to_key(target);
+                if let Operand::Immediate { value } = src_rvalue {
+                    log::debug!("📝 常量追踪: {} = {}", target_key, value);
+                    ctx.known_constants.insert(target_key, value);
+                } else {
+                    // 非常量赋值，清除该变量的常量记录
+                    ctx.known_constants.remove(&target_key);
+                }
+            }
+
             // 2. 获取目标的L-Value（存储位置）
             let target_lvalue = ctx.lower_to_lvalue(target);
 
@@ -86,9 +100,32 @@ pub(super) fn lower_statement(
             // Stack-First策略：创建临时寄存器来存储计算结果
             let temp_register = ctx.current_function_mut().new_register();
 
-            // 从栈load操作数到临时寄存器
-            let src1 = ctx.lower_to_rvalue(left);
-            let src2 = ctx.lower_to_rvalue(right);
+            // 🔧 常量传播：对于算术运算（Add/Sub/Mul/Div/位运算），
+            // 如果操作数是已知常量，直接使用立即数，避免通过栈加载。
+            // 这解决了循环中立即数被映射到物理寄存器后与其他值冲突的问题。
+            let use_const_prop = matches!(
+                op,
+                BinaryOperator::Add
+                    | BinaryOperator::Subtract
+                    | BinaryOperator::Multiply
+                    | BinaryOperator::Divide
+                    | BinaryOperator::BitAnd
+                    | BinaryOperator::BitOr
+                    | BinaryOperator::BitXor
+                    | BinaryOperator::ShiftLeft
+                    | BinaryOperator::ShiftRight
+            );
+
+            let src1 = if use_const_prop {
+                ctx.lower_to_rvalue_with_const_prop(left)
+            } else {
+                ctx.lower_to_rvalue(left)
+            };
+            let src2 = if use_const_prop {
+                ctx.lower_to_rvalue_with_const_prop(right)
+            } else {
+                ctx.lower_to_rvalue(right)
+            };
 
             // 克隆操作数以便在后续逻辑中使用
             let src1_clone = src1.clone();
@@ -1018,23 +1055,32 @@ pub(super) fn lower_statement(
             object_type,
             span,
         } => {
-            // 🔧 新增：堆分配语句的处理
-            // HeapAlloc在LIR中对应Alloc指令，用于在堆上分配内存
+            // 检查是否启用了 karte GC 模式（gc_alloc 函数被注入）
+            if let Some(&gc_alloc_label) = ctx.function_labels.get("gc_alloc") {
+                // karte GC 模式: 调用 gc_alloc(size) 代替 runtime bump allocator
+                let result_reg = ctx.current_function_mut().new_register();
 
-            // 分配一个寄存器来存储堆地址
-            let heap_addr_reg = ctx.current_function_mut().new_register();
+                ctx.add_instruction(Instruction::Call {
+                    target: gc_alloc_label,
+                    args: vec![],
+                    arg_operands: vec![Operand::Immediate { value: *size as i64 }],
+                    result: Some(result_reg),
+                    span: *span,
+                });
 
-            // 生成堆分配指令
-            ctx.add_instruction(Instruction::Alloc {
-                dst: heap_addr_reg,
-                size: *size,
-                alignment: 8, // 默认8字节对齐
-                allocation_type: AllocationType::Heap,
-                span: *span,
-            });
-
-            // 将堆地址存储到目标值的栈位置（Stack-First策略）
-            ctx.store_value_to_stack(target, Operand::Register { id: heap_addr_reg });
+                ctx.store_value_to_stack(target, Operand::Register { id: result_reg });
+            } else {
+                // 默认模式: 使用 runtime bump allocator (Alloc 指令)
+                let heap_addr_reg = ctx.current_function_mut().new_register();
+                ctx.add_instruction(Instruction::Alloc {
+                    dst: heap_addr_reg,
+                    size: *size,
+                    alignment: 8,
+                    allocation_type: AllocationType::Heap,
+                    span: *span,
+                });
+                ctx.store_value_to_stack(target, Operand::Register { id: heap_addr_reg });
+            }
 
             log::debug!(
                 "🔧 HeapAlloc: 分配 {} 字节的 {} 对象到 {:?}",
@@ -1283,8 +1329,11 @@ pub(super) fn lower_statement(
             Ok(())
         }
 
-        Statement::Phi { .. } => {
-            // Phi 节点通过 lower.rs 的 phi_store_map 在前驱块处理
+        Statement::GcRegOp { is_push, span, .. } => {
+            ctx.add_instruction(Instruction::GcRegOp {
+                is_push: *is_push,
+                span: *span,
+            });
             Ok(())
         }
 

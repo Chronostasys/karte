@@ -1,15 +1,20 @@
 fn gc_init() -> number {
     let heap = runtime_heap_base();
-    unsafe_store(heap, heap + 16);
+    let bump_start = heap + 24;
+    unsafe_store(heap, bump_start);
+    unsafe_store(heap + 8, 0);
+    unsafe_store(heap + 16, 256);
     heap
 }
 
-fn gc_alloc(state: number, size: number) -> number {
+fn gc_alloc(size: number) -> number {
+    let heap = runtime_heap_base();
+    let bump = unsafe_load(heap);
     let align_mask = 0 - 16;
     let total_size = (size + 16 + 15) bitand align_mask;
-    let bump = unsafe_load(state);
     let new_bump = bump + total_size;
-    unsafe_store(state, new_bump);
+    unsafe_store(heap, new_bump);
+    unsafe_store(heap + 8, unsafe_load(heap + 8) + 1);
     unsafe_store(bump, 0);
     unsafe_store(bump + 8, total_size);
     bump + 16
@@ -17,7 +22,7 @@ fn gc_alloc(state: number, size: number) -> number {
 
 fn main() -> number {
     let state = gc_init();
-    let p1 = gc_alloc(state, 8);
+    let p1 = gc_alloc(8);
     unsafe_store(p1, 42);
     unsafe_load(p1)
 }

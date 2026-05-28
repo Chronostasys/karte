@@ -92,6 +92,16 @@ impl LirLoweringContext {
     pub fn store_value_to_stack(&mut self, value: &Value, src_operand: Operand) {
         let value_key = value_to_key(value);
 
+        // 🔧 常量追踪：记录存储到栈的立即数，或清除非常量记录
+        match &src_operand {
+            Operand::Immediate { value: const_val } => {
+                self.known_constants.insert(value_key.clone(), *const_val);
+            }
+            _ => {
+                self.known_constants.remove(&value_key);
+            }
+        }
+
         // 确保值已经有栈空间分配
         let stack_addr = if let Some(&existing_addr) = self.stack_allocations.get(&value_key) {
             log::debug!(
@@ -286,6 +296,28 @@ impl LirLoweringContext {
         }
 
         Operand::Register { id: stack_addr }
+    }
+
+    /// 🔧 带常量传播的 R-Value 降级
+    /// 与 lower_to_rvalue 类似，但对于被追踪为常量的 Temp/Variable 值，
+    /// 直接返回 Operand::Immediate 而不是从栈加载。
+    /// 仅在算术运算（Add/Sub/Mul/Div/位运算）中使用，
+    /// 避免在 Compare 等不支持双 Immediate 操作数的指令中使用。
+    pub(super) fn lower_to_rvalue_with_const_prop(&mut self, value: &Value) -> Operand {
+        // 检查该值是否被追踪为已知常量
+        if matches!(value, Value::Temp { .. } | Value::Variable { .. }) {
+            let key = value_to_key(value);
+            if let Some(&const_val) = self.known_constants.get(&key) {
+                log::debug!(
+                    "🔧 常量传播: {} -> 立即数 {} (跳过栈加载)",
+                    key,
+                    const_val
+                );
+                return Operand::Immediate { value: const_val };
+            }
+        }
+        // 非常量值，使用标准路径
+        self.lower_to_rvalue(value)
     }
 
     /// 🔧 新增：R-Value降级 - 返回值的内容

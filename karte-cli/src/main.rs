@@ -149,6 +149,10 @@ enum Commands {
         /// 目标架构 (x86_64/riscv64)
         #[arg(long, default_value = "x86_64")]
         target: String,
+
+        /// GC 模式 (runtime=使用内置bump allocator, karte=使用karte实现的GC)
+        #[arg(long, default_value = "runtime")]
+        gc: String,
     },
 }
 
@@ -459,7 +463,7 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        Some(Commands::Aot { input, output, mode, target }) => {
+        Some(Commands::Aot { input, output, mode, target, gc }) => {
             let mode = mode.map(|m| m.into()).unwrap_or_else(|| {
                 if default_mode_is_explicit { default_mode } else { ParserMode::Script }
             });
@@ -473,7 +477,7 @@ fn main() {
                     std::process::exit(1);
                 }
             };
-            if let Err(e) = runner::aot_compile(&input, &output_path, optimization_level, mode, cli.verbose, aot_target) {
+            if let Err(e) = runner::aot_compile(&input, &output_path, optimization_level, mode, cli.verbose, aot_target, gc.as_str()) {
                 error!("AOT 编译失败: {}", e);
                 std::process::exit(1);
             }

@@ -159,6 +159,16 @@ pub enum Token {
     RuntimeHeapLimit,
     #[token("runtime_stack_bottom")]
     RuntimeStackBottom,
+    #[token("runtime_stack_top")]
+    RuntimeStackTop,
+    #[token("runtime_vm_sp")]
+    RuntimeVmSp,
+
+    // GC 寄存器保存/恢复内建函数
+    #[token("gc_push_regs")]
+    GcPushRegs,
+    #[token("gc_pop_regs")]
+    GcPopRegs,
 
     // 跳过空白字符
     #[regex(r"[ \t\n\f]+", logos::skip)]
@@ -215,6 +225,10 @@ impl fmt::Display for Token {
             Token::RuntimeHeapBase => write!(f, "runtime_heap_base"),
             Token::RuntimeHeapLimit => write!(f, "runtime_heap_limit"),
             Token::RuntimeStackBottom => write!(f, "runtime_stack_bottom"),
+            Token::RuntimeVmSp => write!(f, "runtime_vm_sp"),
+            Token::RuntimeStackTop => write!(f, "runtime_stack_top"),
+            Token::GcPushRegs => write!(f, "gc_push_regs"),
+            Token::GcPopRegs => write!(f, "gc_pop_regs"),
             Token::DoubleColon => write!(f, "::"),
             Token::Underscore => write!(f, "_"),
             Token::KwPerform => write!(f, "perform"),

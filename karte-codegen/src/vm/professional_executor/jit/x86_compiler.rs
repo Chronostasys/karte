@@ -236,6 +236,9 @@ impl X86Compiler {
             Instruction::LoadGlobal { dst, name, .. } => {
                 self.compile_load_global(dst, name, code_builder)
             }
+            Instruction::GcRegOp { is_push, .. } => {
+                self.compile_gc_reg_op(*is_push, code_builder)
+            }
             Instruction::Phi { .. } => {
                 // Phi 应该已经被消除
                 log::warn!("Phi 指令出现在 JIT 编译阶段，这表明 SSA 降级不完整");
@@ -676,7 +679,23 @@ impl X86Compiler {
         code_builder: &mut CodeBuilder,
     ) -> crate::Result<()> {
         let dst_reg = self.get_physical_register(dst)?;
-        
+
+        // vm_sp 是动态值（R10 寄存器），不是全局变量，需要特殊处理
+        if name == "vm_sp" {
+            // 直接 mov dst, R10 (vm_sp 寄存器)
+            // R10 = vm_sp (x86_64 JIT 中 R10 固定为虚拟栈指针)
+            self.emit_mov_reg_reg(code_builder, dst_reg, 10); // 10 = R10
+            return Ok(());
+        }
+
+        // stack_top 也是动态值，等于 R12 (vstack_bottom) + 65520
+        if name == "stack_top" {
+            // mov dst, R12; add dst, 65520
+            self.emit_mov_reg_reg(code_builder, dst_reg, 12); // R12 = vstack_bottom
+            self.emit_add_reg_imm32(code_builder, dst_reg, 65520);
+            return Ok(());
+        }
+
         // 生成占位 movabs rax, <global_addr>
         let global_label = format!("__global_{}", name);
         code_builder.emit_movabs_to_rax_with_label(&global_label);
@@ -685,6 +704,44 @@ impl X86Compiler {
         // mov dst, [dst] (从地址加载值)
         self.emit_mov_reg_mem(code_builder, dst_reg, dst_reg, 0);
         
+        Ok(())
+    }
+
+    /// 编译 GC 寄存器保存/恢复指令
+    /// gc_push_regs: 把所有 callee-saved 寄存器 dump 到虚拟栈
+    /// gc_pop_regs: 从虚拟栈恢复所有 callee-saved 寄存器
+    ///
+    /// 保存的寄存器: RBX(3), RCX(1), RDX(2), RSI(6), RDI(7), R8(8), R9(9),
+    ///              R12(12), R13(13), R14(14), R15(15) = 11 个 × 8 字节 = 88 字节
+    /// 不保存: RAX(返回值), R10(vm_sp), R11(vm_fp), RBP/RSP(系统帧)
+    fn compile_gc_reg_op(
+        &self,
+        is_push: bool,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        // 寄存器列表: [RBX, RCX, RDX, RSI, RDI, R8, R9, R12, R13, R14, R15]
+        const REGS: [u8; 11] = [3, 1, 2, 6, 7, 8, 9, 12, 13, 14, 15];
+        const NUM_REGS: i32 = 11;
+        const FRAME_SIZE: i32 = NUM_REGS * 8; // 88
+
+        if is_push {
+            // sub r10, 88  (在虚拟栈上分配空间)
+            self.emit_sub_reg_imm32(code_builder, 10, FRAME_SIZE);
+            // 逐个保存寄存器
+            for (i, &reg) in REGS.iter().enumerate() {
+                let offset = (i as i32) * 8;
+                self.emit_mov_mem_reg(code_builder, 10, offset, reg);
+            }
+        } else {
+            // 逐个恢复寄存器
+            for (i, &reg) in REGS.iter().enumerate() {
+                let offset = (i as i32) * 8;
+                self.emit_mov_reg_mem(code_builder, reg, 10, offset);
+            }
+            // add r10, 88  (释放虚拟栈空间)
+            self.emit_add_reg_imm32(code_builder, 10, FRAME_SIZE);
+        }
+
         Ok(())
     }
 

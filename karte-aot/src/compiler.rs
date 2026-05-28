@@ -300,6 +300,7 @@ impl AotCompiler {
                         "heap_base" => "__heap_start".to_string(),
                         "heap_limit" => "__heap_limit".to_string(),
                         "stack_bottom" => "__vstack_bottom".to_string(),
+                        "stack_top" => "__vstack_top".to_string(),
                         _ => format!("__{}", global_name),
                     };
                     if let Some(global_offset) = runtime.find_offset(&runtime_global_name) {
@@ -448,6 +449,7 @@ impl AotCompiler {
                         "heap_base" => "__heap_start".to_string(),
                         "heap_limit" => "__heap_limit".to_string(),
                         "stack_bottom" => "__vstack_bottom".to_string(),
+                        "stack_top" => "__vstack_top".to_string(),
                         _ => format!("__{}", global_name),
                     };
                     if let Some(global_offset) = runtime.find_offset(&runtime_global_name) {

@@ -1377,4 +1377,5 @@ fn main() -> number {
 "#;
         compile_and_run_aot(code, 1, "bump_allocator_addresses");
     }
+
 }

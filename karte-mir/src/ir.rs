@@ -417,6 +417,16 @@ pub enum Statement {
         #[ir_codec(skip)]
         span: Span,
     },
+    /// GC 寄存器保存/恢复 - 把所有 callee-saved 寄存器 dump 到虚拟栈
+    #[ir_codec(token = "gc_reg_op")]
+    GcRegOp {
+        #[ir_codec(args, target)]
+        target: Value,
+        #[ir_codec(args)]
+        is_push: bool, // true = push, false = pop
+        #[ir_codec(skip)]
+        span: Span,
+    },
     /// Phi 节点 - SSA 形式中的值选择
     Phi {
         target: Value,

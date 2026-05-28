@@ -242,6 +242,9 @@ fn canonicalize_statement(statement: &mut Statement, symbols: &HashMap<String, S
         Statement::RuntimeGlobal { .. } => {
             // 无需 canonicalize
         }
+        Statement::GcRegOp { .. } => {
+            // 无需 canonicalize
+        }
     }
 }
 
@@ -697,6 +700,46 @@ pub fn process_file(
     Ok(())
 }
 
+/// 从 karte-stdlib/gc.karte 中提取函数定义（去掉 main），拼接到用户源码前面
+fn inject_gc_functions(user_source: &str, gc_mode: &str) -> String {
+    // 只有 karte GC 模式才注入
+    if gc_mode != "karte" {
+        return user_source.to_string();
+    }
+
+    // 尝试读取 karte-stdlib/gc.karte
+    let gc_path = std::path::Path::new("karte-stdlib/gc.karte");
+    if !gc_path.exists() {
+        // 尝试相对于可执行文件的路径
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(parent) = exe_path.parent() {
+                let alt_path = parent.join("../../karte-stdlib/gc.karte");
+                if !alt_path.exists() {
+                    eprintln!("警告: 找不到 karte-stdlib/gc.karte，跳过 GC 注入");
+                    return user_source.to_string();
+                }
+            }
+        }
+        return user_source.to_string();
+    }
+
+    match fs::read_to_string(gc_path) {
+        Ok(gc_source) => {
+            // 提取 fn main 之前的所有内容（函数定义）
+            let gc_fns = if let Some(main_pos) = gc_source.find("fn main()") {
+                &gc_source[..main_pos]
+            } else {
+                &gc_source
+            };
+            format!("{}\n{}", gc_fns.trim(), user_source)
+        }
+        Err(e) => {
+            eprintln!("警告: 读取 gc.karte 失败: {}，跳过 GC 注入", e);
+            user_source.to_string()
+        }
+    }
+}
+
 /// AOT 编译: 将 Karte 源码编译为独立可执行文件
 pub fn aot_compile(
     input: &str,
@@ -705,6 +748,7 @@ pub fn aot_compile(
     mode: ParserMode,
     verbose: u8,
     target: karte_aot::AotTarget,
+    gc_mode: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -714,6 +758,9 @@ pub fn aot_compile(
     } else {
         input.to_string()
     };
+
+    // 1.5 自动引入 GC 函数 (从 karte-stdlib/gc.karte 中提取非 main 函数)
+    let source = inject_gc_functions(&source, gc_mode);
 
     // 1. 编译到 LIR
     let mut lir_program = compile_to_lir(&source, "aot", optimization_level, verbose > 0, mode)?;

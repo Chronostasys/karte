@@ -25,9 +25,10 @@ const G_BUMP_PTR: usize = 0;
 const G_HEAP_START: usize = 8;
 const G_HEAP_LIMIT: usize = 16;
 const G_VSTACK_BOTTOM: usize = 24;
-const G_ALLOC_COUNT: usize = 32;
-const G_GC_THRESHOLD: usize = 40;
-const GLOBALS_SIZE: usize = 48;
+const G_VSTACK_TOP: usize = 32;
+const G_ALLOC_COUNT: usize = 40;
+const G_GC_THRESHOLD: usize = 48;
+const GLOBALS_SIZE: usize = 56;
 
 /// 需要修补的全局变量访问
 #[derive(Debug, Clone)]
@@ -298,10 +299,25 @@ impl RiscvRuntime {
         self.store_global(S4, G_HEAP_START);       // heap_start
         self.store_global(S5, G_HEAP_LIMIT);       // heap_limit
         self.store_global(S2, G_VSTACK_BOTTOM);    // vstack_bottom
+        // vstack_top = vstack_bottom + 65520
+        self.li(T0, 65520);
+        self.add(T0, S2, T0);
+        self.store_global(T0, G_VSTACK_TOP);       // vstack_top
         self.li(A0, 0);
         self.store_global(A0, G_ALLOC_COUNT);      // alloc_count = 0
         self.li(A0, 256);
         self.store_global(A0, G_GC_THRESHOLD);     // gc_threshold = 256
+
+        // ---- 初始化 heap inline header (gc_init 的功能) ----
+        // heap header: [bump_ptr(8)][alloc_count(8)][threshold(8)]
+        // [heap+0] = bump_ptr = heap_base + 24
+        self.li(T0, 24);
+        self.add(T0, S4, T0);   // T0 = heap_base + 24
+        self.sd(T0, S4, 0);     // [heap+0] = heap_base + 24
+        // [heap+8] = 0 (alloc_count, mmap 已经清零)
+        // [heap+16] = 256 (threshold)
+        self.li(T0, 256);
+        self.sd(T0, S4, 16);    // [heap+16] = 256
 
         // ---- 调用 main ----
         // a0 = vm_sp (虚拟栈顶), a1 = vstack_bottom
@@ -330,10 +346,10 @@ impl RiscvRuntime {
         self.li(A7, 94);
         self.ecall();
 
-        // ---- 全局数据区 (48 bytes) ----
+        // ---- 全局数据区 (56 bytes) ----
         while self.code.len() % 8 != 0 { self.addi(ZERO, ZERO, 0); } // NOP 对齐
         self.globals_data_offset = self.code.len();
-        for _ in 0..6 {
+        for _ in 0..7 {
             self.code.extend_from_slice(&0u64.to_le_bytes());
         }
         // 注册全局数据区
@@ -341,6 +357,7 @@ impl RiscvRuntime {
         self.functions.push(RuntimeFunction { name: "__heap_start".into(), offset: self.globals_data_offset + G_HEAP_START, size: 8 });
         self.functions.push(RuntimeFunction { name: "__heap_limit".into(), offset: self.globals_data_offset + G_HEAP_LIMIT, size: 8 });
         self.functions.push(RuntimeFunction { name: "__vstack_bottom".into(), offset: self.globals_data_offset + G_VSTACK_BOTTOM, size: 8 });
+        self.functions.push(RuntimeFunction { name: "__vstack_top".into(), offset: self.globals_data_offset + G_VSTACK_TOP, size: 8 });
         self.functions.push(RuntimeFunction { name: "__alloc_count".into(), offset: self.globals_data_offset + G_ALLOC_COUNT, size: 8 });
         self.functions.push(RuntimeFunction { name: "__gc_threshold".into(), offset: self.globals_data_offset + G_GC_THRESHOLD, size: 8 });
 

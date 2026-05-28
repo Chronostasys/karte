@@ -32,6 +32,7 @@ impl LirLoweringContext {
             global_struct_types: HashMap::new(),
             struct_value_layouts: HashMap::new(),
             handler_block_param: HashMap::new(),
+            known_constants: HashMap::new(),
         }
     }
 
@@ -54,6 +55,7 @@ impl LirLoweringContext {
         // 清空栈分配，每个函数都重新开始
         self.stack_allocations.clear();
         self.label_seed = 0;
+        self.known_constants.clear();
         self.current_function_symbol = self
             .function_symbols
             .get(&name)

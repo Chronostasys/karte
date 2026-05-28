@@ -530,6 +530,7 @@ fn instr_name(instr: &Instruction) -> &'static str {
         Instruction::Safepoint { .. } => "Safepoint",
         Instruction::Load64 { .. } => "Load64",
         Instruction::LoadGlobal { .. } => "LoadGlobal",
+        Instruction::GcRegOp { .. } => "GcRegOp",
         Instruction::Store64 { .. } => "Store64",
         Instruction::Load32 { .. } => "Load32",
         Instruction::Store32 { .. } => "Store32",

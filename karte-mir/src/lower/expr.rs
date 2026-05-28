@@ -1013,6 +1013,14 @@ pub(crate) fn lower_expression(
             });
         }
 
+        Expr::GcRegOp { is_push, span } => {
+            ctx.add_statement(Statement::GcRegOp {
+                target: destination.clone(),
+                is_push: *is_push,
+                span: *span,
+            });
+        }
+
         Expr::Assignment {
             target,
             value,

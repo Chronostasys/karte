@@ -536,6 +536,7 @@ impl RiscvCompiler {
             }
             Instruction::MemCopy { .. } => Err("MemCopy 应该已经被降级".into()),
             Instruction::LoadGlobal { dst, name, .. } => self.compile_load_global(dst, name, cb),
+            Instruction::GcRegOp { is_push, .. } => self.compile_gc_reg_op(*is_push, cb),
             Instruction::Phi { .. } => {
                 log::warn!("Phi 指令出现在 JIT 编译阶段，这表明 SSA 降级不完整");
                 Ok(())
@@ -810,6 +811,30 @@ impl RiscvCompiler {
 
     fn compile_load_global(&self, dst: &Register, name: &str, cb: &mut CodeBuilder) -> crate::Result<()> {
         let dst_rv = self.get_physical_register(dst)?;
+
+        // vm_sp = RISC-V x2 (sp)，直接读取
+        if name == "vm_sp" {
+            // mv dst, sp
+            self.emit_addi(cb, dst_rv, 2, 0);
+            return Ok(());
+        }
+
+        // stack_top = vstack_bottom + 65520，但 RISC-V 中 vstack_bottom 没有固定寄存器
+        // 需要从全局变量加载
+        if name == "stack_top" {
+            let global_label = "__global_stack_bottom".to_string();
+            self.emit_auipc(cb, dst_rv, 0);
+            self.emit_ld(cb, dst_rv, dst_rv, 12);
+            self.emit_jal(cb, 0, 12);
+            cb.emit_label_address(&global_label);
+            // dst = vstack_bottom 地址，加载值
+            self.emit_ld(cb, dst_rv, dst_rv, 0);
+            // dst += 65520
+            self.emit_load_imm64(cb, 5, 65520); // t0 = 65520
+            self.emit_add(cb, dst_rv, dst_rv, 5);
+            return Ok(());
+        }
+
         let global_label = format!("__global_{}", name);
 
         // 使用数据内联 + emit_label_address 加载地址，然后从地址加载值。
@@ -819,6 +844,38 @@ impl RiscvCompiler {
         cb.emit_label_address(&global_label);
         // dst 现在是全局变量的地址，加载值
         self.emit_ld(cb, dst_rv, dst_rv, 0);
+        Ok(())
+    }
+
+    /// GC 寄存器保存/恢复 - 把所有可能持有堆指针的寄存器 dump 到虚拟栈
+    /// 保存: a0-a7(x10-x17), s2-s11(x18-x27), t0-t5(x5-x7,x28-x30) = 20 个 × 8 字节 = 160 字节
+    /// 不保存: zero(x0), sp(x2)=vm_sp, gp(x3), tp(x4), s0(x8)=vm_fp, s1(x9)
+    fn compile_gc_reg_op(&self, is_push: bool, cb: &mut CodeBuilder) -> crate::Result<()> {
+        // 需要保存的 RISC-V 物理寄存器编号
+        const REGS: [u8; 20] = [5, 6, 7, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26];
+        // 注意: 没存 x27(s11), x28(t3), x29(t4), x30(t5) — 如果需要可以加
+        const NUM_REGS: i64 = 20;
+        const FRAME_SIZE: i64 = NUM_REGS * 8; // 160
+
+        // vm_sp 在 RISC-V 中是 x2 (sp)
+        if is_push {
+            // addi sp, sp, -160
+            self.emit_addi(cb, 2, 2, -(FRAME_SIZE as i32));
+            // sd reg, offset(sp) 逐个保存
+            for (i, &reg) in REGS.iter().enumerate() {
+                let offset = (i as i32) * 8;
+                self.emit_sd(cb, reg, 2, offset);
+            }
+        } else {
+            // ld reg, offset(sp) 逐个恢复
+            for (i, &reg) in REGS.iter().enumerate() {
+                let offset = (i as i32) * 8;
+                self.emit_ld(cb, reg, 2, offset);
+            }
+            // addi sp, sp, 160
+            self.emit_addi(cb, 2, 2, FRAME_SIZE as i32);
+        }
+
         Ok(())
     }
 
