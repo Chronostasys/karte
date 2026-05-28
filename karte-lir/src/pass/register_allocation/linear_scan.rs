@@ -72,7 +72,7 @@ impl LinearScanAllocator {
         let mut max_register_pressure = 0;
         self.spill_stack.clear();
 
-        // 🔧 修复：预分配函数参数寄存器
+        // 预分配函数参数寄存器
         for lifetime in &lifetimes {
             if lifetime.is_function_parameter {
                 if let Some(param_index) = lifetime.parameter_index {
@@ -80,9 +80,9 @@ impl LinearScanAllocator {
                         self.calling_convention.argument_registers.get(param_index)
                     {
                         register_mapping.insert(lifetime.register, physical_reg);
-                        println!(
-                            "🔧 预分配函数参数: {:?} -> r{} (参数索引: {})",
-                            lifetime.register, physical_reg, param_index
+                        eprintln!(
+                            "预分配参数: {:?} -> r{} (lifetime: [{}, {}])",
+                            lifetime.register, physical_reg, lifetime.start, lifetime.end
                         );
                         available_registers.retain(|&reg| reg != physical_reg);
                         active_intervals.push(lifetime.clone());
@@ -90,10 +90,10 @@ impl LinearScanAllocator {
                     }
                 }
             }
-            // 🔧 修复：预分配物理寄存器
+            // 预分配物理寄存器
             if let Register::Physical(p) = lifetime.register {
                 register_mapping.insert(lifetime.register, p);
-                println!("🔧 预分配物理寄存器: {:?} -> r{}", lifetime.register, p);
+                eprintln!("预分配物理寄存器: {:?} -> r{}", lifetime.register, p);
                 available_registers.retain(|&reg| reg != p);
                 active_intervals.push(lifetime.clone());
             }

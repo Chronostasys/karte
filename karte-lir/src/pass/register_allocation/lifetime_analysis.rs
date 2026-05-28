@@ -148,7 +148,12 @@ impl LifetimeAnalyzer {
                     live_ranges: vec![],
                 });
 
-                lifetime.end = i;
+                // 🔧 修复：函数参数的 end 保留为函数末尾，不缩短
+                // 函数参数可能在函数任意位置被引用（通过不同的 Virtual 寄存器），
+                // 缩短 end 会导致寄存器被错误复用
+                if !lifetime.is_function_parameter {
+                    lifetime.end = i;
+                }
                 lifetime.uses.push(i);
             }
         }

@@ -265,6 +265,8 @@ pub(crate) fn lower_expression(
             // then 分支
             ctx.set_current_block(then_block);
             lower_expression(ctx, then_branch, destination)?;
+            // 捕获实际跳转到 merge 的块（内嵌 if-else 会改变 current_block）
+            let actual_then_block = ctx.current_block();
             ctx.set_terminator(Terminator::Goto {
                 target: merge_block,
                 span: then_branch.span(),
@@ -281,6 +283,7 @@ pub(crate) fn lower_expression(
                 .collect();
 
             // else 分支
+            let actual_else_block;
             if let Some(else_branch) = else_branch {
                 // 恢复到 if 之前的绑定
                 // 遍历所有作用域，恢复每个作用域中的变量绑定
@@ -293,12 +296,15 @@ pub(crate) fn lower_expression(
                 }
                 ctx.set_current_block(else_block);
                 lower_expression(ctx, else_branch, destination)?;
+                // 捕获实际跳转到 merge 的块
+                actual_else_block = ctx.current_block();
                 ctx.set_terminator(Terminator::Goto {
                     target: merge_block,
                     span: else_branch.span(),
                 });
             } else {
                 // 没有else分支时，else路径应该返回Unit
+                actual_else_block = else_block;
                 ctx.set_current_block(else_block);
                 ctx.add_statement(Statement::Assign {
                     target: destination.clone(),
@@ -322,32 +328,29 @@ pub(crate) fn lower_expression(
                 .collect();
 
             // 在 merge 块中为被修改的变量插入 Phi 节点
-            // 预分析模式不生成 Phi（仅收集变量绑定变化）
-            if !ctx.analysis_mode {
-                ctx.set_current_block(merge_block);
-                ctx.set_current_block(merge_block);
-                for (name, pre_value) in &pre_if_bindings {
-                    let then_value = then_bindings.get(name).cloned().unwrap_or_else(|| pre_value.clone());
-                    let else_value = else_bindings.get(name).cloned().unwrap_or_else(|| pre_value.clone());
+            // 预分析模式也追踪变量变化（创建 phi temp 更新绑定），但不生成 Phi statement
+            ctx.set_current_block(merge_block);
+            for (name, pre_value) in &pre_if_bindings {
+                let then_value = then_bindings.get(name).cloned().unwrap_or_else(|| pre_value.clone());
+                let else_value = else_bindings.get(name).cloned().unwrap_or_else(|| pre_value.clone());
 
-                    let then_changed = then_value != *pre_value;
-                    let else_changed = else_value != *pre_value;
+                let then_changed = then_value != *pre_value;
+                let else_changed = else_value != *pre_value;
 
-                    if then_changed || else_changed {
-                        let phi_temp = ctx.new_temp();
+                if then_changed || else_changed {
+                    let phi_temp = ctx.new_temp();
+                    if !ctx.analysis_mode {
                         ctx.add_statement(Statement::Phi {
                             target: phi_temp.clone(),
                             incoming: vec![
-                                (then_block, then_value),
-                                (else_block, else_value),
+                                (actual_then_block, then_value),
+                                (actual_else_block, else_value),
                             ],
                             span,
                         });
-                        ctx.update_variable(name, phi_temp, None);
                     }
+                    ctx.update_variable(name, phi_temp, None);
                 }
-            } else {
-                ctx.set_current_block(merge_block);
             }
         }
 
