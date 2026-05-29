@@ -912,14 +912,17 @@ impl RiscvCompiler {
                 self.emit_sd(cb, src_rv, base, eff_offset);
             }
             Operand::Immediate { value } => {
-                let tmp2 = 6u8; // t1
+                let tmp2 = 7u8; // t2 — 避免与 effect_resume_temp(t1=x6) 冲突
                 self.emit_load_imm64(cb, tmp2, *value);
                 self.emit_sd(cb, tmp2, base, eff_offset);
             }
             Operand::Label { id } => {
                 let label_name = format!("label_{}", id.0);
                 // 用数据内联方式加载标签地址
-                let tmp2 = 6u8; // t1
+                // 注意：不能用 x6(t1)，因为它是 effect_resume_temp (Karte #9)
+                // CallIndirect 序列中 Store64(Label) 之后紧跟 JumpIndirect(#9=t1)，
+                // 如果这里也用 t1 作为临时寄存器，会覆盖掉之前存入的函数指针
+                let tmp2 = 7u8; // t2 — 不与 effect_resume_temp(t1) 冲突
                 self.emit_auipc(cb, tmp2, 0);
                 self.emit_ld(cb, tmp2, tmp2, 12);
                 self.emit_jal(cb, 0, 12);

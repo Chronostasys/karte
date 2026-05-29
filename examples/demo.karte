@@ -36,7 +36,9 @@ fn main() -> number {
     let fib_val = fib(10);
     let loop_val = sum_loop(20);
     let bw_val = bitwise_demo(12, 10);
+    let double = |x| { x * 2 };
+    let lambda_val = double(15);
     let p = Point { x: 3, y: 7 };
     let struct_val = point_sum(p);
-    fib_val + loop_val + bw_val + struct_val
+    fib_val + loop_val + bw_val + lambda_val + struct_val
 }
