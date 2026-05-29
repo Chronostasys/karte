@@ -1507,8 +1507,7 @@ fn main() -> number {
 }
 "#;
         compile_and_run_aot(code, 15, "riscv64_closure_capture_x86");
-        // TODO: 闭包捕获变量在 RISC-V 上有 SIGSEGV，待修复后启用
-        // compile_and_run_aot_riscv64(code, 15, "riscv64_closure_capture");
+        compile_and_run_aot_riscv64(code, 15, "riscv64_closure_capture");
     }
 
     /// 回归测试：RISC-V lambda 作为参数传递
@@ -1546,6 +1545,52 @@ fn main() -> number {
         // point_sum = 10, double(10) = 20
         compile_and_run_aot(code, 20, "riscv64_lambda_struct_x86");
         compile_and_run_aot_riscv64(code, 20, "riscv64_lambda_struct");
+    }
+
+    /// 回归测试：RISC-V 多变量闭包捕获
+    /// 验证闭包能正确捕获多个外部变量（n 和 m）
+    #[test]
+    fn test_riscv64_closure_multi_capture() {
+        let code = r#"
+fn main() -> number {
+    let n = 10;
+    let m = 20;
+    let add_both = |x| { x + n + m };
+    add_both(5)
+}
+"#;
+        compile_and_run_aot(code, 35, "riscv64_closure_multi_x86");
+        compile_and_run_aot_riscv64(code, 35, "riscv64_closure_multi");
+    }
+
+    /// 回归测试：RISC-V 闭包捕获 + if-else 组合
+    /// 验证闭包在 if-else 分支中正确工作
+    #[test]
+    fn test_riscv64_closure_with_ifelse() {
+        let code = r#"
+fn main() -> number {
+    let threshold = 5;
+    let check = |x| { if x > threshold { x * 2 } else { x } };
+    check(3) + check(10)
+}
+"#;
+        compile_and_run_aot(code, 23, "riscv64_closure_ifelse_x86");
+        compile_and_run_aot_riscv64(code, 23, "riscv64_closure_ifelse");
+    }
+
+    /// 回归测试：RISC-V 闭包乘法运算
+    /// 验证闭包捕获变量在乘法运算中正确
+    #[test]
+    fn test_riscv64_closure_multiply() {
+        let code = r#"
+fn main() -> number {
+    let a = 10;
+    let mul = |x| { x * a };
+    mul(5)
+}
+"#;
+        compile_and_run_aot(code, 50, "riscv64_closure_mul_x86");
+        compile_and_run_aot_riscv64(code, 50, "riscv64_closure_mul");
     }
 
 }
