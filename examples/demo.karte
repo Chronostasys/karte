@@ -1,0 +1,42 @@
+fn fib(n: number) -> number {
+    if n <= 1 {
+        n
+    } else {
+        fib(n - 1) + fib(n - 2)
+    }
+}
+
+fn sum_loop(n: number) -> number {
+    let total = 0;
+    let i = 1;
+    while i <= n {
+        total = total + i;
+        i = i + 1
+    };
+    total
+}
+
+fn bitwise_demo(a: number, b: number) -> number {
+    let or_val = a bitor b;
+    let and_val = a bitand b;
+    let xor_val = a bitxor b;
+    or_val + and_val + xor_val
+}
+
+struct Point {
+    x: number,
+    y: number
+}
+
+fn point_sum(p: Point) -> number {
+    p.x + p.y
+}
+
+fn main() -> number {
+    let fib_val = fib(10);
+    let loop_val = sum_loop(20);
+    let bw_val = bitwise_demo(12, 10);
+    let p = Point { x: 3, y: 7 };
+    let struct_val = point_sum(p);
+    fib_val + loop_val + bw_val + struct_val
+}
