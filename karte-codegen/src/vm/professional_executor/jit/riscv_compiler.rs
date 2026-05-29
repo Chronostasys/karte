@@ -1071,8 +1071,16 @@ impl RiscvCompiler {
     ) -> crate::Result<()> {
         let return_rv = self.map_register(0); // a0 = x10
 
+        // 如果有返回值，从 caller-saved 保存列表中排除返回值寄存器 a0 (#0)
+        // 否则 restore 会覆盖 a0 中的返回值
+        let exclude: Vec<u8> = if result.is_some() && call.expects_result() {
+            vec![0] // 排除 a0 (Karte #0)
+        } else {
+            Vec::new()
+        };
+
         // 保存 caller-saved 寄存器到虚拟栈
-        let (saved_regs, stack_space) = self.save_call_clobbered_registers(cb);
+        let (saved_regs, stack_space) = self.save_call_clobbered_registers_ex(cb, &exclude);
 
         // RISC-V 函数调用参数寄存器: a0(x10)-a7(x17)
         // 对应 Karte 编号 0-7
@@ -1097,15 +1105,19 @@ impl RiscvCompiler {
         }
 
         // 调用运行时函数：通过数据内联加载函数指针
-        // AUIPC t0, 0; LD t0, t0, 12; JALR ra, t0, 0; .quad <func_ptr>
+        // 布局: AUIPC t0, 0; LD t0, t0, 12; JAL x0, 12; .quad <func_ptr>; JALR ra, t0, 0
+        // LD 偏移12：AUIPC(4) + LD(4) + JAL(4) = 12，指向 .quad
+        // JAL 偏移12：跳过 JAL(4) + .quad(8) = 12，到达 JALR
+        // JALR ra 之后 PC+4 直接指向恢复代码，不会被内联数据阻断
         let t0 = 5u8;
         self.emit_auipc(cb, t0, 0);
-        self.emit_ld(cb, t0, t0, 12);
-        self.emit_jalr(cb, 1, t0, 0); // JALR ra, t0, 0
+        self.emit_ld(cb, t0, t0, 12);       // t0 = addr of .quad
+        self.emit_jal(cb, 0, 12);            // 跳过 12 字节（本指令4 + .quad8），到达 JALR
         // 内联函数指针（8 字节）
         // 使用 emit_label_address 机制记录 patch 位置
         let runtime_label = format!("__runtime_{}", call.intrinsic.name());
         cb.emit_label_address(&runtime_label);
+        self.emit_jalr(cb, 1, t0, 0);       // JALR ra, t0, 0 — ra = PC+4 指向恢复代码
 
         // 恢复 caller-saved 寄存器
         self.restore_call_clobbered_registers(cb, &saved_regs, stack_space);
@@ -1121,12 +1133,18 @@ impl RiscvCompiler {
         Ok(())
     }
 
-    /// 保存 caller-saved 寄存器到虚拟栈
-    fn save_call_clobbered_registers(&self, cb: &mut CodeBuilder) -> (Vec<u8>, usize) {
+    /// 保存 caller-saved 寄存器到虚拟栈（带排除列表）
+    fn save_call_clobbered_registers_ex(&self, cb: &mut CodeBuilder, exclude: &[u8]) -> (Vec<u8>, usize) {
         // RISC-V caller-saved 寄存器（Karte 编号）:
         // a0-a7 (#0-7), t0(#8), t1(#9), t3-t6(#23-26)
         // 注意：不保存 ra(#27) 和 effect_sp(#12)，由调用框架处理
-        let caller_saved_lir: Vec<u8> = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 23, 24, 25, 26];
+        let all_caller_saved: Vec<u8> = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 23, 24, 25, 26];
+        
+        // 过滤排除的寄存器
+        let caller_saved_lir: Vec<u8> = all_caller_saved
+            .into_iter()
+            .filter(|r| !exclude.contains(r))
+            .collect();
 
         if caller_saved_lir.is_empty() {
             return (caller_saved_lir, 0);
@@ -1147,6 +1165,11 @@ impl RiscvCompiler {
         }
 
         (caller_saved_lir, stack_space)
+    }
+
+    /// 保存 caller-saved 寄存器到虚拟栈
+    fn save_call_clobbered_registers(&self, cb: &mut CodeBuilder) -> (Vec<u8>, usize) {
+        self.save_call_clobbered_registers_ex(cb, &[])
     }
 
     /// 从虚拟栈恢复 caller-saved 寄存器

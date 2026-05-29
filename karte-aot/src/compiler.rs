@@ -126,23 +126,36 @@ impl AotCompiler {
 
         // 运行时函数地址（使用常量，保证与 runtime_x86.rs 中 fn_start 注册的名字一致）
         if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::GC_ALLOC_ALIGNED) {
-            global_labels.insert("karte_jit_runtime_alloc_aligned".to_string(), code_base + off as u64);
-            global_labels.insert("karte_jit_runtime_alloc".to_string(), code_base + off as u64);
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_alloc_aligned".to_string(), addr);
+            global_labels.insert("karte_jit_runtime_alloc".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_alloc_aligned".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_alloc".to_string(), addr);
         }
         if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::FREE) {
-            global_labels.insert("karte_jit_runtime_free".to_string(), code_base + off as u64);
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_free".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_free".to_string(), addr);
         }
         if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::RETAIN) {
-            global_labels.insert("karte_jit_runtime_retain".to_string(), code_base + off as u64);
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_retain".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_retain".to_string(), addr);
         }
         if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::RELEASE) {
-            global_labels.insert("karte_jit_runtime_release".to_string(), code_base + off as u64);
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_release".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_release".to_string(), addr);
         }
         if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::GC_SAFEPOINT) {
-            global_labels.insert("karte_jit_runtime_gc_safepoint".to_string(), code_base + off as u64);
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_gc_safepoint".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_gc_safepoint".to_string(), addr);
         }
         if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::GC_UPDATE_STACK_TOP) {
-            global_labels.insert("karte_jit_runtime_update_stack_top".to_string(), code_base + off as u64);
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_update_stack_top".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_update_stack_top".to_string(), addr);
         }
 
         // Karte 函数地址
@@ -407,23 +420,37 @@ impl AotCompiler {
         let mut global_labels: HashMap<String, u64> = HashMap::new();
 
         if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::GC_ALLOC_ALIGNED) {
-            global_labels.insert("karte_jit_runtime_alloc_aligned".to_string(), code_base + off as u64);
-            global_labels.insert("karte_jit_runtime_alloc".to_string(), code_base + off as u64);
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_alloc_aligned".to_string(), addr);
+            global_labels.insert("karte_jit_runtime_alloc".to_string(), addr);
+            // RISC-V 编译器 emit_runtime_call 生成的标签带 __runtime_ 前缀
+            global_labels.insert("__runtime_karte_jit_runtime_alloc_aligned".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_alloc".to_string(), addr);
         }
         if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::FREE) {
-            global_labels.insert("karte_jit_runtime_free".to_string(), code_base + off as u64);
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_free".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_free".to_string(), addr);
         }
         if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::RETAIN) {
-            global_labels.insert("karte_jit_runtime_retain".to_string(), code_base + off as u64);
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_retain".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_retain".to_string(), addr);
         }
         if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::RELEASE) {
-            global_labels.insert("karte_jit_runtime_release".to_string(), code_base + off as u64);
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_release".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_release".to_string(), addr);
         }
         if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::GC_SAFEPOINT) {
-            global_labels.insert("karte_jit_runtime_gc_safepoint".to_string(), code_base + off as u64);
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_gc_safepoint".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_gc_safepoint".to_string(), addr);
         }
         if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::GC_UPDATE_STACK_TOP) {
-            global_labels.insert("karte_jit_runtime_update_stack_top".to_string(), code_base + off as u64);
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_update_stack_top".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_update_stack_top".to_string(), addr);
         }
 
         for (func_name, compiled) in &compiled_functions {
