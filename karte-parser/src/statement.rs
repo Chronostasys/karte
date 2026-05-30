@@ -655,29 +655,21 @@ impl<'a> Parser<'a> {
                 let param_span = token.span;
                 self.advance();
 
-                // 期望 ":"
-                if let Some(colon_token) = self.peek() {
+                // 检查是否有类型注解（可选）
+                let type_annotation = if let Some(colon_token) = self.peek() {
                     if matches!(colon_token.token, Token::Colon) {
                         self.advance(); // consume ':'
+                        Some(self.parse_field_type_name()?)
                     } else {
-                        return Err(ParseError::UnexpectedToken {
-                            expected: "':'".to_string(),
-                            found: colon_token.token.clone(),
-                            span: colon_token.span,
-                        });
+                        None
                     }
                 } else {
-                    return Err(ParseError::UnexpectedEof {
-                        expected: "':'".to_string(),
-                    });
-                }
-
-                // 解析参数类型
-                let param_type = self.parse_field_type_name()?;
+                    None
+                };
 
                 karte_hir::Parameter {
                     name,
-                    type_annotation: Some(param_type),
+                    type_annotation,
                     span: param_span,
                 }
             } else {

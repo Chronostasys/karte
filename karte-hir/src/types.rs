@@ -595,3 +595,17 @@ impl Type {
         }
     }
 }
+
+/// 类型方案（Type Scheme）— 用于 let-polymorphism
+/// 将函数类型中的自由类型变量量化，使其可以在不同调用位点实例化为不同类型
+#[derive(Debug, Clone)]
+pub struct TypeScheme {
+    pub bound_vars: Vec<TypeVar>,
+    pub body: Type,
+}
+
+impl TypeScheme {
+    pub fn new(bound_vars: Vec<TypeVar>, body: Type) -> Self {
+        Self { bound_vars, body }
+    }
+}

@@ -1,6 +1,6 @@
 use crate::ast::{BinaryOperator, Expr, FieldDef, Statement, UnaryOperator};
 use crate::errors::TypeCheckError;
-use crate::types::{IntKind, Type, TypeValue, TypeVar};
+use crate::types::{IntKind, Type, TypeScheme, TypeValue, TypeVar};
 use ena::unify::InPlaceUnificationTable;
 use karte_diagnostics::DiagnosticBag;
 use std::collections::HashMap;
@@ -95,6 +95,8 @@ pub struct TypeChecker {
     lambda_types: HashMap<*const Expr, Type>,
     /// 存储所有表达式的推断类型（用于传递给MIR lowering）
     expr_types: HashMap<*const Expr, Type>,
+    /// 泛型函数的类型方案（TypeScheme），用于 let-polymorphism
+    function_schemes: HashMap<String, TypeScheme>,
 }
 
 /// 函数签名，包含参数类型和返回类型
@@ -122,6 +124,7 @@ impl TypeChecker {
             function_signatures: HashMap::new(),
             lambda_types: HashMap::new(),
             expr_types: HashMap::new(),
+            function_schemes: HashMap::new(),
         }
     }
 
@@ -140,6 +143,18 @@ impl TypeChecker {
         self.next_type_var += 1;
         self.unification_table.new_key(TypeValue(None));
         var
+    }
+
+    /// 实例化类型方案：将 bound_vars 替换为新的类型变量
+    /// 每次调用泛型函数时，生成一组新的类型变量
+    fn instantiate(&mut self, scheme: &TypeScheme) -> Type {
+        if scheme.bound_vars.is_empty() {
+            return scheme.body.clone();
+        }
+        let subst: Vec<(TypeVar, Type)> = scheme.bound_vars.iter()
+            .map(|var| (*var, Type::Var(self.fresh_type_var())))
+            .collect();
+        scheme.body.substitute(&subst)
     }
 
     /// 添加约束条件
@@ -883,6 +898,10 @@ impl TypeChecker {
                 // 内建函数
                 if name == "print" {
                     return Type::function(vec![Type::String], Type::Unit);
+                }
+                // 优先检查泛型函数，若匹配则实例化
+                if let Some(scheme) = self.function_schemes.get(name).cloned() {
+                    return self.instantiate(&scheme);
                 }
                 if let Some(ty) = env.get(name) {
                     ty.clone()
@@ -1962,6 +1981,20 @@ impl TypeChecker {
 
                 // 6. 将函数名加入当前环境
                 env.insert(name.clone(), func_type);
+
+                // 7. 检查是否需要 generalize（泛化）
+                // 只 generalize 含有自由类型变量的函数（即参数或返回类型未完全标注的函数）
+                // 有完整类型标注的函数不受影响
+                if let Some(sig) = self.function_signatures.get(name) {
+                    let func_type = Type::Function {
+                        params: sig.param_types.clone(),
+                        return_type: Box::new(sig.return_type.clone()),
+                    };
+                    let free_vars = func_type.free_vars();
+                    if !free_vars.is_empty() {
+                        self.function_schemes.insert(name.clone(), TypeScheme::new(free_vars, func_type));
+                    }
+                }
             }
         }
     }
