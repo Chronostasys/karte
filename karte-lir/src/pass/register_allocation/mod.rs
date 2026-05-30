@@ -231,6 +231,13 @@ impl SimpleStackRegisterAllocation {
             lifetime_map.insert(lifetime.register, (lifetime.start, lifetime.end));
         }
 
+        // 🔧 收集 Div/Mod 指令位置：x86_64 的 idiv 隐式修改 RDX（寄存器2），
+        // 任何生命周期跨越 Div/Mod 的虚拟寄存器不能分配到 RDX。
+        let div_mod_positions: Vec<usize> = function.instructions.iter().enumerate()
+            .filter(|(_, inst)| matches!(inst, Instruction::Div { .. } | Instruction::Mod { .. }))
+            .map(|(i, _)| i)
+            .collect();
+
         let mut allocation_map = HashMap::new();
         let mut used_physical_regs = HashSet::new();
 
@@ -401,6 +408,16 @@ impl SimpleStackRegisterAllocation {
             let mut assigned_physical_reg = None;
 
             for &physical_reg in &self.calling_convention.get_allocatable_registers() {
+                // 🔧 x86_64: idiv 隐式修改 RDX（物理寄存器2），生命周期跨越 Div/Mod
+                // 指令的虚拟寄存器不能分配到 RDX，否则值会被覆盖
+                if physical_reg == 2 && !div_mod_positions.is_empty() {
+                    let (current_start, current_end) = lifetime_map.get(&virtual_reg).copied().unwrap_or((0, 0));
+                    if div_mod_positions.iter().any(|&pos| pos >= current_start && pos <= current_end) {
+                        info!("    ❌ 跳过物理寄存器 r2 (RDX): 生命周期跨越 Div/Mod 指令");
+                        continue;
+                    }
+                }
+
                 info!("  🔍 尝试物理寄存器 r{}", physical_reg);
 
                 if used_physical_regs.contains(&physical_reg) {

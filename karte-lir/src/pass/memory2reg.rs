@@ -1772,7 +1772,21 @@ impl Memory2RegPass {
         if let Some(block) = basic_blocks.get(&start_block_id) {
             if block.predecessors.len() == 1 {
                 let pred_id = block.predecessors[0];
-                if pred_id != target_block_id && pred_id != start_block_id {
+                if pred_id == target_block_id {
+                    // 🔧 回边到 phi 块：使用 phi 结果寄存器创建自引用 phi
+                    // 例如 while 循环中 block4(loop body) -> block2(loop header)
+                    // 闭包地址在循环中不变，phi 的 incoming 应为 phi 自身的结果
+                    if phi_blocks.contains(&target_block_id) {
+                        if let Some(&phi_reg) = phi_block_to_register.get(&target_block_id) {
+                            info!(
+                                "🔍 回边到 phi 块{}，使用 phi 结果寄存器{:?}",
+                                target_block_id, phi_reg
+                            );
+                            return Some(Operand::Register { id: phi_reg });
+                        }
+                    }
+                    // 不是 phi 块的回边，停止搜索
+                } else if pred_id != start_block_id {
                     return self.find_reaching_definition_on_path(
                         pred_id,
                         target_block_id,
