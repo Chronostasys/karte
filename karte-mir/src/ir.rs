@@ -249,6 +249,20 @@ pub enum Statement {
         #[ir_codec(skip)]
         span: Span,
     },
+    /// 类型转换 (显示为: target = cast source, dst_bits, signed)
+    #[ir_codec(token = "cast")]
+    TypeCast {
+        #[ir_codec(args, target)]
+        target: Value,
+        #[ir_codec(args)]
+        source: Value,
+        #[ir_codec(args)]
+        dst_bits: u8,
+        #[ir_codec(args)]
+        signed: bool,
+        #[ir_codec(skip)]
+        span: Span,
+    },
     /// 函数调用
     #[ir_codec(token = "call")]
     Call {

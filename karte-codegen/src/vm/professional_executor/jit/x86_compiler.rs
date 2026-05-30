@@ -136,6 +136,9 @@ impl X86Compiler {
             Instruction::BitNot { dst, src, .. } => {
                 self.compile_bitnot(dst, src, code_builder)
             }
+            Instruction::IntCast { dst, src, src_bits, dst_bits, signed, span: _ } => {
+                self.compile_intcast(dst, src, *src_bits, *dst_bits, *signed, code_builder)
+            }
             Instruction::Compare { src1, src2, .. } => {
                 self.compile_compare(src1, src2, code_builder)
             }
@@ -1147,6 +1150,77 @@ impl X86Compiler {
         }
         // NOT r64: 0x48 0xF7 ModRM(0xD0 + reg)
         code_builder.emit_bytes(&[0x48, 0xF7, 0xD0 | dst_reg]);
+        Ok(())
+    }
+
+    /// 编译整数类型转换指令（截断/零扩展/符号扩展）
+    fn compile_intcast(
+        &self,
+        dst: &Register,
+        src: &Operand,
+        src_bits: u8,
+        dst_bits: u8,
+        signed: bool,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+
+        // 将源操作数加载到目标寄存器
+        match src {
+            Operand::Register { id } => {
+                let src_reg = self.get_physical_register(id)?;
+                if dst_reg != src_reg {
+                    self.emit_mov_reg_reg(code_builder, dst_reg, src_reg);
+                }
+            }
+            Operand::Immediate { value } => {
+                self.emit_mov_reg_imm64(code_builder, dst_reg, *value);
+            }
+            _ => return Err(format!("intcast不支持的src: {:?}", src).into()),
+        }
+
+        match (src_bits, dst_bits) {
+            // 64 → 32：用 AND 掩码截断
+            (64, 32) => {
+                // AND r64, imm32: REX.W 0x81 /4 r imm32
+                self.emit_rex_prefix(code_builder, true, 0, 0, dst_reg);
+                code_builder.emit_byte(0x81);
+                self.emit_modrm(code_builder, 0b11, 4, dst_reg); // /4 = AND
+                code_builder.emit_i32(-1); // 0xFFFFFFFF as i32 = -1
+            }
+            // 64 → 16：用 AND 掩码截断
+            (64, 16) => {
+                self.emit_rex_prefix(code_builder, true, 0, 0, dst_reg);
+                code_builder.emit_byte(0x81);
+                self.emit_modrm(code_builder, 0b11, 4, dst_reg);
+                code_builder.emit_i32(0xFFFF);
+            }
+            // 64 → 8：用 AND 掩码截断
+            (64, 8) => {
+                self.emit_rex_prefix(code_builder, true, 0, 0, dst_reg);
+                code_builder.emit_byte(0x81);
+                self.emit_modrm(code_builder, 0b11, 4, dst_reg);
+                code_builder.emit_i32(0xFF);
+            }
+            // 32 → 64：零扩展（32位操作自动零扩展到64位）或符号扩展
+            (32, 64) => {
+                if signed {
+                    // MOVSXD r64, r/m32: REX.W 0x63 /r
+                    // 简化：通过先将值截断到32位再符号扩展
+                    // 先 AND 0xFFFFFFFF 确保32位值
+                    self.emit_rex_prefix(code_builder, true, 0, 0, dst_reg);
+                    code_builder.emit_byte(0x63);
+                    self.emit_modrm(code_builder, 0b11, dst_reg, dst_reg);
+                }
+                // 无符号：32位值存储在64位寄存器中已经是零扩展的
+            }
+            // 同位宽或不需要转换
+            _ => {}
+        }
+
+        // 注意：signed 标志当前仅用于记录语义，64→N 截断都是 AND 掩码
+        // 未来需要符号扩展时可根据 signed 字段生成不同的指令序列
+        let _ = signed;
         Ok(())
     }
 

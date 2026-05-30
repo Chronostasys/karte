@@ -1704,6 +1704,29 @@ impl TypeChecker {
                 self.infer_expr(body, env)
             }
 
+            Expr::TypeCast { expr, target_type, span } => {
+                let inner_type = self.infer_expr(expr, env);
+
+                match (&inner_type, target_type) {
+                    (Type::Number, Type::Int(_)) | (Type::Int(_), Type::Number) => {},
+                    (Type::Number, Type::Number) => {},
+                    (Type::Int(_), Type::Int(_)) => {},
+                    (Type::Int(_), Type::Bool) | (Type::Number, Type::Bool) => {},
+                    (Type::Bool, Type::Number) | (Type::Bool, Type::Int(_)) => {},
+                    _ => {
+                        self.add_error(
+                            TypeCheckError::TypeMismatch {
+                                expected: target_type.clone(),
+                                found: inner_type,
+                                span: *span,
+                            }
+                        );
+                    }
+                }
+
+                target_type.clone()
+            }
+
             Expr::ForIn {
                 var, start, end, body, ..
             } => {

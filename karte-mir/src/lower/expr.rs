@@ -26,6 +26,7 @@ use crate::{
     TempId, Terminator, Value,
 };
 use karte_common::memory::OwnershipKind;
+use karte_hir::types::Type;
 use karte_hir::Expr;
 
 /// 降低单个表达式并将其结果存入 destination
@@ -1462,6 +1463,40 @@ pub(crate) fn lower_expression(
             ctx.add_statement(Statement::Assign {
                 target: destination.clone(),
                 source: Value::Unit,
+                span: *span,
+            });
+        }
+
+        // ===== 类型转换 (as 表达式) =====
+        Expr::TypeCast { expr, target_type, span } => {
+            // 先 lower 内部表达式到临时变量
+            let source = lower_expression_to_temp(ctx, expr)?;
+            
+            // 从 target_type 提取位宽和符号性
+            let (dst_bits, signed) = match target_type {
+                Type::Int(kind) => ((kind.size_in_bytes() * 8) as u8, kind.is_signed()),
+                Type::Number => (64, true),  // Number 等同于 i64
+                Type::Bool => (8, false),    // Bool 用 U8 表示
+                _ => {
+                    // 不支持的转换目标类型，直接透传
+                    lower_expression(ctx, expr, destination)?;
+                    return Ok(());
+                }
+            };
+            
+            let target = ctx.new_temp();
+            ctx.add_statement(Statement::TypeCast {
+                target: target.clone(),
+                source,
+                dst_bits,
+                signed,
+                span: *span,
+            });
+            
+            // 将结果移动到目标寄存器
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: target,
                 span: *span,
             });
         }

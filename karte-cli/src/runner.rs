@@ -138,6 +138,18 @@ fn canonicalize_statement(statement: &mut Statement, symbols: &HashMap<String, S
             canonicalize_value(target, symbols);
             canonicalize_value(operand, symbols);
         }
+        Statement::TypeCast {
+            target, source, ..
+        } => {
+            canonicalize_value(target, symbols);
+            canonicalize_value(source, symbols);
+        }
+        Statement::TypeCast {
+            target, source, ..
+        } => {
+            canonicalize_value(target, symbols);
+            canonicalize_value(source, symbols);
+        }
         Statement::Call {
             target,
             function,

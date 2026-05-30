@@ -1216,6 +1216,7 @@ impl Memory2RegPass {
                 | Instruction::ShiftLeft { dst, .. }
                 | Instruction::ShiftRight { dst, .. }
                 | Instruction::BitNot { dst, .. }
+                | Instruction::IntCast { dst, .. }
                     if *dst == register =>
                 {
                     definitions.push(i);
@@ -1313,6 +1314,10 @@ impl Memory2RegPass {
                 }
                 Instruction::BitNot { dst, src, .. } if *dst == register => {
                     debug!("🔍 找到位非定义: {:?} = bitnot {:?}", dst, src);
+                    return None;
+                }
+                Instruction::IntCast { dst, src, .. } if *dst == register => {
+                    debug!("🔍 找到类型转换定义: {:?} = intcast {:?}", dst, src);
                     return None;
                 }
                 _ => {

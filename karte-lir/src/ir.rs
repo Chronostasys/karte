@@ -297,6 +297,23 @@ pub enum Instruction {
         span: Span,
     },
 
+    /// 整数类型转换：截断/零扩展/符号扩展
+    #[ir_codec(token = "intcast")]
+    IntCast {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        src: Operand,
+        #[ir_codec(args)]
+        src_bits: u8,
+        #[ir_codec(args)]
+        dst_bits: u8,
+        #[ir_codec(args)]
+        signed: bool,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
     /// 比较指令：cmp src1, src2（只设置 flags，不写结果）
     #[ir_codec(token = "cmp")]
     Compare {
@@ -683,6 +700,7 @@ impl Instruction {
             | Instruction::ShiftLeft { dst, .. }
             | Instruction::ShiftRight { dst, .. }
             | Instruction::BitNot { dst, .. }
+            | Instruction::IntCast { dst, .. }
             | Instruction::Load64 { dst, .. }
             | Instruction::Load32 { dst, .. }
             | Instruction::Load8 { dst, .. }
@@ -719,6 +737,7 @@ impl Instruction {
             | Instruction::ShiftLeft { dst, .. }
             | Instruction::ShiftRight { dst, .. }
             | Instruction::BitNot { dst, .. }
+            | Instruction::IntCast { dst, .. }
             | Instruction::Load64 { dst, .. }
             | Instruction::Load32 { dst, .. }
             | Instruction::Load8 { dst, .. }
@@ -787,6 +806,9 @@ impl Instruction {
                 self.add_operand_registers(src2, &mut used);
             }
             Instruction::BitNot { src, .. } => {
+                self.add_operand_registers(src, &mut used);
+            }
+            Instruction::IntCast { src, .. } => {
                 self.add_operand_registers(src, &mut used);
             }
             Instruction::Compare { src1, src2, .. } => {
@@ -962,6 +984,12 @@ impl Instruction {
                 Self::replace_operand_register(src2, old_reg, new_reg);
             }
             Instruction::BitNot { dst, src, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                Self::replace_operand_register(src, old_reg, new_reg);
+            }
+            Instruction::IntCast { dst, src, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
                 }
@@ -1303,6 +1331,10 @@ impl Instruction {
                 self.add_operand_registers(src2, &mut used);
             }
             Instruction::BitNot { dst, src, .. } => {
+                defined.push(*dst);
+                self.add_operand_registers(src, &mut used);
+            }
+            Instruction::IntCast { dst, src, .. } => {
                 defined.push(*dst);
                 self.add_operand_registers(src, &mut used);
             }

@@ -294,6 +294,14 @@ pub enum Expr {
         body: Box<Expr>,
         span: Span,
     },
+
+    // ===== 类型转换 (as 表达式) =====
+    /// 显式类型转换: expr as TargetType
+    TypeCast {
+        expr: Box<Expr>,
+        target_type: Type,
+        span: Span,
+    },
 }
 
 /// 语句类型
@@ -768,6 +776,9 @@ impl fmt::Display for Expr {
             } => {
                 write!(f, "handle {}({}) {{ {} }} in {}", tag, param, handler, body)
             }
+            Expr::TypeCast { expr, target_type, .. } => {
+                write!(f, "({} as {})", expr, target_type)
+            }
         }
     }
 }
@@ -815,6 +826,7 @@ impl Expr {
             Expr::EffectPerform { span, .. } => *span,
             Expr::EffectResume { span, .. } => *span,
             Expr::EffectHandle { span, .. } => *span,
+            Expr::TypeCast { span, .. } => *span,
         }
     }
 }

@@ -456,6 +456,36 @@ pub(super) fn lower_statement(
             Ok(())
         }
 
+        Statement::TypeCast {
+            target,
+            source,
+            dst_bits,
+            signed,
+            span,
+        } => {
+            let src_rvalue = ctx.lower_to_rvalue(source);
+
+            if *dst_bits == 64 {
+                // 64→64：无需转换，直接存储到栈
+                ctx.store_value_to_stack(target, src_rvalue);
+            } else {
+                // 64→8/16/32：需要截断
+                let temp = ctx.current_function_mut().new_register();
+                ctx.add_instruction(Instruction::IntCast {
+                    dst: temp,
+                    src: src_rvalue,
+                    src_bits: 64,
+                    dst_bits: *dst_bits,
+                    signed: *signed,
+                    span: *span,
+                });
+                // Stack-First策略：将结果存储到栈
+                ctx.store_value_to_stack(target, Operand::Register { id: temp });
+            }
+
+            Ok(())
+        }
+
         Statement::Call {
             target,
             function,

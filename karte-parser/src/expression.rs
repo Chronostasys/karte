@@ -1709,6 +1709,19 @@ impl<'a> Parser<'a> {
                             });
                         }
                     }
+                    Token::Identifier(ref name) if name == "as" => {
+                        progressed = true;
+                        let start_span = expr.span();
+                        self.advance(); // consume 'as'
+                        let target_type = self.parse_type_expression()?;
+                        let end_span = self.peek().map(|t| t.span).unwrap_or(start_span);
+                        let span = Span::new(start_span.start, end_span.end);
+                        expr = Expr::TypeCast {
+                            expr: Box::new(expr),
+                            target_type,
+                            span,
+                        };
+                    }
                     _ => {}
                 }
             }

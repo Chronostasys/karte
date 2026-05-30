@@ -549,6 +549,7 @@ fn instr_name(instr: &Instruction) -> &'static str {
         Instruction::ShiftLeft { .. } => "<<",
         Instruction::ShiftRight { .. } => ">>",
         Instruction::BitNot { .. } => "~",
+        Instruction::IntCast { .. } => "intcast",
     }
 }
 

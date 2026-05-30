@@ -2141,4 +2141,80 @@ fn main() -> number {
         compile_and_run_aot(code, 1, "lambda_bitwise");
     }
 
+    #[test]
+    fn test_cast_number_to_i32() {
+        let code = r#"
+fn main() -> number {
+    let x = 42;
+    x as i32
+}
+"#;
+        compile_and_run_aot(code, 42, "cast_number_to_i32");
+    }
+
+    #[test]
+    fn test_cast_truncate_to_u8() {
+        let code = r#"
+fn main() -> number {
+    300 as u8
+}
+"#;
+        compile_and_run_aot(code, 44, "cast_truncate_to_u8");
+    }
+
+    #[test]
+    fn test_cast_large_to_u8() {
+        let code = r#"
+fn main() -> number {
+    1000 as u8
+}
+"#;
+        compile_and_run_aot(code, 232, "cast_large_to_u8");
+    }
+
+    #[test]
+    fn test_cast_chain() {
+        let code = r#"
+fn main() -> number {
+    let x = 500;
+    let y = x as u8;
+    y as number
+}
+"#;
+        compile_and_run_aot(code, 244, "cast_chain");
+    }
+
+    #[test]
+    fn test_cast_bool_to_number() {
+        let code = r#"
+fn main() -> number {
+    true as number
+}
+"#;
+        compile_and_run_aot(code, 1, "cast_bool_to_number");
+    }
+
+    #[test]
+    fn test_cast_in_expression() {
+        let code = r#"
+fn main() -> number {
+    let x = 42;
+    (x as u8) + 10
+}
+"#;
+        compile_and_run_aot(code, 52, "cast_in_expression");
+    }
+
+    #[test]
+    fn test_cast_let_binding() {
+        let code = r#"
+fn main() -> number {
+    let a = 256;
+    let b = a as u8;
+    b
+}
+"#;
+        compile_and_run_aot(code, 0, "cast_let_binding");
+    }
+
 }

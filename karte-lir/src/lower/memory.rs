@@ -851,6 +851,16 @@ impl LirLoweringContext {
                         }
                         self.collect_temp_values_from_value(operand, &mut temp_values);
                     }
+                    Statement::TypeCast {
+                        target, source, ..
+                    } => {
+                        if let Value::Temp { .. } = target {
+                            let key = value_to_key(target);
+                            log::debug!("🔧 发现临时变量(cast target): {}", key);
+                            temp_values.insert(key);
+                        }
+                        self.collect_temp_values_from_value(source, &mut temp_values);
+                    }
                     _ => {}
                 }
             }

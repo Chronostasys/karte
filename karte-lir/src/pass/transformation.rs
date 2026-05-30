@@ -149,6 +149,7 @@ impl DeadCodeElimination {
             | Instruction::ShiftLeft { .. }
             | Instruction::ShiftRight { .. } => false,
             Instruction::BitNot { .. } => false,
+            Instruction::IntCast { .. } => false,
             Instruction::Load64 { .. } => false,
             Instruction::Load32 { .. } => false,
             Instruction::Load8 { .. } => false,
@@ -167,6 +168,7 @@ impl DeadCodeElimination {
             Instruction::ShiftLeft { .. } => false,
             Instruction::ShiftRight { .. } => false,
             Instruction::BitNot { .. } => false,
+            Instruction::IntCast { .. } => false,
             Instruction::Safepoint { .. } => true,
             Instruction::JumpIndirect { .. } => true,
             Instruction::JumpRegister { .. } => true,
@@ -198,6 +200,9 @@ impl DeadCodeElimination {
                 self.add_operand_registers(src2, &mut used);
             }
             Instruction::BitNot { src, .. } => {
+                self.add_operand_registers(src, &mut used);
+            }
+            Instruction::IntCast { src, .. } => {
                 self.add_operand_registers(src, &mut used);
             }
             Instruction::Compare { src1, src2, .. }
@@ -330,6 +335,7 @@ impl DeadCodeElimination {
             | Instruction::ShiftLeft { dst, .. }
             | Instruction::ShiftRight { dst, .. }
             | Instruction::BitNot { dst, .. }
+            | Instruction::IntCast { dst, .. }
             | Instruction::Load64 { dst, .. }
             | Instruction::Load32 { dst, .. }
             | Instruction::Load8 { dst, .. }
