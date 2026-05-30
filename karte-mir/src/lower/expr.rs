@@ -22,7 +22,7 @@ use super::helpers::{
 use super::stmt::{handle_assignment, lower_statement};
 use super::types::LoweringContext;
 use crate::{
-    BinaryOperator as MirBinaryOp, EscapeState, HeapLayout, MatchArm, MirFunction, Statement,
+    BasicBlockId, BinaryOperator as MirBinaryOp, EscapeState, HeapLayout, MatchArm, MirFunction, Statement,
     TempId, Terminator, Value,
 };
 use karte_common::memory::OwnershipKind;
@@ -599,7 +599,6 @@ pub(crate) fn lower_expression(
             for (name, phi_val) in &phi_values {
                 ctx.update_variable(name, phi_val.clone(), None);
             }
-
             // Jump to loop head (从 pre_loop 块)
             ctx.set_current_block(saved_block);
             ctx.set_terminator(Terminator::Goto {
@@ -936,6 +935,69 @@ pub(crate) fn lower_expression(
             // 确保循环变量和 __for_var 在绑定中
             ctx.bind_variable(for_var_name.clone(), for_var_temp.clone(), None);
 
+            // === 第 2.5 步：预转换结构体变量 ===
+            // 对于在循环体内被闭包捕获的结构体变量，预先将其转换为 Reference，
+            // 确保 loop_head Phi 能合并相同类型的值（shared_var 指针），
+            // 避免迭代间 Struct VALUE 与堆指针类型不一致导致垃圾值。
+            // 切换到 saved_block（循环前的块），确保堆分配语句插入到正确位置
+            ctx.set_current_block(saved_block);
+            let mut struct_ref_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for (name, initial_value, loop_value) in &mut updated_vars {
+                // 通过 scope 中的 binding.struct_name 判断是否为结构体变量
+                let is_struct = ctx.scopes.iter().rev()
+                    .find_map(|scope| scope.bindings.get(name))
+                    .and_then(|b| b.struct_name.clone())
+                    .is_some();
+                let becomes_ref = matches!(loop_value, Value::Reference { .. });
+                if is_struct && becomes_ref {
+                    // 从 scope 获取结构体名称，从 program 获取大小
+                    let struct_name = ctx.scopes.iter().rev()
+                        .find_map(|scope| scope.bindings.get(name))
+                        .and_then(|b| b.struct_name.clone())
+                        .unwrap();
+                    let struct_size = ctx.program.get_struct_type(&struct_name)
+                        .map(|t| t.fields.len().max(1) * 8)
+                        .unwrap_or(8);
+
+                    // 在 pre_loop_block 中插入堆分配（在 Goto loop_head 之前）
+                    let heap_copy = ctx.new_temp();
+                    ctx.add_statement(Statement::HeapAlloc {
+                        target: heap_copy.clone(),
+                        size: struct_size,
+                        object_type: "struct_copy".to_string(),
+                        span: *span,
+                    });
+                    ctx.add_statement(Statement::Store {
+                        target: heap_copy.clone(),
+                        value: initial_value.clone(),
+                        span: *span,
+                    });
+
+                    let shared_location = ctx.new_temp();
+                    ctx.add_statement(Statement::HeapAlloc {
+                        target: shared_location.clone(),
+                        size: 8,
+                        object_type: "shared_var".to_string(),
+                        span: *span,
+                    });
+                    ctx.add_statement(Statement::Store {
+                        target: shared_location.clone(),
+                        value: heap_copy,
+                        span: *span,
+                    });
+
+                    // 更新 initial_value 为 Reference，Phi 将合并 shared_var 指针
+                    let ref_value = Value::Reference {
+                        value: Box::new(shared_location),
+                        ty: None,
+                    };
+                    *initial_value = ref_value;
+                    struct_ref_vars.insert(name.clone());
+                    // 更新变量绑定
+                    ctx.update_variable(name, initial_value.clone(), None);
+                }
+            }
+
             // === 第三步：创建 phi temp ===
             let mut phi_values: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
             // __for_var 也需要 phi
@@ -948,8 +1010,16 @@ pub(crate) fn lower_expression(
             }
 
             // 更新 context 中的变量绑定指向 phi temp
+            // 对于预转换的结构体变量，绑定保持为 Reference(phi_temp)
             for (name, phi_val) in &phi_values {
-                ctx.update_variable(name, phi_val.clone(), None);
+                if struct_ref_vars.contains(name) {
+                    ctx.update_variable(name, Value::Reference {
+                        value: Box::new(phi_val.clone()),
+                        ty: None,
+                    }, None);
+                } else {
+                    ctx.update_variable(name, phi_val.clone(), None);
+                }
             }
 
             // Jump to loop head
@@ -965,13 +1035,23 @@ pub(crate) fn lower_expression(
             // Phi 节点（用户变量）
             for (name, initial_value, _loop_value) in &updated_vars {
                 let phi_temp = phi_values.get(name).unwrap().clone();
+                // 对于预转换的结构体变量，Phi incoming 使用 Reference 内部的 shared_var 指针
+                let phi_initial = if struct_ref_vars.contains(name) {
+                    if let Value::Reference { value: inner, .. } = initial_value {
+                        inner.as_ref().clone()
+                    } else {
+                        initial_value.clone()
+                    }
+                } else {
+                    initial_value.clone()
+                };
                 // back edge 的值稍后填入（先占位，第五步更新）
                 ctx.add_statement(Statement::Phi {
                     target: phi_temp,
                     incoming: vec![
-                        (pre_loop_block, initial_value.clone()),
+                        (pre_loop_block, phi_initial.clone()),
                         // 占位：increment_block 的值在循环体生成后更新
-                        (increment_block, initial_value.clone()),
+                        (increment_block, phi_initial),
                     ],
                     span: *span,
                 });
@@ -987,8 +1067,16 @@ pub(crate) fn lower_expression(
             });
 
             // 更新 context 中所有被循环修改的变量指向 phi 结果
+            // 对于预转换的结构体变量，绑定保持为 Reference(phi_temp)
             for (name, phi_val) in &phi_values {
-                ctx.update_variable(name, phi_val.clone(), None);
+                if struct_ref_vars.contains(name) {
+                    ctx.update_variable(name, Value::Reference {
+                        value: Box::new(phi_val.clone()),
+                        ty: None,
+                    }, None);
+                } else {
+                    ctx.update_variable(name, phi_val.clone(), None);
+                }
             }
 
             // 条件: __for_var < end
@@ -1118,35 +1206,29 @@ pub(crate) fn lower_expression(
             // R8-1 修复：对被闭包捕获的变量（binding 变为 Reference），
             // 在 increment_block 中插入 Dereference 获取实际值，避免 Phi incoming
             // 收到 Reference 而非数值
+            // 对于预转换的结构体变量，直接提取 Reference 内部的 shared_var 指针，
+            // 不做 Dereference（因为 Dereference 会得到 struct_ptr，而非 struct VALUE）
             let mut actual_backedge_values: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
-            let mut actual_continue_backedge_values: std::collections::HashMap<(String, crate::BasicBlockId), Value> = std::collections::HashMap::new();
             for (name, _initial_value, _loop_value) in &updated_vars {
                 // 处理正常结束路径的 Reference 值
                 if let Some((final_value, _)) = final_bindings.get(name) {
                     if let Value::Reference { value: ref_target, .. } = final_value {
-                        let derefed = ctx.new_temp();
-                        ctx.add_statement(Statement::Dereference {
-                            target: derefed.clone(),
-                            reference: *ref_target.clone(),
-                            span: body.span(),
-                        });
-                        actual_backedge_values.insert(name.clone(), derefed);
-                    }
-                }
-                // 处理 continue 路径的 Reference 值（经过 increment_block 回到 loop_head）
-                for (source_block, cont_bindings) in &for_continue_sources {
-                    if let Some(cont_value) = cont_bindings.get(name) {
-                        if let Value::Reference { value: ref_target, .. } = cont_value {
+                        if struct_ref_vars.contains(name) {
+                            // 结构体变量：提取内部 shared_var 指针，不做 Dereference
+                            actual_backedge_values.insert(name.clone(), ref_target.as_ref().clone());
+                        } else {
+                            // 基本类型变量：Dereference 获取实际值
                             let derefed = ctx.new_temp();
                             ctx.add_statement(Statement::Dereference {
                                 target: derefed.clone(),
                                 reference: *ref_target.clone(),
                                 span: body.span(),
                             });
-                            actual_continue_backedge_values.insert((name.clone(), *source_block), derefed);
+                            actual_backedge_values.insert(name.clone(), derefed);
                         }
                     }
                 }
+
             }
 
             // 递增块 → loop_head
@@ -1193,29 +1275,7 @@ pub(crate) fn lower_expression(
                             }
                         }
                     }
-                    // R8-1 修复：为 continue 经过 increment_block 的路径也添加解引用后的 incoming
-                    // continue 路径也通过 increment_block 回到 loop_head
-                    for (source_block, cont_bindings) in &for_continue_sources {
-                        for (name, _initial_value, _loop_value) in &updated_vars {
-                            let var_name = Some(name.clone());
-                            if let Some(phi_target) = phi_values.get(name) {
-                                if *target == *phi_target {
-                                    let cont_value = if let Some(actual) = actual_continue_backedge_values.get(&(name.clone(), *source_block)) {
-                                        actual.clone()
-                                    } else {
-                                        cont_bindings.get(name)
-                                            .cloned()
-                                            .unwrap_or_else(|| {
-                                                pre_loop_bindings.get(name)
-                                                    .map(|(v, _)| v.clone())
-                                                    .unwrap_or_else(|| phi_target.clone())
-                                            })
-                                    };
-                                    incoming.push((*source_block, cont_value));
-                                }
-                            }
-                        }
-                    }
+
                 }
             }
 
@@ -1540,6 +1600,16 @@ pub(crate) fn lower_expression(
             // 1. 计算匹配表达式的值
             let match_value = lower_expression_to_temp(ctx, expr)?;
 
+            // 保存 match 之前的变量绑定快照（遍历所有作用域）
+            let pre_match_bindings: std::collections::HashMap<String, Value> = ctx
+                .scopes
+                .iter()
+                .rev()
+                .flat_map(|scope| {
+                    scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone()))
+                })
+                .collect();
+
             // 2. 为每个匹配分支创建基本块
             let mut mir_arms = Vec::new();
             let mut arm_blocks = Vec::new();
@@ -1567,7 +1637,12 @@ pub(crate) fn lower_expression(
                 span,
             });
 
-            // 5. 为每个分支生成代码
+            // 5. 为每个分支生成代码，并收集 Phi 信息
+            let mut arm_actual_blocks: Vec<BasicBlockId> = Vec::new();
+            let mut arm_bindings_list: Vec<std::collections::HashMap<String, Value>> = Vec::new();
+            // 记录每个 arm 是否提前终止（continue/break/return）
+            let mut arm_terminated_early: Vec<bool> = Vec::new();
+
             for (i, arm) in arms.iter().enumerate() {
                 let arm_block = arm_blocks[i];
                 ctx.set_current_block(arm_block);
@@ -1580,15 +1655,137 @@ pub(crate) fn lower_expression(
                 lower_expression(ctx, &arm.body, destination)?;
                 ctx.exit_scope(arm.span);
 
-                // 跳转到合并块
-                ctx.set_terminator(Terminator::Goto {
-                    target: merge_block,
-                    span: arm.span,
-                });
+                // 检测 arm 体是否提前终止（continue/break/return 创建了 dead_block）
+                // 判断方式：如果当前块不是 arm_block，且 arm_block 已有终结器（不是 Goto merge），
+                // 说明 arm 体中的 continue/break/return 已经设置了终结器并创建了死块
+                let actual_block = ctx.current_block();
+                let terminated_early = if actual_block != arm_block {
+                    // 当前块与初始 arm_block 不同，检查 arm_block 的终结器
+                    let func = ctx.current_function_mut();
+                    func.basic_blocks.get(&arm_block)
+                        .and_then(|b| b.terminator.as_ref())
+                        .map_or(false, |t| {
+                            // 如果 arm_block 的终结器不是跳转到 merge_block，说明提前终止了
+                            !matches!(t, Terminator::Goto { target, .. } if *target == merge_block)
+                        })
+                } else {
+                    false
+                };
+                arm_terminated_early.push(terminated_early);
+
+                if !terminated_early {
+                    // 正常 arm：捕获实际跳转到 merge 的块
+                    arm_actual_blocks.push(actual_block);
+                    ctx.set_terminator(Terminator::Goto {
+                        target: merge_block,
+                        span: arm.span,
+                    });
+
+                    // 记录此 arm 后的变量绑定
+                    let arm_bindings: std::collections::HashMap<String, Value> = ctx
+                        .scopes
+                        .iter()
+                        .rev()
+                        .flat_map(|scope| {
+                            scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone()))
+                        })
+                        .collect();
+                    arm_bindings_list.push(arm_bindings);
+                }
+                // 提前终止的 arm（continue/break/return）不会到达 merge_block，
+                // 不参与 Phi，也不设置 Goto merge（死块不应有到达 merge 的边）
+
+                // 恢复绑定到 match 之前的状态（下一个 arm 需从原始状态开始）
+                for scope in ctx.scopes.iter_mut() {
+                    for (name, binding) in scope.bindings.iter_mut() {
+                        if let Some(pre_val) = pre_match_bindings.get(name) {
+                            binding.value = pre_val.clone();
+                        }
+                    }
+                }
             }
 
-            // 6. 切换到合并块
+            // 6. 切换到合并块，为被修改的变量插入 N 路 Phi 节点
             ctx.set_current_block(merge_block);
+
+            for (name, pre_value) in &pre_match_bindings {
+                // 收集每个 arm 的值
+                let arm_values: Vec<Value> = arm_bindings_list
+                    .iter()
+                    .map(|bindings| {
+                        bindings.get(name).cloned().unwrap_or_else(|| pre_value.clone())
+                    })
+                    .collect();
+
+                // 检查是否有任何 arm 修改了此变量
+                let any_changed = arm_values.iter().any(|v| v != pre_value);
+
+                if any_changed {
+                    // 检查 incoming 值是否混合了 Reference 和非 Reference
+                    let any_is_ref = arm_values.iter().any(|v| matches!(v, Value::Reference { .. }));
+
+                    if any_is_ref {
+                        // 至少一个 arm 有闭包捕获（Reference），需要统一为 shared_location
+                        let mut incoming: Vec<(BasicBlockId, Value)> = Vec::new();
+
+                        for (arm_idx, arm_value) in arm_values.iter().enumerate() {
+                            let arm_actual_block = arm_actual_blocks[arm_idx];
+                            let loc = if let Value::Reference { value: ref_inner, .. } = arm_value {
+                                ref_inner.as_ref().clone()
+                            } else {
+                                // 非 Reference 值：创建 shared_location 并存储值
+                                let loc = ctx.new_temp();
+                                if !ctx.analysis_mode {
+                                    ctx.add_statement(Statement::HeapAlloc {
+                                        target: loc.clone(),
+                                        size: 8,
+                                        object_type: "shared_var".to_string(),
+                                        span,
+                                    });
+                                    ctx.add_statement(Statement::Store {
+                                        target: loc.clone(),
+                                        value: arm_value.clone(),
+                                        span,
+                                    });
+                                }
+                                loc
+                            };
+                            incoming.push((arm_actual_block, loc));
+                        }
+
+                        let phi_temp = ctx.new_temp();
+                        if !ctx.analysis_mode {
+                            ctx.add_statement(Statement::Phi {
+                                target: phi_temp.clone(),
+                                incoming,
+                                span,
+                            });
+                        }
+                        // 变量绑定更新为 Reference，指向 Phi 选出的 shared_location
+                        ctx.update_variable(name, Value::Reference {
+                            value: Box::new(phi_temp),
+                            ty: None,
+                        }, None);
+                    } else {
+                        // 正常情况：都不是 Reference
+                        let incoming: Vec<(BasicBlockId, Value)> = arm_actual_blocks
+                            .iter()
+                            .zip(arm_values.iter())
+                            .map(|(block, value): (&BasicBlockId, &Value)| (*block, value.clone()))
+                            .collect();
+
+                        let phi_temp = ctx.new_temp();
+                        if !ctx.analysis_mode {
+                            ctx.add_statement(Statement::Phi {
+                                target: phi_temp.clone(),
+                                incoming,
+                                span,
+                            });
+                        }
+                        ctx.update_variable(name, phi_temp, None);
+                    }
+                }
+            }
         }
 
         Expr::StructLiteral { name, fields, span } => {
