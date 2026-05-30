@@ -467,6 +467,7 @@ pub(crate) fn lower_expression(
             ctx.loop_stack.push(super::types::LoopContext {
                 continue_target: loop_head,
                 break_target: loop_exit,
+                continue_sources: Vec::new(),
             });
             // 预分析模式：不生成 Phi 节点，仅收集变量绑定变化
             ctx.analysis_mode = true;
@@ -540,13 +541,14 @@ pub(crate) fn lower_expression(
             ctx.loop_stack.push(super::types::LoopContext {
                 continue_target: loop_head,
                 break_target: loop_exit,
+                continue_sources: Vec::new(),
             });
 
             let temp_body_result = ctx.new_temp();
             lower_expression(ctx, body, &temp_body_result)?;
 
-            // 弹出循环上下文
-            ctx.loop_stack.pop();
+            // 弹出循环上下文，取出 continue_sources
+            let while_continue_sources = ctx.loop_stack.pop().unwrap().continue_sources;
 
             // 收集循环体中变量更新后的值（用于 phi incoming）
             // 遍历所有作用域，因为 if-else 的 phi 更新可能在内层作用域
@@ -572,16 +574,25 @@ pub(crate) fn lower_expression(
 
             for (name, initial_value, _loop_value) in &updated_vars {
                 let phi_temp = phi_values.get(name).unwrap().clone();
-                // 获取循环体更新后的值
+                // 获取循环体正常结束后的值
                 let final_value = final_bindings.get(name)
                     .map(|(v, _)| v.clone())
                     .unwrap_or_else(|| initial_value.clone());
+                // 构建 incoming 列表：初始值 + 正常结束值 + 所有 continue 路径的值
+                let mut incoming = vec![
+                    (pre_loop_block, initial_value.clone()),
+                    (loop_back_edge_block, final_value),
+                ];
+                // 为每个 continue 来源添加 incoming
+                for (source_block, cont_bindings) in &while_continue_sources {
+                    let cont_value = cont_bindings.get(name)
+                        .cloned()
+                        .unwrap_or_else(|| initial_value.clone());
+                    incoming.push((*source_block, cont_value));
+                }
                 ctx.add_statement(Statement::Phi {
                     target: phi_temp,
-                    incoming: vec![
-                        (pre_loop_block, initial_value.clone()),
-                        (loop_back_edge_block, final_value),
-                    ],
+                    incoming,
                     span: *span,
                 });
             }
@@ -668,6 +679,7 @@ pub(crate) fn lower_expression(
             ctx.loop_stack.push(super::types::LoopContext {
                 continue_target: increment_block,
                 break_target: loop_exit,
+                continue_sources: Vec::new(),
             });
 
             ctx.analysis_mode = true;
@@ -819,13 +831,24 @@ pub(crate) fn lower_expression(
             ctx.loop_stack.push(super::types::LoopContext {
                 continue_target: increment_block,
                 break_target: loop_exit,
+                continue_sources: Vec::new(),
             });
 
             let temp_body_result = ctx.new_temp();
             lower_expression(ctx, body, &temp_body_result)?;
 
-            // 弹出循环上下文
-            ctx.loop_stack.pop();
+            // 弹出循环上下文，取出 continue_sources
+            let for_continue_sources = ctx.loop_stack.pop().unwrap().continue_sources;
+
+            // 收集循环体正常结束后的变量绑定
+            let normal_end_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
+                ctx.scopes
+                    .iter()
+                    .rev()
+                    .flat_map(|scope| {
+                        scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
+                    })
+                    .collect();
 
             // 循环体正常结束 → 跳转到 increment_block
             ctx.set_terminator(Terminator::Goto {
@@ -833,8 +856,42 @@ pub(crate) fn lower_expression(
                 span: body.span(),
             });
 
+            // 记录循环体正常结束的块（用于 increment_block 的 phi）
+            let normal_end_block = ctx.current_block();
+
             // === 第六步：生成递增块 ===
             ctx.set_current_block(increment_block);
+
+            // 如果有 continue 路径，需要在 increment_block 中为用户变量添加 phi
+            // 合并正常结束路径和 continue 路径的变量值
+            let mut inc_phi_values: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+            if !for_continue_sources.is_empty() {
+                for (name, _initial_value, _loop_value) in &updated_vars {
+                    let inc_phi_temp = ctx.new_temp();
+                    // 正常结束路径的值
+                    let normal_value = normal_end_bindings.get(name)
+                        .map(|(v, _)| v.clone())
+                        .unwrap_or_else(|| _initial_value.clone());
+                    // 构建 incoming：正常结束块 + 所有 continue 来源块
+                    let mut incoming = vec![(normal_end_block, normal_value)];
+                    for (source_block, cont_bindings) in &for_continue_sources {
+                        let cont_value = cont_bindings.get(name)
+                            .cloned()
+                            .unwrap_or_else(|| _initial_value.clone());
+                        incoming.push((*source_block, cont_value));
+                    }
+                    ctx.add_statement(Statement::Phi {
+                        target: inc_phi_temp.clone(),
+                        incoming,
+                        span: *span,
+                    });
+                    inc_phi_values.insert(name.clone(), inc_phi_temp);
+                }
+                // 更新 context 中的变量绑定指向 increment_block 的 phi 结果
+                for (name, inc_phi_val) in &inc_phi_values {
+                    ctx.update_variable(name, inc_phi_val.clone(), None);
+                }
+            }
 
             // 递增 __for_var = __for_var + 1
             let inc_temp = lower_expression_to_temp(ctx, &Expr::BinaryOp {
@@ -848,7 +905,7 @@ pub(crate) fn lower_expression(
             })?;
             ctx.update_variable(&for_var_name, inc_temp.clone(), None);
 
-            // 收集所有变量更新后的值（用于修正 phi incoming）
+            // 收集 increment_block 中所有变量更新后的值（用于修正 loop_head 的 phi）
             let final_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
                 ctx.scopes
                     .iter()
@@ -932,10 +989,20 @@ pub(crate) fn lower_expression(
         }
 
         Expr::Continue { span, .. } => {
-            // continue: 跳转到当前循环的条件检查块
-            if let Some(loop_ctx) = ctx.loop_stack.last() {
+            // continue: 跳转到当前循环的 continue 目标块
+            if ctx.loop_stack.last().is_some() {
+                // 记录 continue 来源块 ID 和当时的变量绑定
+                let source_block = ctx.current_block();
+                let bindings: std::collections::HashMap<String, Value> = ctx.scopes
+                    .iter()
+                    .rev()
+                    .flat_map(|scope| scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone())))
+                    .collect();
+                let continue_target = ctx.loop_stack.last().unwrap().continue_target;
+                // 记录到循环上下文中
+                ctx.loop_stack.last_mut().unwrap().continue_sources.push((source_block, bindings));
                 ctx.set_terminator(Terminator::Goto {
-                    target: loop_ctx.continue_target,
+                    target: continue_target,
                     span: *span,
                 });
                 // 创建一个死块
