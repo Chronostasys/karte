@@ -371,17 +371,17 @@ pub(crate) fn lower_expression(
                 .collect();
 
             // else 分支
-            let actual_else_block;
-            if let Some(else_branch) = else_branch {
-                // 恢复到 if 之前的绑定
-                // 遍历所有作用域，恢复每个作用域中的变量绑定
-                for scope in ctx.scopes.iter_mut() {
-                    for (name, binding) in scope.bindings.iter_mut() {
-                        if let Some(pre_val) = pre_if_bindings.get(name) {
-                            binding.value = pre_val.clone();
-                        }
+            // 无论是否有 else 分支，都需要恢复绑定到 if 之前的状态
+            // 否则无 else 时 else_bindings 会错误继承 then 分支的绑定
+            for scope in ctx.scopes.iter_mut() {
+                for (name, binding) in scope.bindings.iter_mut() {
+                    if let Some(pre_val) = pre_if_bindings.get(name) {
+                        binding.value = pre_val.clone();
                     }
                 }
+            }
+            let actual_else_block;
+            if let Some(else_branch) = else_branch {
                 ctx.set_current_block(else_block);
                 lower_expression(ctx, else_branch, destination)?;
                 // 捕获实际跳转到 merge 的块
@@ -468,6 +468,7 @@ pub(crate) fn lower_expression(
                 continue_target: loop_head,
                 break_target: loop_exit,
                 continue_sources: Vec::new(),
+                break_sources: Vec::new(),
             });
             // 预分析模式：不生成 Phi 节点，仅收集变量绑定变化
             ctx.analysis_mode = true;
@@ -542,13 +543,16 @@ pub(crate) fn lower_expression(
                 continue_target: loop_head,
                 break_target: loop_exit,
                 continue_sources: Vec::new(),
+                break_sources: Vec::new(),
             });
 
             let temp_body_result = ctx.new_temp();
             lower_expression(ctx, body, &temp_body_result)?;
 
-            // 弹出循环上下文，取出 continue_sources
-            let while_continue_sources = ctx.loop_stack.pop().unwrap().continue_sources;
+            // 弹出循环上下文，取出 continue_sources 和 break_sources
+            let popped_loop_ctx = ctx.loop_stack.pop().unwrap();
+            let while_continue_sources = popped_loop_ctx.continue_sources;
+            let while_break_sources = popped_loop_ctx.break_sources;
 
             // 收集循环体中变量更新后的值（用于 phi incoming）
             // 遍历所有作用域，因为 if-else 的 phi 更新可能在内层作用域
@@ -560,6 +564,57 @@ pub(crate) fn lower_expression(
                         scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
                     })
                     .collect();
+
+            // R7-1 修复：对于被闭包捕获的变量（binding 变为 Reference），
+            // 在 back-edge 块中插入 Dereference 获取实际值，避免 Phi incoming
+            // 收到 Reference 而非数值
+            let mut actual_backedge_values: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+            let mut actual_continue_values: std::collections::HashMap<(String, crate::BasicBlockId), Value> = std::collections::HashMap::new();
+            let mut actual_break_values: std::collections::HashMap<(String, crate::BasicBlockId), Value> = std::collections::HashMap::new();
+            for (name, initial_value, _loop_value) in &updated_vars {
+                // 处理 back-edge（循环体正常结束）的 Reference 值
+                if let Some((final_value, _)) = final_bindings.get(name) {
+                    if let Value::Reference { value: ref_target, .. } = final_value {
+                        let derefed = ctx.new_temp();
+                        ctx.add_statement(Statement::Dereference {
+                            target: derefed.clone(),
+                            reference: *ref_target.clone(),
+                            span: body.span(),
+                        });
+                        actual_backedge_values.insert(name.clone(), derefed);
+                    }
+                }
+                // 处理 continue 路径的 Reference 值
+                for (source_block, cont_bindings) in &while_continue_sources {
+                    if let Some(cont_value) = cont_bindings.get(name) {
+                        if let Value::Reference { value: ref_target, .. } = cont_value {
+                            // 需要在 continue 的来源块中插入 Dereference
+                            // 但此时已经离开了来源块，所以在 back-edge 块中处理
+                            let derefed = ctx.new_temp();
+                            ctx.add_statement(Statement::Dereference {
+                                target: derefed.clone(),
+                                reference: *ref_target.clone(),
+                                span: body.span(),
+                            });
+                            actual_continue_values.insert((name.clone(), *source_block), derefed);
+                        }
+                    }
+                }
+                // 处理 break 路径的 Reference 值
+                for (source_block, break_bindings) in &while_break_sources {
+                    if let Some(break_value) = break_bindings.get(name) {
+                        if let Value::Reference { value: ref_target, .. } = break_value {
+                            let derefed = ctx.new_temp();
+                            ctx.add_statement(Statement::Dereference {
+                                target: derefed.clone(),
+                                reference: *ref_target.clone(),
+                                span: body.span(),
+                            });
+                            actual_break_values.insert((name.clone(), *source_block), derefed);
+                        }
+                    }
+                }
+            }
 
             ctx.set_terminator(Terminator::Goto {
                 target: loop_head,
@@ -574,20 +629,28 @@ pub(crate) fn lower_expression(
 
             for (name, initial_value, _loop_value) in &updated_vars {
                 let phi_temp = phi_values.get(name).unwrap().clone();
-                // 获取循环体正常结束后的值
-                let final_value = final_bindings.get(name)
-                    .map(|(v, _)| v.clone())
-                    .unwrap_or_else(|| initial_value.clone());
+                // 获取循环体正常结束后的值（优先使用解引用后的值）
+                let final_value = if let Some(actual) = actual_backedge_values.get(name) {
+                    actual.clone()
+                } else {
+                    final_bindings.get(name)
+                        .map(|(v, _)| v.clone())
+                        .unwrap_or_else(|| initial_value.clone())
+                };
                 // 构建 incoming 列表：初始值 + 正常结束值 + 所有 continue 路径的值
                 let mut incoming = vec![
                     (pre_loop_block, initial_value.clone()),
                     (loop_back_edge_block, final_value),
                 ];
-                // 为每个 continue 来源添加 incoming
+                // 为每个 continue 来源添加 incoming（优先使用解引用后的值）
                 for (source_block, cont_bindings) in &while_continue_sources {
-                    let cont_value = cont_bindings.get(name)
-                        .cloned()
-                        .unwrap_or_else(|| initial_value.clone());
+                    let cont_value = if let Some(actual) = actual_continue_values.get(&(name.clone(), *source_block)) {
+                        actual.clone()
+                    } else {
+                        cont_bindings.get(name)
+                            .cloned()
+                            .unwrap_or_else(|| initial_value.clone())
+                    };
                     incoming.push((*source_block, cont_value));
                 }
                 ctx.add_statement(Statement::Phi {
@@ -610,6 +673,67 @@ pub(crate) fn lower_expression(
                 else_block: loop_exit,
                 span: condition.span(),
             });
+
+            // === 第六步：R7-2 修复 — 处理 break 路径的 Phi 节点 ===
+            // 如果有 break 路径，需要在 loop_exit 中为被修改的变量创建 Phi 节点，
+            // 合并正常退出值（来自 loop_head 的 Phi temp）和 break 路径值
+            if !while_break_sources.is_empty() {
+                ctx.set_current_block(loop_exit);
+
+                // 收集当前变量绑定（此时指向 loop_head 的 Phi temp）
+                let normal_exit_bindings: std::collections::HashMap<String, Value> = ctx.scopes
+                    .iter()
+                    .rev()
+                    .flat_map(|scope| scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone())))
+                    .collect();
+
+                for (name, initial_value, _loop_value) in &updated_vars {
+                    let normal_value = phi_values.get(name)
+                        .map(|v| v.clone())
+                        .unwrap_or_else(|| initial_value.clone());
+
+                    // 检查是否有 break 路径的值与正常退出值不同
+                    let mut need_phi = false;
+                    for (source_block, break_bindings) in &while_break_sources {
+                        let break_value = if let Some(actual) = actual_break_values.get(&(name.clone(), *source_block)) {
+                            actual.clone()
+                        } else {
+                            break_bindings.get(name)
+                                .cloned()
+                                .unwrap_or_else(|| normal_value.clone())
+                        };
+                        if break_value != normal_value {
+                            need_phi = true;
+                            break;
+                        }
+                    }
+
+                    if need_phi {
+                        // 在 loop_exit 中创建 Phi 节点
+                        let exit_phi_temp = ctx.new_temp();
+                        let mut incoming = vec![
+                            (loop_head, normal_value.clone()),
+                        ];
+                        for (source_block, break_bindings) in &while_break_sources {
+                            let break_value = if let Some(actual) = actual_break_values.get(&(name.clone(), *source_block)) {
+                                actual.clone()
+                            } else {
+                                break_bindings.get(name)
+                                    .cloned()
+                                    .unwrap_or_else(|| normal_value.clone())
+                            };
+                            incoming.push((*source_block, break_value));
+                        }
+                        ctx.add_statement(Statement::Phi {
+                            target: exit_phi_temp.clone(),
+                            incoming,
+                            span: *span,
+                        });
+                        // 更新变量绑定指向 loop_exit 的 Phi 结果
+                        ctx.update_variable(name, exit_phi_temp, None);
+                    }
+                }
+            }
 
             // Continue from exit block
             ctx.set_current_block(loop_exit);
@@ -680,6 +804,7 @@ pub(crate) fn lower_expression(
                 continue_target: increment_block,
                 break_target: loop_exit,
                 continue_sources: Vec::new(),
+                break_sources: Vec::new(),
             });
 
             ctx.analysis_mode = true;
@@ -832,13 +957,16 @@ pub(crate) fn lower_expression(
                 continue_target: increment_block,
                 break_target: loop_exit,
                 continue_sources: Vec::new(),
+                break_sources: Vec::new(),
             });
 
             let temp_body_result = ctx.new_temp();
             lower_expression(ctx, body, &temp_body_result)?;
 
-            // 弹出循环上下文，取出 continue_sources
-            let for_continue_sources = ctx.loop_stack.pop().unwrap().continue_sources;
+            // 弹出循环上下文，取出 continue_sources 和 break_sources
+            let popped_for_ctx = ctx.loop_stack.pop().unwrap();
+            let for_continue_sources = popped_for_ctx.continue_sources;
+            let for_break_sources = popped_for_ctx.break_sources;
 
             // 收集循环体正常结束后的变量绑定
             let normal_end_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
@@ -956,6 +1084,49 @@ pub(crate) fn lower_expression(
                 }
             }
 
+            // R7-2 修复：处理 for-in 循环 break 路径的 Phi 节点
+            if !for_break_sources.is_empty() {
+                ctx.set_current_block(loop_exit);
+
+                for (name, _initial_value, _loop_value) in &updated_vars {
+                    // for-in 的正常退出值来自 loop_head 的 Phi temp
+                    let normal_value = phi_values.get(name)
+                        .map(|v| v.clone())
+                        .unwrap_or_else(|| _initial_value.clone());
+
+                    // 检查是否有 break 路径值与正常退出值不同
+                    let mut need_phi = false;
+                    for (source_block, break_bindings) in &for_break_sources {
+                        let break_value = break_bindings.get(name)
+                            .cloned()
+                            .unwrap_or_else(|| normal_value.clone());
+                        if break_value != normal_value {
+                            need_phi = true;
+                            break;
+                        }
+                    }
+
+                    if need_phi {
+                        let exit_phi_temp = ctx.new_temp();
+                        let mut incoming = vec![
+                            (loop_head, normal_value.clone()),
+                        ];
+                        for (source_block, break_bindings) in &for_break_sources {
+                            let break_value = break_bindings.get(name)
+                                .cloned()
+                                .unwrap_or_else(|| normal_value.clone());
+                            incoming.push((*source_block, break_value));
+                        }
+                        ctx.add_statement(Statement::Phi {
+                            target: exit_phi_temp.clone(),
+                            incoming,
+                            span: *span,
+                        });
+                        ctx.update_variable(name, exit_phi_temp, None);
+                    }
+                }
+            }
+
             // Continue from exit block
             ctx.set_current_block(loop_exit);
             ctx.add_statement(Statement::Assign {
@@ -967,10 +1138,20 @@ pub(crate) fn lower_expression(
 
 
         Expr::Break { span, .. } => {
-            // break: 跳转到当前循环的退出块
-            if let Some(loop_ctx) = ctx.loop_stack.last() {
+            // break: 跳转到当前循环的退出块，同时记录当前变量绑定
+            if ctx.loop_stack.last().is_some() {
+                // 记录 break 来源块 ID 和当时的变量绑定（与 continue 一致）
+                let source_block = ctx.current_block();
+                let bindings: std::collections::HashMap<String, Value> = ctx.scopes
+                    .iter()
+                    .rev()
+                    .flat_map(|scope| scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone())))
+                    .collect();
+                let break_target = ctx.loop_stack.last().unwrap().break_target;
+                ctx.loop_stack.last_mut().unwrap().break_sources.push((source_block, bindings));
+
                 ctx.set_terminator(Terminator::Goto {
-                    target: loop_ctx.break_target,
+                    target: break_target,
                     span: *span,
                 });
                 // 创建一个死块来放置后续代码（break 后的代码不会执行）
@@ -1499,12 +1680,39 @@ pub(crate) fn lower_expression(
         }
 
         Expr::Reference { expr, span } => {
-            // 1. 计算被引用表达式的值
-            let referenced_value = lower_expression_to_temp(ctx, expr)?;
+            // R7-3 修复：对于简单变量引用，直接使用变量的绑定值作为引用目标，
+            // 避免创建副本导致引用和原变量不共享存储。
+            // 当变量通过 FieldAssign 修改时，引用能正确看到更新。
+            let reference_target = match expr.as_ref() {
+                karte_hir::Expr::Identifier { name, .. } => {
+                    if let Some(binding) = ctx.lookup_variable(name) {
+                        // 变量已绑定为 Reference（如被闭包捕获），直接透传
+                        if let Value::Reference { .. } = &binding.value {
+                            // 已是引用类型，直接赋值（不再嵌套包装）
+                            let existing_ref = binding.value.clone();
+                            ctx.add_statement(Statement::Assign {
+                                target: destination.clone(),
+                                source: existing_ref,
+                                span: *span,
+                            });
+                            return Ok(());
+                        }
+                        // 普通变量：直接使用绑定值，不创建副本
+                        binding.value.clone()
+                    } else {
+                        // 未找到变量，走默认路径（会报错）
+                        lower_expression_to_temp(ctx, expr)?
+                    }
+                }
+                _ => {
+                    // 非简单变量表达式，走默认路径
+                    lower_expression_to_temp(ctx, expr)?
+                }
+            };
 
-            // 2. 创建引用值并赋值给目标
+            // 创建引用值并赋值给目标
             let reference_value = Value::Reference {
-                value: Box::new(referenced_value),
+                value: Box::new(reference_target),
                 ty: None,
             };
 

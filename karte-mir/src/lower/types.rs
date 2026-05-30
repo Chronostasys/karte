@@ -19,6 +19,8 @@ pub(crate) struct LoopContext {
     pub(crate) break_target: BasicBlockId,
     /// 记录每次 continue 的来源块 ID 和当时的变量绑定
     pub(crate) continue_sources: Vec<(BasicBlockId, std::collections::HashMap<String, Value>)>,
+    /// 记录每次 break 的来源块 ID 和当时的变量绑定
+    pub(crate) break_sources: Vec<(BasicBlockId, std::collections::HashMap<String, Value>)>,
 }
 
 /// 脚本模式入口点函数名
