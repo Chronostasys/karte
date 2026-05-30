@@ -134,6 +134,7 @@ The module system (`karte-module-system`) implements a sophisticated multi-modul
 ### Key Type System Features
 
 - Static type checking with inference
+- **Generic functions (let-polymorphism)**: Functions with unannotated parameters are generalized into type schemes, instantiated per call site (see below)
 - Sum types (algebraic data types): `enum Color { Red, Green, Blue }`
 - Product types (structs): `struct Point { x: number, y: number }`
 - Reference types: `&T` with explicit dereferencing (`*ref`)
@@ -157,6 +158,43 @@ This unified representation enables:
 - ParseResult includes `expr_types` field
 - LoweringOptions must receive `expr_types` from ParseResult for correct function/closure handling
 - If integration tests fail with function parameter issues, check that `expr_types` is being passed correctly
+
+#### Generic Functions (Let-Polymorphism)
+
+Karte 支持基于 **let-polymorphism** 的泛型函数。当函数参数省略类型标注时，类型检查器自动将其泛化为类型方案（`TypeScheme`），在每次调用时实例化为具体类型。
+
+**核心数据结构** (`karte-hir/src/types.rs`):
+- `TypeScheme { bound_vars: Vec<TypeVar>, body: Type }` — 将函数类型中的自由类型变量量化
+- `bound_vars` 为被量化的类型变量列表，`body` 为原始函数类型
+
+**工作机制**:
+1. **Parser 层** (`karte-parser/src/statement.rs:659`): 函数参数类型标注从强制改为可选，允许 `fn id(x) { x }` 形式
+2. **TypeChecker generalize** (`karte-hir/src/type_checker.rs:1985-1997`): 函数定义完成后，调用 `free_vars()` 收集函数类型中的自由类型变量，若非空则创建 `TypeScheme` 存入 `function_schemes`
+3. **TypeChecker instantiate** (`karte-hir/src/type_checker.rs:150-158`): 引用泛型函数时（`Identifier` 节点），从 `function_schemes` 取出对应 `TypeScheme`，为每个 `bound_var` 生成 fresh `TypeVar` 并替换，得到该次调用的具体类型
+4. **单态限制**: 当前支持单态使用（同一函数以一种类型调用）；多态调用（同一函数以不同类型调用）需要后续实现 MIR monomorphization pass
+
+**示例**:
+```karte
+fn id(x) { x }
+fn main() -> number {
+    let a = id(42);
+    let b = id(true);
+    if b { a } else { 0 }
+}
+```
+- `id` 的类型被 generalize 为 `∀a. a → a`
+- `id(42)` 实例化为 `number → number`
+- `id(true)` 实例化为 `bool → bool`（注：多态调用需要 monomorphization 支持）
+
+**相关文件**:
+| 文件 | 关键行 | 作用 |
+|------|--------|------|
+| `karte-hir/src/types.rs:602-611` | `TypeScheme` 定义 | 类型方案结构体 |
+| `karte-hir/src/type_checker.rs:99` | `function_schemes` 字段 | 存储所有泛型函数的 TypeScheme |
+| `karte-hir/src/type_checker.rs:150-158` | `instantiate()` | 实例化类型方案 |
+| `karte-hir/src/type_checker.rs:902-905` | Identifier 推断 | 引用泛型函数时自动实例化 |
+| `karte-hir/src/type_checker.rs:1985-1997` | generalize 逻辑 | 函数定义后生成 TypeScheme |
+| `karte-parser/src/statement.rs:659` | 类型标注可选 | Parser 允许省略参数类型 |
 
 ### IR Serialization
 
@@ -332,6 +370,7 @@ let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering
 ## Notable Recent Changes
 
 Recent work includes:
+- **Generic functions / let-polymorphism (2025-05-30)**: Added `TypeScheme` for generic function support. Parser allows optional parameter type annotations; TypeChecker generalizes functions with free type variables into type schemes and instantiates them per call site. Added 3 integration tests (identity, first, apply). Current limitation: monomorphic use only; polymorphic calls require future MIR monomorphization pass.
 - **Function-as-parameter fix (2025-12-02)**: Implemented unified representation for functions and closures with wrapper functions to handle calling convention differences
 - Refactored module system to support project mode
 - Moved cache implementation from CLI to `karte-module-system`
