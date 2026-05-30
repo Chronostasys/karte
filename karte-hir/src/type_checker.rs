@@ -192,6 +192,34 @@ impl TypeChecker {
         orig_t2: &Type,
         visited: &mut HashSet<(String, String)>,
     ) -> Result<(), ()> {
+        // 解析骨架占位符：将 Struct{name, fields: []} 替换为 custom_types 中的实际类型
+        // 这对递归枚举至关重要（如 enum List { Nil, Cons(number, List) } 中 List 自引用）
+        // 利用 visited 集合防止递归类型的无限循环
+        let resolved_t1;
+        let t1 = match t1 {
+            Type::Struct { name, fields } if fields.is_empty() => {
+                if let Some(resolved) = self.custom_types.get(name) {
+                    resolved_t1 = resolved.clone();
+                    &resolved_t1
+                } else {
+                    t1
+                }
+            }
+            _ => t1,
+        };
+        let resolved_t2;
+        let t2 = match t2 {
+            Type::Struct { name, fields } if fields.is_empty() => {
+                if let Some(resolved) = self.custom_types.get(name) {
+                    resolved_t2 = resolved.clone();
+                    &resolved_t2
+                } else {
+                    t2
+                }
+            }
+            _ => t2,
+        };
+
         match (t1, t2) {
             (Type::Number, Type::Number) => Ok(()),
             // Number 与具体整数类型兼容：number 字面量可以传递给 Int 类型参数
@@ -823,6 +851,7 @@ impl TypeChecker {
         let mut enum_defs: Vec<(String, Vec<(String, Vec<Type>)>)> = Vec::new();
         self.gather_enum_defs(expr, &mut enum_defs);
 
+        // 第一轮：注册所有枚举 Sum 到 custom_types（建立类型引用基础）
         for (name, variants) in &enum_defs {
             let sum_variants: Vec<crate::types::SumVariant> = variants
                 .iter()
@@ -833,6 +862,27 @@ impl TypeChecker {
                 .collect();
 
             let sum_type = Type::sum(name.clone(), sum_variants);
+            self.custom_types.insert(name.clone(), sum_type);
+        }
+
+        // 第二轮：将变体 data_types 中的骨架占位符替换为实际类型
+        // 处理递归枚举（如 enum List { Nil, Cons(number, List) }）和互引用枚举
+        for (name, variants) in &enum_defs {
+            let resolved_variants: Vec<crate::types::SumVariant> = variants
+                .iter()
+                .map(|(variant_name, data_types)| {
+                    let resolved_data_types: Vec<Type> = data_types
+                        .iter()
+                        .map(|dt| self.resolve_struct_field_from_parsed(dt))
+                        .collect();
+                    crate::types::SumVariant {
+                        name: variant_name.clone(),
+                        data_types: resolved_data_types,
+                    }
+                })
+                .collect();
+
+            let sum_type = Type::sum(name.clone(), resolved_variants);
             self.custom_types.insert(name.clone(), sum_type);
         }
     }
@@ -1963,13 +2013,18 @@ impl TypeChecker {
                 self.infer_expr(expr, env);
             }
             Statement::TypeDef { name, variants, .. } => {
-                // 构建加法类型的变体（data_types 已经是结构化 Vec<Type>）
+                // 解析变体 data_types 中的骨架占位符（递归枚举自引用等场景）
                 let sum_variants: Vec<crate::types::SumVariant> = variants
                     .iter()
                     .map(|variant| {
+                        let resolved_data_types: Vec<Type> = variant
+                            .data_types
+                            .iter()
+                            .map(|dt| self.resolve_struct_field_from_parsed(dt))
+                            .collect();
                         crate::types::SumVariant {
                             name: variant.name.clone(),
-                            data_types: variant.data_types.clone(),
+                            data_types: resolved_data_types,
                         }
                     })
                     .collect();

@@ -1559,12 +1559,17 @@ impl LirFunction {
         function.parameter_count = param_count;
 
         // 根据调用约定设置参数寄存器
+        // 使用所有架构参数寄存器最大数量（AArch64/RISC-V = 8）作为上限
+        // 实际映射在寄存器分配阶段由 CallingConvention 确定
+        const MAX_ARGUMENT_REGISTERS: usize = 8;
         for i in 0..param_count {
-            // 调用约定：r1-r4 是参数寄存器
-            if i < 4 {
+            if i < MAX_ARGUMENT_REGISTERS {
                 function.parameter_registers.push(Register::Virtual(i + 1));
             }
         }
+
+        // 确保后续 new_register() 调用不会分配到参数寄存器编号
+        function.next_register = param_count + 1;
 
         function
     }

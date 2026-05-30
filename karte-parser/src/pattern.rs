@@ -56,11 +56,29 @@ impl<'a> Parser<'a> {
                             } else if matches!(next_token.token, Token::LeftParen) {
                                 self.parse_constructor_pattern(name, span)
                             } else {
-                                // 变量模式或简单构造器
-                                Ok(karte_hir::Pattern::Variable { name, span })
+                                // 大写字母开头的标识符视为零参数构造器模式
+                                // （枚举变体如 Red、Green、Blue），小写字母开头视为变量绑定
+                                if name.chars().next().map_or(false, |c| c.is_uppercase()) {
+                                    Ok(karte_hir::Pattern::Constructor {
+                                        name,
+                                        args: vec![],
+                                        span,
+                                    })
+                                } else {
+                                    Ok(karte_hir::Pattern::Variable { name, span })
+                                }
                             }
                         } else {
-                            Ok(karte_hir::Pattern::Variable { name, span })
+                            // 大写字母开头的标识符视为零参数构造器模式
+                            if name.chars().next().map_or(false, |c| c.is_uppercase()) {
+                                Ok(karte_hir::Pattern::Constructor {
+                                    name,
+                                    args: vec![],
+                                    span,
+                                })
+                            } else {
+                                Ok(karte_hir::Pattern::Variable { name, span })
+                            }
                         }
                     }
                 }
