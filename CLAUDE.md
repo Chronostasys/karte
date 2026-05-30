@@ -667,6 +667,9 @@ Store { target = %10000, value = %2 }
 - **IF-ELSE PHI GOTCHA**: if-else 变量变异需要在 merge_block 插入 Phi 节点。预分析（while 循环第一步）期间必须跳过 Phi 生成（analysis_mode=true），且分析完成后必须清理孤立的分析块。变量绑定必须遍历所有作用域（ctx.scopes），因为 if-else 的 phi 更新可能在嵌套作用域中。
 - **ENUM REGISTRATION ORDER GOTCHA**: `collect_function_definitions` 在解析函数签名中的类型标注（如 `fn f(e: Expr)`）时调用 `resolve_struct_field_from_parsed`。如果枚举 TypeDef 尚未通过 `collect_enum_definitions` 注册到 `custom_types`，会被解析为空的 Struct 骨架 `Type::Struct { name, fields: [] }`，导致后续所有类型检查看到空枚举。**解决方案**: `check_program_with_context` 中必须在 `collect_function_definitions` 之前调用 `collect_enum_definitions`。
 - **DUPLICATE FUNCTION GOTCHA**: `collect_function_definitions` 在同一次类型检查中可能被多次调用（多层作用域），需要用 `primary_function_spans` 区分"同一函数定义的二次遍历"与"真正的重复定义"，否则会在 `infer_stmt` 阶段误报 E006 错误。
+- **🔴 绝对禁止 HACKS：永远禁止任何 hack、workaround、取巧绕过、治标不治本的修复。必须找到并修复问题的根因。翻转 bool / unwrap_or 改默认值 / 加条件跳过分析 等绕过手段 = 不可接受。** 🔴
+- **🔴 绝对禁止 HACKS：永远禁止任何 hack、workaround、取巧绕过、治标不治本的修复。必须找到并修复问题的根因。翻转 bool / unwrap_or 改默认值 / 加条件跳过分析 等绕过手段 = 不可接受。** 🔴
+- **🔴 绝对禁止 HACKS：永远禁止任何 hack、workaround、取巧绕过、治标不治本的修复。必须找到并修复问题的根因。翻转 bool / unwrap_or 改默认值 / 加条件跳过分析 等绕过手段 = 不可接受。** 🔴
 - **⚠️ 测试铁律**：
   - **禁止使用 `cargo test`**，必须且只能使用 `cargo nextest run` 运行测试
   - nextest 会为每个测试创建独立进程，SIGSEGV 不会中断整个测试套件，能真实反映所有失败
