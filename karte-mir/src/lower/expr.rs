@@ -585,6 +585,69 @@ pub(crate) fn lower_expression(
                 ctx.update_variable(name, value.clone(), *ownership);
             }
 
+            // === 第 2.5 步：预转换结构体变量 ===
+            // 对于在循环体内被闭包捕获的结构体变量，预先将其转换为 Reference，
+            // 确保 loop_head Phi 能合并相同类型的值（shared_var 指针），
+            // 避免迭代间 Struct VALUE 与堆指针类型不一致导致垃圾值。
+            // 切换到 saved_block（循环前的块），确保堆分配语句插入到正确位置
+            ctx.set_current_block(saved_block);
+            let mut struct_ref_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for (name, initial_value, loop_value) in &mut updated_vars {
+                // 通过 scope 中的 binding.struct_name 判断是否为结构体变量
+                let is_struct = ctx.scopes.iter().rev()
+                    .find_map(|scope| scope.bindings.get(name))
+                    .and_then(|b| b.struct_name.clone())
+                    .is_some();
+                let becomes_ref = matches!(loop_value, Value::Reference { .. });
+                if is_struct && becomes_ref {
+                    // 从 scope 获取结构体名称，从 program 获取大小
+                    let struct_name = ctx.scopes.iter().rev()
+                        .find_map(|scope| scope.bindings.get(name))
+                        .and_then(|b| b.struct_name.clone())
+                        .unwrap();
+                    let struct_size = ctx.program.get_struct_type(&struct_name)
+                        .map(|t| t.fields.len().max(1) * 8)
+                        .unwrap_or(8);
+
+                    // 在 pre_loop_block 中插入堆分配（在 Goto loop_head 之前）
+                    let heap_copy = ctx.new_temp();
+                    ctx.add_statement(Statement::HeapAlloc {
+                        target: heap_copy.clone(),
+                        size: struct_size,
+                        object_type: "struct_copy".to_string(),
+                        span: *span,
+                    });
+                    ctx.add_statement(Statement::Store {
+                        target: heap_copy.clone(),
+                        value: initial_value.clone(),
+                        span: *span,
+                    });
+
+                    let shared_location = ctx.new_temp();
+                    ctx.add_statement(Statement::HeapAlloc {
+                        target: shared_location.clone(),
+                        size: 8,
+                        object_type: "shared_var".to_string(),
+                        span: *span,
+                    });
+                    ctx.add_statement(Statement::Store {
+                        target: shared_location.clone(),
+                        value: heap_copy,
+                        span: *span,
+                    });
+
+                    // 更新 initial_value 为 Reference，Phi 将合并 shared_var 指针
+                    let ref_value = Value::Reference {
+                        value: Box::new(shared_location),
+                        ty: None,
+                    };
+                    *initial_value = ref_value;
+                    struct_ref_vars.insert(name.clone());
+                    // 更新变量绑定
+                    ctx.update_variable(name, initial_value.clone(), None);
+                }
+            }
+
             // === 第三步：创建 phi temp 并更新 context ===
             // 这样后续 lower 循环体时会使用 phi 结果
             let mut phi_values: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
@@ -596,8 +659,16 @@ pub(crate) fn lower_expression(
             }
 
             // 更新 context 中的变量绑定指向 phi temp
+            // 对于预转换的结构体变量，绑定保持为 Reference(phi_temp)
             for (name, phi_val) in &phi_values {
-                ctx.update_variable(name, phi_val.clone(), None);
+                if struct_ref_vars.contains(name) {
+                    ctx.update_variable(name, Value::Reference {
+                        value: Box::new(phi_val.clone()),
+                        ty: None,
+                    }, None);
+                } else {
+                    ctx.update_variable(name, phi_val.clone(), None);
+                }
             }
             // Jump to loop head (从 pre_loop 块)
             ctx.set_current_block(saved_block);
@@ -646,13 +717,20 @@ pub(crate) fn lower_expression(
                 // 处理 back-edge（循环体正常结束）的 Reference 值
                 if let Some((final_value, _)) = final_bindings.get(name) {
                     if let Value::Reference { value: ref_target, .. } = final_value {
-                        let derefed = ctx.new_temp();
-                        ctx.add_statement(Statement::Dereference {
-                            target: derefed.clone(),
-                            reference: *ref_target.clone(),
-                            span: body.span(),
-                        });
-                        actual_backedge_values.insert(name.clone(), derefed);
+                        if struct_ref_vars.contains(name) {
+                            // 结构体变量：提取内部 shared_var 指针，不做 Dereference
+                            // （Dereference 会得到 struct_ptr，而非 struct VALUE）
+                            actual_backedge_values.insert(name.clone(), ref_target.as_ref().clone());
+                        } else {
+                            // 基本类型变量：Dereference 获取实际值
+                            let derefed = ctx.new_temp();
+                            ctx.add_statement(Statement::Dereference {
+                                target: derefed.clone(),
+                                reference: *ref_target.clone(),
+                                span: body.span(),
+                            });
+                            actual_backedge_values.insert(name.clone(), derefed);
+                        }
                     }
                 }
                 // 处理 continue 路径的 Reference 值
@@ -700,17 +778,27 @@ pub(crate) fn lower_expression(
 
             for (name, initial_value, _loop_value) in &updated_vars {
                 let phi_temp = phi_values.get(name).unwrap().clone();
+                // 对于预转换的结构体变量，Phi incoming 使用 Reference 内部的 shared_var 指针
+                let phi_initial = if struct_ref_vars.contains(name) {
+                    if let Value::Reference { value: inner, .. } = initial_value {
+                        inner.as_ref().clone()
+                    } else {
+                        initial_value.clone()
+                    }
+                } else {
+                    initial_value.clone()
+                };
                 // 获取循环体正常结束后的值（优先使用解引用后的值）
                 let final_value = if let Some(actual) = actual_backedge_values.get(name) {
                     actual.clone()
                 } else {
                     final_bindings.get(name)
                         .map(|(v, _)| v.clone())
-                        .unwrap_or_else(|| initial_value.clone())
+                        .unwrap_or_else(|| phi_initial.clone())
                 };
                 // 构建 incoming 列表：初始值 + 正常结束值 + 所有 continue 路径的值
                 let mut incoming = vec![
-                    (pre_loop_block, initial_value.clone()),
+                    (pre_loop_block, phi_initial),
                     (loop_back_edge_block, final_value),
                 ];
                 // 为每个 continue 来源添加 incoming（优先使用解引用后的值）
@@ -732,8 +820,16 @@ pub(crate) fn lower_expression(
             }
 
             // 更新 context 指向 phi 结果
+            // 对于预转换的结构体变量，绑定保持为 Reference(phi_temp)
             for (name, phi_val) in &phi_values {
-                ctx.update_variable(name, phi_val.clone(), None);
+                if struct_ref_vars.contains(name) {
+                    ctx.update_variable(name, Value::Reference {
+                        value: Box::new(phi_val.clone()),
+                        ty: None,
+                    }, None);
+                } else {
+                    ctx.update_variable(name, phi_val.clone(), None);
+                }
             }
 
             // 条件求值
@@ -1661,13 +1757,27 @@ pub(crate) fn lower_expression(
                 let actual_block = ctx.current_block();
                 let terminated_early = if actual_block != arm_block {
                     // 当前块与初始 arm_block 不同，检查 arm_block 的终结器
-                    let func = ctx.current_function_mut();
-                    func.basic_blocks.get(&arm_block)
-                        .and_then(|b| b.terminator.as_ref())
-                        .map_or(false, |t| {
-                            // 如果 arm_block 的终结器不是跳转到 merge_block，说明提前终止了
-                            !matches!(t, Terminator::Goto { target, .. } if *target == merge_block)
-                        })
+                    // 先提取终结器信息（释放对 ctx 的可变借用），再检查 loop_stack
+                    let terminator_info = {
+                        let func = ctx.current_function_mut();
+                        func.basic_blocks.get(&arm_block)
+                            .and_then(|b| b.terminator.clone())
+                    };
+                    match terminator_info {
+                        // Return 是真正的提前终止
+                        Some(Terminator::Return { .. }) => true,
+                        // Goto 需要区分：如果目标是外层循环的 break/continue 目标，
+                        // 则是提前终止；如果是内部 while/for 的 loop_head，
+                        // 则是嵌套控制流，不是提前终止
+                        Some(Terminator::Goto { target, .. }) => {
+                            ctx.loop_stack.iter().any(|lc| {
+                                lc.continue_target == target || lc.break_target == target
+                            })
+                        }
+                        // Match、Branch 等是嵌套控制流，不是提前终止
+                        Some(_) => false,
+                        None => false,
+                    }
                 } else {
                     false
                 };
