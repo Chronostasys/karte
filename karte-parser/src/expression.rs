@@ -1821,13 +1821,13 @@ impl<'a> Parser<'a> {
             // 解析模式
             let pattern = self.parse_pattern()?;
 
-            // 期望 '->'
+            // 期望 '->' 或 '=>'（match arm 分隔符，向后兼容两种语法）
             if let Some(token) = self.peek() {
-                if matches!(token.token, Token::Arrow) {
-                    self.advance(); // consume '->'
+                if matches!(token.token, Token::Arrow | Token::FatArrow) {
+                    self.advance(); // consume '->' or '=>'
                 } else {
                     return Err(ParseError::UnexpectedToken {
-                        expected: "'->'".to_string(),
+                        expected: "'->' or '=>'".to_string(),
                         found: token.token.clone(),
                         span: token.span,
                     });

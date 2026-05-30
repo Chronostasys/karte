@@ -454,12 +454,12 @@ pub(crate) fn lower_expression(
             // 记录循环前的块 ID
             let pre_loop_block = ctx.current_block();
 
-            // 快照当前变量绑定
+            // 快照所有作用域的变量绑定（不仅仅是当前 scope）
             let pre_loop_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
-                ctx.current_scope()
-                    .bindings
+                ctx.scopes
                     .iter()
-                    .map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
+                    .rev()
+                    .flat_map(|scope| scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership))))
                     .collect();
 
             // === 第一步：预分析循环体，找出被更新的变量 ===
@@ -474,12 +474,12 @@ pub(crate) fn lower_expression(
             let _ = lower_expression(ctx, body, &temp_result);
             ctx.analysis_mode = false;
 
-            // 收集循环体中更新的变量
+            // 收集所有作用域中变量更新后的绑定
             let post_loop_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
-                ctx.current_scope()
-                    .bindings
+                ctx.scopes
                     .iter()
-                    .map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
+                    .rev()
+                    .flat_map(|scope| scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership))))
                     .collect();
 
             // 清理预分析产生的临时块（包括 if-else 创建的 then/else/merge 块）
@@ -644,12 +644,13 @@ pub(crate) fn lower_expression(
             });
             ctx.bind_variable(for_var_name.clone(), for_var_temp.clone(), None);
 
-            // 快照当前变量绑定
+            // 快照所有作用域的变量绑定（不仅仅是当前 scope，因为嵌套循环中
+            // 外层变量可能在更外层 scope 中，如 "let sum = 0; for i in .. { for j in .. { sum = ... } }"）
             let pre_loop_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
-                ctx.current_scope()
-                    .bindings
+                ctx.scopes
                     .iter()
-                    .map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
+                    .rev()
+                    .flat_map(|scope| scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership))))
                     .collect();
 
             // === 第一步：预分析循环体，找出被更新的变量 ===
@@ -674,12 +675,12 @@ pub(crate) fn lower_expression(
             let _ = lower_expression(ctx, body, &temp_result);
             ctx.analysis_mode = false;
 
-            // 收集循环体中更新的变量
+            // 收集所有作用域中变量更新后的绑定
             let post_loop_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
-                ctx.current_scope()
-                    .bindings
+                ctx.scopes
                     .iter()
-                    .map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
+                    .rev()
+                    .flat_map(|scope| scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership))))
                     .collect();
 
             // 清理预分析产生的临时块

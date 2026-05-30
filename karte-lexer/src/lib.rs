@@ -103,6 +103,9 @@ pub enum Token {
     #[token("|")]
     Pipe,
 
+    #[token("=>")]
+    FatArrow,
+
     #[token("->")]
     Arrow,
 
@@ -288,6 +291,7 @@ impl fmt::Display for Token {
             Token::LeftBracket => write!(f, "["),
             Token::RightBracket => write!(f, "]"),
             Token::Pipe => write!(f, "|"),
+            Token::FatArrow => write!(f, "=>"),
             Token::Arrow => write!(f, "->"),
             Token::Identifier(s) => write!(f, "{}", s),
             Token::StringLiteral(s) => write!(f, "\"{}\"", s),
