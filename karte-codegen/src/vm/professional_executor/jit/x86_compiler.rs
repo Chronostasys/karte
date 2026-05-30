@@ -424,13 +424,15 @@ impl X86Compiler {
         let dst_reg = self.get_physical_register(dst)?;
         let rax: u8 = 0; // RAX
         let rdx: u8 = 2; // RDX
-        let rcx: u8 = 1; // RCX (安全临时寄存器)
+        // 临时寄存器选择：必须使用非分配寄存器（R9=return_address 或 R8=effect_tag），
+        // 因为 RCX 是可分配寄存器，可能持有跨 Div/Mod 指令的活跃变量
+        let r9: u8 = 9;  // R9 (return_address，非分配)
+        let r8: u8 = 8;  // R8 (effect_tag，非分配)
 
         // 先处理 src2（除数），因为它可能在 RDX 中，CQO 会覆盖 RDX
-        // 同时需要确保临时寄存器不与 src1 冲突
         let src1_reg = match src1 {
             Operand::Register { id } => self.get_physical_register(id)?,
-            _ => 0xFF, // 立即数，不会与寄存器冲突
+            _ => 0xFF,
         };
 
         let div_src_reg: u8;
@@ -438,26 +440,20 @@ impl X86Compiler {
             Operand::Register { id } => {
                 let src2_reg = self.get_physical_register(id)?;
                 if src2_reg == rdx {
-                    // src2 在 RDX 中，CQO 会覆盖它
-                    // 使用 RCX 作为临时寄存器（但如果 src1 在 RCX 中就不能用）
-                    if src1_reg == rcx {
-                        // src1 在 RCX，不能用 RCX 作临时，用 R8 代替
-                        let r8: u8 = 8;
-                        self.emit_mov_reg_reg(code_builder, r8, rdx);
-                        div_src_reg = r8;
-                    } else {
-                        self.emit_mov_reg_reg(code_builder, rcx, rdx);
-                        div_src_reg = rcx;
-                    }
+                    // src2 在 RDX 中，CQO 会覆盖它，需要保存到临时寄存器
+                    // 优先用 R9，如果 src1 占用 R9 则用 R8
+                    let temp = if src1_reg == r9 { r8 } else { r9 };
+                    self.emit_mov_reg_reg(code_builder, temp, rdx);
+                    div_src_reg = temp;
                 } else {
                     div_src_reg = src2_reg;
                 }
             }
             Operand::Immediate { value } => {
-                // 立即数，加载到安全寄存器（不能是 RAX, RDX, src1 寄存器）
-                let temp_reg = if src1_reg == rcx { 8 } else { rcx }; // R8 or RCX
-                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
-                div_src_reg = temp_reg;
+                // 立即数加载到非分配临时寄存器
+                let temp = if src1_reg == r9 { r8 } else { r9 };
+                self.emit_mov_reg_imm64(code_builder, temp, *value);
+                div_src_reg = temp;
             }
             _ => {
                 return Err(format!("div指令不支持的src2类型: {:?}", src2).into());
@@ -506,12 +502,15 @@ impl X86Compiler {
         let dst_reg = self.get_physical_register(dst)?;
         let rax: u8 = 0; // RAX
         let rdx: u8 = 2; // RDX
-        let rcx: u8 = 1; // RCX (安全临时寄存器)
+        // 临时寄存器选择：必须使用非分配寄存器（R9=return_address 或 R8=effect_tag），
+        // 因为 RCX 是可分配寄存器，可能持有跨 Div/Mod 指令的活跃变量
+        let r9: u8 = 9;  // R9 (return_address，非分配)
+        let r8: u8 = 8;  // R8 (effect_tag，非分配)
 
         // 先处理 src2（除数），因为它可能在 RDX 中，CQO 会覆盖 RDX
         let src1_reg = match src1 {
             Operand::Register { id } => self.get_physical_register(id)?,
-            _ => 0xFF, // 立即数，不会与寄存器冲突
+            _ => 0xFF,
         };
 
         let div_src_reg: u8;
@@ -519,24 +518,19 @@ impl X86Compiler {
             Operand::Register { id } => {
                 let src2_reg = self.get_physical_register(id)?;
                 if src2_reg == rdx {
-                    // src2 在 RDX 中，CQO 会覆盖它
-                    if src1_reg == rcx {
-                        // src1 在 RCX，不能用 RCX 作临时，用 R8 代替
-                        let r8: u8 = 8;
-                        self.emit_mov_reg_reg(code_builder, r8, rdx);
-                        div_src_reg = r8;
-                    } else {
-                        self.emit_mov_reg_reg(code_builder, rcx, rdx);
-                        div_src_reg = rcx;
-                    }
+                    // src2 在 RDX 中，CQO 会覆盖它，需要保存到临时寄存器
+                    let temp = if src1_reg == r9 { r8 } else { r9 };
+                    self.emit_mov_reg_reg(code_builder, temp, rdx);
+                    div_src_reg = temp;
                 } else {
                     div_src_reg = src2_reg;
                 }
             }
             Operand::Immediate { value } => {
-                let temp_reg = if src1_reg == rcx { 8 } else { rcx };
-                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
-                div_src_reg = temp_reg;
+                // 立即数加载到非分配临时寄存器
+                let temp = if src1_reg == r9 { r8 } else { r9 };
+                self.emit_mov_reg_imm64(code_builder, temp, *value);
+                div_src_reg = temp;
             }
             _ => {
                 return Err(format!("mod指令不支持的src2类型: {:?}", src2).into());

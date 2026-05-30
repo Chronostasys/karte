@@ -150,7 +150,7 @@ impl TaggedUnionManager {
 
     /// 根据构造器名称获取标签ID（用于简单构造器）
     pub fn get_constructor_id(&mut self, constructor_name: &str) -> i64 {
-        match constructor_name {
+        let id = match constructor_name {
             "true" | "True" => self.get_tag_id(&TaggedUnionTag::bool_true()).unwrap(),
             "false" | "False" => self.get_tag_id(&TaggedUnionTag::bool_false()).unwrap(),
             "Some" => self.get_tag_id(&TaggedUnionTag::option_some()).unwrap(),
@@ -161,13 +161,15 @@ impl TaggedUnionManager {
                     TaggedUnionTag::new("UserDefined".to_string(), constructor_name.to_string());
                 self.register_tag(tag)
             }
-        }
+        };
+        id
     }
 
     /// 根据限定构造器获取标签ID
     pub fn get_qualified_constructor_id(&mut self, type_name: &str, constructor_name: &str) -> i64 {
         let tag = TaggedUnionTag::new(type_name.to_string(), constructor_name.to_string());
-        self.register_tag(tag)
+        let id = self.register_tag(tag);
+        id
     }
 
     /// 获取Tagged Union的布局信息

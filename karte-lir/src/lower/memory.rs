@@ -681,13 +681,20 @@ impl LirLoweringContext {
             }
         };
 
-        // 2. 分配内存：发出一条Alloc指令，在栈上为整个结构体分配一块连续的内存
+        // 2. 分配内存
+        // 闭包结构体（Closure）会在创建函数返回后被调用方使用，
+        // 栈分配的内存在函数返回后会被后续调用覆盖，因此必须使用堆分配
+        let alloc_type = if name == "Closure" {
+            AllocationType::Heap
+        } else {
+            AllocationType::Stack
+        };
         let struct_ptr = self.current_function_mut().new_register();
         self.add_instruction(Instruction::Alloc {
             dst: struct_ptr,
             size: layout.total_size,
             alignment: layout.alignment,
-            allocation_type: AllocationType::Stack,
+            allocation_type: alloc_type,
             span: karte_diagnostics::Span::dummy(),
         });
 

@@ -438,6 +438,7 @@ pub(crate) fn convert_pattern(pattern: &karte_hir::Pattern) -> Result<Pattern, V
         karte_hir::Pattern::Number { value, .. } => Ok(Pattern::Number { value: *value }),
         karte_hir::Pattern::Boolean { value, .. } => Ok(Pattern::Boolean { value: *value }),
         karte_hir::Pattern::QualifiedConstructor {
+            type_name,
             constructor_name,
             args,
             ..
@@ -452,8 +453,9 @@ pub(crate) fn convert_pattern(pattern: &karte_hir::Pattern) -> Result<Pattern, V
                     ]),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            // 保留完整限定名（如 "ABC::B"），确保构造和匹配使用相同的 TaggedUnion tag
             Ok(Pattern::Constructor {
-                name: constructor_name.clone(),
+                name: format!("{}::{}", type_name, constructor_name),
                 args: mir_args,
             })
         }
