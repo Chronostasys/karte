@@ -1042,13 +1042,6 @@ pub(super) fn lower_statement(
         } => {
             // Tagged Union构造器参数提取：从Tagged Union结构体中提取数据
 
-            if *arg_index != 0 {
-                return Err(vec![format!(
-                    "ConstructorArgExtract only supports arg_index = 0 for single-field unions (got {})",
-                    arg_index
-                )]);
-            }
-
             // 获取构造器寄存器
             let constructor_operand = ctx.lower_to_rvalue(constructor);
             let constructor_reg = match constructor_operand {
@@ -1066,13 +1059,24 @@ pub(super) fn lower_statement(
             // 创建临时寄存器来接收提取的数据
             let temp_reg = ctx.current_function_mut().new_register();
 
-            // 使用Tagged Union管理器生成数据提取指令到临时寄存器
-            let extract_instructions = ctx
-                .tagged_union_manager
-                .generate_data_extraction_instructions(constructor_reg, temp_reg, *span);
+            if *arg_index == 0 {
+                // 第一个参数：使用 Tagged Union 管理器的数据提取（兼容旧逻辑）
+                let extract_instructions = ctx
+                    .tagged_union_manager
+                    .generate_data_extraction_instructions(constructor_reg, temp_reg, *span);
 
-            for instruction in extract_instructions {
-                ctx.add_instruction(instruction);
+                for instruction in extract_instructions {
+                    ctx.add_instruction(instruction);
+                }
+            } else {
+                // 多参数构造器的后续参数：直接从 offset 8 + arg_index * 8 读取
+                let data_offset = (8 + arg_index * 8) as i64;
+                ctx.add_instruction(Instruction::Load64 {
+                    dst: temp_reg,
+                    addr: constructor_reg,
+                    offset: data_offset,
+                    span: *span,
+                });
             }
 
             // 将提取的数据存储到栈槽

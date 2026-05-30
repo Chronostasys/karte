@@ -2104,10 +2104,35 @@ impl TypeChecker {
                         }
                     }
                     _ => {
-                        self.add_error(TypeCheckError::InvalidPattern {
-                            message: format!("Unknown constructor: {}", name),
-                            span: *span,
-                        });
+                        // 动态查找构造器所属的 enum 类型
+                        let mut found = false;
+                        let mut matched_type: Option<Type> = None;
+                        let mut arg_types: Vec<Type> = Vec::new();
+                        for (_, custom_type) in &self.custom_types {
+                            if let Type::Sum { name: _sum_name, variants } = custom_type {
+                                if let Some(variant) = variants.iter().find(|v| v.name == *name) {
+                                    found = true;
+                                    matched_type = Some(custom_type.clone());
+                                    arg_types = variant.data_types.clone();
+                                    break;
+                                }
+                            }
+                        }
+                        if found {
+                            if let Some(ct) = matched_type {
+                                self.add_constraint(expected_type.clone(), ct, *span);
+                            }
+                            for (i, arg_pattern) in args.iter().enumerate() {
+                                if let Some(param_type) = arg_types.get(i) {
+                                    self.check_pattern(arg_pattern, param_type, env);
+                                }
+                            }
+                        } else {
+                            self.add_error(TypeCheckError::InvalidPattern {
+                                message: format!("Unknown constructor: {}", name),
+                                span: *span,
+                            });
+                        }
                     }
                 }
             }
