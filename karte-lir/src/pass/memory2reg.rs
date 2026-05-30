@@ -564,7 +564,8 @@ impl Memory2RegPass {
     ) {
         debug!("🎯 使用φ节点支持变换栈槽 {:?}", slot.address_register);
 
-        // 1. 移除alloc指令
+        // 1. 记录alloc指令索引（延迟移除，等load全部替换成功后再移除）
+        let mut alloc_to_remove: Option<usize> = None;
         if slot.alloc_instruction < function.instructions.len() {
             if let Instruction::Alloc {
                 dst,
@@ -575,11 +576,10 @@ impl Memory2RegPass {
             {
                 if *dst == slot.address_register {
                     info!(
-                        "🎯 添加移除alloc指令: {:?} (size: {}, type: {:?})",
+                        "🎯 记录alloc指令待移除: {:?} (size: {}, type: {:?})",
                         dst, size, allocation_type
                     );
-                    // instructions_to_remove.push(slot.alloc_instruction);
-                    transformer.remove(slot.alloc_instruction);
+                    alloc_to_remove = Some(slot.alloc_instruction);
                 }
             }
         }
@@ -587,6 +587,7 @@ impl Memory2RegPass {
         // 2. 处理store指令，同时记录每个块中的最后一个store
         debug!("🎯 扫描所有store指令以匹配栈槽 {:?}", slot.address_register);
         let mut found_stores = 0;
+        let mut stores_to_remove: Vec<usize> = Vec::new();
         let mut block_last_store: HashMap<usize, (usize, Operand)> = HashMap::new();
 
         for (i, instruction) in function.instructions.iter().enumerate() {
@@ -602,7 +603,7 @@ impl Memory2RegPass {
                         block_last_store.insert(block_id, (i, src.clone()));
                     }
 
-                    transformer.remove(i);
+                    stores_to_remove.push(i);
                     found_stores += 1;
                 }
             }
@@ -615,6 +616,7 @@ impl Memory2RegPass {
         // 3. 处理load指令
         debug!("🎯 扫描所有load指令以匹配栈槽 {:?}", slot.address_register);
         let mut found_loads = 0;
+        let mut total_loads = 0;
         for (i, instruction) in function.instructions.iter().enumerate() {
             if let Instruction::Load64 {
                 dst,
@@ -631,6 +633,7 @@ impl Memory2RegPass {
                         );
                         continue;
                     }
+                    total_loads += 1;
                     debug!("🎯   - 发现load指令 [{}]: {}", i, instruction);
 
                     // 查找对应的phi结果寄存器
@@ -742,9 +745,28 @@ impl Memory2RegPass {
             }
         }
         info!(
-            "🎯 为栈槽 {:?} 找到 {} 个load指令进行替换",
-            slot.address_register, found_loads
+            "🎯 为栈槽 {:?} 替换 {}/{} 个load指令",
+            slot.address_register, found_loads, total_loads
         );
+
+        // 4. 只有当所有load都成功替换时，才实际移除alloc和store
+        if found_loads == total_loads {
+            if let Some(alloc_idx) = alloc_to_remove {
+                transformer.remove(alloc_idx);
+            }
+            for store_idx in stores_to_remove {
+                transformer.remove(store_idx);
+            }
+            info!(
+                "✅ 栈槽 {:?} 全部load替换成功，移除alloc和{}个store",
+                slot.address_register, found_stores
+            );
+        } else if total_loads > 0 {
+            warn!(
+                "⚠️ 栈槽 {:?} 只有 {}/{} 个load被替换，保留alloc和store（安全降级）",
+                slot.address_register, found_loads, total_loads
+            );
+        }
     }
 
     /// 为指定位置的load指令找到对应的φ节点结果寄存器
@@ -1534,7 +1556,7 @@ impl Memory2RegPass {
                     // 需要 phi 的条件：
                     // 1. 有相关使用（load）
                     // 2. 多个前驱块可能提供不同的值（有不同的 store 路径）
-                    let needs_phi = has_relevant_use && predecessors_with_stores.len() > 1;
+                    let needs_phi = has_relevant_use && analysis.basic_blocks.get(&block_id).map_or(false, |b| b.predecessors.len() > 1) && predecessors_with_stores.len() >= 1;
 
                     info!(
                         "🎯 分析块{}: 有load={}, 前驱有store数={}, 需要phi={}",

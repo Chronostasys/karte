@@ -463,7 +463,11 @@ pub(crate) fn lower_expression(
                     .collect();
 
             // === 第一步：预分析循环体，找出被更新的变量 ===
-            // 先保存当前状态，lower 循环体到临时块来收集变量更新
+            // 推入循环上下文，使 break/continue 在预分析阶段也能正常工作
+            ctx.loop_stack.push(super::types::LoopContext {
+                continue_target: loop_head,
+                break_target: loop_exit,
+            });
             // 预分析模式：不生成 Phi 节点，仅收集变量绑定变化
             ctx.analysis_mode = true;
             let pre_analysis_block_count = ctx.current_function_mut().basic_blocks.len();
@@ -473,6 +477,8 @@ pub(crate) fn lower_expression(
             let temp_result = ctx.new_temp();
             let _ = lower_expression(ctx, body, &temp_result);
             ctx.analysis_mode = false;
+            // 弹出预分析用的循环上下文
+            ctx.loop_stack.pop();
 
             // 收集所有作用域中变量更新后的绑定
             let post_loop_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
@@ -616,14 +622,19 @@ pub(crate) fn lower_expression(
             //   let __for_start = start
             //   let __for_end = end
             //   let mut __for_var = __for_start
-            //   while __for_var < __for_end {
-            //       let var = __for_var
-            //       body
-            //       __for_var = __for_var + 1
+            //   loop {
+            //       if __for_var < __for_end {
+            //           let var = __for_var
+            //           body         ← break → loop_exit, continue → increment_block
+            //           __for_var = __for_var + 1   ← increment_block
+            //       } else {
+            //           break  → loop_exit
+            //       }
             //   }
 
             let loop_head = ctx.new_block();
             let loop_body = ctx.new_block();
+            let increment_block = ctx.new_block(); // 递增块（continue 的目标）
             let loop_exit = ctx.new_block();
 
             // 记录循环前的块 ID
@@ -644,8 +655,7 @@ pub(crate) fn lower_expression(
             });
             ctx.bind_variable(for_var_name.clone(), for_var_temp.clone(), None);
 
-            // 快照所有作用域的变量绑定（不仅仅是当前 scope，因为嵌套循环中
-            // 外层变量可能在更外层 scope 中，如 "let sum = 0; for i in .. { for j in .. { sum = ... } }"）
+            // 快照所有作用域的变量绑定
             let pre_loop_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
                 ctx.scopes
                     .iter()
@@ -654,6 +664,12 @@ pub(crate) fn lower_expression(
                     .collect();
 
             // === 第一步：预分析循环体，找出被更新的变量 ===
+            // 推入循环上下文，使 break/continue 在预分析阶段也能正常工作
+            ctx.loop_stack.push(super::types::LoopContext {
+                continue_target: increment_block,
+                break_target: loop_exit,
+            });
+
             ctx.analysis_mode = true;
             let pre_analysis_block_count = ctx.current_function_mut().basic_blocks.len();
             let saved_block = ctx.current_block();
@@ -664,9 +680,9 @@ pub(crate) fn lower_expression(
             let analysis_var_temp = ctx.new_temp();
             ctx.bind_variable(var.clone(), analysis_var_temp, None);
             // 模拟递增
-            let inc_temp = ctx.new_temp();
+            let analysis_inc_temp = ctx.new_temp();
             ctx.add_statement(Statement::Assign {
-                target: inc_temp.clone(),
+                target: analysis_inc_temp.clone(),
                 source: Value::Number { value: 1, ty: None },
                 span: *span,
             });
@@ -674,6 +690,9 @@ pub(crate) fn lower_expression(
             let temp_result = ctx.new_temp();
             let _ = lower_expression(ctx, body, &temp_result);
             ctx.analysis_mode = false;
+
+            // 弹出预分析用的循环上下文
+            ctx.loop_stack.pop();
 
             // 收集所有作用域中变量更新后的绑定
             let post_loop_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
@@ -699,7 +718,7 @@ pub(crate) fn lower_expression(
                 }
             }
 
-            // === 第二步：删除分析用的临时块，恢复状态 ===
+            // === 第二步：恢复状态 ===
             ctx.remove_block(analysis_block);
             for (name, (value, ownership)) in &pre_loop_bindings {
                 ctx.update_variable(name, value.clone(), *ownership);
@@ -731,98 +750,39 @@ pub(crate) fn lower_expression(
                 span: *span,
             });
 
-            // === 第四步：生成循环体 ===
-            ctx.set_current_block(loop_body);
-
-            // 在循环体内绑定用户变量 = __for_var 的 phi 值
-            let user_var_temp = ctx.new_temp();
-            ctx.add_statement(Statement::Assign {
-                target: user_var_temp.clone(),
-                source: for_var_phi.clone(),
-                span: *span,
-            });
-            ctx.bind_variable(var.clone(), user_var_temp.clone(), None);
-
-            // 推入循环上下文（break/continue 需要）
-            ctx.loop_stack.push(super::types::LoopContext {
-                continue_target: loop_head,
-                break_target: loop_exit,
-            });
-
-            let temp_body_result = ctx.new_temp();
-            lower_expression(ctx, body, &temp_body_result)?;
-
-            // 弹出循环上下文
-            ctx.loop_stack.pop();
-
-            // 递增 __for_var = __for_var + 1
-            let inc_temp = lower_expression_to_temp(ctx, &Expr::BinaryOp {
-                left: Box::new(Expr::Identifier {
-                    name: for_var_name.clone(),
-                    span: *span,
-                }),
-                op: karte_hir::BinaryOperator::Add,
-                right: Box::new(Expr::Number { value: 1, span: *span }),
-                span: *span,
-            })?;
-            // 递增结果写入新 temp 并通过 update_variable 更新绑定
-            // 不能直接写入 for_var_phi（phi target），否则 phi incoming 会自引用
-            ctx.update_variable(&for_var_name, inc_temp.clone(), None);
-
-            // 收集循环体中变量更新后的值
-            let final_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
-                ctx.scopes
-                    .iter()
-                    .rev()
-                    .flat_map(|scope| {
-                        scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
-                    })
-                    .collect();
-
-            ctx.set_terminator(Terminator::Goto {
-                target: loop_head,
-                span: body.span(),
-            });
-
-            let loop_back_edge_block = ctx.current_block();
-
-            // === 第五步：生成循环头 ===
+            // === 第四步：生成循环头（phi + 条件判断）===
             ctx.set_current_block(loop_head);
 
-            // Phi 节点（包括 __for_var）
+            // Phi 节点（用户变量）
             for (name, initial_value, _loop_value) in &updated_vars {
                 let phi_temp = phi_values.get(name).unwrap().clone();
-                let final_value = final_bindings.get(name)
-                    .map(|(v, _)| v.clone())
-                    .unwrap_or_else(|| initial_value.clone());
+                // back edge 的值稍后填入（先占位，第五步更新）
                 ctx.add_statement(Statement::Phi {
                     target: phi_temp,
                     incoming: vec![
                         (pre_loop_block, initial_value.clone()),
-                        (loop_back_edge_block, final_value),
+                        // 占位：increment_block 的值在循环体生成后更新
+                        (increment_block, initial_value.clone()),
                     ],
                     span: *span,
                 });
             }
-            // __for_var 的 phi
-            let for_var_updated = final_bindings.get(&for_var_name)
-                .map(|(v, _)| v.clone())
-                .unwrap_or_else(|| start_val);
+            // __for_var 的 phi（同样先占位）
             ctx.add_statement(Statement::Phi {
-                target: for_var_phi,
+                target: for_var_phi.clone(),
                 incoming: vec![
-                    (pre_loop_block, for_var_temp),
-                    (loop_back_edge_block, for_var_updated),
+                    (pre_loop_block, for_var_temp.clone()),
+                    (increment_block, for_var_temp.clone()),
                 ],
                 span: *span,
             });
+
             // 更新 context 中所有被循环修改的变量指向 phi 结果
             for (name, phi_val) in &phi_values {
                 ctx.update_variable(name, phi_val.clone(), None);
             }
 
             // 条件: __for_var < end
-            // 在循环头内部重新计算 end，避免跨块引用临时值导致 memory2reg 错误提升
             let for_var_phi_val = phi_values.get(&for_var_name).unwrap().clone();
             let end_val_in_header = lower_expression_to_temp(ctx, end)?;
             let cond_temp = ctx.new_temp();
@@ -841,6 +801,104 @@ pub(crate) fn lower_expression(
                 span: *span,
             });
 
+            // === 第五步：生成循环体 ===
+            ctx.set_current_block(loop_body);
+
+            // 在循环体内绑定用户变量 = __for_var 的 phi 值
+            let user_var_temp = ctx.new_temp();
+            ctx.add_statement(Statement::Assign {
+                target: user_var_temp.clone(),
+                source: for_var_phi.clone(),
+                span: *span,
+            });
+            ctx.bind_variable(var.clone(), user_var_temp.clone(), None);
+
+            // 推入循环上下文（break/continue 需要）
+            // continue → increment_block（确保递增不会跳过）
+            // break → loop_exit
+            ctx.loop_stack.push(super::types::LoopContext {
+                continue_target: increment_block,
+                break_target: loop_exit,
+            });
+
+            let temp_body_result = ctx.new_temp();
+            lower_expression(ctx, body, &temp_body_result)?;
+
+            // 弹出循环上下文
+            ctx.loop_stack.pop();
+
+            // 循环体正常结束 → 跳转到 increment_block
+            ctx.set_terminator(Terminator::Goto {
+                target: increment_block,
+                span: body.span(),
+            });
+
+            // === 第六步：生成递增块 ===
+            ctx.set_current_block(increment_block);
+
+            // 递增 __for_var = __for_var + 1
+            let inc_temp = lower_expression_to_temp(ctx, &Expr::BinaryOp {
+                left: Box::new(Expr::Identifier {
+                    name: for_var_name.clone(),
+                    span: *span,
+                }),
+                op: karte_hir::BinaryOperator::Add,
+                right: Box::new(Expr::Number { value: 1, span: *span }),
+                span: *span,
+            })?;
+            ctx.update_variable(&for_var_name, inc_temp.clone(), None);
+
+            // 收集所有变量更新后的值（用于修正 phi incoming）
+            let final_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
+                ctx.scopes
+                    .iter()
+                    .rev()
+                    .flat_map(|scope| {
+                        scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
+                    })
+                    .collect();
+
+            // 递增块 → loop_head
+            ctx.set_terminator(Terminator::Goto {
+                target: loop_head,
+                span: *span,
+            });
+
+            // === 第七步：修正 loop_head 中 phi 的 back-edge incoming 值 ===
+            // 遍历 loop_head 的语句，找到占位的 phi 节点，用实际值替换
+            let loop_head_block = ctx.current_function_mut().basic_blocks.get_mut(&loop_head).unwrap();
+            for stmt in &mut loop_head_block.statements {
+                if let Statement::Phi { target, incoming, .. } = stmt {
+                    // 找到 increment_block 对应的 incoming，用实际值替换
+                    for (block, value) in incoming.iter_mut() {
+                        if *block == increment_block {
+                            // 查找 target 对应的变量名
+                            if *target == for_var_phi {
+                                // __for_var 的 phi back edge
+                                *value = final_bindings.get(&for_var_name)
+                                    .map(|(v, _)| v.clone())
+                                    .unwrap_or_else(|| for_var_temp.clone());
+                            } else {
+                                // 用户变量的 phi back edge
+                                // 通过 phi_values 反查变量名
+                                let var_name = phi_values.iter()
+                                    .find(|(_, v)| **v == *target)
+                                    .map(|(k, _)| k.clone());
+                                if let Some(name) = var_name {
+                                    *value = final_bindings.get(&name)
+                                        .map(|(v, _)| v.clone())
+                                        .unwrap_or_else(|| {
+                                            pre_loop_bindings.get(&name)
+                                                .map(|(v, _)| v.clone())
+                                                .unwrap_or_else(|| value.clone())
+                                        });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Continue from exit block
             ctx.set_current_block(loop_exit);
             ctx.add_statement(Statement::Assign {
@@ -849,6 +907,7 @@ pub(crate) fn lower_expression(
                 span: *span,
             });
         }
+
 
         Expr::Break { span, .. } => {
             // break: 跳转到当前循环的退出块
