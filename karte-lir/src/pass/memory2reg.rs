@@ -739,7 +739,7 @@ impl Memory2RegPass {
                         //         continue;
                         //     }
                         // }
-                        error!("❌   - 无法找到phi节点结果寄存器或store值，保留原始load指令");
+                        debug!("栈槽 {:?} 的phi节点无法解析，保留原始load指令（phi可能在远处的merge块中）", addr);
                     }
                 }
             }
@@ -1276,12 +1276,16 @@ impl Memory2RegPass {
                 }
                 Instruction::Load64 { dst, addr, .. } if *dst == register => {
                     debug!("🔍 找到load定义: {:?} = [{}]", dst, addr);
-                    // 🔧 改进：对于load指令，尝试追踪栈槽的存储值
+                    // 🔧 修复：仅当栈槽有多个store时阻止穿透追踪
+                    // 多个store意味着值依赖控制流（如match不同分支），线性追踪会选错分支的值
                     if self.is_stack_address_register(*addr, function) {
-                        // 从栈地址加载，追踪栈槽的存储值
-                        return self.trace_stack_slot_value(*addr, i, function);
+                        if self.has_multiple_stores_to_slot(*addr, function) {
+                            debug!("🔍 栈槽 {:?} 有多个store，跳过穿透追踪（控制流依赖）", addr);
+                            return None;
+                        } else {
+                            return self.trace_stack_slot_value(*addr, i, function);
+                        }
                     } else {
-                        // 从非栈地址加载，无法追踪
                         return None;
                     }
                 }
@@ -1408,6 +1412,23 @@ impl Memory2RegPass {
             if let Instruction::Alloc { dst, .. } = instruction {
                 if *dst == register {
                     return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// 检查栈槽是否有多个store（控制流依赖）
+    /// 多个store意味着值可能来自不同分支，不能安全地线性追踪
+    fn has_multiple_stores_to_slot(&self, slot_addr: Register, function: &LirFunction) -> bool {
+        let mut store_count = 0;
+        for instruction in &function.instructions {
+            if let Instruction::Store64 { addr, offset, .. } = instruction {
+                if *addr == slot_addr && *offset == 0 {
+                    store_count += 1;
+                    if store_count > 1 {
+                        return true;
+                    }
                 }
             }
         }

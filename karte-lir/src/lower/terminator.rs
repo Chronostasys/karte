@@ -230,21 +230,6 @@ pub(super) fn lower_terminator(
                             span: *span,
                         });
 
-                        // 多参数绑定：逐个提取参数
-                        for (i, var_name) in args.iter().enumerate() {
-                            let var_reg_id = ctx.allocate_register_for_value(&Value::Variable {
-                                name: var_name.clone(),
-                                ty: None,
-                            });
-                            // 第一个参数在 offset 8，后续在 offset 16, 24, ...
-                            let data_offset = (8 + i * 8) as i64;
-                            ctx.add_instruction(Instruction::Load64 {
-                                dst: var_reg_id,
-                                addr: constructor_reg,
-                                offset: data_offset,
-                                span: *span,
-                            });
-                        }
                     }
                     karte_mir::Pattern::Variable { name: _ } => {
                         // 变量模式总是匹配（类似通配符）
