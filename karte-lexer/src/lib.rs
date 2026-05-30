@@ -54,6 +54,13 @@ pub enum Token {
     #[token("<=")]
     LessEqual,
 
+    // 移位复合赋值（必须在 << 和 >> 之前定义，Logos 最长匹配）
+    #[token("<<=")]
+    ShiftLeftEqual,
+
+    #[token(">>=")]
+    ShiftRightEqual,
+
     // 移位符号（双字符，必须在 > 和 < 之前定义以避免被截断匹配）
     #[token("<<")]
     ShiftLeftSym,
@@ -87,6 +94,10 @@ pub enum Token {
     RightBrace,
 
     // Lambda 语法
+    // 位或复合赋值（必须在 | 之前定义，Logos 最长匹配）
+    #[token("|=")]
+    PipeEqual,
+
     #[token("|")]
     Pipe,
 
@@ -127,10 +138,18 @@ pub enum Token {
     Colon,
 
     // 引用符号
+    // 位与复合赋值（必须在 & 之前定义，Logos 最长匹配）
+    #[token("&=")]
+    AmpersandEqual,
+
     #[token("&")]
     Ampersand,
 
     // 异或符号
+    // 异或复合赋值（必须在 ^ 之前定义，Logos 最长匹配）
+    #[token("^=")]
+    CaretEqual,
+
     #[token("^")]
     Caret,
 
@@ -243,6 +262,11 @@ impl fmt::Display for Token {
             Token::MinusEqual => write!(f, "-="),
             Token::StarEqual => write!(f, "*="),
             Token::SlashEqual => write!(f, "/="),
+            Token::ShiftLeftEqual => write!(f, "<<="),
+            Token::ShiftRightEqual => write!(f, ">>="),
+            Token::PipeEqual => write!(f, "|="),
+            Token::AmpersandEqual => write!(f, "&="),
+            Token::CaretEqual => write!(f, "^="),
             Token::Plus => write!(f, "+"),
             Token::Minus => write!(f, "-"),
             Token::Multiply => write!(f, "*"),

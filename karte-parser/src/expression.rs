@@ -46,6 +46,11 @@ impl<'a> Parser<'a> {
                 Token::MinusEqual => Some(BinaryOperator::Subtract),
                 Token::StarEqual => Some(BinaryOperator::Multiply),
                 Token::SlashEqual => Some(BinaryOperator::Divide),
+                Token::AmpersandEqual => Some(BinaryOperator::BitAnd),
+                Token::PipeEqual => Some(BinaryOperator::BitOr),
+                Token::CaretEqual => Some(BinaryOperator::BitXor),
+                Token::ShiftLeftEqual => Some(BinaryOperator::ShiftLeft),
+                Token::ShiftRightEqual => Some(BinaryOperator::ShiftRight),
                 _ => {
                     // 双 token 复合赋值：bitand= bitor= bitxor= shl= shr=
                     // 需要 lookahead 一个 token
@@ -81,6 +86,11 @@ impl<'a> Parser<'a> {
                         | Token::MinusEqual
                         | Token::StarEqual
                         | Token::SlashEqual
+                        | Token::AmpersandEqual
+                        | Token::PipeEqual
+                        | Token::CaretEqual
+                        | Token::ShiftLeftEqual
+                        | Token::ShiftRightEqual
                 )
             );
 
@@ -250,16 +260,19 @@ impl<'a> Parser<'a> {
         Ok(left)
     }
 
-    // bitwise_or = bitwise_xor (bitor bitwise_xor)*
+    // bitwise_or = bitwise_xor ((bitor | |) bitwise_xor)*
     // 注意：需要排除 bitor= 复合赋值的情况
     pub(crate) fn parse_bitwise_or(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_bitwise_xor()?;
         while let Some(token) = self.peek() {
-            if token.token == Token::BitOr {
-                // 检查是否为 bitor= 复合赋值
-                if let Some(next) = self.tokens.get(self.position + 1) {
-                    if matches!(next.token, Token::Equal) {
-                        break; // 交给 parse_assignment 处理
+            if token.token == Token::BitOr || token.token == Token::Pipe {
+                // BitOr 关键字形式需要排除 bitor= 复合赋值
+                // Pipe 符号形式不需要排除，因为 |= 已经是单 Token PipeEqual
+                if token.token == Token::BitOr {
+                    if let Some(next) = self.tokens.get(self.position + 1) {
+                        if matches!(next.token, Token::Equal) {
+                            break; // 交给 parse_assignment 处理
+                        }
                     }
                 }
                 self.advance();
@@ -284,7 +297,8 @@ impl<'a> Parser<'a> {
         let mut left = self.parse_bitwise_and()?;
         while let Some(token) = self.peek() {
             if token.token == Token::BitXor || token.token == Token::Caret {
-                // 检查是否为 bitxor= 复合赋值（仅关键字形式）
+                // BitXor 关键字形式需要排除 bitxor= 复合赋值
+                // Caret 符号形式不需要排除，因为 ^= 已经是单 Token CaretEqual
                 if token.token == Token::BitXor {
                     if let Some(next) = self.tokens.get(self.position + 1) {
                         if matches!(next.token, Token::Equal) {
@@ -308,16 +322,19 @@ impl<'a> Parser<'a> {
         Ok(left)
     }
 
-    // bitwise_and = shift (bitand shift)*
+    // bitwise_and = shift ((bitand | &) shift)*
     // 注意：需要排除 bitand= 复合赋值的情况
     pub(crate) fn parse_bitwise_and(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_shift()?;
         while let Some(token) = self.peek() {
-            if token.token == Token::BitAnd {
-                // 检查是否为 bitand= 复合赋值
-                if let Some(next) = self.tokens.get(self.position + 1) {
-                    if matches!(next.token, Token::Equal) {
-                        break; // 交给 parse_assignment 处理
+            if token.token == Token::BitAnd || token.token == Token::Ampersand {
+                // BitAnd 关键字形式需要排除 bitand= 复合赋值
+                // Ampersand 符号形式不需要排除，因为 &= 已经是单 Token AmpersandEqual
+                if token.token == Token::BitAnd {
+                    if let Some(next) = self.tokens.get(self.position + 1) {
+                        if matches!(next.token, Token::Equal) {
+                            break; // 交给 parse_assignment 处理
+                        }
                     }
                 }
                 self.advance();

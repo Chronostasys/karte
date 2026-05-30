@@ -480,11 +480,11 @@ impl fmt::Display for BinaryOperator {
             BinaryOperator::Less => write!(f, "<"),
             BinaryOperator::LogicalAnd => write!(f, "&&"),
             BinaryOperator::LogicalOr => write!(f, "||"),
-            BinaryOperator::BitAnd => write!(f, "bitand"),
-            BinaryOperator::BitOr => write!(f, "bitor"),
-            BinaryOperator::BitXor => write!(f, "bitxor"),
-            BinaryOperator::ShiftLeft => write!(f, "shl"),
-            BinaryOperator::ShiftRight => write!(f, "shr"),
+            BinaryOperator::BitAnd => write!(f, "&"),
+            BinaryOperator::BitOr => write!(f, "|"),
+            BinaryOperator::BitXor => write!(f, "^"),
+            BinaryOperator::ShiftLeft => write!(f, "<<"),
+            BinaryOperator::ShiftRight => write!(f, ">>"),
         }
     }
 }
@@ -495,7 +495,7 @@ impl fmt::Display for UnaryOperator {
             UnaryOperator::Plus => write!(f, "+"),
             UnaryOperator::Minus => write!(f, "-"),
             UnaryOperator::LogicalNot => write!(f, "!"),
-            UnaryOperator::BitNot => write!(f, "bitnot"),
+            UnaryOperator::BitNot => write!(f, "~"),
         }
     }
 }

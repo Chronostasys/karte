@@ -221,8 +221,8 @@ pub enum Instruction {
         span: Span,
     },
 
-    /// 位与指令：bitand dst, src1, src2
-    #[ir_codec(token = "bitand")]
+    /// 位与指令：& dst, src1, src2
+    #[ir_codec(token = "&")]
     BitAnd {
         #[ir_codec(args)]
         dst: Register,
@@ -234,8 +234,8 @@ pub enum Instruction {
         span: Span,
     },
 
-    /// 位或指令：bitor dst, src1, src2
-    #[ir_codec(token = "bitor")]
+    /// 位或指令：| dst, src1, src2
+    #[ir_codec(token = "|")]
     BitOr {
         #[ir_codec(args)]
         dst: Register,
@@ -247,8 +247,8 @@ pub enum Instruction {
         span: Span,
     },
 
-    /// 位异或指令：bitxor dst, src1, src2
-    #[ir_codec(token = "bitxor")]
+    /// 位异或指令：^ dst, src1, src2
+    #[ir_codec(token = "^")]
     BitXor {
         #[ir_codec(args)]
         dst: Register,
@@ -260,8 +260,8 @@ pub enum Instruction {
         span: Span,
     },
 
-    /// 左移指令：shl dst, src1, src2
-    #[ir_codec(token = "shl")]
+    /// 左移指令：<< dst, src1, src2
+    #[ir_codec(token = "<<")]
     ShiftLeft {
         #[ir_codec(args)]
         dst: Register,
@@ -273,8 +273,8 @@ pub enum Instruction {
         span: Span,
     },
 
-    /// 右移指令：shr dst, src1, src2
-    #[ir_codec(token = "shr")]
+    /// 右移指令：>> dst, src1, src2
+    #[ir_codec(token = ">>")]
     ShiftRight {
         #[ir_codec(args)]
         dst: Register,
@@ -286,8 +286,8 @@ pub enum Instruction {
         span: Span,
     },
 
-    /// 位非指令：bitnot dst, src
-    #[ir_codec(token = "bitnot")]
+    /// 位非指令：~ dst, src
+    #[ir_codec(token = "~")]
     BitNot {
         #[ir_codec(args)]
         dst: Register,

@@ -543,12 +543,12 @@ fn instr_name(instr: &Instruction) -> &'static str {
         Instruction::StorePair { .. } => "StorePair",
         Instruction::LoadPair { .. } => "LoadPair",
         Instruction::Phi { .. } => "Phi",
-        Instruction::BitAnd { .. } => "bitand",
-        Instruction::BitOr { .. } => "bitor",
-        Instruction::BitXor { .. } => "bitxor",
-        Instruction::ShiftLeft { .. } => "shl",
-        Instruction::ShiftRight { .. } => "shr",
-        Instruction::BitNot { .. } => "bitnot",
+        Instruction::BitAnd { .. } => "&",
+        Instruction::BitOr { .. } => "|",
+        Instruction::BitXor { .. } => "^",
+        Instruction::ShiftLeft { .. } => "<<",
+        Instruction::ShiftRight { .. } => ">>",
+        Instruction::BitNot { .. } => "~",
     }
 }
 

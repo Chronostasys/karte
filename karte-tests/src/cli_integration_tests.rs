@@ -2035,4 +2035,110 @@ fn main() -> number {
         compile_and_run_aot(code, 0, "for_loop_phi_single_iteration");
     }
 
+    // ==================== 符号形式位运算符测试 ====================
+
+    #[test]
+    fn test_bitwise_and_operator() {
+        let code = r#"
+fn main() -> number {
+    12 & 10
+}
+"#;
+        compile_and_run_aot(code, 8, "bitwise_and_operator");
+    }
+
+    #[test]
+    fn test_bitwise_or_operator() {
+        let code = r#"
+fn main() -> number {
+    12 | 10
+}
+"#;
+        compile_and_run_aot(code, 14, "bitwise_or_operator");
+    }
+
+    #[test]
+    fn test_bitwise_xor_operator() {
+        let code = r#"
+fn main() -> number {
+    15 ^ 9
+}
+"#;
+        compile_and_run_aot(code, 6, "bitwise_xor_operator");
+    }
+
+    #[test]
+    fn test_bitwise_compound_assignment_symbols() {
+        let code = r#"
+fn main() -> number {
+    let x = 15;
+    x &= 6;
+    x
+}
+"#;
+        compile_and_run_aot(code, 6, "bitwise_compound_and");
+
+        let code2 = r#"
+fn main() -> number {
+    let y = 10;
+    y |= 3;
+    y
+}
+"#;
+        compile_and_run_aot(code2, 11, "bitwise_compound_or");
+
+        let code3 = r#"
+fn main() -> number {
+    let z = 15;
+    z ^= 6;
+    z
+}
+"#;
+        compile_and_run_aot(code3, 9, "bitwise_compound_xor");
+    }
+
+    #[test]
+    fn test_shift_compound_assignment_symbols() {
+        let code = r#"
+fn main() -> number {
+    let x = 1;
+    x <<= 4;
+    x
+}
+"#;
+        compile_and_run_aot(code, 16, "shift_compound_left");
+
+        let code2 = r#"
+fn main() -> number {
+    let y = 16;
+    y >>= 2;
+    y
+}
+"#;
+        compile_and_run_aot(code2, 4, "shift_compound_right");
+    }
+
+    #[test]
+    fn test_mixed_bitwise_and_reference() {
+        let code = r#"
+fn main() -> number {
+    let x = 10;
+    let y = 12 & x;
+    y
+}
+"#;
+        compile_and_run_aot(code, 8, "mixed_bitwise_ref");
+    }
+
+    #[test]
+    fn test_lambda_with_bitwise() {
+        let code = r#"
+fn main() -> number {
+    let f = |x| { x & 1 };
+    f(7)
+}
+"#;
+        compile_and_run_aot(code, 1, "lambda_bitwise");
+    }
+
 }

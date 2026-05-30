@@ -807,15 +807,15 @@ pub enum BinaryOperator {
     #[ir_codec(token = "||")]
     Or,
     // 位运算符
-    #[ir_codec(token = "bitand")]
+    #[ir_codec(token = "&")]
     BitAnd,
-    #[ir_codec(token = "bitor")]
+    #[ir_codec(token = "|")]
     BitOr,
-    #[ir_codec(token = "bitxor")]
+    #[ir_codec(token = "^")]
     BitXor,
-    #[ir_codec(token = "shl")]
+    #[ir_codec(token = "<<")]
     ShiftLeft,
-    #[ir_codec(token = "shr")]
+    #[ir_codec(token = ">>")]
     ShiftRight,
 }
 
@@ -828,6 +828,6 @@ pub enum UnaryOperator {
     Minus,
     #[ir_codec(token = "!")]
     Not,
-    #[ir_codec(token = "bitnot")]
+    #[ir_codec(token = "~")]
     BitNot,
 }
