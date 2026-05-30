@@ -565,6 +565,20 @@ impl FunctionPass for BlockLayoutPass {
             return PassResult::Unchanged;
         }
 
+        // 🔧 检测嵌套循环：多个不同的回边目标意味着嵌套循环
+        // 嵌套循环的块重排会导致外层循环增量被放在内层循环体之间，
+        // 破坏线性扫描寄存器分配器的 lifetime 分析
+        let back_edges = self.find_back_edges(cfg);
+        let back_edge_targets: HashSet<usize> =
+            back_edges.iter().map(|(_, tgt)| *tgt).collect();
+        if back_edge_targets.len() >= 2 {
+            debug!(
+                "🔄 检测到 {} 个嵌套循环（{} 个不同回边目标），跳过块布局优化",
+                back_edges.len(), back_edge_targets.len()
+            );
+            return PassResult::Unchanged;
+        }
+
         // 执行块重排
         match self.reorder_blocks(function, cfg) {
             Ok(new_instructions) => {

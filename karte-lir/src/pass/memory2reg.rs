@@ -1534,7 +1534,7 @@ impl Memory2RegPass {
                     // 需要 phi 的条件：
                     // 1. 有相关使用（load）
                     // 2. 多个前驱块可能提供不同的值（有不同的 store 路径）
-                    let needs_phi = has_relevant_use && predecessors_with_stores.len() > 0;
+                    let needs_phi = has_relevant_use && predecessors_with_stores.len() > 1;
 
                     info!(
                         "🎯 分析块{}: 有load={}, 前驱有store数={}, 需要phi={}",
