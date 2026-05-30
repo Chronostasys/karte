@@ -401,6 +401,7 @@ impl SsaConstructionPass {
             | Instruction::Sub { dst, .. }
             | Instruction::Mul { dst, .. }
             | Instruction::Div { dst, .. }
+            | Instruction::Mod { dst, .. }
             | Instruction::Load64 { dst, .. } => Some(*dst),
             Instruction::Call {
                 result: Some(dst), ..
@@ -432,6 +433,7 @@ impl SsaConstructionPass {
             | Instruction::Sub { dst, .. }
             | Instruction::Mul { dst, .. }
             | Instruction::Div { dst, .. }
+            | Instruction::Mod { dst, .. }
             | Instruction::Load64 { dst, .. } => Some(*dst),
             Instruction::Call {
                 result: Some(dst), ..

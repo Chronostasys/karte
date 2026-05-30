@@ -35,10 +35,80 @@ impl<'a> Parser<'a> {
         self.parse_assignment()
     }
 
-    // assignment = logical_or ('=' assignment)?
+    // assignment = logical_or (('=' | '+=' | '-=' | '*=' | '/=' | 'bitand=' | 'bitor=' | 'bitxor=' | 'shl=' | 'shr=') assignment)?
     pub(crate) fn parse_assignment(&mut self) -> Result<Expr, ParseError> {
         let expr = self.parse_logical_or()?;
 
+        // 检测复合赋值运算符（单 token: += -= *= /=）
+        let compound_op = if let Some(token) = self.peek() {
+            match &token.token {
+                Token::PlusEqual => Some(BinaryOperator::Add),
+                Token::MinusEqual => Some(BinaryOperator::Subtract),
+                Token::StarEqual => Some(BinaryOperator::Multiply),
+                Token::SlashEqual => Some(BinaryOperator::Divide),
+                _ => {
+                    // 双 token 复合赋值：bitand= bitor= bitxor= shl= shr=
+                    // 需要 lookahead 一个 token
+                    let tok = &token.token;
+                    let next_tok = self.tokens.get(self.position + 1).map(|t| &t.token);
+                    match (tok, next_tok) {
+                        (Token::BitAnd, Some(Token::Equal)) => Some(BinaryOperator::BitAnd),
+                        (Token::BitOr, Some(Token::Equal)) => Some(BinaryOperator::BitOr),
+                        (Token::BitXor, Some(Token::Equal)) => Some(BinaryOperator::BitXor),
+                        (Token::ShiftLeft, Some(Token::Equal))
+                        | (Token::ShiftLeftSym, Some(Token::Equal)) => {
+                            Some(BinaryOperator::ShiftLeft)
+                        }
+                        (Token::ShiftRight, Some(Token::Equal))
+                        | (Token::ShiftRightSym, Some(Token::Equal)) => {
+                            Some(BinaryOperator::ShiftRight)
+                        }
+                        _ => None,
+                    }
+                }
+            }
+        } else {
+            None
+        };
+
+        if let Some(op) = compound_op {
+            let span_start = expr.span().start;
+            // 判断是单 token 还是双 token 复合赋值
+            let is_single_token = matches!(
+                self.peek().map(|t| &t.token),
+                Some(
+                    Token::PlusEqual
+                        | Token::MinusEqual
+                        | Token::StarEqual
+                        | Token::SlashEqual
+                )
+            );
+
+            if is_single_token {
+                self.advance(); // 消费 += 等
+            } else {
+                self.advance(); // 消费 bitand 等
+                self.advance(); // 消费 =
+            }
+
+            let right = self.parse_assignment()?; // 右结合
+            let span = Span::new(span_start, right.span().end);
+            let target = expr.clone();
+            // 复合赋值展开为 target = target op right
+            let value = Expr::BinaryOp {
+                left: Box::new(target.clone()),
+                op,
+                right: Box::new(right),
+                span,
+            };
+            return Ok(Expr::Assignment {
+                target: Box::new(target),
+                value: Box::new(value),
+                span,
+            });
+        }
+
+        // 普通赋值
         if let Some(token) = self.peek() {
             if matches!(token.token, Token::Equal) {
                 self.advance(); // consume '='
@@ -181,10 +251,17 @@ impl<'a> Parser<'a> {
     }
 
     // bitwise_or = bitwise_xor (bitor bitwise_xor)*
+    // 注意：需要排除 bitor= 复合赋值的情况
     pub(crate) fn parse_bitwise_or(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_bitwise_xor()?;
         while let Some(token) = self.peek() {
             if token.token == Token::BitOr {
+                // 检查是否为 bitor= 复合赋值
+                if let Some(next) = self.tokens.get(self.position + 1) {
+                    if matches!(next.token, Token::Equal) {
+                        break; // 交给 parse_assignment 处理
+                    }
+                }
                 self.advance();
                 let right = self.parse_bitwise_xor()?;
                 let span = Span::new(left.span().start, right.span().end);
@@ -201,11 +278,20 @@ impl<'a> Parser<'a> {
         Ok(left)
     }
 
-    // bitwise_xor = bitwise_and (bitxor bitwise_and)*
+    // bitwise_xor = bitwise_and ((bitxor | ^) bitwise_and)*
+    // 注意：需要排除 bitxor= 复合赋值的情况
     pub(crate) fn parse_bitwise_xor(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_bitwise_and()?;
         while let Some(token) = self.peek() {
-            if token.token == Token::BitXor {
+            if token.token == Token::BitXor || token.token == Token::Caret {
+                // 检查是否为 bitxor= 复合赋值（仅关键字形式）
+                if token.token == Token::BitXor {
+                    if let Some(next) = self.tokens.get(self.position + 1) {
+                        if matches!(next.token, Token::Equal) {
+                            break; // 交给 parse_assignment 处理
+                        }
+                    }
+                }
                 self.advance();
                 let right = self.parse_bitwise_and()?;
                 let span = Span::new(left.span().start, right.span().end);
@@ -223,10 +309,17 @@ impl<'a> Parser<'a> {
     }
 
     // bitwise_and = shift (bitand shift)*
+    // 注意：需要排除 bitand= 复合赋值的情况
     pub(crate) fn parse_bitwise_and(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_shift()?;
         while let Some(token) = self.peek() {
             if token.token == Token::BitAnd {
+                // 检查是否为 bitand= 复合赋值
+                if let Some(next) = self.tokens.get(self.position + 1) {
+                    if matches!(next.token, Token::Equal) {
+                        break; // 交给 parse_assignment 处理
+                    }
+                }
                 self.advance();
                 let right = self.parse_shift()?;
                 let span = Span::new(left.span().start, right.span().end);
@@ -243,12 +336,21 @@ impl<'a> Parser<'a> {
         Ok(left)
     }
 
-    // shift = additive ((shl | shr) additive)*
+    // shift = additive ((shl | shr | << | >>) additive)*
+    // 注意：需要排除 shl= / shr= 复合赋值的情况
     pub(crate) fn parse_shift(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_additive()?;
         while let Some(token) = self.peek() {
             match token.token {
-                Token::ShiftLeft => {
+                Token::ShiftLeft | Token::ShiftLeftSym => {
+                    // 检查是否为 shl= 复合赋值（仅关键字形式）
+                    if token.token == Token::ShiftLeft {
+                        if let Some(next) = self.tokens.get(self.position + 1) {
+                            if matches!(next.token, Token::Equal) {
+                                break; // 交给 parse_assignment 处理
+                            }
+                        }
+                    }
                     self.advance();
                     let right = self.parse_additive()?;
                     let span = Span::new(left.span().start, right.span().end);
@@ -259,7 +361,15 @@ impl<'a> Parser<'a> {
                         span,
                     };
                 }
-                Token::ShiftRight => {
+                Token::ShiftRight | Token::ShiftRightSym => {
+                    // 检查是否为 shr= 复合赋值（仅关键字形式）
+                    if token.token == Token::ShiftRight {
+                        if let Some(next) = self.tokens.get(self.position + 1) {
+                            if matches!(next.token, Token::Equal) {
+                                break; // 交给 parse_assignment 处理
+                            }
+                        }
+                    }
                     self.advance();
                     let right = self.parse_additive()?;
                     let span = Span::new(left.span().start, right.span().end);
@@ -339,6 +449,17 @@ impl<'a> Parser<'a> {
                         span,
                     };
                 }
+                Token::Percent => {
+                    self.advance();
+                    let right = self.parse_factor()?;
+                    let span = Span::new(left.span().start, right.span().end);
+                    left = Expr::BinaryOp {
+                        left: Box::new(left),
+                        op: BinaryOperator::Modulo,
+                        right: Box::new(right),
+                        span,
+                    };
+                }
                 _ => break,
             }
         }
@@ -400,8 +521,8 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            // bitnot 一元运算符
-            if token.token == Token::BitNot {
+            // bitnot 一元运算符（支持 bitnot 关键字和 ~ 符号）
+            if token.token == Token::BitNot || token.token == Token::Tilde {
                 let start_span = token.span;
                 self.advance();
                 let operand = self.parse_factor()?;
@@ -576,6 +697,12 @@ impl<'a> Parser<'a> {
                     let span = token.span;
                     self.advance();
                     Ok(Expr::Number { value, span })
+                }
+                Token::StringLiteral(value) => {
+                    let value = value.clone();
+                    let span = token.span;
+                    self.advance();
+                    Ok(Expr::StringLiteral { value, span })
                 }
                 Token::KwPerform => {
                     let span = token.span;
@@ -1330,6 +1457,42 @@ impl<'a> Parser<'a> {
                         }
                     }
                 }
+                Token::KwFor => {
+                    self.parse_for_in()
+                }
+                Token::KwBreak => {
+                    let span = token.span;
+                    self.advance();
+                    Ok(Expr::Break { span })
+                }
+                Token::KwContinue => {
+                    let span = token.span;
+                    self.advance();
+                    Ok(Expr::Continue { span })
+                }
+                Token::KwReturn => {
+                    let start_span = token.span;
+                    self.advance();
+                    // return 后面可以跟表达式，也可以没有
+                    let value = if let Some(tok) = self.peek() {
+                        // 检查下一个 token 是否可以开始一个表达式
+                        match &tok.token {
+                            Token::RightBrace | Token::Semicolon | Token::Comma => None,
+                            _ => Some(Box::new(self.parse_expression()?)),
+                        }
+                    } else {
+                        None
+                    };
+                    let end_span = if let Some(v) = &value {
+                        v.span()
+                    } else {
+                        start_span
+                    };
+                    Ok(Expr::Return {
+                        value,
+                        span: Span::new(start_span.start, end_span.end),
+                    })
+                }
                 Token::Pipe => {
                     // 解析lambda表达式: |param1, param2| body
                     self.parse_lambda()
@@ -1917,6 +2080,112 @@ impl<'a> Parser<'a> {
 
         Ok(Expr::While {
             condition: Box::new(condition),
+            body: Box::new(body),
+            span,
+        })
+    }
+
+    /// 解析 for-in 表达式: for ident in start..end { body }
+    pub(crate) fn parse_for_in(&mut self) -> Result<Expr, ParseError> {
+        let start_span = self.peek().unwrap().span;
+        self.advance(); // consume 'for'
+
+        // 解析循环变量名
+        let var = if let Some(tok) = self.peek() {
+            if let Token::Identifier(name) = &tok.token {
+                name.clone()
+            } else {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "identifier".to_string(),
+                    found: tok.token.clone(),
+                    span: tok.span,
+                });
+            }
+        } else {
+            return Err(ParseError::UnexpectedEof {
+                expected: "loop variable name".to_string(),
+            });
+        };
+        self.advance(); // consume var name
+
+        // 期望 'in'
+        if let Some(tok) = self.peek() {
+            match &tok.token {
+                Token::KwIn => {
+                    self.advance();
+                }
+                Token::Identifier(id) if id == "in" => {
+                    self.advance();
+                }
+                _ => {
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "'in'".to_string(),
+                        found: tok.token.clone(),
+                        span: tok.span,
+                    });
+                }
+            }
+        } else {
+            return Err(ParseError::UnexpectedEof {
+                expected: "'in'".to_string(),
+            });
+        }
+
+        // 解析 start 表达式
+        let start = self.parse_expression()?;
+
+        // 期望 '..'
+        if let Some(tok) = self.peek() {
+            if matches!(tok.token, Token::DoubleDot) {
+                self.advance(); // consume '..'
+            } else {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "'..'".to_string(),
+                    found: tok.token.clone(),
+                    span: tok.span,
+                });
+            }
+        } else {
+            return Err(ParseError::UnexpectedEof {
+                expected: "'..'".to_string(),
+            });
+        }
+
+        // 解析 end 表达式
+        let end = self.parse_expression()?;
+
+        // 期望 '{' (或 do)
+        if let Some(tok) = self.peek() {
+            match &tok.token {
+                Token::LeftBrace => {
+                    // 允许 for x in 0..10 { ... } 语法，不需要 consume
+                }
+                Token::Identifier(name) if name == "do" => {
+                    self.advance(); // consume 'do'
+                }
+                _ => {
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "'{' or 'do'".to_string(),
+                        found: tok.token.clone(),
+                        span: tok.span,
+                    });
+                }
+            }
+        } else {
+            return Err(ParseError::UnexpectedEof {
+                expected: "'{' or 'do'".to_string(),
+            });
+        }
+
+        // 解析循环体
+        let body = self.parse_expression()?;
+        let end_span = body.span();
+        let span = Span::new(start_span.start, end_span.end);
+
+        Ok(Expr::ForIn {
+            var,
+            start: Box::new(start),
+            end: Box::new(end),
             body: Box::new(body),
             span,
         })

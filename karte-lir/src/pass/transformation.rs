@@ -142,6 +142,7 @@ impl DeadCodeElimination {
             Instruction::Sub { .. } => false,
             Instruction::Mul { .. } => false,
             Instruction::Div { .. } => false,
+            Instruction::Mod { .. } => false,
             Instruction::BitAnd { .. }
             | Instruction::BitOr { .. }
             | Instruction::BitXor { .. }
@@ -170,6 +171,8 @@ impl DeadCodeElimination {
             Instruction::JumpIndirect { .. } => true,
             Instruction::JumpRegister { .. } => true,
             Instruction::Safepoint { .. } => false,
+            Instruction::StringConcat { .. } => true,
+            Instruction::PrintString { .. } => true,
         }
     }
 
@@ -185,6 +188,7 @@ impl DeadCodeElimination {
             | Instruction::Sub { src1, src2, .. }
             | Instruction::Mul { src1, src2, .. }
             | Instruction::Div { src1, src2, .. }
+            | Instruction::Mod { src1, src2, .. }
             | Instruction::BitAnd { src1, src2, .. }
             | Instruction::BitOr { src1, src2, .. }
             | Instruction::BitXor { src1, src2, .. }
@@ -319,6 +323,7 @@ impl DeadCodeElimination {
             | Instruction::Sub { dst, .. }
             | Instruction::Mul { dst, .. }
             | Instruction::Div { dst, .. }
+            | Instruction::Mod { dst, .. }
             | Instruction::BitAnd { dst, .. }
             | Instruction::BitOr { dst, .. }
             | Instruction::BitXor { dst, .. }
@@ -475,6 +480,31 @@ impl ConstantFolding {
                         changed = true;
                     }
                 }
+                Instruction::Mod {
+                    dst,
+                    src1,
+                    src2,
+                    span,
+                } => {
+                    let dst_reg = *dst;
+                    let span_copy = *span;
+                    if let (Some(&val1), Some(&val2)) = (
+                        self.get_constant_value(src1, &constant_values),
+                        self.get_constant_value(src2, &constant_values),
+                    ) {
+                        if val2 != 0 {
+                            // 折叠取余运算（避免除零）
+                            let result = val1 % val2;
+                            *instruction = Instruction::Move {
+                                dst: dst_reg,
+                                src: Operand::Immediate { value: result },
+                                span: span_copy,
+                            };
+                            constant_values.insert(dst_reg, result);
+                            changed = true;
+                        }
+                    }
+                }
                 Instruction::BitAnd {
                     dst,
                     src1,
@@ -591,6 +621,7 @@ impl ConstantFolding {
             | Instruction::Sub { dst, .. }
             | Instruction::Mul { dst, .. }
             | Instruction::Div { dst, .. }
+            | Instruction::Mod { dst, .. }
             | Instruction::Load64 { dst, .. }
             | Instruction::Alloc { dst, .. }
             | Instruction::StructAlloc { dst, .. }

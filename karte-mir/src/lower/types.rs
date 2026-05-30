@@ -10,6 +10,15 @@ use karte_common::memory::OwnershipKind;
 use karte_hir::ModuleContext;
 use std::collections::{HashMap, HashSet};
 
+/// 循环上下文，记录 break/continue 的目标基本块
+#[derive(Clone, Debug)]
+pub(crate) struct LoopContext {
+    /// continue 目标（循环条件检查块）
+    pub(crate) continue_target: BasicBlockId,
+    /// break 目标（循环退出块）
+    pub(crate) break_target: BasicBlockId,
+}
+
 /// 脚本模式入口点函数名
 pub const SCRIPT_ENTRY_POINT: &str = "__script_entry__";
 
@@ -97,4 +106,9 @@ pub struct LoweringContext<'a> {
     /// 预分析模式：while 循环预分析时不生成 Phi 节点
     /// 仅用于收集变量更新信息
     pub(crate) analysis_mode: bool,
+    /// 循环上下文栈：break/continue 跳转目标
+    pub(crate) loop_stack: Vec<LoopContext>,
+    /// 返回跳转目标块（用于 return 语句）
+    /// 当前函数的 epilogue 块，None 表示不在函数中或尚未创建
+    pub(crate) return_target: Option<BasicBlockId>,
 }

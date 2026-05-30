@@ -328,12 +328,12 @@ mod closure_struct_tests {
     #[test]
     fn test_lambda_without_captures_lowering() {
         // lambda (x) => x + 1
-        use karte_hir::Parameter;
+        use karte_hir::{Parameter, Type};
 
         let lambda_expr = Expr::Lambda {
             params: vec![Parameter {
                 name: "x".to_string(),
-                type_annotation: Some("Number".to_string()),
+                type_annotation: Some(Type::Number),
                 span: make_span(),
             }],
             body: Box::new(Expr::BinaryOp {
@@ -394,7 +394,7 @@ mod closure_struct_tests {
     #[test]
     fn test_lambda_with_captures_lowering() {
         // let y = 42; lambda (x) => x + y
-        use karte_hir::{Parameter, Statement as HirStatement};
+        use karte_hir::{Parameter, Statement as HirStatement, Type};
 
         let expr = Expr::Block {
             statements: vec![HirStatement::Let {
@@ -408,7 +408,7 @@ mod closure_struct_tests {
             final_expr: Some(Box::new(Expr::Lambda {
                 params: vec![Parameter {
                     name: "x".to_string(),
-                    type_annotation: Some("Number".to_string()),
+                    type_annotation: Some(Type::Number),
                     span: make_span(),
                 }],
                 body: Box::new(Expr::BinaryOp {
@@ -484,13 +484,13 @@ mod closure_struct_tests {
     #[test]
     fn test_closure_struct_function_call() {
         // 测试闭包结构体的函数调用
-        use karte_hir::Parameter;
+        use karte_hir::{Parameter, Type};
 
         let call_expr = Expr::FunctionCall {
             function: Box::new(Expr::Lambda {
                 params: vec![Parameter {
                     name: "x".to_string(),
-                    type_annotation: Some("Number".to_string()),
+                    type_annotation: Some(Type::Number),
                     span: make_span(),
                 }],
                 body: Box::new(Expr::Identifier {
@@ -525,7 +525,7 @@ mod closure_struct_tests {
     #[test]
     fn test_heap_allocation_statements() {
         // 测试堆分配相关语句的生成
-        use karte_hir::{Parameter, Statement as HirStatement};
+        use karte_hir::{Parameter, Statement as HirStatement, Type};
 
         let expr = Expr::Block {
             statements: vec![HirStatement::Let {
@@ -539,7 +539,7 @@ mod closure_struct_tests {
             final_expr: Some(Box::new(Expr::Lambda {
                 params: vec![Parameter {
                     name: "param".to_string(),
-                    type_annotation: Some("Number".to_string()),
+                    type_annotation: Some(Type::Number),
                     span: make_span(),
                 }],
                 body: Box::new(Expr::Identifier {

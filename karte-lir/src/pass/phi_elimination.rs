@@ -43,11 +43,10 @@ impl PhiEliminationPass {
             {
                 debug!("🔧 处理φ指令 {}: dst={:?}, incoming={:?}", i, dst, incoming);
 
-                // 跳过栈地址 Phi（来自 Memory2Reg）
-                // Memory2Reg 为跨块使用的栈槽生成 Phi，其 dst 是 Alloc 分配的栈地址。
-                // phi 值已经通过 lower.rs 的 phi_store_map Store64 传递。
-                // 如果 PhiEliminationPass 再生成 Move dst=addr_reg, src=value，
-                // 会覆盖栈地址寄存器，导致 Store64 写入错误地址。
+                // 跳过栈地址 Phi（来自 Memory2Reg 或 lower.rs）
+                // 栈地址 Phi 的 dst 是 Alloc 分配的栈地址。
+                // 值通过 lower.rs 的 phi_store_map Store64 传递，
+                // 不需要 PhiElimination 再生成 Move 或 Store64。
                 let is_stack_addr_phi = function.instructions.iter().any(|instr| {
                     if let Instruction::Alloc { dst: alloc_dst, .. } = instr {
                         alloc_dst == dst
@@ -69,7 +68,6 @@ impl PhiEliminationPass {
                     if let Some(&source_block_id) = cfg.label_to_block.get(source_label) {
                         if let Some(source_block) = cfg.get_node_by_id(source_block_id) {
                             let insert_position = self.find_insertion_point(function, source_block);
-                            // 使用 usize::MAX 作为 span 标记，标识这是 phi elimination 生成的 Move
                             let move_instruction = Instruction::Move {
                                 dst: *dst,
                                 src: operand.clone(),
@@ -99,8 +97,6 @@ impl PhiEliminationPass {
         let (start, end) = block.instruction_range;
         let mut last_non_control = end;
         let mut control_flow_pos = end;
-
-        // 从后向前扫描，找到最后一个非控制流指令的位置
         for i in (start..end).rev() {
             if i >= function.instructions.len() {
                 continue;
@@ -123,7 +119,6 @@ impl PhiEliminationPass {
             }
         }
 
-        // 在最后一个非控制流指令之后、控制流指令之前插入
         if last_non_control <= control_flow_pos {
             last_non_control
         } else {

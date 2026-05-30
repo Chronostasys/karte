@@ -23,4 +23,4 @@ pub use type_checker::{
     type_check, type_check_with_context, type_check_with_context_and_maps, ModuleContext,
     TypeChecker,
 };
-pub use types::{Type, TypeVar};
+pub use types::{IntKind, Type, TypeVar};

@@ -587,48 +587,77 @@ impl RiscvRuntime {
         // scan_done:
         let scan_done_label = self.code.len();
 
-        // ---- 2. 清除阶段：遍历堆 ----
-        // 从 heap_start 到 bump_ptr，清除未标记的对象
-        // 策略：将 bump_ptr 回退，跳过标记的对象（紧凑化）
-        // 简化：遍历堆，对未标记的对象不做处理（只清除标记位）
-        //        然后 reset alloc_count
+        // ---- 2. 压缩阶段：将存活对象复制到堆前端 ----
+        // 寄存器分配：
+        //   S5 = dest（写入位置，从 heap_start 开始）
+        //   T0 = src（读取位置，从 heap_start 开始）
+        //   T1 = total_size（当前对象大小）
+        //   T2 = mark byte
+        self.mv(S5, S1); // S5 = dest = heap_start
+        self.mv(T0, S1); // T0 = src = heap_start
 
-        self.mv(T0, S1); // T0 = 当前堆位置
-
-        // sweep_loop:
-        let sweep_loop = self.code.len();
-        // if T0 >= bump_ptr, 结束
-        self.bgeu(T0, S2, 0); // 占位 → sweep_done
-        let sweep_done_jmp = self.code.len() - 4;
+        // compact_loop:
+        let compact_loop = self.code.len();
+        // if T0 >= bump_ptr (S2), 跳出
+        self.bgeu(T0, S2, 0); // 占位 → compact_done
+        let compact_done_jmp = self.code.len() - 4;
 
         // T1 = total_size = [T0+4]
         self.i_type(4, T0, 0x2, T1, 0x03); // LW T1, 4(T0)
 
-        // 检查 mark bit
+        // T2 = mark byte = [T0+0]
         self.i_type(0, T0, 0x0, T2, 0x03); // LB T2, 0(T0)
+
+        // 检查 mark bit (bit 0)
         self.andi(T2, T2, 1);
+        // 如果未标记，跳过此对象
+        self.beq(T2, ZERO, 0); // 占位 → skip_obj
+        let skip_obj_jmp = self.code.len() - 4;
 
-        // 清除标记位 (为下次 GC 准备)
-        self.i_type(0, T0, 0x0, T3, 0x03); // LB T3, 0(T0)
-        self.andi(T3, T3, -2 as i32);       // T3 &= ~1
-        self.s_type(0, T3, T0, 0x0, 0x23);  // SB T3, 0(T0)
+        // ---- 存活对象：逐字节复制从 src(T0) 到 dest(S5) ----
+        // 保存 dest 到 T3，因为复制循环会修改它
+        self.mv(T3, S5); // T3 = dest（复制用临时指针）
+        self.mv(T4, T0); // T4 = src（复制用临时指针）
+        self.mv(T2, T1); // T2 = 剩余字节数
 
-        // 如果 total_size == 0，跳过（安全检查）
-        self.beq(T1, ZERO, 0); // 占位 → sweep_next
-        let sweep_safety_jmp = self.code.len() - 4;
+        // copy_loop: 逐字节复制
+        let copy_loop = self.code.len();
+        self.beq(T2, ZERO, 0); // 占位 → copy_done
+        let copy_done_jmp = self.code.len() - 4;
+        // LB T6, 0(T4)
+        self.i_type(0, T4, 0x0, T6, 0x03); // LB T6, 0(T4)
+        // SB T6, 0(T3)
+        self.s_type(0, T6, T3, 0x0, 0x23); // SB T6, 0(T3)
+        self.addi(T4, T4, 1); // src++
+        self.addi(T3, T3, 1); // dst++
+        self.addi(T2, T2, -1); // remaining--
+        self.jal(ZERO, copy_loop as i32 - self.code.len() as i32);
 
-        // T0 += total_size
+        // copy_done:
+        let copy_done_label = self.code.len();
+
+        // 将新位置的 mark bit 清除（为下次 GC 准备）
+        // 新位置 = dest = S5
+        self.i_type(0, S5, 0x0, T2, 0x03); // LB T2, 0(S5)
+        self.andi(T2, T2, -2 as i32);       // T2 &= ~1
+        self.s_type(0, T2, S5, 0x0, 0x23);  // SB T2, 0(S5)
+
+        // dest += total_size
+        self.add(S5, S5, T1);
+
+        // skip_obj / advance_src:
+        let skip_obj_label = self.code.len();
+        // src += total_size
         self.add(T0, T0, T1);
-        self.jal(ZERO, sweep_loop as i32 - self.code.len() as i32);
+        self.jal(ZERO, compact_loop as i32 - self.code.len() as i32);
 
-        // sweep_next (safety):
-        self.addi(T0, T0, 16); // 最小步进
-        self.jal(ZERO, sweep_loop as i32 - self.code.len() as i32);
+        // compact_done:
+        let compact_done_label = self.code.len();
 
-        // sweep_done:
-        let sweep_done_label = self.code.len();
+        // 更新 bump_ptr = dest (S5)
+        self.store_global(S5, G_BUMP_PTR);
 
-        // 重置 alloc_count
+        // 重置 alloc_count = 0
         self.li(T0, 0);
         self.store_global(T0, G_ALLOC_COUNT);
 
@@ -699,12 +728,12 @@ impl RiscvRuntime {
         // already_marked: 已标记 → already_marked_label
         patch_btype(&mut self.code, already_marked_jmp, already_marked_label);
 
-        // sweep_done: T0 >= bump_ptr
-        patch_btype(&mut self.code, sweep_done_jmp, sweep_done_label);
-        // sweep_safety: total_size == 0
-        let sweep_next_label = sweep_loop; // sweep_next 就是继续循环
-        // 修补 sweep_loop 中的 JAL 指令（向回跳）
-        // 它们已经在 emit 时计算了正确的 offset
+        // compact_done: T0 >= bump_ptr
+        patch_btype(&mut self.code, compact_done_jmp, compact_done_label);
+        // skip_obj: mark bit == 0 → skip_obj_label
+        patch_btype(&mut self.code, skip_obj_jmp, skip_obj_label);
+        // copy_done: 剩余字节 == 0 → copy_done_label
+        patch_btype(&mut self.code, copy_done_jmp, copy_done_label);
 
         self.fn_end();
     }

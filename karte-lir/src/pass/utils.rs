@@ -108,6 +108,9 @@ impl VerifyPass {
                 }
                 | Instruction::Div {
                     dst, src1, src2, ..
+                }
+                | Instruction::Mod {
+                    dst, src1, src2, ..
                 } => {
                     self.check_operand_defined(src1, &defined_regs)?;
                     self.check_operand_defined(src2, &defined_regs)?;
@@ -281,6 +284,9 @@ impl StatisticsPass {
                 dst, src1, src2, ..
             }
             | Instruction::Div {
+                dst, src1, src2, ..
+            }
+            | Instruction::Mod {
                 dst, src1, src2, ..
             } => {
                 add_reg(*dst, virtual_regs, physical_regs);

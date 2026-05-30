@@ -46,6 +46,11 @@ pub enum Expr {
         value: i64,
         span: Span,
     },
+    /// 字符串字面量
+    StringLiteral {
+        value: String,
+        span: Span,
+    },
     Unit {
         span: Span,
     },
@@ -140,6 +145,31 @@ pub enum Expr {
     While {
         condition: Box<Expr>,
         body: Box<Expr>,
+        span: Span,
+    },
+
+    /// ForIn表达式 - 范围循环 for ident in start..end { body }
+    ForIn {
+        var: String,
+        start: Box<Expr>,
+        end: Box<Expr>,
+        body: Box<Expr>,
+        span: Span,
+    },
+
+    /// Break表达式 - 跳出当前循环
+    Break {
+        span: Span,
+    },
+
+    /// Continue表达式 - 跳到当前循环的条件检查
+    Continue {
+        span: Span,
+    },
+
+    /// Return表达式 - 从当前函数返回
+    Return {
+        value: Option<Box<Expr>>,
         span: Span,
     },
 
@@ -284,6 +314,7 @@ pub enum Statement {
     TypeDef {
         name: String,
         variants: Vec<TypeVariant>,
+        is_pub: bool,
         span: Span,
     },
 
@@ -291,6 +322,7 @@ pub enum Statement {
     StructDef {
         name: String,
         fields: Vec<FieldDef>,
+        is_pub: bool,
         span: Span,
     },
 
@@ -305,8 +337,9 @@ pub enum Statement {
     FunctionDef {
         name: String,
         params: Vec<Parameter>,
-        return_type: Option<String>,
+        return_type: Option<Type>,
         body: Expr,
+        is_pub: bool,
         span: Span,
     },
 }
@@ -349,7 +382,7 @@ pub enum Pattern {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeVariant {
     pub name: String,
-    pub data_type: Option<String>, // 简化版本，只支持类型名字符串
+    pub data_type: Option<Type>, // 结构化类型
     pub span: Span,
 }
 
@@ -365,7 +398,7 @@ pub struct FieldInit {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldDef {
     pub name: String,
-    pub field_type: String, // 简化版本，只支持类型名字符串
+    pub field_type: Type, // 结构化类型
     pub span: Span,
 }
 
@@ -373,7 +406,7 @@ pub struct FieldDef {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Parameter {
     pub name: String,
-    pub type_annotation: Option<String>, // 可选的类型注解
+    pub type_annotation: Option<Type>, // 结构化类型注解
     pub span: Span,
 }
 
@@ -388,7 +421,7 @@ impl Parameter {
     }
 
     /// 创建一个带类型注解的参数
-    pub fn typed(name: String, type_annotation: String) -> Self {
+    pub fn typed(name: String, type_annotation: Type) -> Self {
         Self {
             name,
             type_annotation: Some(type_annotation),
@@ -403,6 +436,7 @@ pub enum BinaryOperator {
     Subtract,
     Multiply,
     Divide,
+    Modulo,
     Equal,
     NotEqual,
     GreaterEqual,
@@ -437,6 +471,7 @@ impl fmt::Display for BinaryOperator {
             BinaryOperator::Subtract => write!(f, "-"),
             BinaryOperator::Multiply => write!(f, "*"),
             BinaryOperator::Divide => write!(f, "/"),
+            BinaryOperator::Modulo => write!(f, "%"),
             BinaryOperator::Equal => write!(f, "=="),
             BinaryOperator::NotEqual => write!(f, "!="),
             BinaryOperator::GreaterEqual => write!(f, ">="),
@@ -470,7 +505,8 @@ impl fmt::Display for Statement {
         match self {
             Statement::Let { name, value, .. } => write!(f, "let {} = {};", name, value),
             Statement::Expression { expr, .. } => write!(f, "{};", expr),
-            Statement::TypeDef { name, variants, .. } => {
+            Statement::TypeDef { name, variants, is_pub, .. } => {
+                let pub_str = if *is_pub { "pub " } else { "" };
                 let variants_str = variants
                     .iter()
                     .map(|v| {
@@ -482,15 +518,16 @@ impl fmt::Display for Statement {
                     })
                     .collect::<Vec<_>>()
                     .join(" | ");
-                write!(f, "enum {} = {};", name, variants_str)
+                write!(f, "{}enum {} = {};", pub_str, name, variants_str)
             }
-            Statement::StructDef { name, fields, .. } => {
+            Statement::StructDef { name, fields, is_pub, .. } => {
+                let pub_str = if *is_pub { "pub " } else { "" };
                 let fields_str = fields
                     .iter()
                     .map(|f| format!("{}: {}", f.name, f.field_type))
                     .collect::<Vec<_>>()
                     .join(", ");
-                write!(f, "struct {} = {{ {} }};", name, fields_str)
+                write!(f, "{}struct {} = {{ {} }};", pub_str, name, fields_str)
             }
             Statement::Assignment { target, value, .. } => {
                 write!(f, "{} = {};", target, value)
@@ -500,8 +537,10 @@ impl fmt::Display for Statement {
                 params,
                 return_type,
                 body,
+                is_pub,
                 ..
             } => {
+                let pub_str = if *is_pub { "pub " } else { "" };
                 let params_str = params
                     .iter()
                     .map(|p| {
@@ -518,7 +557,7 @@ impl fmt::Display for Statement {
                 } else {
                     "".to_string()
                 };
-                write!(f, "fn {}({}){} {}", name, params_str, ret_str, body)
+                write!(f, "{}fn {}({}){} {}", pub_str, name, params_str, ret_str, body)
             }
         }
     }
@@ -528,6 +567,7 @@ impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Expr::Number { value, .. } => write!(f, "{}", value),
+            Expr::StringLiteral { value, .. } => write!(f, "\"{}\"", value),
             Expr::Unit { .. } => write!(f, "()"),
             Expr::Identifier { name, .. } => write!(f, "{}", name),
             Expr::ModuleSymbolAccess {
@@ -637,6 +677,20 @@ impl fmt::Display for Expr {
             } => {
                 write!(f, "while {} do {}", condition, body)
             }
+            Expr::ForIn {
+                var, start, end, body, ..
+            } => {
+                write!(f, "for {} in {}..{} {{ {} }}", var, start, end, body)
+            }
+            Expr::Break { .. } => write!(f, "break"),
+            Expr::Continue { .. } => write!(f, "continue"),
+            Expr::Return { value, .. } => {
+                if let Some(v) = value {
+                    write!(f, "return {}", v)
+                } else {
+                    write!(f, "return")
+                }
+            }
             Expr::StructLiteral { name, fields, .. } => {
                 let fields_str = fields
                     .iter()
@@ -722,6 +776,7 @@ impl Expr {
     pub fn span(&self) -> Span {
         match self {
             Expr::Number { span, .. } => *span,
+            Expr::StringLiteral { span, .. } => *span,
             Expr::Unit { span, .. } => *span,
             Expr::Identifier { span, .. } => *span,
             Expr::ModuleSymbolAccess { span, .. } => *span,
@@ -737,6 +792,10 @@ impl Expr {
             Expr::Boolean { span, .. } => *span,
             Expr::If { span, .. } => *span,
             Expr::While { span, .. } => *span,
+            Expr::ForIn { span, .. } => *span,
+            Expr::Break { span, .. } => *span,
+            Expr::Continue { span, .. } => *span,
+            Expr::Return { span, .. } => *span,
             Expr::StructLiteral { span, .. } => *span,
             Expr::FieldAccess { span, .. } => *span,
             Expr::ArrayLiteral { span, .. } => *span,

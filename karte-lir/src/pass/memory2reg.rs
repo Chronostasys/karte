@@ -1209,6 +1209,7 @@ impl Memory2RegPass {
                 | Instruction::Sub { dst, .. }
                 | Instruction::Mul { dst, .. }
                 | Instruction::Div { dst, .. }
+                | Instruction::Mod { dst, .. }
                 | Instruction::BitAnd { dst, .. }
                 | Instruction::BitOr { dst, .. }
                 | Instruction::BitXor { dst, .. }
@@ -1286,6 +1287,9 @@ impl Memory2RegPass {
                     dst, src1, src2, ..
                 }
                 | Instruction::Div {
+                    dst, src1, src2, ..
+                }
+                | Instruction::Mod {
                     dst, src1, src2, ..
                 }
                 | Instruction::BitAnd {

@@ -220,6 +220,7 @@ pub(super) fn value_to_key(value: &Value) -> String {
         Value::Reference { value, .. } => {
             format!("ref:({})", value_to_key(value))
         }
+        Value::StringLiteral { value, .. } => format!("str:{}", value),
     }
 }
 

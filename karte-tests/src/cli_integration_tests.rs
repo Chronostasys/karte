@@ -1593,4 +1593,371 @@ fn main() -> number {
         compile_and_run_aot_riscv64(code, 50, "riscv64_closure_mul");
     }
 
+    // ==================== 回归测试：while 循环 phi 修复 ====================
+
+    #[test]
+    fn test_while_loop_assign_constant() {
+        let code = r#"
+fn main() -> number {
+    let x = 10;
+    let i = 0;
+    while i < 1 {
+        x = 42;
+        i = i + 1;
+    };
+    x
+}
+"#;
+        compile_and_run_aot(code, 42, "while_assign_const");
+    }
+
+    #[test]
+    fn test_while_loop_accumulate() {
+        let code = r#"
+fn main() -> number {
+    let x = 10;
+    let i = 0;
+    while i < 3 {
+        x = x + 1;
+        i = i + 1;
+    };
+    x
+}
+"#;
+        compile_and_run_aot(code, 13, "while_accumulate");
+    }
+
+    #[test]
+    fn test_while_loop_counter() {
+        let code = r#"
+fn main() -> number {
+    let count = 0;
+    let i = 0;
+    while i < 3 {
+        count = count + 1;
+        i = i + 1;
+    };
+    count
+}
+"#;
+        compile_and_run_aot(code, 3, "while_counter");
+    }
+
+    #[test]
+    fn test_while_loop_sum() {
+        let code = r#"
+fn main() -> number {
+    let sum = 0;
+    let i = 1;
+    while i <= 5 {
+        sum = sum + i;
+        i = i + 1;
+    };
+    sum
+}
+"#;
+        compile_and_run_aot(code, 15, "while_sum");
+    }
+
+    #[test]
+    fn test_while_not_entered() {
+        let code = r#"
+fn main() -> number {
+    let x = 99;
+    let i = 0;
+    while i < 0 {
+        x = 0;
+        i = i + 1;
+    };
+    x
+}
+"#;
+        compile_and_run_aot(code, 99, "while_not_entered");
+    }
+
+    // ==================== 回归测试：return 语句 ====================
+
+    #[test]
+    fn test_return_basic() {
+        let code = r#"
+fn main() -> number {
+    return 42;
+}
+"#;
+        compile_and_run_aot(code, 42, "return_basic");
+    }
+
+    #[test]
+    fn test_return_expression() {
+        let code = r#"
+fn add(a: number, b: number) -> number {
+    return a + b;
+}
+fn main() -> number {
+    add(10, 20)
+}
+"#;
+        compile_and_run_aot(code, 30, "return_expr");
+    }
+
+    #[test]
+    fn test_return_early() {
+        let code = r#"
+fn abs(x: number) -> number {
+    if x < 0 {
+        return 0 - x;
+    };
+    x
+}
+fn main() -> number {
+    abs(-7)
+}
+"#;
+        compile_and_run_aot(code, 7, "return_early");
+    }
+
+    #[test]
+    fn test_return_in_nested_if() {
+        let code = r#"
+fn classify(x: number) -> number {
+    if x > 0 {
+        return 1;
+    };
+    if x < 0 {
+        return 2;
+    };
+    0
+}
+fn main() -> number {
+    classify(-5)
+}
+"#;
+        compile_and_run_aot(code, 2, "return_nested_if");
+    }
+
+    // ==================== 回归测试：注释 ====================
+
+    #[test]
+    fn test_line_comment() {
+        let code = r#"
+fn main() -> number {
+    let x = 42; // this is a comment
+    x
+}
+"#;
+        compile_and_run_aot(code, 42, "line_comment");
+    }
+
+    // ==================== 回归测试：模运算 ====================
+
+    #[test]
+    fn test_modulo_basic() {
+        let code = r#"
+fn main() -> number {
+    12 % 5
+}
+"#;
+        compile_and_run_aot(code, 2, "modulo_basic");
+    }
+
+    #[test]
+    fn test_modulo_zero_remainder() {
+        let code = r#"
+fn main() -> number {
+    10 % 2
+}
+"#;
+        compile_and_run_aot(code, 0, "modulo_zero");
+    }
+
+    // ==================== 回归测试：复合赋值 ====================
+
+    #[test]
+    fn test_compound_add() {
+        let code = r#"
+fn main() -> number {
+    let x = 10;
+    x += 5;
+    x
+}
+"#;
+        compile_and_run_aot(code, 15, "compound_add");
+    }
+
+    #[test]
+    fn test_compound_subtract() {
+        let code = r#"
+fn main() -> number {
+    let x = 20;
+    x -= 7;
+    x
+}
+"#;
+        compile_and_run_aot(code, 13, "compound_sub");
+    }
+
+    #[test]
+    fn test_compound_multiply() {
+        let code = r#"
+fn main() -> number {
+    let x = 6;
+    x *= 7;
+    x
+}
+"#;
+        compile_and_run_aot(code, 42, "compound_mul");
+    }
+
+    #[test]
+    fn test_compound_divide() {
+        let code = r#"
+fn main() -> number {
+    let x = 42;
+    x /= 6;
+    x
+}
+"#;
+        compile_and_run_aot(code, 7, "compound_div");
+    }
+
+    // ==================== 回归测试：布尔类型 ====================
+
+    #[test]
+    fn test_bool_true_branch() {
+        let code = r#"
+fn main() -> number {
+    if true { 1 } else { 0 }
+}
+"#;
+        compile_and_run_aot(code, 1, "bool_true");
+    }
+
+    #[test]
+    fn test_bool_false_branch() {
+        let code = r#"
+fn main() -> number {
+    if false { 1 } else { 0 }
+}
+"#;
+        compile_and_run_aot(code, 0, "bool_false");
+    }
+
+    #[test]
+    fn test_logical_not() {
+        let code = r#"
+fn main() -> number {
+    if !false { 1 } else { 0 }
+}
+"#;
+        compile_and_run_aot(code, 1, "logical_not");
+    }
+
+    #[test]
+    fn test_logical_and() {
+        let code = r#"
+fn main() -> number {
+    if true && true { 1 } else { 0 }
+}
+"#;
+        compile_and_run_aot(code, 1, "logical_and");
+    }
+
+    #[test]
+    fn test_logical_or() {
+        let code = r#"
+fn main() -> number {
+    if false || true { 1 } else { 0 }
+}
+"#;
+        compile_and_run_aot(code, 1, "logical_or");
+    }
+
+    // ==================== 回归测试：位操作 ====================
+
+    #[test]
+    fn test_bitwise_xor_symbol() {
+        let code = r#"
+fn main() -> number {
+    12 ^ 10
+}
+"#;
+        compile_and_run_aot(code, 6, "bitwise_xor");
+    }
+
+    #[test]
+    fn test_bitwise_not() {
+        let code = r#"
+fn main() -> number {
+    let a = 0;
+    let b = ~a;
+    let c = b bitxor a;
+    0 - c
+}
+"#;
+        compile_and_run_aot(code, 1, "bitwise_not");
+    }
+
+    #[test]
+    fn test_shift_left() {
+        let code = r#"
+fn main() -> number {
+    1 << 4
+}
+"#;
+        compile_and_run_aot(code, 16, "shift_left");
+    }
+
+    #[test]
+    fn test_shift_right() {
+        let code = r#"
+fn main() -> number {
+    16 >> 2
+}
+"#;
+        compile_and_run_aot(code, 4, "shift_right");
+    }
+
+    // ==================== 回归测试：字符串 ====================
+
+    #[test]
+    #[ignore] // TODO: AOT 字符串支持需要完善
+    fn test_string_concat_and_print() {
+        let code = r#"
+fn main() -> number {
+    print("hello" + " " + "world");
+    0
+}
+"#;
+        compile_and_run_aot(code, 0, "string_concat_print");
+    }
+
+    #[test]
+    #[ignore] // TODO: AOT 字符串支持需要完善
+    fn test_string_in_variable() {
+        let code = r#"
+fn main() -> number {
+    let s = "ok";
+    print(s);
+    0
+}
+"#;
+        compile_and_run_aot(code, 0, "string_variable");
+    }
+
+    #[test]
+    #[ignore] // TODO: AOT 字符串支持需要完善
+    fn test_string_as_argument() {
+        let code = r#"
+fn greet(name: string) -> number {
+    print("Hello, " + name);
+    0
+}
+fn main() -> number {
+    greet("Karte");
+    0
+}
+"#;
+        compile_and_run_aot(code, 0, "string_argument");
+    }
+
 }

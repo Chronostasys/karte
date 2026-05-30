@@ -461,6 +461,7 @@ impl RiscvCompiler {
             Instruction::Sub { dst, src1, src2, .. } => self.compile_sub(dst, src1, src2, cb),
             Instruction::Mul { dst, src1, src2, .. } => self.compile_mul(dst, src1, src2, cb),
             Instruction::Div { dst, src1, src2, .. } => self.compile_div(dst, src1, src2, cb),
+            Instruction::Mod { dst, src1, src2, .. } => self.compile_mod(dst, src1, src2, cb),
             Instruction::BitAnd { dst, src1, src2, .. } => self.compile_bitand(dst, src1, src2, cb),
             Instruction::BitOr { dst, src1, src2, .. } => self.compile_bitor(dst, src1, src2, cb),
             Instruction::BitXor { dst, src1, src2, .. } => self.compile_bitxor(dst, src1, src2, cb),
@@ -524,6 +525,12 @@ impl RiscvCompiler {
             Instruction::Retain { value, .. } => self.compile_retain(value, cb),
             Instruction::Release { value, .. } => self.compile_release(value, cb),
             Instruction::Safepoint { .. } => self.compile_safepoint(cb),
+            Instruction::StringConcat { dst, left, right, .. } => {
+                self.compile_string_concat(dst, left, right, cb)
+            }
+            Instruction::PrintString { ptr, .. } => {
+                self.compile_print_string(ptr, cb)
+            }
             Instruction::Nop { .. } => {
                 self.emit_nop(cb);
                 Ok(())
@@ -584,6 +591,15 @@ impl RiscvCompiler {
         self.load_operand_to_reg(cb, dst_rv, src1)?;
         let src2_rv = self.resolve_operand_reg(cb, src2, 5)?;
         self.emit_div(cb, dst_rv, dst_rv, src2_rv);
+        Ok(())
+    }
+
+    /// 编译取余指令，使用 RISC-V REM 指令
+    fn compile_mod(&self, dst: &Register, src1: &Operand, src2: &Operand, cb: &mut CodeBuilder) -> crate::Result<()> {
+        let dst_rv = self.get_physical_register(dst)?;
+        self.load_operand_to_reg(cb, dst_rv, src1)?;
+        let src2_rv = self.resolve_operand_reg(cb, src2, 5)?;
+        self.emit_rem(cb, dst_rv, dst_rv, src2_rv);
         Ok(())
     }
 
@@ -1060,6 +1076,26 @@ impl RiscvCompiler {
         let call = RuntimeCall::gc_safepoint();
         self.emit_runtime_call(cb, call, None)
     }
+
+    fn compile_string_concat(
+        &self,
+        dst: &Register,
+        left: &Register,
+        right: &Register,
+        cb: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::string_concat(*left, *right);
+        self.emit_runtime_call(cb, call, Some(dst))
+    }
+
+    fn compile_print_string(
+        &self,
+        ptr: &Register,
+        cb: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::print_string(*ptr);
+        self.emit_runtime_call(cb, call, None)
+    }
 }
 
 // ============================================================================
@@ -1492,7 +1528,7 @@ impl JitCompiler for RiscvCompiler {
             stack_pointer: 10,
             frame_pointer: 11,
             caller_saved: vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 23, 24, 25, 26, 27],
-            callee_saved: vec![11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22],
+            callee_saved: vec![12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22],
         }
     }
 }

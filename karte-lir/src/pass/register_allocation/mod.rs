@@ -981,10 +981,13 @@ impl SimpleStackRegisterAllocation {
         let scratch_regs = &self.calling_convention.temp_registers;
 
         if scratch_regs.is_empty() {
-            // 极端情况回退
-            for &reg in spilled_operands {
-                assignments.insert(reg, 0);
-            }
+            // 极端情况：没有任何临时寄存器可用
+            // 不能静默分配到寄存器0，多个操作数共享同一寄存器会导致数据损坏
+            assert!(
+                spilled_operands.is_empty(),
+                "当前架构没有临时寄存器，但指令有 {} 个溢出操作数需要加载到临时寄存器",
+                spilled_operands.len()
+            );
             return assignments;
         }
 
@@ -1007,9 +1010,23 @@ impl SimpleStackRegisterAllocation {
         let mut sorted_operands: Vec<Register> = spilled_operands.iter().copied().collect();
         sorted_operands.sort_by_key(|r| r.id());
 
-        // 简单轮询分配
+        // 安全检查：溢出操作数数量不能超过可用临时寄存器数量
+        // 如果超出，模运算会导致不同操作数分配到同一临时寄存器，
+        // 在指令执行前加载时后者覆盖前者，造成静默数据损坏。
+        // 当前的指令重写机制要求所有溢出操作数的值同时在寄存器中存活，
+        // 因此无法通过栈中转来解决——此处选择 fail-fast 以暴露问题。
+        assert!(
+            sorted_operands.len() <= use_regs.len(),
+            "溢出操作数数量（{}）超过可用临时寄存器数量（{}），\
+             无法为每个溢出操作数分配独立的临时寄存器。\
+             请检查寄存器分配器的压力是否过大，或增加临时寄存器池。",
+            sorted_operands.len(),
+            use_regs.len()
+        );
+
+        // 轮询分配（通过上面的断言保证不会发生模运算重叠）
         for (i, &reg) in sorted_operands.iter().enumerate() {
-            let temp_reg = use_regs[i % use_regs.len()];
+            let temp_reg = use_regs[i];
             assignments.insert(reg, temp_reg);
         }
 

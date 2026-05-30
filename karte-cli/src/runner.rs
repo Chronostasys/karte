@@ -301,7 +301,8 @@ fn canonicalize_value(value: &mut Value, symbols: &HashMap<String, String>) {
         | Value::Number { .. }
         | Value::Boolean { .. }
         | Value::Unit
-        | Value::Temp { .. } => {}
+        | Value::Temp { .. }
+        | Value::StringLiteral { .. } => {}
     }
 }
 

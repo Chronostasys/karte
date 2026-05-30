@@ -149,3 +149,69 @@ pub extern "C" fn karte_jit_runtime_update_stack_top(stack_top: u64) {
         karte_gc::update_virtual_stack_top(stack_top as *const u8);
     }
 }
+
+/// 字符串连接：将两个字符串连接成新字符串
+/// 字符串格式：[length: i64][bytes...]
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_string_concat(left_ptr: u64, right_ptr: u64) -> u64 {
+    unsafe {
+        if left_ptr == 0 || right_ptr == 0 {
+            return 0;
+        }
+        let left_len = *(left_ptr as *const i64) as usize;
+        let right_len = *(right_ptr as *const i64) as usize;
+        let total_len = left_len + right_len;
+        // 8 字节头部 + 数据对齐到 8 字节
+        let total_size = 8 + ((total_len + 7) & !7);
+
+        // 先拷贝源数据到栈上的缓冲区，避免 gc_alloc 触发 GC 后指针失效
+        // 栈上分配足够大的缓冲区
+        let mut left_buf: Vec<u8> = Vec::with_capacity(left_len);
+        let mut right_buf: Vec<u8> = Vec::with_capacity(right_len);
+
+        let left_data = (left_ptr as *const u8).add(8);
+        std::ptr::copy_nonoverlapping(left_data, left_buf.as_mut_ptr(), left_len);
+        left_buf.set_len(left_len);
+
+        let right_data = (right_ptr as *const u8).add(8);
+        std::ptr::copy_nonoverlapping(right_data, right_buf.as_mut_ptr(), right_len);
+        right_buf.set_len(right_len);
+
+        // 现在安全地分配新内存（GC 可能移动 left/right 对象，但我们已经复制了数据）
+        let new_ptr = gc_alloc(total_size, ObjectType::Conservative);
+        if new_ptr.is_null() {
+            return 0;
+        }
+
+        // 写入总长度
+        *(new_ptr as *mut i64) = total_len as i64;
+
+        // 拷贝左字符串数据
+        let dest = (new_ptr as *mut u8).add(8);
+        std::ptr::copy_nonoverlapping(left_buf.as_ptr(), dest, left_len);
+
+        // 拷贝右字符串数据
+        std::ptr::copy_nonoverlapping(right_buf.as_ptr(), dest.add(left_len), right_len);
+
+        new_ptr as u64
+    }
+}
+
+/// 打印字符串到 stdout
+/// 字符串格式：[length: i64][bytes...]
+/// 返回 0（Unit）
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_print_string(str_ptr: u64) -> u64 {
+    unsafe {
+        if str_ptr == 0 {
+            return 0;
+        }
+        let len = *(str_ptr as *const i64) as usize;
+        let data = (str_ptr as *const u8).add(8);
+
+        if len > 0 {
+            libc::write(1, data as *const libc::c_void, len);
+        }
+        0
+    }
+}

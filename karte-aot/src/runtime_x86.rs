@@ -889,7 +889,8 @@ impl X86Runtime {
         // RSI = src (RDI), RDI = dst (RSI) — 注意 rep movsb 是 [RSI] → [RDI]
         // 所以我们需要: RSI = src, RDI = dst
         self.mov_rr(6, 7); // RSI = src (original RDI)
-        // RDI (dst) 已经是目标位置
+        // 从栈上恢复 dest 到 RDI: push(6) 保存的 RSI(dest) 现在在 [RSP]
+        self.mov_mem_load(7, 4, 0); // RDI = [RSP] = dest
         self.push(8); // 保存 total_size
         // rep movsb
         self.bs(&[0xF3, 0xA4]); // REP MOVSB

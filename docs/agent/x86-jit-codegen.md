@@ -15,7 +15,7 @@ Karte uses its own calling convention (not C ABI). Key registers:
 | RSI | 6 | Caller-saved | General purpose |
 | RDI | 7 | Caller-saved | General purpose |
 | R8 | 8 | Caller-saved | effect_tag_register |
-| R9 | 9 | Caller-saved | return_address (unused on x86) |
+| R9 | 9 | Caller-saved | return_address（内部函数返回时使用，但 x86 实际用 RCX(1) 加载返回地址） |
 | R10 | 10 | vm_sp | Virtual stack pointer — RESERVED |
 | R11 | 11 | vm_fp | Virtual frame pointer — RESERVED |
 | R12 | 12 | Callee-saved | effect_stack_pointer |

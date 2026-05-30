@@ -115,6 +115,9 @@ impl X86Compiler {
             Instruction::Div { dst, src1, src2, .. } => {
                 self.compile_div(dst, src1, src2, code_builder)
             }
+            Instruction::Mod { dst, src1, src2, .. } => {
+                self.compile_mod(dst, src1, src2, code_builder)
+            }
             Instruction::BitAnd { dst, src1, src2, .. } => {
                 self.compile_bitand(dst, src1, src2, code_builder)
             }
@@ -214,6 +217,12 @@ impl X86Compiler {
             Instruction::Retain { value, .. } => self.compile_retain(value, code_builder),
             Instruction::Release { value, .. } => self.compile_release(value, code_builder),
             Instruction::Safepoint { .. } => self.compile_safepoint(code_builder),
+            Instruction::StringConcat { dst, left, right, .. } => {
+                self.compile_string_concat(dst, left, right, code_builder)
+            }
+            Instruction::PrintString { ptr, .. } => {
+                self.compile_print_string(ptr, code_builder)
+            }
             Instruction::Nop { .. } => {
                 // x86 NOP
                 code_builder.emit_byte(0x90);
@@ -478,6 +487,85 @@ impl X86Compiler {
         // 商在 RAX，移动到 dst
         if dst_reg != rax {
             self.emit_mov_reg_reg(code_builder, dst_reg, rax);
+        }
+        Ok(())
+    }
+
+    /// 编译取余指令
+    /// x86 的 IDIV 指令将 RDX:RAX 除以操作数，余数在 RDX 中
+    fn compile_mod(
+        &self,
+        dst: &Register,
+        src1: &Operand,
+        src2: &Operand,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+        let rax: u8 = 0; // RAX
+        let rdx: u8 = 2; // RDX
+        let rcx: u8 = 1; // RCX (安全临时寄存器)
+
+        // 先处理 src2（除数），因为它可能在 RDX 中，CQO 会覆盖 RDX
+        let src1_reg = match src1 {
+            Operand::Register { id } => self.get_physical_register(id)?,
+            _ => 0xFF, // 立即数，不会与寄存器冲突
+        };
+
+        let div_src_reg: u8;
+        match src2 {
+            Operand::Register { id } => {
+                let src2_reg = self.get_physical_register(id)?;
+                if src2_reg == rdx {
+                    // src2 在 RDX 中，CQO 会覆盖它
+                    if src1_reg == rcx {
+                        // src1 在 RCX，不能用 RCX 作临时，用 R8 代替
+                        let r8: u8 = 8;
+                        self.emit_mov_reg_reg(code_builder, r8, rdx);
+                        div_src_reg = r8;
+                    } else {
+                        self.emit_mov_reg_reg(code_builder, rcx, rdx);
+                        div_src_reg = rcx;
+                    }
+                } else {
+                    div_src_reg = src2_reg;
+                }
+            }
+            Operand::Immediate { value } => {
+                let temp_reg = if src1_reg == rcx { 8 } else { rcx };
+                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
+                div_src_reg = temp_reg;
+            }
+            _ => {
+                return Err(format!("mod指令不支持的src2类型: {:?}", src2).into());
+            }
+        }
+
+        // 将 src1 加载到 RAX
+        match src1 {
+            Operand::Register { id } => {
+                let src1_phys = self.get_physical_register(id)?;
+                if rax != src1_phys {
+                    self.emit_mov_reg_reg(code_builder, rax, src1_phys);
+                }
+            }
+            Operand::Immediate { value } => {
+                self.emit_mov_reg_imm64(code_builder, rax, *value);
+            }
+            _ => {
+                return Err(format!("mod指令不支持的src1类型: {:?}", src1).into());
+            }
+        }
+
+        // CQO (将 RAX 符号扩展到 RDX:RAX)
+        self.emit_rex_prefix(code_builder, true, 0, 0, 0);
+        code_builder.emit_byte(0x99);
+
+        // IDIV div_src_reg
+        self.emit_idiv_reg(code_builder, div_src_reg);
+
+        // 余数在 RDX，移动到 dst
+        if dst_reg != rdx {
+            self.emit_mov_reg_reg(code_builder, dst_reg, rdx);
         }
         Ok(())
     }
@@ -1305,6 +1393,26 @@ impl X86Compiler {
 
     fn compile_safepoint(&self, code_builder: &mut CodeBuilder) -> crate::Result<()> {
         let call = RuntimeCall::gc_safepoint();
+        self.emit_runtime_call(code_builder, call, None)
+    }
+
+    fn compile_string_concat(
+        &self,
+        dst: &Register,
+        left: &Register,
+        right: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::string_concat(*left, *right);
+        self.emit_runtime_call(code_builder, call, Some(dst))
+    }
+
+    fn compile_print_string(
+        &self,
+        ptr: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::print_string(*ptr);
         self.emit_runtime_call(code_builder, call, None)
     }
 

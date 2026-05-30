@@ -277,7 +277,8 @@ fn check_instruction_operands_no_virtual(instr: &Instruction, fn_name: &str, idx
         Instruction::Add { dst, src1, src2, .. }
         | Instruction::Sub { dst, src1, src2, .. }
         | Instruction::Mul { dst, src1, src2, .. }
-        | Instruction::Div { dst, src1, src2, .. } => {
+        | Instruction::Div { dst, src1, src2, .. }
+        | Instruction::Mod { dst, src1, src2, .. } => {
             check_operand(src1, "Arith src1");
             check_operand(src2, "Arith src2");
             if dst.is_virtual() {
@@ -498,6 +499,7 @@ fn instr_name(instr: &Instruction) -> &'static str {
         Instruction::Sub { .. } => "sub",
         Instruction::Mul { .. } => "mul",
         Instruction::Div { .. } => "div",
+        Instruction::Mod { .. } => "mod",
         Instruction::Compare { .. } => "cmp",
         Instruction::CompareSet { .. } => "setcc",
         Instruction::Jump { .. } => "Jump",
@@ -528,6 +530,8 @@ fn instr_name(instr: &Instruction) -> &'static str {
         Instruction::Retain { .. } => "Retain",
         Instruction::Release { .. } => "Release",
         Instruction::Safepoint { .. } => "Safepoint",
+        Instruction::StringConcat { .. } => "StringConcat",
+        Instruction::PrintString { .. } => "PrintString",
         Instruction::Load64 { .. } => "Load64",
         Instruction::LoadGlobal { .. } => "LoadGlobal",
         Instruction::GcRegOp { .. } => "GcRegOp",

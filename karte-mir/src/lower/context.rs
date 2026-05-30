@@ -29,6 +29,8 @@ impl<'a> LoweringContext<'a> {
             temp_types: std::collections::HashMap::new(),
             expr_types: std::collections::HashMap::new(),
             analysis_mode: false,
+            loop_stack: Vec::new(),
+            return_target: None,
         };
         ctx.enter_scope();
         ctx

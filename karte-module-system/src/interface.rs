@@ -73,7 +73,7 @@ impl ModuleInterfaceAccumulator {
                 .iter()
                 .map(|field| StructFieldExport {
                     name: field.name.clone(),
-                    ty: field.field_type.clone(),
+                    ty: field.field_type.to_string(),
                 })
                 .collect::<Vec<_>>();
             fields.sort_by(|a, b| a.name.cmp(&b.name));

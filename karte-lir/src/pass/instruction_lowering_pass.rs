@@ -622,35 +622,20 @@ impl InstructionLoweringPass {
     }
 
     /// 降级Phi指令
+    ///
+    /// Phi 指令不应该出现在指令降级阶段，说明 SSA 降级不完整。
+    /// 直接 panic 以便暴露问题，而非静默使用第一个 incoming 值导致语义错误。
     fn lower_phi(
         &mut self,
-        dst: &Register,
+        _dst: &Register,
         incoming: &[(crate::LabelId, Operand)],
-        span: &Span,
-        instructions: &mut Vec<Instruction>,
+        _span: &Span,
+        _instructions: &mut Vec<Instruction>,
     ) -> crate::Result<()> {
-        println!("🔧 专业降级φ指令: dst={:?}, incoming={:?}", dst, incoming);
-
-        if incoming.is_empty() {
-            return Err("φ指令没有incoming值".into());
-        }
-
-        println!("⚠️  警告：φ指令出现在降级阶段，这表明SSA降级不完整");
-
-        // 选择第一个incoming值作为fallback
-        let (source_block, ref operand) = incoming[0];
-        println!(
-            "🔧 使用fallback策略，选择来自块 {:?} 的值: {:?}",
-            source_block, operand
+        panic!(
+            "Phi 指令出现在降级阶段，这表明 SSA 降级不完整。Phi 目标: {:?}, incoming 数量: {}",
+            _dst, incoming.len()
         );
-
-        instructions.push(Instruction::Move {
-            dst: *dst,
-            src: operand.clone(),
-            span: *span,
-        });
-
-        Ok(())
     }
 
     /// 消除冗余Move指令

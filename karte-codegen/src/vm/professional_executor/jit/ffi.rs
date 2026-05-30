@@ -9,6 +9,8 @@ pub enum RuntimeIntrinsic {
     Retain,
     Release,
     GcSafepoint,
+    StringConcat,
+    PrintString,
 }
 
 impl RuntimeIntrinsic {
@@ -19,6 +21,12 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::Retain => runtime::karte_jit_runtime_retain as *const (),
             RuntimeIntrinsic::Release => runtime::karte_jit_runtime_release as *const (),
             RuntimeIntrinsic::GcSafepoint => runtime::karte_jit_runtime_gc_safepoint as *const (),
+            RuntimeIntrinsic::StringConcat => {
+                runtime::karte_jit_runtime_string_concat as *const ()
+            }
+            RuntimeIntrinsic::PrintString => {
+                runtime::karte_jit_runtime_print_string as *const ()
+            }
         }
     }
 
@@ -29,11 +37,16 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::Retain => "karte_jit_runtime_retain",
             RuntimeIntrinsic::Release => "karte_jit_runtime_release",
             RuntimeIntrinsic::GcSafepoint => "karte_jit_runtime_gc_safepoint",
+            RuntimeIntrinsic::StringConcat => "karte_jit_runtime_string_concat",
+            RuntimeIntrinsic::PrintString => "karte_jit_runtime_print_string",
         }
     }
 
     pub fn has_result(self) -> bool {
-        matches!(self, RuntimeIntrinsic::AllocAligned)
+        matches!(
+            self,
+            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat
+        )
     }
 }
 
@@ -87,6 +100,20 @@ impl RuntimeCall {
         Self {
             intrinsic: RuntimeIntrinsic::GcSafepoint,
             args: vec![],
+        }
+    }
+
+    pub fn string_concat(left: Register, right: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::StringConcat,
+            args: vec![RuntimeArg::Register(left), RuntimeArg::Register(right)],
+        }
+    }
+
+    pub fn print_string(ptr: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::PrintString,
+            args: vec![RuntimeArg::Register(ptr)],
         }
     }
 

@@ -234,6 +234,9 @@ impl AArch64Compiler {
             Instruction::Div {
                 dst, src1, src2, ..
             } => self.compile_div(dst, src1, src2, code_builder),
+            Instruction::Mod {
+                dst, src1, src2, ..
+            } => self.compile_mod(dst, src1, src2, code_builder),
             Instruction::Compare { src1, src2, .. } => {
                 self.compile_compare(src1, src2, code_builder)
             }
@@ -322,6 +325,12 @@ impl AArch64Compiler {
             }
             Instruction::Safepoint { .. } => {
                 self.compile_safepoint(code_builder, instruction_index, function)
+            }
+            Instruction::StringConcat { dst, left, right, .. } => {
+                self.compile_string_concat(dst, left, right, code_builder, instruction_index, function)
+            }
+            Instruction::PrintString { ptr, .. } => {
+                self.compile_print_string(ptr, code_builder, instruction_index, function)
             }
             Instruction::Nop { .. } => {
                 // AArch64 NOP指令 (0xD503201F)
@@ -500,6 +509,46 @@ impl AArch64Compiler {
             }
             _ => {
                 return Err(format!("不支持的除法操作数组合: {:?}, {:?}", src1, src2).into());
+            }
+        }
+        Ok(())
+    }
+
+    /// 编译取余指令
+    /// AArch64 没有直接的取余指令，使用 remainder = dividend - (dividend / divisor) * divisor
+    fn compile_mod(
+        &mut self,
+        dst: &Register,
+        src1: &Operand,
+        src2: &Operand,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+        // 使用 X16, X17 作为临时寄存器
+        let temp_quot = AArch64Register::X16 as u8; // 存商
+        let temp_divisor = AArch64Register::X17 as u8; // 存除数
+
+        match (src1, src2) {
+            (Operand::Register { id: src1_id }, Operand::Register { id: src2_id }) => {
+                let src1_reg = self.get_physical_register(src1_id)?;
+                let src2_reg = self.get_physical_register(src2_id)?;
+                // 保存除数到临时寄存器（因为 src2 可能在后续操作中被覆盖）
+                self.emit_mov_reg_reg(code_builder, temp_divisor, src2_reg);
+                // SDIV temp_quot, src1, src2 (计算商)
+                self.emit_div_reg_reg_reg(code_builder, temp_quot, src1_reg, src2_reg);
+                // MSUB dst, temp_quot, temp_divisor, src1 (result = src1 - temp_quot * temp_divisor)
+                self.emit_msub(code_builder, dst_reg, temp_quot, temp_divisor, src1_reg);
+            }
+            (Operand::Register { id: src1_id }, Operand::Immediate { value }) => {
+                let src1_reg = self.get_physical_register(src1_id)?;
+                self.emit_mov_reg_imm64(code_builder, temp_divisor, *value);
+                // SDIV temp_quot, src1, temp_divisor
+                self.emit_div_reg_reg_reg(code_builder, temp_quot, src1_reg, temp_divisor);
+                // MSUB dst, temp_quot, temp_divisor, src1
+                self.emit_msub(code_builder, dst_reg, temp_quot, temp_divisor, src1_reg);
+            }
+            _ => {
+                return Err(format!("不支持的取余操作数组合: {:?}, {:?}", src1, src2).into());
             }
         }
         Ok(())
@@ -951,6 +1000,30 @@ impl AArch64Compiler {
     ) -> crate::Result<()> {
         // GC 安全点：调用运行时函数
         let call = RuntimeCall::gc_safepoint();
+        self.emit_runtime_call(code_builder, call, None, instruction_index, function)
+    }
+
+    fn compile_string_concat(
+        &mut self,
+        dst: &Register,
+        left: &Register,
+        right: &Register,
+        code_builder: &mut CodeBuilder,
+        instruction_index: usize,
+        function: &LirFunction,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::string_concat(*left, *right);
+        self.emit_runtime_call(code_builder, call, Some(dst), instruction_index, function)
+    }
+
+    fn compile_print_string(
+        &mut self,
+        ptr: &Register,
+        code_builder: &mut CodeBuilder,
+        instruction_index: usize,
+        function: &LirFunction,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::print_string(*ptr);
         self.emit_runtime_call(code_builder, call, None, instruction_index, function)
     }
 
@@ -1414,6 +1487,19 @@ impl AArch64Compiler {
         // 1 |0 |0 |1  1  0  1  1  0 |0  0 |Xm   |0 |0 0 0 1|Xn |Xd
         let instruction =
             0x9AC00800u32 | ((src2 as u32) << 16) | ((src1 as u32) << 5) | (dst as u32);
+        code_builder.emit_bytes(&instruction.to_le_bytes());
+    }
+
+    /// 生成MSUB指令: Xd = Xa - Xn * Xm
+    /// 用于 AArch64 取余运算: remainder = dividend - quotient * divisor
+    fn emit_msub(&self, code_builder: &mut CodeBuilder, dst: u8, rn: u8, rm: u8, ra: u8) {
+        // MSUB <Xd>, <Xn>, <Xm>, <Xa>
+        // 31|30|29|28 27 26 25 24 23|22 21|20 16|15|14 10|9 5|4 0
+        // 1 |0 |0 |1  1  0  1  1  0 |0  0 |Xm   |1 |Ra   |Xn |Xd
+        // MADD: 0x9B000000, o0=0
+        // MSUB: 0x9B008000, o0=1 (bit 15)
+        let instruction =
+            0x9B008000u32 | ((rm as u32) << 16) | ((ra as u32) << 10) | ((rn as u32) << 5) | (dst as u32);
         code_builder.emit_bytes(&instruction.to_le_bytes());
     }
 

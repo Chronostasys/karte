@@ -418,6 +418,9 @@ impl DefUseAnalysis {
             }
             | Instruction::Div {
                 dst, src1, src2, ..
+            }
+            | Instruction::Mod {
+                dst, src1, src2, ..
             } => {
                 defs.push(*dst);
                 self.analyze_operand_uses(src1, &mut uses);
@@ -476,6 +479,14 @@ impl DefUseAnalysis {
                 // 🔧 修复：Alloc 指令定义 dst 寄存器
                 // 在降级后的 LIR 中，Alloc 明确定义了目标寄存器
                 defs.push(*dst);
+            }
+            Instruction::StringConcat { dst, left, right, .. } => {
+                defs.push(*dst);
+                uses.push(*left);
+                uses.push(*right);
+            }
+            Instruction::PrintString { ptr, .. } => {
+                uses.push(*ptr);
             }
             Instruction::StructAlloc { dst, .. } => {
                 defs.push(*dst);

@@ -32,6 +32,7 @@ pub(crate) fn convert_binary_op(op: &HirBinaryOp) -> MirBinaryOp {
         HirBinaryOp::Subtract => MirBinaryOp::Subtract,
         HirBinaryOp::Multiply => MirBinaryOp::Multiply,
         HirBinaryOp::Divide => MirBinaryOp::Divide,
+        HirBinaryOp::Modulo => MirBinaryOp::Modulo,
         HirBinaryOp::Equal => MirBinaryOp::Equal,
         HirBinaryOp::NotEqual => MirBinaryOp::NotEqual,
         HirBinaryOp::GreaterEqual => MirBinaryOp::GreaterEqual,

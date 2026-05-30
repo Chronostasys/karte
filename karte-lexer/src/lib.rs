@@ -9,6 +9,19 @@ pub enum Token {
     #[regex(r"[0-9]+", |lex| lex.slice().parse::<i64>().ok())]
     Number(i64),
 
+    // 复合赋值运算符（必须在对应单字符运算符之前，Logos 最长匹配）
+    #[token("+=")]
+    PlusEqual,
+
+    #[token("-=")]
+    MinusEqual,
+
+    #[token("*=")]
+    StarEqual,
+
+    #[token("/=")]
+    SlashEqual,
+
     // 运算符
     #[token("+")]
     Plus,
@@ -21,6 +34,9 @@ pub enum Token {
 
     #[token("/")]
     Divide,
+
+    #[token("%")]
+    Percent,
 
     #[token("=")]
     Equal,
@@ -37,6 +53,13 @@ pub enum Token {
 
     #[token("<=")]
     LessEqual,
+
+    // 移位符号（双字符，必须在 > 和 < 之前定义以避免被截断匹配）
+    #[token("<<")]
+    ShiftLeftSym,
+
+    #[token(">>")]
+    ShiftRightSym,
 
     #[token(">")]
     Greater,
@@ -70,6 +93,13 @@ pub enum Token {
     #[token("->")]
     Arrow,
 
+    // 字符串字面量（简单版，不支持转义）
+    #[regex(r#""[^"]*""#, |lex| {
+        let s = lex.slice();
+        s[1..s.len()-1].to_string()
+    })]
+    StringLiteral(String),
+
     // 标识符和关键字
     #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_string())]
     Identifier(String),
@@ -85,6 +115,10 @@ pub enum Token {
     Semicolon,
 
     // 添加点操作符用于字段访问
+    // 范围运算符（必须在 Dot 之前定义，Logos 最长匹配）
+    #[token("..")]
+    DoubleDot,
+
     #[token(".")]
     Dot,
 
@@ -95,6 +129,14 @@ pub enum Token {
     // 引用符号
     #[token("&")]
     Ampersand,
+
+    // 异或符号
+    #[token("^")]
+    Caret,
+
+    // 按位取反符号
+    #[token("~")]
+    Tilde,
 
     // 添加逻辑运算符
     #[token("&&")]
@@ -114,6 +156,15 @@ pub enum Token {
     #[token("_")]
     Underscore,
 
+    #[token("for")]
+    KwFor,
+    #[token("break")]
+    KwBreak,
+    #[token("continue")]
+    KwContinue,
+    #[token("return")]
+    KwReturn,
+
     // 代数效应语法关键字
     #[token("perform")]
     KwPerform,
@@ -123,6 +174,10 @@ pub enum Token {
     KwHandle,
     #[token("in")]
     KwIn,
+
+    // 可见性关键字
+    #[token("pub")]
+    KwPub,
 
     // 位运算关键字（避免与 & | 符号冲突）
     #[token("bitand")]
@@ -172,6 +227,10 @@ pub enum Token {
 
     // 跳过空白字符
     #[regex(r"[ \t\n\f]+", logos::skip)]
+
+    // 跳过行注释（// 到行尾）
+    #[regex(r"//[^\n]*", logos::skip)]
+
     // Error token - handled automatically by Logos 0.13+
     Error,
 }
@@ -180,10 +239,15 @@ impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Token::Number(n) => write!(f, "{}", n),
+            Token::PlusEqual => write!(f, "+="),
+            Token::MinusEqual => write!(f, "-="),
+            Token::StarEqual => write!(f, "*="),
+            Token::SlashEqual => write!(f, "/="),
             Token::Plus => write!(f, "+"),
             Token::Minus => write!(f, "-"),
             Token::Multiply => write!(f, "*"),
             Token::Divide => write!(f, "/"),
+            Token::Percent => write!(f, "%"),
             Token::Equal => write!(f, "="),
             Token::EqualEqual => write!(f, "=="),
             Token::NotEqual => write!(f, "!="),
@@ -200,11 +264,17 @@ impl fmt::Display for Token {
             Token::Pipe => write!(f, "|"),
             Token::Arrow => write!(f, "->"),
             Token::Identifier(s) => write!(f, "{}", s),
+            Token::StringLiteral(s) => write!(f, "\"{}\"", s),
             Token::Comma => write!(f, ","),
             Token::Semicolon => write!(f, ";"),
+            Token::DoubleDot => write!(f, ".."),
             Token::Dot => write!(f, "."),
             Token::Colon => write!(f, ":"),
             Token::Ampersand => write!(f, "&"),
+            Token::Caret => write!(f, "^"),
+            Token::Tilde => write!(f, "~"),
+            Token::ShiftLeftSym => write!(f, "<<"),
+            Token::ShiftRightSym => write!(f, ">>"),
             Token::LogicalAnd => write!(f, "&&"),
             Token::LogicalOr => write!(f, "||"),
             Token::LogicalNot => write!(f, "!"),
@@ -235,6 +305,11 @@ impl fmt::Display for Token {
             Token::KwResume => write!(f, "resume"),
             Token::KwHandle => write!(f, "handle"),
             Token::KwIn => write!(f, "in"),
+            Token::KwPub => write!(f, "pub"),
+            Token::KwFor => write!(f, "for"),
+            Token::KwBreak => write!(f, "break"),
+            Token::KwContinue => write!(f, "continue"),
+            Token::KwReturn => write!(f, "return"),
             Token::Error => write!(f, "<error>"),
         }
     }
@@ -303,6 +378,7 @@ pub fn is_keyword(ident: &str) -> bool {
     matches!(
         ident,
         "let" | "match" | "enum" | "struct" | "true" | "false" | "if" | "else" | "while"
+            | "for" | "in" | "break" | "continue" | "return"
     )
 }
 

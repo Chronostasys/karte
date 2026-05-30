@@ -1,6 +1,6 @@
 use crate::ast::{BinaryOperator, Expr, FieldDef, Statement, UnaryOperator};
 use crate::errors::TypeCheckError;
-use crate::types::{Type, TypeValue, TypeVar};
+use crate::types::{IntKind, Type, TypeValue, TypeVar};
 use ena::unify::InPlaceUnificationTable;
 use karte_diagnostics::DiagnosticBag;
 use std::collections::HashMap;
@@ -173,7 +173,15 @@ impl TypeChecker {
     ) -> Result<(), ()> {
         match (t1, t2) {
             (Type::Number, Type::Number) => Ok(()),
+            // Number 与具体整数类型兼容：number 字面量可以传递给 Int 类型参数
+            (Type::Number, Type::Int(_)) | (Type::Int(_), Type::Number) => Ok(()),
             (Type::Unit, Type::Unit) => Ok(()),
+            (Type::Bool, Type::Bool) => Ok(()),
+            (Type::String, Type::String) => Ok(()),
+            (Type::Int(k1), Type::Int(k2)) if k1 == k2 => Ok(()),
+            (Type::Array { element: e1 }, Type::Array { element: e2 }) => {
+                self.unify_recursive(e1, e2, span, orig_t1, orig_t2, visited)
+            }
 
             (Type::Var(v1), Type::Var(v2)) if v1 == v2 => Ok(()),
 
@@ -483,6 +491,15 @@ impl TypeChecker {
         // 解决所有约束
         self.solve_constraints();
 
+        // 对所有 expr_types 中的类型应用统一化结果
+        // 因为 infer_expr 存储时约束尚未求解，此时类型变量未解析
+        for key in self.expr_types.keys().copied().collect::<Vec<_>>() {
+            if let Some(old_ty) = self.expr_types.remove(&key) {
+                let resolved = self.apply_substitution(old_ty);
+                self.expr_types.insert(key, resolved);
+            }
+        }
+
         // 应用统一化结果
         let final_type = self.apply_substitution(result_type);
 
@@ -635,16 +652,9 @@ impl TypeChecker {
 
                     // 解析参数类型（严格模式）
                     for param in params {
-                        let param_ty = if let Some(type_name) = &param.type_annotation {
-                            // 使用严格模式解析类型标注
-                            match self.parse_type_annotation(type_name, *span, true) {
-                                Ok(ty) => ty,
-                                Err(err) => {
-                                    self.diagnostics.add_error(err.to_string(), err.span());
-                                    parse_failed = true;
-                                    Type::Unknown
-                                }
-                            }
+                        let param_ty = if let Some(type_ann) = &param.type_annotation {
+                            // 使用结构化类型注解，但需要解析其中的骨架占位符
+                            self.resolve_struct_field_from_parsed(type_ann)
                         } else {
                             // 没有类型标注，创建类型变量
                             Type::Var(self.fresh_type_var())
@@ -653,15 +663,9 @@ impl TypeChecker {
                     }
 
                     // 解析返回类型（严格模式）
-                    let ret_ty = if let Some(type_name) = return_type {
-                        match self.parse_type_annotation(type_name, *span, true) {
-                            Ok(ty) => ty,
-                            Err(err) => {
-                                self.diagnostics.add_error(err.to_string(), err.span());
-                                parse_failed = true;
-                                Type::Unknown
-                            }
-                        }
+                    let ret_ty = if let Some(ret) = return_type {
+                        // 使用结构化返回类型，但需要解析其中的骨架占位符
+                        self.resolve_struct_field_from_parsed(ret)
                     } else {
                         // 没有返回类型标注，创建类型变量
                         Type::Var(self.fresh_type_var())
@@ -772,8 +776,9 @@ impl TypeChecker {
             let struct_fields: Vec<crate::types::StructField> = fields
                 .iter()
                 .map(|field| {
-                    let field_type =
-                        self.resolve_struct_field_type(&field.field_type, &struct_defs_copy);
+                    // field.field_type 已经是 Type（parser 解析的结构化类型）
+                    // 但自定义类型名在 parser 阶段是 Type::Unknown，需要在这里解析为实际类型
+                    let field_type = self.resolve_parsed_type(&field.field_type, &struct_defs_copy);
                     crate::types::StructField {
                         name: field.name.clone(),
                         field_type,
@@ -825,6 +830,18 @@ impl TypeChecker {
                         return true;
                     }
                 }
+                Type::Array { element } => {
+                    // 检查数组元素类型是否构成非法递归
+                    match element.as_ref() {
+                        Type::Struct {
+                            name: elem_name,
+                            ..
+                        } if elem_name == struct_name => {
+                            return true; // 非法递归：struct S { arr: [S; N] }
+                        }
+                        _ => continue,
+                    }
+                }
                 _ => {
                     // 其他类型不会导致递归
                     continue;
@@ -841,9 +858,15 @@ impl TypeChecker {
         let inferred_type = match expr {
             Expr::Number { .. } => Type::Number,
 
+            Expr::StringLiteral { .. } => Type::String,
+
             Expr::Unit { .. } => Type::Unit,
 
             Expr::Identifier { name, span } => {
+                // 内建函数
+                if name == "print" {
+                    return Type::function(vec![Type::String], Type::Unit);
+                }
                 if let Some(ty) = env.get(name) {
                     ty.clone()
                 } else {
@@ -872,10 +895,23 @@ impl TypeChecker {
 
                 // 根据操作符类型添加不同的类型约束
                 match op {
-                    BinaryOperator::Add
-                    | BinaryOperator::Subtract
+                    BinaryOperator::Add => {
+                        // Add 支持数字加法和字符串拼接：任一操作数为 String 时两边都约束为 String
+                        match (&left_type, &right_type) {
+                            (Type::String, _) | (_, Type::String) => {
+                                self.add_constraint(left_type.clone(), Type::String, left.span());
+                                self.add_constraint(right_type.clone(), Type::String, right.span());
+                            }
+                            _ => {
+                                self.add_constraint(left_type.clone(), Type::Number, left.span());
+                                self.add_constraint(right_type.clone(), Type::Number, right.span());
+                            }
+                        }
+                    }
+                    BinaryOperator::Subtract
                     | BinaryOperator::Multiply
                     | BinaryOperator::Divide
+                    | BinaryOperator::Modulo
                     | BinaryOperator::Equal
                     | BinaryOperator::NotEqual
                     | BinaryOperator::GreaterEqual
@@ -888,21 +924,28 @@ impl TypeChecker {
                     | BinaryOperator::ShiftLeft
                     | BinaryOperator::ShiftRight => {
                         // 数字运算、比较运算、位运算：左右操作数都必须是数字类型
-                        self.add_constraint(left_type, Type::Number, left.span());
-                        self.add_constraint(right_type, Type::Number, right.span());
+                        self.add_constraint(left_type.clone(), Type::Number, left.span());
+                        self.add_constraint(right_type.clone(), Type::Number, right.span());
                     }
                     BinaryOperator::LogicalAnd | BinaryOperator::LogicalOr => {
-                        self.add_constraint(left_type, Type::bool(), left.span());
-                        self.add_constraint(right_type, Type::bool(), right.span());
+                        self.add_constraint(left_type.clone(), Type::bool(), left.span());
+                        self.add_constraint(right_type.clone(), Type::bool(), right.span());
                     }
                 }
 
                 // 根据操作符类型返回不同的结果类型
                 match op {
-                    BinaryOperator::Add
-                    | BinaryOperator::Subtract
+                    BinaryOperator::Add => {
+                        // Add 支持数字加法和字符串拼接
+                        match (&left_type, &right_type) {
+                            (Type::String, _) | (_, Type::String) => Type::String,
+                            _ => Type::Number,
+                        }
+                    }
+                    BinaryOperator::Subtract
                     | BinaryOperator::Multiply
                     | BinaryOperator::Divide
+                    | BinaryOperator::Modulo
                     | BinaryOperator::BitAnd
                     | BinaryOperator::BitOr
                     | BinaryOperator::BitXor
@@ -948,8 +991,8 @@ impl TypeChecker {
                     .iter()
                     .map(|param| {
                         let param_type = if let Some(ref type_ann) = param.type_annotation {
-                            // 如果有类型注解，解析类型注解
-                            self.parse_field_type(type_ann)
+                            // 使用结构化类型注解，但需要解析其中的骨架占位符
+                            self.resolve_struct_field_from_parsed(type_ann)
                         } else {
                             // 否则创建类型变量进行推断
                             Type::Var(self.fresh_type_var())
@@ -1065,6 +1108,22 @@ impl TypeChecker {
                 // 推断最终表达式
                 if let Some(expr) = final_expr {
                     self.infer_expr(expr, &current_env)
+                } else if let Some(last_stmt) = statements.last() {
+                    // 如果没有 final_expr，检查最后一个语句是否是 return/break/continue 表达式
+                    // 这些控制流表达式有实际的返回类型
+                    match last_stmt {
+                        Statement::Expression { expr, .. } => {
+                            let last_type = self.infer_expr(expr, &current_env);
+                            // 检查是否是控制流表达式（return/break/continue）
+                            // 这些表达式的类型就是函数的返回类型
+                            if matches!(expr, Expr::Return { .. } | Expr::Break { .. } | Expr::Continue { .. }) {
+                                last_type
+                            } else {
+                                Type::Unit
+                            }
+                        }
+                        _ => Type::Unit,
+                    }
                 } else {
                     Type::Unit
                 }
@@ -1360,6 +1419,19 @@ impl TypeChecker {
                     _ => &object_type,
                 };
 
+                // 字符串 .len 属性
+                if matches!(actual_type, Type::String) {
+                    if field == "len" {
+                        return Type::Number;
+                    } else {
+                        self.add_error(TypeCheckError::NotAStruct {
+                            name: format!("字符串类型没有属性 '{}'", field),
+                            span: *span,
+                        });
+                        return Type::Unknown;
+                    }
+                }
+
                 match actual_type {
                     Type::Struct { fields, .. } => {
                         if let Some(field_def) = fields.iter().find(|f| f.name == *field) {
@@ -1631,6 +1703,43 @@ impl TypeChecker {
                 // body 在原环境中检查，作为整体类型
                 self.infer_expr(body, env)
             }
+
+            Expr::ForIn {
+                var, start, end, body, ..
+            } => {
+                // start 和 end 必须是数字类型
+                let start_type = self.infer_expr(start, env);
+                self.add_constraint(start_type, Type::Number, start.span());
+                let end_type = self.infer_expr(end, env);
+                self.add_constraint(end_type, Type::Number, end.span());
+
+                // 循环变量是数字类型
+                let mut loop_env = env.clone();
+                loop_env.insert(var.clone(), Type::Number);
+
+                // for 循环的 body 可以是任何类型，但 for 表达式本身返回 Unit
+                self.infer_expr(body, &loop_env);
+                Type::Unit
+            }
+
+            Expr::Break { .. } => {
+                // break 返回 Unit（实际上会跳转，不会使用返回值）
+                Type::Unit
+            }
+
+            Expr::Continue { .. } => {
+                // continue 返回 Unit（实际上会跳转，不会使用返回值）
+                Type::Unit
+            }
+
+            Expr::Return { value, .. } => {
+                // return 的类型取决于返回值
+                if let Some(v) = value {
+                    self.infer_expr(v, env)
+                } else {
+                    Type::Unit
+                }
+            }
         };
 
         // 存储所有表达式的类型信息（用于传递给MIR lowering）
@@ -1651,25 +1760,14 @@ impl TypeChecker {
                 self.infer_expr(expr, env);
             }
             Statement::TypeDef { name, variants, .. } => {
-                // 构建加法类型的变体
+                // 构建加法类型的变体（data_type 已经是结构化 Type）
                 let sum_variants: Vec<crate::types::SumVariant> = variants
                     .iter()
                     .map(|variant| {
-                        let data_type = variant.data_type.as_ref().map(|type_name| {
-                            // 简单的类型名解析，这里可以扩展为更复杂的类型解析
-                            match type_name.as_str() {
-                                "number" => Type::Number,
-                                "unit" => Type::Unit,
-                                _ => {
-                                    // 暂时假设未知类型名为已定义类型
-                                    Type::Unknown
-                                }
-                            }
-                        });
-
+                        // data_type 已经是 Option<Type>，直接使用
                         crate::types::SumVariant {
                             name: variant.name.clone(),
-                            data_type,
+                            data_type: variant.data_type.clone(),
                         }
                     })
                     .collect();
@@ -1694,15 +1792,15 @@ impl TypeChecker {
             }
             Statement::StructDef { name, fields, .. } => {
                 // 构建结构体类型的字段
+                // field.field_type 已经是 parser 生成的结构化 Type，但自定义类型名可能是骨架占位符
+                // 需要用 process_struct_definitions 中创建的完整类型替换
                 let struct_fields: Vec<crate::types::StructField> = fields
                     .iter()
                     .map(|field| {
-                        // 类型名解析，支持引用类型
-                        let field_type = self.parse_field_type(&field.field_type);
-
+                        let resolved_type = self.resolve_struct_field_from_parsed(&field.field_type);
                         crate::types::StructField {
                             name: field.name.clone(),
-                            field_type,
+                            field_type: resolved_type,
                         }
                     })
                     .collect();
@@ -1996,6 +2094,9 @@ impl TypeChecker {
                     })
                     .collect(),
             },
+            Type::Array { element } => Type::Array {
+                element: Box::new(self.apply_substitution(*element)),
+            },
             _ => ty,
         }
     }
@@ -2065,7 +2166,17 @@ impl TypeChecker {
         } else {
             // 非泛型类型
             match type_str {
-                "number" | "i32" | "i64" => return Ok(Type::Number),
+                "number" => return Ok(Type::Number),
+                "i32" => return Ok(Type::Int(IntKind::I32)),
+                "i64" => return Ok(Type::Int(IntKind::I64)),
+                "bool" => return Ok(Type::Bool),
+                "i8" => return Ok(Type::Int(IntKind::I8)),
+                "i16" => return Ok(Type::Int(IntKind::I16)),
+                "u8" => return Ok(Type::Int(IntKind::U8)),
+                "u16" => return Ok(Type::Int(IntKind::U16)),
+                "u32" => return Ok(Type::Int(IntKind::U32)),
+                "u64" => return Ok(Type::Int(IntKind::U64)),
+                "usize" => return Ok(Type::Int(IntKind::USize)),
                 "unit" => return Ok(Type::Unit),
                 _ => {
                     // 检查是否是已定义的类型
@@ -2145,7 +2256,17 @@ impl TypeChecker {
         } else {
             // 非泛型类型
             match type_str {
-                "number" | "i32" | "i64" => Type::Number,
+                "number" => Type::Number,
+                "i32" => Type::Int(IntKind::I32),
+                "i64" => Type::Int(IntKind::I64),
+                "bool" => Type::Bool,
+                "i8" => Type::Int(IntKind::I8),
+                "i16" => Type::Int(IntKind::I16),
+                "u8" => Type::Int(IntKind::U8),
+                "u16" => Type::Int(IntKind::U16),
+                "u32" => Type::Int(IntKind::U32),
+                "u64" => Type::Int(IntKind::U64),
+                "usize" => Type::Int(IntKind::USize),
                 "unit" => Type::Unit,
                 _ => {
                     // 检查是否是已定义的类型
@@ -2174,6 +2295,88 @@ impl TypeChecker {
             result.push(self.parse_generic_type(arg));
         }
         result
+    }
+
+    /// 解析 parser 生成的结构化类型中的自定义类型引用
+    /// 在 infer_statement 阶段使用，此时 custom_types 已经完整建立
+    fn resolve_struct_field_from_parsed(&self, ty: &Type) -> Type {
+        match ty {
+            Type::Struct { name, fields } if fields.is_empty() => {
+                // Parser 创建的 Struct 骨架占位符，用 custom_types 中的完整类型替换
+                if let Some(struct_type) = self.custom_types.get(name) {
+                    struct_type.clone()
+                } else {
+                    ty.clone()
+                }
+            }
+            Type::Reference { inner } => {
+                let resolved_inner = self.resolve_struct_field_from_parsed(inner);
+                Type::reference(resolved_inner)
+            }
+            Type::Array { element } => {
+                let resolved_element = self.resolve_struct_field_from_parsed(element);
+                Type::array(resolved_element)
+            }
+            // Option 等泛型类型的内部参数也需要递归解析
+            Type::Sum { name: sum_name, variants } => {
+                let resolved_variants = variants
+                    .iter()
+                    .map(|v| crate::types::SumVariant {
+                        name: v.name.clone(),
+                        data_type: v
+                            .data_type
+                            .as_ref()
+                            .map(|dt| self.resolve_struct_field_from_parsed(dt)),
+                    })
+                    .collect();
+                Type::sum(sum_name.clone(), resolved_variants)
+            }
+            _ => ty.clone(),
+        }
+    }
+
+    /// 解析 parser 生成的结构化类型，将 Struct 骨架等占位替换为实际自定义类型
+    /// 在 process_struct_definitions 阶段使用，此时 custom_types 可能只有骨架
+    fn resolve_parsed_type(
+        &self,
+        ty: &Type,
+        struct_defs: &HashMap<String, Vec<FieldDef>>,
+    ) -> Type {
+        match ty {
+            Type::Unknown => Type::Unknown,
+            Type::Struct { name, fields } if fields.is_empty() => {
+                // Parser 创建的 Struct 骨架占位符，检查是否是已定义的结构体
+                if let Some(struct_type) = self.custom_types.get(name) {
+                    struct_type.clone()
+                } else {
+                    // 未知类型名，保留骨架
+                    ty.clone()
+                }
+            }
+            Type::Reference { inner } => {
+                let resolved_inner = self.resolve_parsed_type(inner, struct_defs);
+                Type::reference(resolved_inner)
+            }
+            Type::Array { element } => {
+                let resolved_element = self.resolve_parsed_type(element, struct_defs);
+                Type::array(resolved_element)
+            }
+            // Option 等泛型类型的内部参数也需要递归解析
+            Type::Sum { name: sum_name, variants } => {
+                let resolved_variants = variants
+                    .iter()
+                    .map(|v| crate::types::SumVariant {
+                        name: v.name.clone(),
+                        data_type: v
+                            .data_type
+                            .as_ref()
+                            .map(|dt| self.resolve_parsed_type(dt, struct_defs)),
+                    })
+                    .collect();
+                Type::sum(sum_name.clone(), resolved_variants)
+            }
+            _ => ty.clone(),
+        }
     }
 
     /// 解析结构体字段类型，支持延迟解析、循环检测和泛型类型
@@ -2226,6 +2429,14 @@ impl TypeChecker {
             // 非泛型类型
             match type_str {
                 "number" => Type::Number,
+                "bool" => Type::Bool,
+                "i8" => Type::Int(IntKind::I8),
+                "i16" => Type::Int(IntKind::I16),
+                "u8" => Type::Int(IntKind::U8),
+                "u16" => Type::Int(IntKind::U16),
+                "u32" => Type::Int(IntKind::U32),
+                "u64" => Type::Int(IntKind::U64),
+                "usize" => Type::Int(IntKind::USize),
                 "unit" => Type::Unit,
                 _ => {
                     // 检查是否是已定义的结构体类型

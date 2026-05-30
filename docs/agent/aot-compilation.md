@@ -11,7 +11,8 @@ Raw syscall wrappers with no libc dependency.
 
 **Supported platforms**:
 - x86_64 Linux: Uses `syscall` instruction
-- AArch64 Linux: Uses `svc #0` instruction
+- AArch64 Linux: Uses `svc #0` instruction (syscall wrappers exist, AOT runtime not yet implemented)
+- RISC-V 64 Linux: Uses `ecall` instruction (AOT runtime fully implemented)
 
 **Available syscalls**:
 - `sys_write(fd, buf, count)` → SYS_write
@@ -29,9 +30,10 @@ AOT compilation crate that generates executable binaries.
 
 **Files**:
 - `elf.rs` — ELF64 writer (generates minimal ELF with PT_LOAD segments)
-- `runtime_x86.rs` — x86_64 runtime code generator (machine code as raw bytes)
-- `runtime_aarch64.rs` — AArch64 runtime (placeholder for future)
-- `compiler.rs` — Main AOT compiler (LIR → machine code → patch → ELF)
+- `runtime_x86.rs` — x86_64 runtime code generator with tri-color mark-sweep-compact GC (1095 lines)
+- `runtime_aarch64.rs` — AArch64 runtime (placeholder, not yet implemented)
+- `runtime_riscv.rs` — RISC-V 64 runtime code generator with mark-sweep GC (799 lines)
+- `compiler.rs` — Main AOT compiler for x86_64 and RISC-V (574 lines)
 
 ## Compilation Pipeline
 
@@ -41,13 +43,14 @@ karte-cli (aot subcommand)
     → compile_to_lir() [existing function]
     → OptimizationPipeline::optimize()
     → karte_aot::AotCompiler::compile_to_bytes()
-      → X86Runtime::new().generate()           // Generate runtime code
-      → X86Compiler::compile_function()         // Compile each function
-      → Patch runtime calls (MOV RAX,imm64; CALL RAX → AOT addresses)
-      → Patch pending jumps (resolve cross-function references)
-      → Patch pending label addresses (64-bit absolute addresses)
-      → Patch _start CALL main (set rel32)
-      → ElfWriter::generate()                   // Write ELF
+      → [x86_64] X86Runtime::new().generate() + patch_internal_calls()
+      → [RISC-V] RiscvRuntime::new().generate() + patch_globals() + patch_internal_calls()
+      → X86Compiler/RiscvCompiler::compile_function() for each function
+      → Patch runtime calls (x86_64: MOV RAX,imm64; CALL RAX → AOT addresses)
+      → Patch pending_label_addresses (64-bit absolute address loads)
+      → Patch pending_jumps (x86_64: rel32; RISC-V: JAL/B-type)
+      → Patch _start CALL/JAL main (rel32 / J-type)
+      → ElfWriter::generate() with appropriate ElfArch
 ```
 
 ## Runtime Architecture
@@ -178,9 +181,9 @@ karte aot /tmp/test.karte -o /tmp/t4 && /tmp/t4; echo $?  # → 50
 
 ## Known Limitations
 
-1. **No GC**: Only bump allocator, no garbage collection. Programs with unbounded allocation will eventually exhaust the 4MB heap.
+1. **GC incomplete**: x86_64 has tri-color mark-sweep-compact GC (⚠️ compact phase has REP MOVSB bug — RDI not set to destination). RISC-V has mark-sweep but doesn't reclaim memory (only clears marks). AArch64 not implemented.
 2. **No string I/O**: print/println built-ins not yet implemented (needs string type support).
-3. **x86_64 only**: AArch64 AOT compilation is not yet implemented.
+3. **AArch64 not implemented**: Only x86_64 and RISC-V 64 are functional.
 4. **Linux only**: macOS support (Mach-O) not yet implemented.
 5. **No dynamic loading**: All code must be statically compiled into the binary.
 6. **Register allocation warnings**: Complex programs may trigger "超出虚拟机范围的物理寄存器" warnings.
@@ -189,7 +192,8 @@ karte aot /tmp/test.karte -o /tmp/t4 && /tmp/t4; echo $?  # → 50
 
 1. **AArch64 AOT**: Implement AArch64 runtime code generation
 2. **macOS support**: Implement Mach-O writer
-3. **GC integration**: Replace bump allocator with Immix GC using raw syscalls
-4. **Built-in I/O**: Implement print/println using write(2) syscall
-5. **Cross-compilation**: Support compiling for different target architectures
-6. **Optimization**: Implement dead code elimination, inline small wrappers
+3. **Fix GC compact bug**: x86_64 REP MOVSB in gc_collect compact phase doesn't set RDI=dest (runtime_x86.rs:883-897)
+4. **RISC-V GC reclaim**: Implement actual memory reclamation in sweep phase
+5. **Built-in I/O**: Implement print/println using write(2) syscall
+6. **Cross-compilation**: Support compiling for different target architectures
+7. **Optimization**: Implement dead code elimination, inline small wrappers

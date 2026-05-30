@@ -34,6 +34,8 @@ impl CallsiteLiveRegisterPass {
                 | Instruction::Free { .. }
                 | Instruction::Retain { .. }
                 | Instruction::Release { .. }
+                | Instruction::StringConcat { .. }
+                | Instruction::PrintString { .. }
         )
     }
 

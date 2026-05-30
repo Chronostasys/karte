@@ -55,6 +55,15 @@ pub enum Value {
         ty: Option<Type>,
     },
 
+    /// 字符串字面量
+    #[ir_codec(token = "str")]
+    StringLiteral {
+        #[ir_codec(args)]
+        value: String,
+        #[ir_codec(skip)]
+        ty: Option<Type>,
+    },
+
     /// 单元值
     #[ir_codec(token = "()")]
     #[default]
@@ -778,6 +787,8 @@ pub enum BinaryOperator {
     Multiply,
     #[ir_codec(token = "/")]
     Divide,
+    #[ir_codec(token = "%")]
+    Modulo,
     #[ir_codec(token = "==")]
     Equal,
     #[ir_codec(token = "!=")]

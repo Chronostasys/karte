@@ -47,6 +47,68 @@ pub(crate) fn lower_expression(
             });
         }
 
+        Expr::StringLiteral { value, span } => {
+            // 字符串字面量：堆分配 [length: i64] [byte0 byte1 ... padding]
+            let byte_len = value.len();
+            // 对齐到 8 字节 + 8 字节头部（存储长度）
+            let total_size = ((byte_len + 7) / 8) * 8 + 8;
+
+            let str_ptr = ctx.new_temp();
+            ctx.add_statement(Statement::Allocate {
+                target: str_ptr.clone(),
+                layout: HeapLayout {
+                    type_id: format!("string:{}", byte_len),
+                    size: total_size,
+                    align: 8,
+                    mutable: false,
+                    escape: EscapeState::Global,
+                    ownership: OwnershipKind::Manual,
+                },
+                span: *span,
+            });
+
+            // 写入长度到头部（offset 0）
+            ctx.add_statement(Statement::Store {
+                target: str_ptr.clone(),
+                value: Value::Number {
+                    value: byte_len as i64,
+                    ty: None,
+                },
+                span: *span,
+            });
+
+            // 逐字节写入字符串数据（从 offset 8 开始）
+            for (i, byte) in value.as_bytes().iter().enumerate() {
+                let byte_offset = 8 + i;
+                let byte_addr = ctx.new_temp();
+                ctx.add_statement(Statement::BinaryOp {
+                    target: byte_addr.clone(),
+                    left: str_ptr.clone(),
+                    op: MirBinaryOp::Add,
+                    right: Value::Number {
+                        value: byte_offset as i64,
+                        ty: None,
+                    },
+                    span: *span,
+                });
+                ctx.add_statement(Statement::UnsafeStore {
+                    addr: byte_addr,
+                    value: Value::Number {
+                        value: *byte as i64,
+                        ty: None,
+                    },
+                    byte_size: 1,
+                    span: *span,
+                });
+            }
+
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: str_ptr,
+                span: *span,
+            });
+        }
+
         Expr::Unit { .. } => {
             ctx.add_statement(Statement::Assign {
                 target: destination.clone(),
@@ -210,16 +272,41 @@ pub(crate) fn lower_expression(
         Expr::BinaryOp {
             left, op, right, ..
         } => {
-            let left_val = lower_expression_to_temp(ctx, left)?;
-            let right_val = lower_expression_to_temp(ctx, right)?;
+            // 检查是否为字符串连接：Add 且操作数类型为 String
+            let expr_ptr = expr as *const Expr as usize;
+            let is_string_concat = *op == karte_hir::BinaryOperator::Add
+                && ctx
+                    .expr_types
+                    .get(&expr_ptr)
+                    .map(|t| matches!(t, karte_hir::Type::String))
+                    .unwrap_or(false);
 
-            ctx.add_statement(Statement::BinaryOp {
-                target: destination.clone(),
-                left: left_val,
-                op: convert_binary_op(op),
-                right: right_val,
-                span,
-            });
+            if is_string_concat {
+                // 字符串连接：调用运行时 string_concat 函数
+                let left_val = lower_expression_to_temp(ctx, left)?;
+                let right_val = lower_expression_to_temp(ctx, right)?;
+                ctx.add_statement(Statement::Call {
+                    target: Some(destination.clone()),
+                    function: Value::Function {
+                        name: "__runtime_string_concat".to_string(),
+                        ty: None,
+                    },
+                    args: vec![left_val, right_val],
+                    span,
+                });
+            } else {
+                // 原有数字运算逻辑
+                let left_val = lower_expression_to_temp(ctx, left)?;
+                let right_val = lower_expression_to_temp(ctx, right)?;
+
+                ctx.add_statement(Statement::BinaryOp {
+                    target: destination.clone(),
+                    left: left_val,
+                    op: convert_binary_op(op),
+                    right: right_val,
+                    span,
+                });
+            }
         }
 
         Expr::UnaryOp { op, operand, .. } => {
@@ -441,8 +528,18 @@ pub(crate) fn lower_expression(
 
             // === 第四步：生成循环体（使用 phi 绑定后的 context）===
             ctx.set_current_block(loop_body);
+
+            // 推入循环上下文（break/continue 需要）
+            ctx.loop_stack.push(super::types::LoopContext {
+                continue_target: loop_head,
+                break_target: loop_exit,
+            });
+
             let temp_body_result = ctx.new_temp();
             lower_expression(ctx, body, &temp_body_result)?;
+
+            // 弹出循环上下文
+            ctx.loop_stack.pop();
 
             // 收集循环体中变量更新后的值（用于 phi incoming）
             // 遍历所有作用域，因为 if-else 的 phi 更新可能在内层作用域
@@ -499,6 +596,327 @@ pub(crate) fn lower_expression(
             // Continue from exit block
             ctx.set_current_block(loop_exit);
             // while loops evaluate to Unit
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: Value::Unit,
+                span: *span,
+            });
+        }
+
+        Expr::ForIn {
+            var,
+            start,
+            end,
+            body,
+            span,
+        } => {
+            // for var in start..end { body }
+            // 展开为：
+            //   let __for_start = start
+            //   let __for_end = end
+            //   let mut __for_var = __for_start
+            //   while __for_var < __for_end {
+            //       let var = __for_var
+            //       body
+            //       __for_var = __for_var + 1
+            //   }
+
+            let loop_head = ctx.new_block();
+            let loop_body = ctx.new_block();
+            let loop_exit = ctx.new_block();
+
+            // 记录循环前的块 ID
+            let pre_loop_block = ctx.current_block();
+
+            // 计算 start 和 end
+            let start_val = lower_expression_to_temp(ctx, start)?;
+            let end_val = lower_expression_to_temp(ctx, end)?;
+
+            // 创建循环变量 __for_var
+            let for_var_name = format!("__for_var_{}", ctx.lambda_counter);
+            let for_var_temp = ctx.new_temp();
+            ctx.add_statement(Statement::Assign {
+                target: for_var_temp.clone(),
+                source: start_val.clone(),
+                span: *span,
+            });
+            ctx.bind_variable(for_var_name.clone(), for_var_temp.clone(), None);
+
+            // 快照当前变量绑定
+            let pre_loop_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
+                ctx.current_scope()
+                    .bindings
+                    .iter()
+                    .map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
+                    .collect();
+
+            // === 第一步：预分析循环体，找出被更新的变量 ===
+            ctx.analysis_mode = true;
+            let pre_analysis_block_count = ctx.current_function_mut().basic_blocks.len();
+            let saved_block = ctx.current_block();
+            let analysis_block = ctx.new_block();
+            ctx.set_current_block(analysis_block);
+
+            // 在分析块中绑定循环变量
+            let analysis_var_temp = ctx.new_temp();
+            ctx.bind_variable(var.clone(), analysis_var_temp, None);
+            // 模拟递增
+            let inc_temp = ctx.new_temp();
+            ctx.add_statement(Statement::Assign {
+                target: inc_temp.clone(),
+                source: Value::Number { value: 1, ty: None },
+                span: *span,
+            });
+
+            let temp_result = ctx.new_temp();
+            let _ = lower_expression(ctx, body, &temp_result);
+            ctx.analysis_mode = false;
+
+            // 收集循环体中更新的变量
+            let post_loop_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
+                ctx.current_scope()
+                    .bindings
+                    .iter()
+                    .map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
+                    .collect();
+
+            // 清理预分析产生的临时块
+            let all_block_ids: Vec<_> = ctx.current_function_mut().basic_blocks.keys().cloned().collect();
+            let analysis_blocks: Vec<_> = all_block_ids[pre_analysis_block_count..].to_vec();
+            for block_id in &analysis_blocks {
+                ctx.remove_block(*block_id);
+            }
+
+            let mut updated_vars: Vec<(String, Value, Value)> = Vec::new();
+            for (name, (post_value, _)) in &post_loop_bindings {
+                if let Some((pre_value, _)) = pre_loop_bindings.get(name) {
+                    if post_value != pre_value {
+                        updated_vars.push((name.clone(), pre_value.clone(), post_value.clone()));
+                    }
+                }
+            }
+
+            // === 第二步：删除分析用的临时块，恢复状态 ===
+            ctx.remove_block(analysis_block);
+            for (name, (value, ownership)) in &pre_loop_bindings {
+                ctx.update_variable(name, value.clone(), *ownership);
+            }
+
+            // 确保循环变量和 __for_var 在绑定中
+            ctx.bind_variable(for_var_name.clone(), for_var_temp.clone(), None);
+
+            // === 第三步：创建 phi temp ===
+            let mut phi_values: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+            // __for_var 也需要 phi
+            let for_var_phi = ctx.new_temp();
+            phi_values.insert(for_var_name.clone(), for_var_phi.clone());
+
+            for (name, initial_value, _loop_value) in &updated_vars {
+                let phi_temp = ctx.new_temp();
+                phi_values.insert(name.clone(), phi_temp);
+            }
+
+            // 更新 context 中的变量绑定指向 phi temp
+            for (name, phi_val) in &phi_values {
+                ctx.update_variable(name, phi_val.clone(), None);
+            }
+
+            // Jump to loop head
+            ctx.set_current_block(saved_block);
+            ctx.set_terminator(Terminator::Goto {
+                target: loop_head,
+                span: *span,
+            });
+
+            // === 第四步：生成循环体 ===
+            ctx.set_current_block(loop_body);
+
+            // 在循环体内绑定用户变量 = __for_var 的 phi 值
+            let user_var_temp = ctx.new_temp();
+            ctx.add_statement(Statement::Assign {
+                target: user_var_temp.clone(),
+                source: for_var_phi.clone(),
+                span: *span,
+            });
+            ctx.bind_variable(var.clone(), user_var_temp.clone(), None);
+
+            // 推入循环上下文（break/continue 需要）
+            ctx.loop_stack.push(super::types::LoopContext {
+                continue_target: loop_head,
+                break_target: loop_exit,
+            });
+
+            let temp_body_result = ctx.new_temp();
+            lower_expression(ctx, body, &temp_body_result)?;
+
+            // 弹出循环上下文
+            ctx.loop_stack.pop();
+
+            // 递增 __for_var = __for_var + 1
+            let inc_temp = lower_expression_to_temp(ctx, &Expr::BinaryOp {
+                left: Box::new(Expr::Identifier {
+                    name: for_var_name.clone(),
+                    span: *span,
+                }),
+                op: karte_hir::BinaryOperator::Add,
+                right: Box::new(Expr::Number { value: 1, span: *span }),
+                span: *span,
+            })?;
+            ctx.add_statement(Statement::Assign {
+                target: for_var_phi.clone(),
+                source: inc_temp,
+                span: *span,
+            });
+
+            // 收集循环体中变量更新后的值
+            let final_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
+                ctx.scopes
+                    .iter()
+                    .rev()
+                    .flat_map(|scope| {
+                        scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
+                    })
+                    .collect();
+
+            ctx.set_terminator(Terminator::Goto {
+                target: loop_head,
+                span: body.span(),
+            });
+
+            let loop_back_edge_block = ctx.current_block();
+
+            // === 第五步：生成循环头 ===
+            ctx.set_current_block(loop_head);
+
+            // Phi 节点（包括 __for_var）
+            for (name, initial_value, _loop_value) in &updated_vars {
+                let phi_temp = phi_values.get(name).unwrap().clone();
+                let final_value = final_bindings.get(name)
+                    .map(|(v, _)| v.clone())
+                    .unwrap_or_else(|| initial_value.clone());
+                ctx.add_statement(Statement::Phi {
+                    target: phi_temp,
+                    incoming: vec![
+                        (pre_loop_block, initial_value.clone()),
+                        (loop_back_edge_block, final_value),
+                    ],
+                    span: *span,
+                });
+            }
+            // __for_var 的 phi
+            let for_var_updated = final_bindings.get(&for_var_name)
+                .map(|(v, _)| v.clone())
+                .unwrap_or_else(|| start_val);
+            ctx.add_statement(Statement::Phi {
+                target: for_var_phi,
+                incoming: vec![
+                    (pre_loop_block, for_var_temp),
+                    (loop_back_edge_block, for_var_updated),
+                ],
+                span: *span,
+            });
+            // 更新 context 中所有被循环修改的变量指向 phi 结果
+            for (name, phi_val) in &phi_values {
+                ctx.update_variable(name, phi_val.clone(), None);
+            }
+
+            // 条件: __for_var < end（使用 MIR BinaryOperator::LessThan）
+            let for_var_phi_val = phi_values.get(&for_var_name).unwrap().clone();
+            let cond_temp = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                op: crate::BinaryOperator::LessThan,
+                left: for_var_phi_val,
+                right: end_val,
+                target: cond_temp.clone(),
+                span: *span,
+            });
+
+            ctx.set_terminator(Terminator::Branch {
+                condition: cond_temp,
+                then_block: loop_body,
+                else_block: loop_exit,
+                span: *span,
+            });
+
+            // Continue from exit block
+            ctx.set_current_block(loop_exit);
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: Value::Unit,
+                span: *span,
+            });
+        }
+
+        Expr::Break { span, .. } => {
+            // break: 跳转到当前循环的退出块
+            if let Some(loop_ctx) = ctx.loop_stack.last() {
+                ctx.set_terminator(Terminator::Goto {
+                    target: loop_ctx.break_target,
+                    span: *span,
+                });
+                // 创建一个死块来放置后续代码（break 后的代码不会执行）
+                let dead_block = ctx.new_block();
+                ctx.set_current_block(dead_block);
+            } else {
+                // 不在循环中，break 是错误
+                return Err(vec![format!("break outside of loop at {:?}", span)]);
+            }
+            // break 后赋值 Unit（不会执行，但满足 destination 要求）
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: Value::Unit,
+                span: *span,
+            });
+        }
+
+        Expr::Continue { span, .. } => {
+            // continue: 跳转到当前循环的条件检查块
+            if let Some(loop_ctx) = ctx.loop_stack.last() {
+                ctx.set_terminator(Terminator::Goto {
+                    target: loop_ctx.continue_target,
+                    span: *span,
+                });
+                // 创建一个死块
+                let dead_block = ctx.new_block();
+                ctx.set_current_block(dead_block);
+            } else {
+                return Err(vec![format!("continue outside of loop at {:?}", span)]);
+            }
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: Value::Unit,
+                span: *span,
+            });
+        }
+
+        Expr::Return { value, span, .. } => {
+            // return: 跳转到函数返回块
+            // 对于脚本入口，我们创建一个提前返回块
+            // 对于函数，跳转到 return 终结符
+            let return_value = if let Some(v) = value {
+                lower_expression_to_temp(ctx, v)?
+            } else {
+                // 无返回值，用 Unit
+                let unit_temp = ctx.new_temp();
+                ctx.add_statement(Statement::Assign {
+                    target: unit_temp.clone(),
+                    source: Value::Unit,
+                    span: *span,
+                });
+                unit_temp
+            };
+
+            // 设置 Return 终结符
+            ctx.set_terminator(Terminator::Return {
+                value: Some(return_value),
+                span: *span,
+            });
+
+            // 创建一个死块
+            let dead_block = ctx.new_block();
+            ctx.set_current_block(dead_block);
+
+            // 赋值 Unit（不会执行）
             ctx.add_statement(Statement::Assign {
                 target: destination.clone(),
                 source: Value::Unit,
@@ -766,16 +1184,29 @@ pub(crate) fn lower_expression(
             field,
             span,
         } => {
-            // 1. 计算对象表达式的值
-            let object_value = lower_expression_to_temp(ctx, object)?;
+            // 检查是否为字符串 .len 属性
+            let obj_type = ctx.get_expr_type(object);
+            let is_string_len = field == "len"
+                && matches!(obj_type, karte_hir::Type::String);
 
-            // 2. 创建字段访问语句
-            ctx.add_statement(Statement::FieldAccess {
-                target: destination.clone(),
-                object: object_value,
-                field: field.clone(),
-                span: *span,
-            });
+            if is_string_len {
+                // 字符串 .len：从指针 offset 0 读取 i64 长度值
+                let object_value = lower_expression_to_temp(ctx, object)?;
+                ctx.add_statement(Statement::Dereference {
+                    target: destination.clone(),
+                    reference: object_value,
+                    span: *span,
+                });
+            } else {
+                // struct field access
+                let object_value = lower_expression_to_temp(ctx, object)?;
+                ctx.add_statement(Statement::FieldAccess {
+                    target: destination.clone(),
+                    object: object_value,
+                    field: field.clone(),
+                    span: *span,
+                });
+            }
         }
 
         Expr::ArrayLiteral { elements, span } => {
@@ -1414,6 +1845,26 @@ fn lower_function_call(
 ) -> Result<(), Vec<String>> {
     // Special handling for identifiers that might be functions or closures
     if let Expr::Identifier { name, .. } = function {
+        // 处理 print 内建函数
+        if name == "print" {
+            // print 只接受一个参数
+            if args.len() != 1 {
+                ctx.errors.push("print 函数只接受一个参数".to_string());
+                return Err(ctx.errors.clone());
+            }
+            let arg_val = lower_expression_to_temp(ctx, &args[0])?;
+            ctx.add_statement(Statement::Call {
+                target: Some(destination.clone()),
+                function: Value::Function {
+                    name: "__runtime_print_string".to_string(),
+                    ty: None,
+                },
+                args: vec![arg_val],
+                span,
+            });
+            return Ok(());
+        }
+
         // 首先检查变量环境中的绑定，并解析实际值
         let resolved_value = if let Some(binding) = ctx.lookup_variable(name) {
             let resolved = ctx.resolve_value(&binding.value);

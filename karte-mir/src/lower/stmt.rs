@@ -46,7 +46,7 @@ pub(crate) fn lower_statement(
                 .iter()
                 .map(|field| MirStructField {
                     name: field.name.clone(),
-                    field_type: field.field_type.clone(),
+                    field_type: field.field_type.to_string(),
                 })
                 .collect();
 
@@ -69,13 +69,12 @@ pub(crate) fn lower_statement(
             params,
             body,
             return_type,
+            is_pub: _,
             span,
         } => {
-            // 如果有返回类型注解，解析并注册
-            if let Some(return_type_str) = return_type {
-                if let Some(parsed_type) = ctx.parse_type_annotation(return_type_str) {
-                    ctx.register_function_return_type(name.clone(), parsed_type);
-                }
+            // 如果有返回类型注解，直接使用结构化类型
+            if let Some(return_type) = return_type {
+                ctx.register_function_return_type(name.clone(), return_type.clone());
             }
 
             // 保存当前上下文状态

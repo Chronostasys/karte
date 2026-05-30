@@ -131,6 +131,9 @@ impl StructLayoutManager {
             Type::Array { .. } => Ok((8, 8)), // 数组值在运行时以指针表示
             Type::Var(_) => Ok((8, 8)),       // 类型变量默认8字节
             Type::Unknown => Ok((8, 8)),      // 未知类型默认8字节
+            Type::Int(_) => Ok((8, 8)),       // 整数类型默认8字节
+            Type::Bool => Ok((1, 1)),          // 布尔类型用1字节
+            Type::String => Ok((8, 8)),        // 字符串类型用指针（8字节）
         }
     }
 

@@ -24,14 +24,29 @@ pub(super) fn lower_statement(
             // 这是为了避免env_ptr覆盖function_ptr的问题
             log::debug!("🔧 Assignment: target={:?}, source={:?}", target, source);
 
-            // 检查源值是否是env_ptr字段访问
+            // 🔧 关键修复：精确检查是否是 env_ptr 字段的赋值（值为0）
+            // 原逻辑过于宽泛：任何值为0的临时变量赋值都会被跳过
+            // 现在改为：只有当 source 关联的结构体布局为 Closure（即 source 是从 Closure
+            // 结构体字段提取的值，如 env_ptr）且值为 0 时才跳过
+            // 注意：保留 lower_to_rvalue 调用以维持其副作用
             let is_env_ptr_assignment = match source {
-                Value::Temp { .. } => {
-                    // 对于临时变量，我们需要检查其值是否为0
+                Value::Temp { .. } | Value::Variable { .. } => {
+                    // 先调用 lower_to_rvalue（保留副作用）
                     let src_rvalue = ctx.lower_to_rvalue(source);
                     if let Operand::Immediate { value: 0 } = src_rvalue {
-                        log::debug!("🔧 检测到值为0的临时变量赋值，可能是env_ptr，跳过以避免覆盖function_ptr");
-                        true
+                        // 进一步检查 source 是否关联到 Closure 结构体
+                        let is_closure_related = ctx
+                            .get_struct_layout_for_value(source)
+                            .map(|layout| layout.name == "Closure")
+                            .unwrap_or(false);
+                        if is_closure_related {
+                            log::debug!(
+                                "🔧 检测到 Closure 结构体关联的 0 值赋值（env_ptr），跳过以避免覆盖 function_ptr"
+                            );
+                            true
+                        } else {
+                            false
+                        }
                     } else {
                         false
                     }
@@ -109,6 +124,7 @@ pub(super) fn lower_statement(
                     | BinaryOperator::Subtract
                     | BinaryOperator::Multiply
                     | BinaryOperator::Divide
+                    | BinaryOperator::Modulo
                     | BinaryOperator::BitAnd
                     | BinaryOperator::BitOr
                     | BinaryOperator::BitXor
@@ -151,6 +167,12 @@ pub(super) fn lower_statement(
                     span: *span,
                 },
                 BinaryOperator::Divide => Instruction::Div {
+                    dst: temp_register,
+                    src1,
+                    src2,
+                    span: *span,
+                },
+                BinaryOperator::Modulo => Instruction::Mod {
                     dst: temp_register,
                     src1,
                     src2,
@@ -442,6 +464,89 @@ pub(super) fn lower_statement(
         } => {
             // 首先解析函数值，看看是否是闭包
             let resolved_function = ctx.resolve_value(function);
+
+            // 检查是否为运行时内建函数（字符串连接、print 等）
+            if let Value::Function { name, .. } = &resolved_function {
+                match name.as_str() {
+                    "__runtime_string_concat" => {
+                        // 字符串连接：生成 StringConcat LIR 指令
+                        let left_op = ctx.lower_to_rvalue(&args[0]);
+                        let right_op = ctx.lower_to_rvalue(&args[1]);
+
+                        let left_reg = match left_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: left_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+                        let right_reg = match right_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: right_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+
+                        let result_reg = ctx.current_function_mut().new_register();
+                        ctx.add_instruction(Instruction::StringConcat {
+                            dst: result_reg,
+                            left: left_reg,
+                            right: right_reg,
+                            span: *span,
+                        });
+
+                        if let Some(target_value) = target {
+                            ctx.store_value_to_stack(
+                                target_value,
+                                Operand::Register { id: result_reg },
+                            );
+                        }
+                        return Ok(());
+                    }
+                    "__runtime_print_string" => {
+                        // 打印字符串：生成 PrintString LIR 指令
+                        let ptr_op = ctx.lower_to_rvalue(&args[0]);
+                        let ptr_reg = match ptr_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: ptr_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+
+                        ctx.add_instruction(Instruction::PrintString {
+                            ptr: ptr_reg,
+                            span: *span,
+                        });
+
+                        // print 返回 Unit (0)
+                        if let Some(target_value) = target {
+                            ctx.store_value_to_stack(
+                                target_value,
+                                Operand::Immediate { value: 0 },
+                            );
+                        }
+                        return Ok(());
+                    }
+                    _ => {} // 继续常规处理
+                }
+            }
 
             let mut all_args = Vec::new();
             let actual_function_to_call;

@@ -45,10 +45,79 @@ impl UnifyKey for TypeVar {
     }
 }
 
+/// 整数类型种类
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IntKind {
+    I8,
+    I16,
+    I32,
+    I64,
+    U8,
+    U16,
+    U32,
+    U64,
+    USize,
+}
+
+impl IntKind {
+    /// 获取整数类型的字节大小
+    pub fn size_in_bytes(&self) -> usize {
+        match self {
+            IntKind::I8 | IntKind::U8 => 1,
+            IntKind::I16 | IntKind::U16 => 2,
+            IntKind::I32 | IntKind::U32 => 4,
+            IntKind::I64 | IntKind::U64 | IntKind::USize => 8,
+        }
+    }
+
+    /// 是否为有符号整数
+    pub fn is_signed(&self) -> bool {
+        matches!(self, IntKind::I8 | IntKind::I16 | IntKind::I32 | IntKind::I64)
+    }
+
+    /// 检查是否可以从 other 隐式转换到 self（无损转换）
+    pub fn can_implicitly_convert_from(&self, other: &IntKind) -> bool {
+        if self == other {
+            return true;
+        }
+        // 同符号：从小到大可以隐式转换
+        if self.is_signed() == other.is_signed() {
+            return self.size_in_bytes() >= other.size_in_bytes();
+        }
+        // 无符号小类型到有符号大类型
+        if self.is_signed() && !other.is_signed() {
+            return self.size_in_bytes() > other.size_in_bytes();
+        }
+        false
+    }
+}
+
+impl fmt::Display for IntKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            IntKind::I8 => write!(f, "i8"),
+            IntKind::I16 => write!(f, "i16"),
+            IntKind::I32 => write!(f, "i32"),
+            IntKind::I64 => write!(f, "i64"),
+            IntKind::U8 => write!(f, "u8"),
+            IntKind::U16 => write!(f, "u16"),
+            IntKind::U32 => write!(f, "u32"),
+            IntKind::U64 => write!(f, "u64"),
+            IntKind::USize => write!(f, "usize"),
+        }
+    }
+}
+
 /// 类型系统
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Number,
+    /// 具体整数类型
+    Int(IntKind),
+    /// 布尔类型（原生类型）
+    Bool,
+    /// 字符串类型
+    String,
     Unit,
     Function {
         params: Vec<Type>,
@@ -126,6 +195,9 @@ impl Type {
     pub fn structural_eq(&self, other: &Type) -> bool {
         match (self, other) {
             (Type::Number, Type::Number) => true,
+            (Type::Int(k1), Type::Int(k2)) => k1 == k2,
+            (Type::Bool, Type::Bool) => true,
+            (Type::String, Type::String) => true,
             (Type::Unit, Type::Unit) => true,
             (
                 Type::Function {
@@ -212,6 +284,9 @@ impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Type::Number => write!(f, "number"),
+            Type::Int(kind) => write!(f, "{}", kind),
+            Type::Bool => write!(f, "bool"),
+            Type::String => write!(f, "string"),
             Type::Unit => write!(f, "()"),
             Type::Function {
                 params,
@@ -288,6 +363,20 @@ impl Type {
         }
     }
 
+    /// 检查是否为数值类型（Number 或具体整数类型）
+    pub fn is_numeric(&self) -> bool {
+        matches!(self, Type::Number | Type::Int(_))
+    }
+
+    /// 获取整数类型的字节大小，非整数类型返回 None
+    pub fn int_size_bytes(&self) -> Option<usize> {
+        match self {
+            Type::Number => Some(8), // Number 默认 8 字节（i64）
+            Type::Int(kind) => Some(kind.size_in_bytes()),
+            _ => None,
+        }
+    }
+
     /// 创建函数类型
     pub fn function(params: Vec<Type>, return_type: Type) -> Self {
         Type::Function {
@@ -328,21 +417,28 @@ impl Type {
         }
     }
 
-    /// 创建布尔类型
+    /// 创建布尔类型（原生 Bool）
     pub fn bool() -> Self {
-        Type::Sum {
-            name: "Bool".to_string(),
-            variants: vec![
-                SumVariant {
-                    name: "True".to_string(),
-                    data_type: None,
-                },
-                SumVariant {
-                    name: "False".to_string(),
-                    data_type: None,
-                },
-            ],
+        Type::Bool
+    }
+
+    /// 创建字符串类型
+    pub fn string() -> Self {
+        Type::String
+    }
+
+    /// 检查是否为布尔类型（兼容旧的 Type::Sum { name: "Bool" }）
+    pub fn is_bool(&self) -> bool {
+        match self {
+            Type::Bool => true,
+            Type::Sum { name, .. } => name == "Bool",
+            _ => false,
         }
+    }
+
+    /// 检查两个布尔类型是否兼容（Type::Bool 与 Type::Sum { name: "Bool" } 兼容）
+    pub fn is_bool_compatible(&self, other: &Type) -> bool {
+        self.is_bool() && other.is_bool()
     }
 
     /// 创建Option类型
@@ -366,6 +462,9 @@ impl Type {
     pub fn substitute(&self, subst: &[(TypeVar, Type)]) -> Type {
         match self {
             Type::Number => Type::Number,
+            Type::Int(kind) => Type::Int(*kind),
+            Type::Bool => Type::Bool,
+            Type::String => Type::String,
             Type::Unit => Type::Unit,
             Type::Function {
                 params,
@@ -422,7 +521,7 @@ impl Type {
     /// 获取类型中所有的自由类型变量
     pub fn free_vars(&self) -> Vec<TypeVar> {
         match self {
-            Type::Number | Type::Unit | Type::Unknown => vec![],
+            Type::Number | Type::Int(_) | Type::Bool | Type::String | Type::Unit | Type::Unknown => vec![],
             Type::Function {
                 params,
                 return_type,

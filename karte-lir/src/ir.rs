@@ -208,6 +208,19 @@ pub enum Instruction {
         span: Span,
     },
 
+    /// 取余指令：mod dst, src1, src2
+    #[ir_codec(token = "mod")]
+    Mod {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        src1: Operand,
+        #[ir_codec(args)]
+        src2: Operand,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
     /// 位与指令：bitand dst, src1, src2
     #[ir_codec(token = "bitand")]
     BitAnd {
@@ -471,6 +484,30 @@ pub enum Instruction {
         span: Span,
     },
 
+    /// 字符串连接：dst = concat(left, right)
+    /// 调用运行时 karte_jit_runtime_string_concat(left_ptr, right_ptr) -> new_ptr
+    #[ir_codec(token = "string_concat")]
+    StringConcat {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        left: Register,
+        #[ir_codec(args)]
+        right: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 打印字符串：print(ptr)
+    /// 调用运行时 karte_jit_runtime_print_string(str_ptr) -> 0
+    #[ir_codec(token = "print_string")]
+    PrintString {
+        #[ir_codec(args)]
+        ptr: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
     /// 加载内存值（8字节）
     #[ir_codec(token = "load64")]
     Load64 {
@@ -639,6 +676,7 @@ impl Instruction {
             | Instruction::Sub { dst, .. }
             | Instruction::Mul { dst, .. }
             | Instruction::Div { dst, .. }
+            | Instruction::Mod { dst, .. }
             | Instruction::BitAnd { dst, .. }
             | Instruction::BitOr { dst, .. }
             | Instruction::BitXor { dst, .. }
@@ -654,7 +692,8 @@ impl Instruction {
             | Instruction::StructFieldAddr { dst, .. }
             | Instruction::Alloc { dst, .. }
             | Instruction::MemCopy { dst, .. }
-            | Instruction::CompareSet { dst, .. } => Some(*dst),
+            | Instruction::CompareSet { dst, .. }
+            | Instruction::StringConcat { dst, .. } => Some(*dst),
             Instruction::LoadPair { dst1, .. } => Some(*dst1),
             Instruction::Call { result, .. } | Instruction::CallIndirect { result, .. } => *result,
             Instruction::Phi { dst, .. } => Some(*dst),
@@ -673,6 +712,7 @@ impl Instruction {
             | Instruction::Sub { dst, .. }
             | Instruction::Mul { dst, .. }
             | Instruction::Div { dst, .. }
+            | Instruction::Mod { dst, .. }
             | Instruction::BitAnd { dst, .. }
             | Instruction::BitOr { dst, .. }
             | Instruction::BitXor { dst, .. }
@@ -687,7 +727,8 @@ impl Instruction {
             | Instruction::StructFieldAddr { dst, .. }
             | Instruction::Alloc { dst, .. }
             | Instruction::MemCopy { dst, .. }
-            | Instruction::CompareSet { dst, .. } => {
+            | Instruction::CompareSet { dst, .. }
+            | Instruction::StringConcat { dst, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
                 }
@@ -736,6 +777,7 @@ impl Instruction {
             | Instruction::Sub { src1, src2, .. }
             | Instruction::Mul { src1, src2, .. }
             | Instruction::Div { src1, src2, .. }
+            | Instruction::Mod { src1, src2, .. }
             | Instruction::BitAnd { src1, src2, .. }
             | Instruction::BitOr { src1, src2, .. }
             | Instruction::BitXor { src1, src2, .. }
@@ -839,6 +881,13 @@ impl Instruction {
             Instruction::Retain { value, .. } | Instruction::Release { value, .. } => {
                 used.push(*value);
             }
+            Instruction::StringConcat { left, right, .. } => {
+                used.push(*left);
+                used.push(*right);
+            }
+            Instruction::PrintString { ptr, .. } => {
+                used.push(*ptr);
+            }
             Instruction::Phi { incoming, .. } => {
                 for (_, value) in incoming {
                     self.add_operand_registers(value, &mut used);
@@ -886,6 +935,9 @@ impl Instruction {
                 dst, src1, src2, ..
             }
             | Instruction::Div {
+                dst, src1, src2, ..
+            }
+            | Instruction::Mod {
                 dst, src1, src2, ..
             }
             | Instruction::BitAnd {
@@ -1108,6 +1160,22 @@ impl Instruction {
                     *dst = new_reg;
                 }
             }
+            Instruction::StringConcat { dst, left, right, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                if *left == old_reg {
+                    *left = new_reg;
+                }
+                if *right == old_reg {
+                    *right = new_reg;
+                }
+            }
+            Instruction::PrintString { ptr, .. } => {
+                if *ptr == old_reg {
+                    *ptr = new_reg;
+                }
+            }
             Instruction::Phi { dst, incoming, .. } => {
                 // 🔧 关键修复：替换目标寄存器
                 if *dst == old_reg {
@@ -1175,6 +1243,7 @@ impl Instruction {
             | Instruction::Sub { span, .. }
             | Instruction::Mul { span, .. }
             | Instruction::Div { span, .. }
+            | Instruction::Mod { span, .. }
             | Instruction::Store64 { span, .. }
             | Instruction::Load64 { span, .. }
             | Instruction::Compare { span, .. }
@@ -1209,6 +1278,9 @@ impl Instruction {
                 dst, src1, src2, ..
             }
             | Instruction::Div {
+                dst, src1, src2, ..
+            }
+            | Instruction::Mod {
                 dst, src1, src2, ..
             }
             | Instruction::BitAnd {
@@ -1321,6 +1393,14 @@ impl Instruction {
             }
             Instruction::Alloc { dst, .. } | Instruction::StructAlloc { dst, .. } => {
                 defined.push(*dst);
+            }
+            Instruction::StringConcat { dst, left, right, .. } => {
+                defined.push(*dst);
+                used.push(*left);
+                used.push(*right);
+            }
+            Instruction::PrintString { ptr, .. } => {
+                used.push(*ptr);
             }
             Instruction::StructFieldStore {
                 struct_addr, src, ..

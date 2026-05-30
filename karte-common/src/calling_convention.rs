@@ -450,10 +450,10 @@ impl CallingConvention {
             27u8, // ra
         ].into_iter().collect();
 
-        // Callee-saved (非易失): s0-s11
-        // 注意: s0=11(vm_fp), s1=12(effect_sp), s2-s11=13-22
+        // Callee-saved (非易失): s1-s11
+        // 注意: s0=11(vm_fp) 和 sp=10(vm_sp) 是虚拟栈指针，不作为 callee-saved
+        // s1=12(effect_stack_pointer), s2-s11=13-22
         let callee_saved: HashSet<PhysicalRegister> = [
-            11u8,  // s0/fp (vm_fp)
             12u8,  // s1 (effect_stack_pointer)
             13u8,  // s2
             14u8,  // s3

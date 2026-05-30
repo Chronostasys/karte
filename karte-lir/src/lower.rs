@@ -137,25 +137,9 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
         }
 
         // MIR Phi 节点收集：
-        // 在前驱块的 terminator 之前插入 Store64，把 phi incoming 值写入 phi target 的栈地址
-        let mut phi_store_map: std::collections::HashMap<BasicBlockId, Vec<(Register, Value)>> = std::collections::HashMap::new();
-        for block in mir_function.basic_blocks.values() {
-            for statement in &block.statements {
-                if let Statement::Phi { target, incoming, .. } = statement {
-                    let phi_addr = match context.lower_to_lvalue(target) {
-                        Operand::Register { id } => id,
-                        _ => continue,
-                    };
-                    for (pred_block, pred_value) in incoming {
-                        phi_store_map.entry(*pred_block).or_default().push((phi_addr, pred_value.clone()));
-                    }
-                }
-            }
-        }
-
-        // MIR Phi 节点收集：
-        // 在前驱块的 terminator 之前插入 Store64，把 phi incoming 值写入 phi target 的栈地址
-        let mut phi_store_map: std::collections::HashMap<BasicBlockId, Vec<(Register, Value)>> = std::collections::HashMap::new();
+        // MIR Phi 节点延迟收集：
+        // 收集 Phi 信息，在 terminator 之前生成 Store64 传递变量值
+        let mut phi_info_list: Vec<(BasicBlockId, Value, Vec<(BasicBlockId, Value)>)> = Vec::new();
         for (block_id, block) in &mir_function.basic_blocks {
             for statement in &block.statements {
                 if let Statement::Phi {
@@ -164,42 +148,28 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
                     ..
                 } = statement
                 {
-                    let phi_addr = match context.lower_to_lvalue(phi_target) {
-                        Operand::Register { id } => id,
-                        _ => continue,
-                    };
-                    for (pred_block, pred_value) in incoming {
-                        phi_store_map
-                            .entry(*pred_block)
-                            .or_default()
-                            .push((phi_addr, pred_value.clone()));
-                    }
+                    phi_info_list.push((*block_id, phi_target.clone(), incoming.clone()));
                 }
             }
         }
 
         // 转换每个基本块
-        // 按ID顺序处理基本块
         let mut block_ids: Vec<_> = mir_function.basic_blocks.keys().copied().collect();
         block_ids.sort_by_key(|id| id.0);
 
         for block_id in block_ids {
             if let Some(block) = mir_function.basic_blocks.get(&block_id) {
-                // 添加基本块标签
                 let label = context.allocate_label_for_block(block_id);
                 context.add_instruction(Instruction::Label {
                     id: label,
-                    span: karte_diagnostics::Span::new(0, 0), // 简化span处理
+                    span: karte_diagnostics::Span::new(0, 0),
                 });
-                // 如果这是一个handler入口块，绑定payload到变量（通过将r1写入变量的栈槽）
                 if let Some(param_name) = context.handler_block_param.get(&block_id) {
-                    // 把 r1 写入变量 param_name 的栈槽
                     let var_value = Value::Variable {
                         name: param_name.clone(),
                         ty: None,
                     };
                     let var_addr = context.lower_to_lvalue(&var_value);
-                    // 确保目标是寄存器地址
                     let addr_reg = match var_addr {
                         Operand::Register { id } => id,
                         _ => context.current_function_mut().new_register(),
@@ -211,7 +181,7 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
                             id: Register::Physical(
                                 karte_common::calling_convention::REG_EFFECT_PAYLOAD,
                             ),
-                        }, // r1 (payload)
+                        },
                         span: karte_diagnostics::Span::dummy(),
                     });
                 }
@@ -227,15 +197,22 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
                 }
 
                 // 在 terminator 之前，为后继块的 phi 节点生成 Store64 指令
-                if let Some(phi_moves) = phi_store_map.get(&block_id) {
-                    for (addr_reg, incoming_value) in phi_moves {
-                        let src = context.lower_to_rvalue(incoming_value);
-                        context.add_instruction(Instruction::Store64 {
-                            addr: *addr_reg,
-                            offset: 0,
-                            src,
-                            span: karte_diagnostics::Span { start: usize::MAX, end: usize::MAX },
-                        });
+                // 延迟评估：在生成所有语句后才调用 lower_to_lvalue/lower_to_rvalue
+                for (phi_block_id, phi_target, phi_incoming) in &phi_info_list {
+                    for (pred_block, pred_value) in phi_incoming {
+                        if *pred_block == block_id {
+                            let phi_addr = match context.lower_to_lvalue(phi_target) {
+                                Operand::Register { id } => id,
+                                _ => continue,
+                            };
+                            let src = context.lower_to_rvalue_with_const_prop(pred_value);
+                            context.add_instruction(Instruction::Store64 {
+                                addr: phi_addr,
+                                offset: 0,
+                                src,
+                                span: karte_diagnostics::Span { start: usize::MAX, end: usize::MAX },
+                            });
+                        }
                     }
                 }
 
