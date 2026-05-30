@@ -1741,30 +1741,44 @@ fn lower_lambda_expression(
             if let Some(binding) = ctx.lookup_variable(&var_name).cloned() {
                 free_vars.push(var_name.clone());
 
-                let shared_location = ctx.new_temp();
-                ctx.add_statement(Statement::HeapAlloc {
-                    target: shared_location.clone(),
-                    size: 8,
-                    object_type: "shared_var".to_string(),
-                    span,
-                });
+                // 解析绑定值，检查变量是否已被外层闭包捕获
+                let resolved_value = ctx.resolve_value(&binding.value);
 
-                ctx.add_statement(Statement::Store {
-                    target: shared_location.clone(),
-                    value: binding.value.clone(),
-                    span,
-                });
+                match &resolved_value {
+                    // 变量已被外层闭包捕获（值为 Reference）
+                    // 此时 Reference 内部的 Temp 已经持有 shared_location 的地址，
+                    // 直接复用，不需要创建新的堆分配和间接层
+                    Value::Reference { value: inner, .. } => {
+                        captured_var_locations.push(inner.as_ref().clone());
+                    }
+                    // 变量首次被捕获，创建新的 shared_location（堆分配）
+                    _ => {
+                        let shared_location = ctx.new_temp();
+                        ctx.add_statement(Statement::HeapAlloc {
+                            target: shared_location.clone(),
+                            size: 8,
+                            object_type: "shared_var".to_string(),
+                            span,
+                        });
 
-                ctx.update_variable(
-                    &var_name,
-                    Value::Reference {
-                        value: Box::new(shared_location.clone()),
-                        ty: None,
-                    },
-                    None,
-                );
+                        ctx.add_statement(Statement::Store {
+                            target: shared_location.clone(),
+                            value: binding.value.clone(),
+                            span,
+                        });
 
-                captured_var_locations.push(shared_location);
+                        ctx.update_variable(
+                            &var_name,
+                            Value::Reference {
+                                value: Box::new(shared_location.clone()),
+                                ty: None,
+                            },
+                            None,
+                        );
+
+                        captured_var_locations.push(shared_location);
+                    }
+                }
             }
         }
     }

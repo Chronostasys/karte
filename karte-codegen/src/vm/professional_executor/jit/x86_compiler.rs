@@ -2039,17 +2039,47 @@ impl X86Compiler {
         self.emit_modrm(code_builder, 0b11, 0b010, rax); // CALL r/m64
     }
 
-    /// 保存 caller-saved 寄存器（用于运行时函数调用）
+    /// 保存 caller-saved 寄存器和 callee-saved 寄存器（用于运行时函数调用 / GC safepoint）
+    ///
+    /// 除了保存 C 函数调用约定要求的 caller-saved 寄存器外，
+    /// 还保存当前函数使用的 callee-saved 寄存器。
+    /// 这样 GC 在扫描虚拟栈时能发现所有寄存器中的堆指针，
+    /// evacuation 后从虚拟栈恢复的值已经是更新后的新地址。
     fn save_call_clobbered_registers(
         &self,
         code_builder: &mut CodeBuilder,
         exclude: &[u8],
     ) -> (Vec<u8>, usize) {
         // x86-64 System V ABI caller-saved: RAX, RCX, RDX, RSI, RDI, R8, R9, R10, R11
-        let regs: Vec<u8> = [0u8, 1, 2, 6, 7, 8, 9, 10, 11]
+        let caller_saved: Vec<u8> = [0u8, 1, 2, 6, 7, 8, 9, 10, 11]
             .into_iter()
             .filter(|reg| !exclude.contains(reg))
             .collect();
+
+        // 也保存当前函数使用的 callee-saved 寄存器
+        // GC evacuation 会搬移堆对象，所有持有堆指针的寄存器都必须在虚拟栈上可见
+        // 排除 R10(vm_sp) 和 R11(vm_fp) — 它们已在 caller_saved 中
+        let cc = CallingConvention::standard();
+        let callee_saved: Vec<u8> = self.current_function_used_regs
+            .iter()
+            .filter(|&&reg| {
+                cc.is_callee_saved(reg)
+                && reg != cc.stack_pointer   // 不保存 RSP
+                && reg != cc.frame_pointer   // 不保存 RBP
+                && reg != cc.stack_pointer   // 不重复保存 vm_sp(R10)
+                && reg != cc.frame_pointer   // 不重复保存 vm_fp(R11)
+                && !exclude.contains(&reg)   // 不在排除列表中
+            })
+            .cloned()
+            .collect();
+
+        // 合并寄存器列表（caller-saved 在前，callee-saved 在后）
+        let mut regs = caller_saved;
+        for reg in callee_saved {
+            if !regs.contains(&reg) {
+                regs.push(reg);
+            }
+        }
 
         if regs.is_empty() {
             return (regs, 0);
