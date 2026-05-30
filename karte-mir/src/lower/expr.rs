@@ -632,8 +632,9 @@ pub(crate) fn lower_expression(
             let start_val = lower_expression_to_temp(ctx, start)?;
             let end_val = lower_expression_to_temp(ctx, end)?;
 
-            // 创建循环变量 __for_var
+            // 创建循环变量 __for_var（使用递增计数器确保嵌套循环变量名唯一）
             let for_var_name = format!("__for_var_{}", ctx.lambda_counter);
+            ctx.lambda_counter += 1;
             let for_var_temp = ctx.new_temp();
             ctx.add_statement(Statement::Assign {
                 target: for_var_temp.clone(),
@@ -762,11 +763,9 @@ pub(crate) fn lower_expression(
                 right: Box::new(Expr::Number { value: 1, span: *span }),
                 span: *span,
             })?;
-            ctx.add_statement(Statement::Assign {
-                target: for_var_phi.clone(),
-                source: inc_temp,
-                span: *span,
-            });
+            // 递增结果写入新 temp 并通过 update_variable 更新绑定
+            // 不能直接写入 for_var_phi（phi target），否则 phi incoming 会自引用
+            ctx.update_variable(&for_var_name, inc_temp.clone(), None);
 
             // 收集循环体中变量更新后的值
             let final_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
@@ -820,13 +819,15 @@ pub(crate) fn lower_expression(
                 ctx.update_variable(name, phi_val.clone(), None);
             }
 
-            // 条件: __for_var < end（使用 MIR BinaryOperator::LessThan）
+            // 条件: __for_var < end
+            // 在循环头内部重新计算 end，避免跨块引用临时值导致 memory2reg 错误提升
             let for_var_phi_val = phi_values.get(&for_var_name).unwrap().clone();
+            let end_val_in_header = lower_expression_to_temp(ctx, end)?;
             let cond_temp = ctx.new_temp();
             ctx.add_statement(Statement::BinaryOp {
                 op: crate::BinaryOperator::LessThan,
                 left: for_var_phi_val,
-                right: end_val,
+                right: end_val_in_header,
                 target: cond_temp.clone(),
                 span: *span,
             });
