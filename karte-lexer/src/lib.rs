@@ -5,7 +5,9 @@ use std::fmt;
 /// Token 类型定义
 #[derive(Logos, Debug, Clone, PartialEq)]
 pub enum Token {
-    // 数字
+    // 数字（十六进制和二进制必须在十进制之前，Logos 最长匹配）
+    #[regex(r"0x[0-9a-fA-F]+", |lex| i64::from_str_radix(&lex.slice()[2..], 16).ok())]
+    #[regex(r"0b[01]+", |lex| i64::from_str_radix(&lex.slice()[2..], 2).ok())]
     #[regex(r"[0-9]+", |lex| lex.slice().parse::<i64>().ok())]
     Number(i64),
 
