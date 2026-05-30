@@ -78,6 +78,10 @@ pub enum TypeCheckError {
         length: i64,
         span: Span,
     },
+    DuplicateFunctionDefinition {
+        name: String,
+        span: Span,
+    },
 }
 
 impl fmt::Display for TypeCheckError {
@@ -156,6 +160,9 @@ impl fmt::Display for TypeCheckError {
             TypeCheckError::UndefinedModuleSymbol { module, symbol, .. } => {
                 write!(f, "Module `{}` does not export `{}`", module, symbol)
             }
+            TypeCheckError::DuplicateFunctionDefinition { name, .. } => {
+                write!(f, "Duplicate function definition: {}", name)
+            }
             TypeCheckError::IndexOutOfBounds { index, length, .. } => {
                 write!(f, "Index {} out of bounds (length {})", index, length)
             }
@@ -182,6 +189,7 @@ impl TypeCheckError {
             | TypeCheckError::InvalidAssignmentTarget { span }
             | TypeCheckError::ModuleInterfaceUnavailable { span, .. }
             | TypeCheckError::UndefinedModuleSymbol { span, .. }
+            | TypeCheckError::DuplicateFunctionDefinition { span, .. }
             | TypeCheckError::IndexOutOfBounds { span, .. } => *span,
         }
     }

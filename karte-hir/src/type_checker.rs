@@ -97,6 +97,10 @@ pub struct TypeChecker {
     expr_types: HashMap<*const Expr, Type>,
     /// 泛型函数的类型方案（TypeScheme），用于 let-polymorphism
     function_schemes: HashMap<String, TypeScheme>,
+    /// 追踪重复函数定义的 span（与 primary 不同），用于 infer_stmt 阶段报告错误
+    duplicate_function_spans: HashSet<(usize, usize)>,
+    /// 追踪已在 hoisting pass 中处理过的函数 span，用于区分重复定义与二次遍历
+    primary_function_spans: HashSet<(usize, usize)>,
 }
 
 /// 函数签名，包含参数类型和返回类型
@@ -125,6 +129,8 @@ impl TypeChecker {
             lambda_types: HashMap::new(),
             expr_types: HashMap::new(),
             function_schemes: HashMap::new(),
+            duplicate_function_spans: HashSet::new(),
+            primary_function_spans: HashSet::new(),
         }
     }
 
@@ -512,6 +518,11 @@ impl TypeChecker {
         // 首先收集所有结构体定义
         self.collect_struct_definitions(expr);
 
+        // 🔧 修复：在收集函数定义之前，先收集所有枚举（TypeDef）定义
+        // 否则函数签名中的枚举类型引用会被 resolve_struct_field_from_parsed
+        // 解析为空的 Struct 骨架，导致类型检查器看到空枚举
+        self.collect_enum_definitions(expr);
+
         let mut env = TypeEnvironment::new();
 
         // 🔧 Hoisting Pass: 收集顶层函数定义
@@ -676,8 +687,14 @@ impl TypeChecker {
                     ..
                 } = stmt
                 {
-                    // 如果环境里已经有了，跳过
+                    // 如果环境里已经有了，检查是否是二次遍历（同一 span）还是真正的重复定义
                     if env.contains_key(name) {
+                        // 如果是已处理过的主定义（二次遍历中的同一 span），静默跳过
+                        if self.primary_function_spans.contains(&(span.start, span.end)) {
+                            continue;
+                        }
+                        // 真正的重复定义：记录 span，后续由 infer_stmt 统一报告错误
+                        self.duplicate_function_spans.insert((span.start, span.end));
                         continue;
                     }
 
@@ -714,6 +731,9 @@ impl TypeChecker {
                             return_type: ret_ty.clone(),
                         },
                     );
+
+                    // 记录此 span 为已处理的主定义（用于后续检测二次遍历）
+                    self.primary_function_spans.insert((span.start, span.end));
 
                     let func_type = Type::Function {
                         params: param_types,
@@ -793,6 +813,63 @@ impl TypeChecker {
     ) {
         if let Statement::StructDef { name, fields, .. } = stmt {
             struct_defs.insert(name.clone(), fields.clone());
+        }
+    }
+
+    /// 🔧 预收集枚举定义（TypeDef），在函数签名解析之前注册到 custom_types
+    /// 否则 `fn eval(e: Expr)` 中的 `Expr` 类型在函数签名解析时尚未注册，
+    /// resolve_struct_field_from_parsed 会返回空 Struct 骨架导致类型检查失败
+    fn collect_enum_definitions(&mut self, expr: &Expr) {
+        let mut enum_defs: Vec<(String, Vec<(String, Vec<Type>)>)> = Vec::new();
+        self.gather_enum_defs(expr, &mut enum_defs);
+
+        for (name, variants) in &enum_defs {
+            let sum_variants: Vec<crate::types::SumVariant> = variants
+                .iter()
+                .map(|(variant_name, data_types)| crate::types::SumVariant {
+                    name: variant_name.clone(),
+                    data_types: data_types.clone(),
+                })
+                .collect();
+
+            let sum_type = Type::sum(name.clone(), sum_variants);
+            self.custom_types.insert(name.clone(), sum_type);
+        }
+    }
+
+    fn gather_enum_defs(
+        &self,
+        expr: &Expr,
+        enum_defs: &mut Vec<(String, Vec<(String, Vec<Type>)>)>,
+    ) {
+        match expr {
+            Expr::Block {
+                statements,
+                final_expr,
+                ..
+            } => {
+                for stmt in statements {
+                    self.gather_enum_defs_from_statement(stmt, enum_defs);
+                }
+                if let Some(final_expr) = final_expr {
+                    self.gather_enum_defs(final_expr, enum_defs);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn gather_enum_defs_from_statement(
+        &self,
+        stmt: &Statement,
+        enum_defs: &mut Vec<(String, Vec<(String, Vec<Type>)>)>,
+    ) {
+        if let Statement::TypeDef { name, variants, .. } = stmt {
+            let variant_list: Vec<(String, Vec<Type>)> = variants
+                .iter()
+                .map(|v| (v.name.clone(), v.data_types.clone()))
+                .collect();
+            enum_defs.push((name.clone(), variant_list));
         }
     }
 
@@ -1972,6 +2049,14 @@ impl TypeChecker {
                 span,
                 ..
             } => {
+                // 如果是重复定义（已在 collect_function_definitions 中标记），报告错误并跳过函数体检查
+                if self.duplicate_function_spans.contains(&(span.start, span.end)) {
+                    self.add_error(TypeCheckError::DuplicateFunctionDefinition {
+                        name: name.clone(),
+                        span: *span,
+                    });
+                    return;
+                }
                 // 从缓存中获取函数签名（已在 collect_function_definitions 中解析和验证）
                 let signature = self
                     .function_signatures

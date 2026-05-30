@@ -123,8 +123,6 @@ pub(super) fn lower_statement(
                 BinaryOperator::Add
                     | BinaryOperator::Subtract
                     | BinaryOperator::Multiply
-                    | BinaryOperator::Divide
-                    | BinaryOperator::Modulo
                     | BinaryOperator::BitAnd
                     | BinaryOperator::BitOr
                     | BinaryOperator::BitXor
@@ -166,20 +164,8 @@ pub(super) fn lower_statement(
                     src2,
                     span: *span,
                 },
-                BinaryOperator::Divide => Instruction::Div {
-                    dst: temp_register,
-                    src1,
-                    src2,
-                    span: *span,
-                },
-                BinaryOperator::Modulo => Instruction::Mod {
-                    dst: temp_register,
-                    src1,
-                    src2,
-                    span: *span,
-                },
 
-                // 逻辑和比较操作：在下面的第二个 match 中处理
+                // 逻辑、比较、除法和取模操作：在下面的第二个 match 中处理
                 // 这里返回一个占位指令（会被丢弃）
                 BinaryOperator::And
                 | BinaryOperator::Or
@@ -188,7 +174,9 @@ pub(super) fn lower_statement(
                 | BinaryOperator::LessThan
                 | BinaryOperator::LessEqual
                 | BinaryOperator::GreaterThan
-                | BinaryOperator::GreaterEqual => {
+                | BinaryOperator::GreaterEqual
+                | BinaryOperator::Divide
+                | BinaryOperator::Modulo => {
                     // CompareSet 在下面的第二个 match 中通过 ctx.add_instruction 添加，
                     // 这里返回一个无副作用的占位指令（会被覆盖）
                     Instruction::Move {
@@ -351,6 +339,104 @@ pub(super) fn lower_statement(
                         span: *span,
                     });
                 }
+                BinaryOperator::Divide => {
+                    // 除零检查：如果 src2 == 0，结果为 0；否则执行除法
+                    let zero_label = ctx.next_internal_label("div_zero");
+                    let end_label = ctx.next_internal_label("div_end");
+
+                    // 比较 src2 与 0
+                    ctx.add_instruction(Instruction::Compare {
+                        src1: src2_clone.clone(),
+                        src2: Operand::Immediate { value: 0 },
+                        span: *span,
+                    });
+
+                    // 如果 src2 == 0，跳转到 zero_label
+                    ctx.add_instruction(Instruction::JumpEqual {
+                        target: zero_label,
+                        span: *span,
+                    });
+
+                    // 非零路径：执行除法
+                    ctx.add_instruction(Instruction::Div {
+                        dst: temp_register,
+                        src1: src1_clone.clone(),
+                        src2: src2_clone.clone(),
+                        span: *span,
+                    });
+
+                    // 跳转到 end_label
+                    ctx.add_instruction(Instruction::Jump {
+                        target: end_label,
+                        span: *span,
+                    });
+
+                    // 零路径：结果为 0
+                    ctx.add_instruction(Instruction::Label {
+                        id: zero_label,
+                        span: *span,
+                    });
+                    ctx.add_instruction(Instruction::Move {
+                        dst: temp_register,
+                        src: Operand::Immediate { value: 0 },
+                        span: *span,
+                    });
+
+                    // End
+                    ctx.add_instruction(Instruction::Label {
+                        id: end_label,
+                        span: *span,
+                    });
+                }
+                BinaryOperator::Modulo => {
+                    // 除零检查：如果 src2 == 0，结果为 0；否则执行取模
+                    let zero_label = ctx.next_internal_label("mod_zero");
+                    let end_label = ctx.next_internal_label("mod_end");
+
+                    // 比较 src2 与 0
+                    ctx.add_instruction(Instruction::Compare {
+                        src1: src2_clone.clone(),
+                        src2: Operand::Immediate { value: 0 },
+                        span: *span,
+                    });
+
+                    // 如果 src2 == 0，跳转到 zero_label
+                    ctx.add_instruction(Instruction::JumpEqual {
+                        target: zero_label,
+                        span: *span,
+                    });
+
+                    // 非零路径：执行取模
+                    ctx.add_instruction(Instruction::Mod {
+                        dst: temp_register,
+                        src1: src1_clone.clone(),
+                        src2: src2_clone.clone(),
+                        span: *span,
+                    });
+
+                    // 跳转到 end_label
+                    ctx.add_instruction(Instruction::Jump {
+                        target: end_label,
+                        span: *span,
+                    });
+
+                    // 零路径：结果为 0
+                    ctx.add_instruction(Instruction::Label {
+                        id: zero_label,
+                        span: *span,
+                    });
+                    ctx.add_instruction(Instruction::Move {
+                        dst: temp_register,
+                        src: Operand::Immediate { value: 0 },
+                        span: *span,
+                    });
+
+                    // End
+                    ctx.add_instruction(Instruction::Label {
+                        id: end_label,
+                        span: *span,
+                    });
+                }
                 _ => {
                     // 对于简单运算（Add, Sub, Mul, Div），添加基本指令
                     ctx.add_instruction(instruction);
@@ -416,11 +502,12 @@ pub(super) fn lower_statement(
                 UnaryOperator::Not => {
                     // !x: logical not with 0/1 encoding
                     // For 0/1 boolean encoding: !x = 1 - x
-                    let temp_reg = ctx.current_function_mut().new_register();
+                    // 🔧 修复：复用 temp_register 而非分配新的 temp_reg，
+                    // 减少一个虚拟寄存器，避免 SSA/Memory2Reg 在长 && 链中值追踪错误
 
-                    // Move 1 to temp register
+                    // Move 1 to result register first
                     ctx.add_instruction(Instruction::Move {
-                        dst: temp_reg,
+                        dst: temp_register,
                         src: Operand::Immediate { value: 1 },
                         span: *span,
                     });
@@ -428,7 +515,7 @@ pub(super) fn lower_statement(
                     // Subtract src from 1: result = 1 - src
                     ctx.add_instruction(Instruction::Sub {
                         dst: temp_register,
-                        src1: Operand::Register { id: temp_reg },
+                        src1: Operand::Register { id: temp_register },
                         src2: src,
                         span: *span,
                     });
