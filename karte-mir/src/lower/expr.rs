@@ -417,6 +417,11 @@ pub(crate) fn lower_expression(
 
             // 在 merge 块中为被修改的变量插入 Phi 节点
             // 预分析模式也追踪变量变化（创建 phi temp 更新绑定），但不生成 Phi statement
+            // R8-2 修复：当闭包在一个分支中捕获变量时（值变为 Reference），
+            // 另一个分支的值是普通 Temp。Phi 不能直接合并不同类型，
+            // 需要为 Reference 值插入 Dereference 获取实际值，
+            // 并为非 Reference 值创建 shared_location 统一类型。
+            // 最终 Phi 合并 shared_location 指针，变量绑定更新为 Reference。
             ctx.set_current_block(merge_block);
             for (name, pre_value) in &pre_if_bindings {
                 let then_value = then_bindings.get(name).cloned().unwrap_or_else(|| pre_value.clone());
@@ -426,18 +431,85 @@ pub(crate) fn lower_expression(
                 let else_changed = else_value != *pre_value;
 
                 if then_changed || else_changed {
-                    let phi_temp = ctx.new_temp();
-                    if !ctx.analysis_mode {
-                        ctx.add_statement(Statement::Phi {
-                            target: phi_temp.clone(),
-                            incoming: vec![
-                                (actual_then_block, then_value),
-                                (actual_else_block, else_value),
-                            ],
-                            span,
-                        });
+                    // R8-2 修复：检查 incoming 值是否混合了 Reference 和非 Reference
+                    let then_is_ref = matches!(&then_value, Value::Reference { .. });
+                    let else_is_ref = matches!(&else_value, Value::Reference { .. });
+
+                    if then_is_ref || else_is_ref {
+                        // 至少一个分支有闭包捕获（Reference），需要统一为 shared_location
+                        // 提取或创建 shared_location，Phi 合并指针
+                        let then_loc = if let Value::Reference { value: ref_inner, .. } = &then_value {
+                            ref_inner.as_ref().clone()
+                        } else {
+                            // 非Reference 值：创建 shared_location 并存储值
+                            let loc = ctx.new_temp();
+                            if !ctx.analysis_mode {
+                                ctx.add_statement(Statement::HeapAlloc {
+                                    target: loc.clone(),
+                                    size: 8,
+                                    object_type: "shared_var".to_string(),
+                                    span,
+                                });
+                                ctx.add_statement(Statement::Store {
+                                    target: loc.clone(),
+                                    value: then_value.clone(),
+                                    span,
+                                });
+                            }
+                            loc
+                        };
+
+                        let else_loc = if let Value::Reference { value: ref_inner, .. } = &else_value {
+                            ref_inner.as_ref().clone()
+                        } else {
+                            let loc = ctx.new_temp();
+                            if !ctx.analysis_mode {
+                                ctx.add_statement(Statement::HeapAlloc {
+                                    target: loc.clone(),
+                                    size: 8,
+                                    object_type: "shared_var".to_string(),
+                                    span,
+                                });
+                                ctx.add_statement(Statement::Store {
+                                    target: loc.clone(),
+                                    value: else_value.clone(),
+                                    span,
+                                });
+                            }
+                            loc
+                        };
+
+                        let phi_temp = ctx.new_temp();
+                        if !ctx.analysis_mode {
+                            ctx.add_statement(Statement::Phi {
+                                target: phi_temp.clone(),
+                                incoming: vec![
+                                    (actual_then_block, then_loc),
+                                    (actual_else_block, else_loc),
+                                ],
+                                span,
+                            });
+                        }
+                        // 变量绑定更新为 Reference，指向 Phi 选出的 shared_location
+                        ctx.update_variable(name, Value::Reference {
+                            value: Box::new(phi_temp),
+                            ty: None,
+                        }, None);
+                    } else {
+                        // 正常情况：都不是 Reference
+                        let phi_temp = ctx.new_temp();
+                        if !ctx.analysis_mode {
+                            ctx.add_statement(Statement::Phi {
+                                target: phi_temp.clone(),
+                                incoming: vec![
+                                    (actual_then_block, then_value),
+                                    (actual_else_block, else_value),
+                                ],
+                                span,
+                            });
+                        }
+                        ctx.update_variable(name, phi_temp, None);
                     }
-                    ctx.update_variable(name, phi_temp, None);
                 }
             }
         }
@@ -1043,6 +1115,40 @@ pub(crate) fn lower_expression(
                     })
                     .collect();
 
+            // R8-1 修复：对被闭包捕获的变量（binding 变为 Reference），
+            // 在 increment_block 中插入 Dereference 获取实际值，避免 Phi incoming
+            // 收到 Reference 而非数值
+            let mut actual_backedge_values: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+            let mut actual_continue_backedge_values: std::collections::HashMap<(String, crate::BasicBlockId), Value> = std::collections::HashMap::new();
+            for (name, _initial_value, _loop_value) in &updated_vars {
+                // 处理正常结束路径的 Reference 值
+                if let Some((final_value, _)) = final_bindings.get(name) {
+                    if let Value::Reference { value: ref_target, .. } = final_value {
+                        let derefed = ctx.new_temp();
+                        ctx.add_statement(Statement::Dereference {
+                            target: derefed.clone(),
+                            reference: *ref_target.clone(),
+                            span: body.span(),
+                        });
+                        actual_backedge_values.insert(name.clone(), derefed);
+                    }
+                }
+                // 处理 continue 路径的 Reference 值（经过 increment_block 回到 loop_head）
+                for (source_block, cont_bindings) in &for_continue_sources {
+                    if let Some(cont_value) = cont_bindings.get(name) {
+                        if let Value::Reference { value: ref_target, .. } = cont_value {
+                            let derefed = ctx.new_temp();
+                            ctx.add_statement(Statement::Dereference {
+                                target: derefed.clone(),
+                                reference: *ref_target.clone(),
+                                span: body.span(),
+                            });
+                            actual_continue_backedge_values.insert((name.clone(), *source_block), derefed);
+                        }
+                    }
+                }
+            }
+
             // 递增块 → loop_head
             ctx.set_terminator(Terminator::Goto {
                 target: loop_head,
@@ -1051,6 +1157,7 @@ pub(crate) fn lower_expression(
 
             // === 第七步：修正 loop_head 中 phi 的 back-edge incoming 值 ===
             // 遍历 loop_head 的语句，找到占位的 phi 节点，用实际值替换
+            // 使用 R8-1 修复后的解引用值（如果变量被闭包捕获）
             let loop_head_block = ctx.current_function_mut().basic_blocks.get_mut(&loop_head).unwrap();
             for stmt in &mut loop_head_block.statements {
                 if let Statement::Phi { target, incoming, .. } = stmt {
@@ -1070,13 +1177,41 @@ pub(crate) fn lower_expression(
                                     .find(|(_, v)| **v == *target)
                                     .map(|(k, _)| k.clone());
                                 if let Some(name) = var_name {
-                                    *value = final_bindings.get(&name)
-                                        .map(|(v, _)| v.clone())
-                                        .unwrap_or_else(|| {
-                                            pre_loop_bindings.get(&name)
-                                                .map(|(v, _)| v.clone())
-                                                .unwrap_or_else(|| value.clone())
-                                        });
+                                    // R8-1 修复：优先使用解引用后的值
+                                    if let Some(actual) = actual_backedge_values.get(&name) {
+                                        *value = actual.clone();
+                                    } else {
+                                        *value = final_bindings.get(&name)
+                                            .map(|(v, _)| v.clone())
+                                            .unwrap_or_else(|| {
+                                                pre_loop_bindings.get(&name)
+                                                    .map(|(v, _)| v.clone())
+                                                    .unwrap_or_else(|| value.clone())
+                                            });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // R8-1 修复：为 continue 经过 increment_block 的路径也添加解引用后的 incoming
+                    // continue 路径也通过 increment_block 回到 loop_head
+                    for (source_block, cont_bindings) in &for_continue_sources {
+                        for (name, _initial_value, _loop_value) in &updated_vars {
+                            let var_name = Some(name.clone());
+                            if let Some(phi_target) = phi_values.get(name) {
+                                if *target == *phi_target {
+                                    let cont_value = if let Some(actual) = actual_continue_backedge_values.get(&(name.clone(), *source_block)) {
+                                        actual.clone()
+                                    } else {
+                                        cont_bindings.get(name)
+                                            .cloned()
+                                            .unwrap_or_else(|| {
+                                                pre_loop_bindings.get(name)
+                                                    .map(|(v, _)| v.clone())
+                                                    .unwrap_or_else(|| phi_target.clone())
+                                            })
+                                    };
+                                    incoming.push((*source_block, cont_value));
                                 }
                             }
                         }

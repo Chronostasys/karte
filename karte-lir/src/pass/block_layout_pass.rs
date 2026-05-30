@@ -431,6 +431,11 @@ impl BlockLayoutPass {
         let mut visited = HashSet::new();
         let mut order = Vec::new();
         let mut worklist = VecDeque::new();
+        // R8-3 修复：延迟节点集合，记录尚未满足前驱条件的块
+        // 当一个块有多条非回边前驱时（如 if-else 的 merge 块），
+        // 必须等所有前驱都访问后才能访问，否则物理顺序会与控制流不一致，
+        // 导致线性扫描寄存器分配器的生命周期分析出错
+        let mut deferred: HashSet<usize> = HashSet::new();
 
         // 识别回边（用于循环检测）
         let back_edges = self.find_back_edges(cfg);
@@ -455,8 +460,23 @@ impl BlockLayoutPass {
             // 优先处理非回边的successor
             for &succ in &node.successors {
                 if !visited.contains(&succ) && !back_edges.contains(&(block_id, succ)) {
-                    // 非回边的successor优先访问（fall-through候选）
-                    worklist.push_front(succ);
+                    // R8-3 修复：检查后继块的所有非回边前驱是否都已访问
+                    // 只有所有前驱都访问后，才能确保物理顺序与控制流一致
+                    let all_preds_visited = cfg.get_node_by_id(succ)
+                        .map(|succ_node| {
+                            succ_node.predecessors.iter().all(|&pred| {
+                                visited.contains(&pred) || back_edges.contains(&(pred, succ))
+                            })
+                        })
+                        .unwrap_or(true);
+
+                    if all_preds_visited {
+                        // 非回边的successor优先访问（fall-through候选）
+                        worklist.push_front(succ);
+                    } else {
+                        // 延迟处理：等所有前驱都访问后再处理
+                        deferred.insert(succ);
+                    }
                 }
             }
 
@@ -465,6 +485,26 @@ impl BlockLayoutPass {
                 if !visited.contains(&succ) && back_edges.contains(&(block_id, succ)) {
                     worklist.push_back(succ);
                 }
+            }
+
+            // R8-3 修复：检查延迟节点中是否有现在满足条件的
+            let newly_ready: Vec<usize> = deferred.iter()
+                .filter(|&&d_block| {
+                    cfg.get_node_by_id(d_block)
+                        .map(|d_node| {
+                            d_node.predecessors.iter().all(|&pred| {
+                                visited.contains(&pred) || back_edges.contains(&(pred, d_block))
+                            })
+                        })
+                        .unwrap_or(true)
+                })
+                .cloned()
+                .collect();
+
+            for ready_block in newly_ready {
+                deferred.remove(&ready_block);
+                // 延迟节点满足条件后，添加到工作列表前端
+                worklist.push_front(ready_block);
             }
         }
 
