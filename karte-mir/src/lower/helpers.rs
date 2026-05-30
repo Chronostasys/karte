@@ -251,6 +251,10 @@ pub(crate) fn infer_heap_layout_from_expr(expr: &Expr) -> HeapLayout {
             format!("array:{}", elements.len()),
             elements.len().max(1) + 1,
         ),
+        Expr::TupleLiteral { elements, .. } => (
+            format!("tuple:{}", elements.len()),
+            elements.len().max(1),
+        ),
         _ => ("opaque".to_string(), 1),
     };
 

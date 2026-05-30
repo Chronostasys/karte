@@ -1313,6 +1313,41 @@ pub(crate) fn lower_expression(
             });
         }
 
+        Expr::TupleLiteral { elements, span } => {
+            // 将元组转换为匿名结构体: (a, b, c) → Struct { name: "__tuple_3", fields: { _0: a, _1: b, _2: c } }
+            let n = elements.len();
+            let struct_name = format!("__tuple_{}", n);
+
+            let mut mir_fields = std::collections::BTreeMap::new();
+            for (i, elem) in elements.iter().enumerate() {
+                let elem_value = lower_expression_to_temp(ctx, elem)?;
+                mir_fields.insert(format!("_{}", i), elem_value);
+            }
+
+            let struct_value = Value::Struct {
+                name: struct_name,
+                fields: mir_fields,
+                ty: None,
+            };
+
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: struct_value,
+                span: *span,
+            });
+        }
+
+        Expr::TupleAccess { object, index, span } => {
+            // 元组索引访问转为字段访问: t.1 → field_access(t, "_1")
+            let object_value = lower_expression_to_temp(ctx, object)?;
+            ctx.add_statement(Statement::FieldAccess {
+                target: destination.clone(),
+                object: object_value,
+                field: format!("_{}", index),
+                span: *span,
+            });
+        }
+
         Expr::Reference { expr, span } => {
             // 1. 计算被引用表达式的值
             let referenced_value = lower_expression_to_temp(ctx, expr)?;

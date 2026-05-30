@@ -2217,4 +2217,112 @@ fn main() -> number {
         compile_and_run_aot(code, 0, "cast_let_binding");
     }
 
+    #[test]
+    fn test_tuple_basic() {
+        let code = r#"
+fn main() -> number {
+    let t = (1, 2);
+    t.0 + t.1
+}
+"#;
+        compile_and_run_aot(code, 3, "tuple_basic");
+    }
+
+    #[test]
+    fn test_tuple_three_elements() {
+        let code = r#"
+fn main() -> number {
+    let p = (10, 20, 30);
+    p.0 + p.2
+}
+"#;
+        compile_and_run_aot(code, 40, "tuple_three_elements");
+    }
+
+    #[test]
+    fn test_tuple_field_access_in_arithmetic() {
+        let code = r#"
+fn main() -> number {
+    let t = (1, 2);
+    t.1 * 10
+}
+"#;
+        compile_and_run_aot(code, 20, "tuple_field_access_in_arithmetic");
+    }
+
+    #[test]
+    fn test_tuple_five_elements() {
+        let code = r#"
+fn main() -> number {
+    let t = (1, 2, 3, 4, 5);
+    t.0 + t.4
+}
+"#;
+        compile_and_run_aot(code, 6, "tuple_five_elements");
+    }
+
+    #[test]
+    fn test_tuple_as_parameter() {
+        let code = r#"
+fn main() -> number {
+    let fst = |t| { t.0 };
+    let snd = |t| { t.1 };
+    let t = (42, 99);
+    fst(t) + snd(t)
+}
+"#;
+        compile_and_run_aot(code, 141, "tuple_as_parameter");
+    }
+
+    #[test]
+    fn test_tuple_nested_access() {
+        let code = r#"
+fn main() -> number {
+    let a = (1, 2);
+    let b = (3, 4);
+    a.0 + a.1 + b.0 + b.1
+}
+"#;
+        compile_and_run_aot(code, 10, "tuple_nested_access");
+    }
+
+    #[test]
+    fn test_tuple_single_element_paren_grouping() {
+        let code = r#"
+fn main() -> number {
+    let x = (42);
+    x + 1
+}
+"#;
+        compile_and_run_aot(code, 43, "tuple_single_element_paren_grouping");
+    }
+
+    #[test]
+    fn test_tuple_in_if_expression() {
+        let code = r#"
+fn main() -> number {
+    let t = (10, 20);
+    if t.0 < t.1 {
+        t.1 - t.0
+    } else {
+        t.0 - t.1
+    }
+}
+"#;
+        compile_and_run_aot(code, 10, "tuple_in_if_expression");
+    }
+
+    #[test]
+    fn test_tuple_computed_elements() {
+        let code = r#"
+fn main() -> number {
+    let a = 3;
+    let b = 4;
+    let t = (a + b, a * b);
+    t.0 + t.1
+}
+"#;
+        compile_and_run_aot(code, 19, "tuple_computed_elements");
+    }
+
 }

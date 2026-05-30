@@ -129,6 +129,7 @@ impl StructLayoutManager {
                 }
             }
             Type::Array { .. } => Ok((8, 8)), // 数组值在运行时以指针表示
+            Type::Tuple(types) => Ok((types.len() * 8, 8)), // 元组：每个元素8字节
             Type::Var(_) => Ok((8, 8)),       // 类型变量默认8字节
             Type::Unknown => Ok((8, 8)),      // 未知类型默认8字节
             Type::Int(_) => Ok((8, 8)),       // 整数类型默认8字节

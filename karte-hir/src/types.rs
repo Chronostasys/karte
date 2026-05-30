@@ -138,6 +138,8 @@ pub enum Type {
         name: String,
         fields: Vec<StructField>,
     },
+    /// 元组类型
+    Tuple(Vec<Type>),
     /// 数组类型
     Array {
         element: Box<Type>,
@@ -272,6 +274,10 @@ impl Type {
                     })
             }
             (Type::Array { element: e1 }, Type::Array { element: e2 }) => e1.structural_eq(e2),
+            (Type::Tuple(ts1), Type::Tuple(ts2)) => {
+                ts1.len() == ts2.len()
+                    && ts1.iter().zip(ts2.iter()).all(|(t1, t2)| t1.structural_eq(t2))
+            }
             (Type::Reference { inner: i1 }, Type::Reference { inner: i2 }) => i1.structural_eq(i2),
             (Type::Var(v1), Type::Var(v2)) => v1 == v2,
             (Type::Unknown, Type::Unknown) => true,
@@ -341,6 +347,14 @@ impl fmt::Display for Type {
                     .join(", ");
                 write!(f, "{} = {{ {} }}", name, fields_str)
             }
+            Type::Tuple(types) => {
+                let types_str = types
+                    .iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "({})", types_str)
+            }
             Type::Array { element } => {
                 write!(f, "[{}]", element)
             }
@@ -401,6 +415,11 @@ impl Type {
     /// 创建结构体类型
     pub fn struct_type(name: String, fields: Vec<StructField>) -> Self {
         Type::Struct { name, fields }
+    }
+
+    /// 创建元组类型
+    pub fn tuple(types: Vec<Type>) -> Self {
+        Type::Tuple(types)
     }
 
     /// 创建数组类型
@@ -500,6 +519,9 @@ impl Type {
                     })
                     .collect(),
             },
+            Type::Tuple(types) => Type::Tuple(
+                types.iter().map(|t| t.substitute(subst)).collect()
+            ),
             Type::Array { element } => Type::Array {
                 element: Box::new(element.substitute(subst)),
             },
@@ -557,6 +579,13 @@ impl Type {
                 let mut vars = Vec::new();
                 for field in fields {
                     vars.extend(field.field_type.free_vars());
+                }
+                vars
+            }
+            Type::Tuple(types) => {
+                let mut vars = Vec::new();
+                for t in types {
+                    vars.extend(t.free_vars());
                 }
                 vars
             }

@@ -366,6 +366,23 @@ impl TypeChecker {
                 self.unify_recursive(i1, i2, span, orig_t1, orig_t2, visited)
             }
 
+            (Type::Tuple(ts1), Type::Tuple(ts2)) => {
+                if ts1.len() != ts2.len() {
+                    let expected = self.apply_substitution(orig_t1.clone());
+                    let found = self.apply_substitution(orig_t2.clone());
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected,
+                        found,
+                        span,
+                    });
+                    return Err(());
+                }
+                for (t1_elem, t2_elem) in ts1.iter().zip(ts2.iter()) {
+                    self.unify_recursive(t1_elem, t2_elem, span, orig_t1, orig_t2, visited)?;
+                }
+                Ok(())
+            }
+
             (
                 Type::Struct {
                     name: n1,
@@ -1525,6 +1542,48 @@ impl TypeChecker {
                         self.add_error(TypeCheckError::TypeMismatch {
                             expected: Type::array(Type::Unknown),
                             found: other,
+                            span: *span,
+                        });
+                        Type::Unknown
+                    }
+                }
+            }
+
+            Expr::TupleLiteral { elements, span } => {
+                let elem_types: Vec<Type> = elements
+                    .iter()
+                    .map(|e| self.infer_expr(e, env))
+                    .collect();
+                Type::tuple(elem_types)
+            }
+            Expr::TupleAccess { object, index, span } => {
+                let obj_type = self.infer_expr(object, env);
+                // 自动解引用
+                let actual_type = match &obj_type {
+                    Type::Reference { inner } => inner.as_ref(),
+                    _ => &obj_type,
+                };
+                match actual_type {
+                    Type::Tuple(types) => {
+                        if *index >= types.len() {
+                            self.add_error(TypeCheckError::IndexOutOfBounds {
+                                index: *index as i64,
+                                length: types.len() as i64,
+                                span: *span,
+                            });
+                            Type::Unknown
+                        } else {
+                            types[*index].clone()
+                        }
+                    }
+                    Type::Var(_) => {
+                        // 类型变量，无法立即确定，返回新的类型变量
+                        Type::Var(self.fresh_type_var())
+                    }
+                    Type::Unknown => Type::Unknown,
+                    _ => {
+                        self.add_error(TypeCheckError::NotAStruct {
+                            name: format!("不是元组类型，无法使用 .{} 索引访问", index),
                             span: *span,
                         });
                         Type::Unknown

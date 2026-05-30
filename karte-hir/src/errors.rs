@@ -73,6 +73,11 @@ pub enum TypeCheckError {
         symbol: String,
         span: Span,
     },
+    IndexOutOfBounds {
+        index: i64,
+        length: i64,
+        span: Span,
+    },
 }
 
 impl fmt::Display for TypeCheckError {
@@ -151,6 +156,9 @@ impl fmt::Display for TypeCheckError {
             TypeCheckError::UndefinedModuleSymbol { module, symbol, .. } => {
                 write!(f, "Module `{}` does not export `{}`", module, symbol)
             }
+            TypeCheckError::IndexOutOfBounds { index, length, .. } => {
+                write!(f, "Index {} out of bounds (length {})", index, length)
+            }
         }
     }
 }
@@ -173,7 +181,8 @@ impl TypeCheckError {
             | TypeCheckError::UndefinedType { span, .. }
             | TypeCheckError::InvalidAssignmentTarget { span }
             | TypeCheckError::ModuleInterfaceUnavailable { span, .. }
-            | TypeCheckError::UndefinedModuleSymbol { span, .. } => *span,
+            | TypeCheckError::UndefinedModuleSymbol { span, .. }
+            | TypeCheckError::IndexOutOfBounds { span, .. } => *span,
         }
     }
 }

@@ -634,6 +634,24 @@ impl LirLoweringContext {
                         alignment: 8,
                     }
                 }
+                n if n.starts_with("__tuple_") => {
+                    // 匿名元组结构体：所有字段都是 8 字节对齐
+                    let field_count = fields.len();
+                    let struct_fields: Vec<StructField> = (0..field_count)
+                        .map(|i| StructField {
+                            name: format!("_{}", i),
+                            offset: i * 8,
+                            size: 8,
+                            alignment: 8,
+                        })
+                        .collect();
+                    StructLayout {
+                        name: name.to_string(),
+                        fields: struct_fields,
+                        total_size: field_count * 8,
+                        alignment: 8,
+                    }
+                }
                 _ => {
                     return Err(format!("未知的结构体类型: {}", name));
                 }
@@ -694,6 +712,12 @@ impl LirLoweringContext {
                 match field_name {
                     "function_ptr" | "env_ptr" => "Closure".to_string(), // 闭包结构体字段
                     _ => {
+                        // 元组字段: _0, _1, _2...
+                        if let Some(index_str) = field_name.strip_prefix('_') {
+                            if let Ok(index) = index_str.parse::<usize>() {
+                                return Ok(index * 8);
+                            }
+                        }
                         // 如果无法推断，尝试从所有已知类型中查找包含该字段的类型
                         for layout in self.global_struct_types.values() {
                             if layout.fields.iter().any(|f| f.name == field_name) {
@@ -734,6 +758,15 @@ impl LirLoweringContext {
                     "env_ptr" => Ok(8),
                     _ => Err(format!("Unknown field '{}' in Closure", field_name)),
                 },
+                n if n.starts_with("__tuple_") => {
+                    // 元组字段偏移: _0 → 0, _1 → 8, _2 → 16
+                    if let Some(index_str) = field_name.strip_prefix('_') {
+                        if let Ok(index) = index_str.parse::<usize>() {
+                            return Ok(index * 8);
+                        }
+                    }
+                    Err(format!("Invalid tuple field '{}' in {}", field_name, struct_name))
+                }
                 _ => Err(format!("Unknown struct type: {}", struct_name)),
             }
         }

@@ -202,6 +202,17 @@ pub enum Expr {
         array: Box<Expr>,
         span: Span,
     },
+    /// 元组字面量
+    TupleLiteral {
+        elements: Vec<Expr>,
+        span: Span,
+    },
+    /// 元组字段访问 (t.0, t.1)
+    TupleAccess {
+        object: Box<Expr>,
+        index: usize,
+        span: Span,
+    },
 
     /// 引用表达式 - 创建对表达式的不可变引用
     Reference {
@@ -724,6 +735,17 @@ impl fmt::Display for Expr {
             Expr::ArrayLen { array, .. } => {
                 write!(f, "len {}", array)
             }
+            Expr::TupleLiteral { elements, .. } => {
+                let elems = elements
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "({})", elems)
+            }
+            Expr::TupleAccess { object, index, .. } => {
+                write!(f, "{}.{}", object, index)
+            }
             Expr::Reference { expr, .. } => {
                 write!(f, "&{}", expr)
             }
@@ -812,6 +834,8 @@ impl Expr {
             Expr::ArrayLiteral { span, .. } => *span,
             Expr::Index { span, .. } => *span,
             Expr::ArrayLen { span, .. } => *span,
+            Expr::TupleLiteral { span, .. } => *span,
+            Expr::TupleAccess { span, .. } => *span,
             Expr::Reference { span, .. } => *span,
             Expr::Dereference { span, .. } => *span,
             Expr::HeapAllocate { span, .. } => *span,

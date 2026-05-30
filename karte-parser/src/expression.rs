@@ -1520,22 +1520,53 @@ impl<'a> Parser<'a> {
                 }
                 Token::LeftParen => {
                     self.advance(); // consume '('
-                    let expr = self.parse_expression()?;
+                    let first_expr = self.parse_expression()?;
 
                     if let Some(token) = self.peek() {
                         if matches!(token.token, Token::RightParen) {
+                            // 单表达式 + ')' → 括号分组
                             self.advance(); // consume ')'
-                            Ok(expr)
+                            Ok(first_expr)
+                        } else if matches!(token.token, Token::Comma) {
+                            // 逗号 → 元组字面量
+                            let start_span = first_expr.span();
+                            self.advance(); // consume ','
+                            let mut elements = vec![first_expr];
+                            loop {
+                                let elem = self.parse_expression()?;
+                                elements.push(elem);
+                                if let Some(tok) = self.peek() {
+                                    if matches!(tok.token, Token::Comma) {
+                                        self.advance(); // consume ','
+                                    } else if matches!(tok.token, Token::RightParen) {
+                                        self.advance(); // consume ')'
+                                        break;
+                                    } else {
+                                        return Err(ParseError::UnexpectedToken {
+                                            expected: "',' or ')'".to_string(),
+                                            found: tok.token.clone(),
+                                            span: tok.span,
+                                        });
+                                    }
+                                } else {
+                                    return Err(ParseError::UnexpectedEof {
+                                        expected: "',' or ')'".to_string(),
+                                    });
+                                }
+                            }
+                            let end_span = elements.last().unwrap().span();
+                            let span = Span::new(start_span.start, end_span.end);
+                            Ok(Expr::TupleLiteral { elements, span })
                         } else {
                             Err(ParseError::UnexpectedToken {
-                                expected: "')'".to_string(),
+                                expected: "',' or ')'".to_string(),
                                 found: token.token.clone(),
                                 span: token.span,
                             })
                         }
                     } else {
                         Err(ParseError::UnexpectedEof {
-                            expected: "')'".to_string(),
+                            expected: "',' or ')'".to_string(),
                         })
                     }
                 }
@@ -1696,16 +1727,35 @@ impl<'a> Parser<'a> {
                                     field: field_name,
                                     span,
                                 };
+                            } else if let Token::Number(n) = &field_token.token {
+                                // 数字索引 → 元组访问 t.0, t.1
+                                if *n >= 0 {
+                                    let index = *n as usize;
+                                    let end_span = field_token.span;
+                                    self.advance();
+                                    let span = Span::new(expr.span().start, end_span.end);
+                                    expr = Expr::TupleAccess {
+                                        object: Box::new(expr),
+                                        index,
+                                        span,
+                                    };
+                                } else {
+                                    return Err(ParseError::UnexpectedToken {
+                                        expected: "non-negative tuple index".to_string(),
+                                        found: field_token.token.clone(),
+                                        span: field_token.span,
+                                    });
+                                }
                             } else {
                                 return Err(ParseError::UnexpectedToken {
-                                    expected: "field name".to_string(),
+                                    expected: "field name or tuple index".to_string(),
                                     found: field_token.token.clone(),
                                     span: field_token.span,
                                 });
                             }
                         } else {
                             return Err(ParseError::UnexpectedEof {
-                                expected: "field name".to_string(),
+                                expected: "field name or tuple index".to_string(),
                             });
                         }
                     }
