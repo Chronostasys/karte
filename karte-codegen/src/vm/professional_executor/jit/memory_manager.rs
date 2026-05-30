@@ -402,9 +402,12 @@ impl JitMemoryManager {
         #[cfg(not(target_os = "windows"))]
         {
             // 🔧 修复：确保地址和大小按页面边界对齐
+            // 需要覆盖从 aligned_address 到 (address + size) 向上对齐的完整页面范围
             let page_size = self.get_page_size();
             let aligned_address = self.align_to_page_boundary(address as usize, page_size);
-            let aligned_size = self.align_size_to_page_boundary(size, page_size);
+            let end_address = address as usize + size;
+            let aligned_end = self.align_size_to_page_boundary(end_address, page_size);
+            let aligned_size = aligned_end.saturating_sub(aligned_address).max(page_size);
 
             if self.debug_mode {
                 debug!(
@@ -471,9 +474,12 @@ impl JitMemoryManager {
         #[cfg(not(target_os = "windows"))]
         {
             // 🔧 修复：确保地址和大小按页面边界对齐
+            // 需要覆盖从 aligned_address 到 (address + size) 向上对齐的完整页面范围
             let page_size = self.get_page_size();
             let aligned_address = self.align_to_page_boundary(address as usize, page_size);
-            let aligned_size = self.align_size_to_page_boundary(size, page_size);
+            let end_address = address as usize + size;
+            let aligned_end = self.align_size_to_page_boundary(end_address, page_size);
+            let aligned_size = aligned_end.saturating_sub(aligned_address).max(page_size);
 
             if self.debug_mode {
                 debug!(
@@ -534,9 +540,12 @@ impl JitMemoryManager {
         #[cfg(not(target_os = "windows"))]
         {
             // 🔧 修复：确保地址和大小按页面边界对齐
+            // 需要覆盖从 aligned_address 到 (address + size) 向上对齐的完整页面范围
             let page_size = self.get_page_size();
             let aligned_address = self.align_to_page_boundary(address as usize, page_size);
-            let aligned_size = self.align_size_to_page_boundary(size, page_size);
+            let end_address = address as usize + size;
+            let aligned_end = self.align_size_to_page_boundary(end_address, page_size);
+            let aligned_size = aligned_end.saturating_sub(aligned_address).max(page_size);
 
             if self.debug_mode {
                 debug!(

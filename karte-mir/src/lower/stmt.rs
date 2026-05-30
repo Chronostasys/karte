@@ -176,8 +176,27 @@ pub(crate) fn handle_assignment(
         Expr::FieldAccess { object, field, .. } => {
             if let Expr::Identifier { name, .. } = object.as_ref() {
                 if let Some(binding) = ctx.lookup_variable(name).cloned() {
+                    // 对 object 求值，正确处理被闭包捕获的 Reference 类型变量
+                    // 当变量被闭包捕获后，binding.value 是 Reference，
+                    // 需要先解引用得到实际的结构体地址，再进行字段赋值
+                    let object_value = match &binding.value {
+                        Value::Reference { value: ref_target, .. } => {
+                            // 变量被闭包捕获：先解引用得到结构体地址
+                            let derefed = ctx.new_temp();
+                            ctx.add_statement(Statement::Dereference {
+                                target: derefed.clone(),
+                                reference: *ref_target.clone(),
+                                span,
+                            });
+                            derefed
+                        }
+                        _ => {
+                            // 普通变量：直接使用绑定值
+                            binding.value.clone()
+                        }
+                    };
                     ctx.add_statement(Statement::FieldAssign {
-                        object: binding.value,
+                        object: object_value,
                         field: field.clone(),
                         value: value_temp,
                         span,
