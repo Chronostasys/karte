@@ -2466,6 +2466,56 @@ fn main() -> number {
         assert_eq!(exit_code, 6, "Expected apply(|n| n+1, 5) to return 6");
     }
 
+    /// 回归测试：引用类型作为泛型函数参数（Dereference 推断）
+    /// 确保 fn read_ref(r) { *r } 中参数 r 被正确推断为 &T
+    #[test]
+    fn test_generic_ref_param_deref() {
+        let code = r#"
+fn read_ref(r) { *r }
+
+fn main() -> number {
+    let x = 99;
+    read_ref(&x)
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing failed: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        assert_eq!(exit_code, 99, "Expected read_ref(&x) to return 99");
+    }
+
     #[test]
     fn test_for_break() {
         let code = r#"fn main() -> number { let sum = 0; for i in 0..10 { if i == 5 { break }; sum = sum + i }; sum }"#;
@@ -2717,6 +2767,73 @@ fn main() -> number {
         let mut executor = ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
         let exit_code = executor.execute_with_jit(&lir).expect("JIT execution failed");
         assert_eq!(exit_code, 187, "Expected arr[0]+arr[1] = 99+88 = 187");
+    }
+    #[test]
+    fn test_struct_array_access() {
+        // 回归测试：结构体数组索引访问不应触发 SIGSEGV
+        let code = r#"struct Point { x: number, y: number }
+fn main() -> number {
+    let points = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }, Point { x: 5, y: 6 }];
+    points[0].x + points[1].y + points[2].x
+}"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parse/type errors: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false).expect("Escape analysis failed");
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+        let mut executor = ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor.execute_with_jit(&lir).expect("JIT execution failed");
+        assert_eq!(exit_code, 10, "Expected points[0].x + points[1].y + points[2].x = 1+4+5 = 10");
+    }
+
+    #[test]
+    fn test_struct_single_element_array() {
+        // 回归测试：单元素结构体数组
+        let code = r#"struct Point { x: number, y: number }
+fn main() -> number {
+    let pts = [Point { x: 10, y: 20 }];
+    pts[0].y
+}"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parse/type errors: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false).expect("Escape analysis failed");
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+        let mut executor = ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor.execute_with_jit(&lir).expect("JIT execution failed");
+        assert_eq!(exit_code, 20, "Expected pts[0].y = 20");
     }
 
     #[test]

@@ -1328,10 +1328,17 @@ pub(crate) fn lower_expression(
         }
 
         Expr::ArrayLiteral { elements, span } => {
+            // 计算元素大小：从数组表达式的类型中获取元素类型，计算其字节大小
+            let element_size = if let Type::Array { element } = ctx.get_expr_type(expr) {
+                element.byte_size().max(8) // 至少8字节步幅，保证对齐
+            } else {
+                8 // 默认回退
+            };
             let slot_count = elements.len() + 1; // length slot + elements
+            let array_data_size = elements.len() * element_size;
             let layout = HeapLayout {
                 type_id: format!("array:{}", elements.len()),
-                size: slot_count.max(1) * 8,
+                size: 8 + array_data_size,
                 align: 8,
                 mutable: true,
                 escape: EscapeState::Global,
@@ -1363,7 +1370,7 @@ pub(crate) fn lower_expression(
                     left: array_ptr.clone(),
                     op: MirBinaryOp::Add,
                     right: Value::Number {
-                        value: ((idx + 1) * 8) as i64,
+                        value: (8 + idx * element_size) as i64,
                         ty: None,
                     },
                     span: *span,
@@ -1386,12 +1393,20 @@ pub(crate) fn lower_expression(
             let array_value = lower_expression_to_temp(ctx, array)?;
             let index_value = lower_expression_to_temp(ctx, index)?;
 
+            // 从数组类型获取元素类型，计算元素大小
+            let el_type = ctx.get_expr_type(array);
+            let element_size = if let Type::Array { element } = &el_type {
+                element.byte_size().max(8)
+            } else {
+                8
+            };
+
             let scaled_index = ctx.new_temp();
             ctx.add_statement(Statement::BinaryOp {
                 target: scaled_index.clone(),
                 left: index_value,
                 op: MirBinaryOp::Multiply,
-                right: Value::Number { value: 8, ty: None },
+                right: Value::Number { value: element_size as i64, ty: None },
                 span: *span,
             });
 
@@ -1413,11 +1428,30 @@ pub(crate) fn lower_expression(
                 span: *span,
             });
 
-            ctx.add_statement(Statement::Dereference {
-                target: destination.clone(),
-                reference: element_ptr,
-                span: *span,
-            });
+            // 对于结构体/元组元素，直接返回元素指针（不解引用），
+            // 后续 FieldAccess 才能正确使用基地址计算字段偏移
+            let is_struct = match &el_type {
+                Type::Array { element } => matches!(element.as_ref(),
+                    Type::Struct { .. } | Type::Tuple(_)
+                ),
+                _ => false,
+            };
+
+            if is_struct {
+                // 结构体元素：直接赋值元素指针（地址）
+                ctx.add_statement(Statement::Assign {
+                    target: destination.clone(),
+                    source: element_ptr,
+                    span: *span,
+                });
+            } else {
+                // 简单类型元素：解引用获取值
+                ctx.add_statement(Statement::Dereference {
+                    target: destination.clone(),
+                    reference: element_ptr,
+                    span: *span,
+                });
+            }
         }
 
         Expr::ArrayLen { array, span } => {

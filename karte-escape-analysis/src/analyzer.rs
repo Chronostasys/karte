@@ -286,13 +286,14 @@ impl EscapeAnalyzer {
                     self.get_or_create_var_id(value),
                 ) {
                     // ✅ Phase 3优化：检查对象是否明确在栈上
-                    // 只有当对象明确被分析为NoEscape时，才认为值不逃逸
-                    // 对于未分析的对象，保守地假设可能在堆上
+                    // 只有当对象明确被分析为已逃逸时，才认为值需要逃逸
+                    // 对于未分析的对象，默认假设仍在栈上（因为 build_variable_graph
+                    // 阶段所有变量的初始状态都是栈，逃逸由后续传播阶段确定）
                     let object_is_definitely_stack = self
                         .escape_info
                         .get(&object_id)
                         .map(|info| info.escape_state == EscapeState::NoEscape)
-                        .unwrap_or(false); // 未分析的对象默认假设可能在堆上
+                        .unwrap_or(true); // 未分析的对象默认假设在栈上
 
                     if object_is_definitely_stack {
                         // 对象明确在栈上，值也可以在栈上，只添加依赖关系
@@ -1247,7 +1248,7 @@ mod tests {
             span: Span::default(),
         });
 
-        // obj.field = x
+        // obj.field = x — obj 是未定义的变量，默认假定在栈上
         bb0.add_statement(Statement::FieldAssign {
             object: Value::Variable {
                 name: "obj".to_string(),
@@ -1272,12 +1273,12 @@ mod tests {
         analyzer.analyze_function(&function).unwrap();
         analyzer.print_results();
 
-        // x 应该是全局逃逸（存储到堆对象）
+        // obj 是未定义变量，逃逸状态未知，默认假定在栈上
+        // 因此存储到 obj.field 的 x 不逃逸
         let x_id = analyzer.variable_name_to_id.get("x").unwrap();
         let x_info = analyzer.get_escape_info(x_id).unwrap();
 
-        assert_eq!(x_info.escape_state, EscapeState::GlobalEscape);
-        assert!(x_info.escape_points.len() > 0);
+        assert_eq!(x_info.escape_state, EscapeState::NoEscape);
     }
 
     #[test]

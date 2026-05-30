@@ -1712,6 +1712,13 @@ impl TypeChecker {
                 let expr_type = self.infer_expr(expr, env);
                 match expr_type {
                     Type::Reference { inner } => *inner,
+                    // 类型变量：添加约束，要求该类型变量必须为引用类型
+                    Type::Var(_) => {
+                        let inner_type = Type::Var(self.fresh_type_var());
+                        let expected_ref_type = Type::reference(inner_type.clone());
+                        self.add_constraint(expr_type, expected_ref_type, *span);
+                        inner_type
+                    }
                     _ => {
                         // 创建一个占位符引用类型用于错误报告
                         let expected_ref_type = Type::reference(Type::Unknown);

@@ -1072,6 +1072,58 @@ pub(super) fn lower_statement(
             Ok(())
         }
 
+        Statement::FieldAssign {
+            object,
+            field,
+            value,
+            span,
+        } => {
+            // 字段赋值：将 value 写入 object 的 field 字段
+            // 语义是 FieldAccess 的反向操作
+
+            // 1. 获取结构体的基地址（栈地址或堆指针）
+            let struct_base_operand = ctx.lower_to_rvalue(object);
+            let base_reg = match struct_base_operand {
+                Operand::Register { id } => id,
+                operand => {
+                    let temp = ctx.current_function_mut().new_register();
+                    ctx.add_instruction(Instruction::Move {
+                        dst: temp,
+                        src: operand,
+                        span: *span,
+                    });
+                    temp
+                }
+            };
+
+            // 2. 计算字段偏移量
+            let field_offset = ctx
+                .get_field_offset_from_struct_layout(object, field)
+                .map_err(|e| vec![e])?;
+
+            // 3. 计算字段地址 = 基地址 + 偏移
+            let field_addr_reg = ctx.current_function_mut().new_register();
+            ctx.add_instruction(Instruction::Add {
+                dst: field_addr_reg,
+                src1: Operand::Register { id: base_reg },
+                src2: Operand::Immediate {
+                    value: field_offset as i64,
+                },
+                span: *span,
+            });
+
+            // 4. 将值存储到字段地址
+            let value_operand = ctx.lower_to_rvalue(value);
+            ctx.add_instruction(Instruction::Store64 {
+                addr: field_addr_reg,
+                offset: 0,
+                src: value_operand,
+                span: *span,
+            });
+
+            Ok(())
+        }
+
         Statement::Dereference {
             target,
             reference,

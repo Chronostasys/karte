@@ -394,6 +394,30 @@ impl Type {
         }
     }
 
+    /// 获取类型的字节大小（用于数组元素步幅计算）
+    /// 对结构体递归计算所有字段大小之和
+    pub fn byte_size(&self) -> usize {
+        match self {
+            Type::Number => 8,
+            Type::Int(kind) => kind.size_in_bytes(),
+            Type::Bool => 1,
+            Type::String => 8, // 字符串是指针
+            Type::Unit => 0,
+            Type::Struct { fields, .. } => {
+                fields.iter().map(|f| f.field_type.byte_size()).sum()
+            }
+            Type::Tuple(types) => {
+                types.iter().map(|t| t.byte_size()).sum()
+            }
+            Type::Reference { .. } => 8, // 引用是指针
+            Type::Array { .. } => 8, // 数组是指针
+            Type::Function { .. } | Type::Closure { .. } => 8, // 函数值是指针
+            Type::Sum { .. } => 8, // Tagged union 是指针
+            Type::Var(_) | Type::Unknown => 8, // 保守估计
+        }
+    }
+
+
     /// 创建函数类型
     pub fn function(params: Vec<Type>, return_type: Type) -> Self {
         Type::Function {
