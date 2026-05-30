@@ -33,6 +33,9 @@ pub(crate) struct VariableBinding {
     pub(crate) ownership: Option<OwnershipKind>,
     /// 是否已移动
     pub(crate) moved: bool,
+    /// 结构体类型名称（如果值是结构体类型）
+    /// 用于闭包捕获时确定正确的堆分配大小
+    pub(crate) struct_name: Option<String>,
 }
 
 /// 作用域帧

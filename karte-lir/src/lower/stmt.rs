@@ -1460,7 +1460,13 @@ pub(super) fn lower_statement(
                     });
                 }
 
-                ctx.set_struct_layout_for_value(target, layout);
+                // 注意：不再传播结构体布局到 target。
+                // Store 逐字段复制了结构体数据到 target 的内存区域，
+                // 但 target 本身可能只是一个指针大小的栈槽。
+                // 如果传播布局，后续对 target 的 Store 会错误地逐字段复制，
+                // 导致越界写入。FieldAccess 通过 global_struct_types 动态查找布局，
+                // 不依赖 struct_value_layouts。
+                // ctx.set_struct_layout_for_value(target, layout);
 
                 log::debug!("🔧 Store: 复制结构体值到 {:?}", target);
                 return Ok(());

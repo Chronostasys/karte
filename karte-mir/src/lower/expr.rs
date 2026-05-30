@@ -1753,30 +1753,85 @@ fn lower_lambda_expression(
                     }
                     // 变量首次被捕获，创建新的 shared_location（堆分配）
                     _ => {
-                        let shared_location = ctx.new_temp();
-                        ctx.add_statement(Statement::HeapAlloc {
-                            target: shared_location.clone(),
-                            size: 8,
-                            object_type: "shared_var".to_string(),
-                            span,
-                        });
+                        // 结构体变量的闭包捕获需要特殊处理：
+                        // 基本类型（number, bool）：shared_location 直接存储值（8字节）
+                        // 结构体类型：需要先在堆上创建结构体副本，shared_location 存储
+                        // 指向堆副本的指针。因为 lambda 中通过 Dereference + FieldAccess
+                        // 访问字段，Dereference 返回的必须是指向结构体的指针（不是值）。
+                        if let Some(ref struct_name) = binding.struct_name {
+                            // 结构体变量：两步堆分配
+                            let struct_type = ctx.program.get_struct_type(struct_name);
+                            let struct_size = struct_type
+                                .map(|t| t.fields.len().max(1) * 8)
+                                .unwrap_or(8);
+                            
+                            // 第一步：在堆上分配结构体副本
+                            let heap_copy = ctx.new_temp();
+                            ctx.add_statement(Statement::HeapAlloc {
+                                target: heap_copy.clone(),
+                                size: struct_size,
+                                object_type: "struct_copy".to_string(),
+                                span,
+                            });
+                            // 将结构体值复制到堆副本
+                            ctx.add_statement(Statement::Store {
+                                target: heap_copy.clone(),
+                                value: binding.value.clone(),
+                                span,
+                            });
+                            
+                            // 第二步：shared_location 存储指向堆副本的指针（8字节）
+                            let shared_location = ctx.new_temp();
+                            ctx.add_statement(Statement::HeapAlloc {
+                                target: shared_location.clone(),
+                                size: 8,
+                                object_type: "shared_var".to_string(),
+                                span,
+                            });
+                            // 存储堆副本的地址到 shared_location
+                            ctx.add_statement(Statement::Store {
+                                target: shared_location.clone(),
+                                value: heap_copy,
+                                span,
+                            });
 
-                        ctx.add_statement(Statement::Store {
-                            target: shared_location.clone(),
-                            value: binding.value.clone(),
-                            span,
-                        });
+                            ctx.update_variable(
+                                &var_name,
+                                Value::Reference {
+                                    value: Box::new(shared_location.clone()),
+                                    ty: None,
+                                },
+                                None,
+                            );
 
-                        ctx.update_variable(
-                            &var_name,
-                            Value::Reference {
-                                value: Box::new(shared_location.clone()),
-                                ty: None,
-                            },
-                            None,
-                        );
+                            captured_var_locations.push(shared_location);
+                        } else {
+                            // 基本类型变量：shared_location 直接存储值
+                            let shared_location = ctx.new_temp();
+                            ctx.add_statement(Statement::HeapAlloc {
+                                target: shared_location.clone(),
+                                size: 8,
+                                object_type: "shared_var".to_string(),
+                                span,
+                            });
 
-                        captured_var_locations.push(shared_location);
+                            ctx.add_statement(Statement::Store {
+                                target: shared_location.clone(),
+                                value: binding.value.clone(),
+                                span,
+                            });
+
+                            ctx.update_variable(
+                                &var_name,
+                                Value::Reference {
+                                    value: Box::new(shared_location.clone()),
+                                    ty: None,
+                                },
+                                None,
+                            );
+
+                            captured_var_locations.push(shared_location);
+                        }
                     }
                 }
             }

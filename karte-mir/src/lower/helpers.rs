@@ -69,11 +69,28 @@ pub(crate) fn collect_referenced_variables(expr: &Expr) -> Vec<String> {
 }
 
 /// 递归收集变量引用
+///
+/// 完整遍历所有表达式类型，确保不遗漏任何子表达式中的变量引用。
+/// 这对闭包捕获分析至关重要——如果遗漏了某个表达式类型的遍历，
+/// 闭包就无法正确捕获该表达式中引用的外部变量。
 fn collect_vars_recursive(expr: &Expr, vars: &mut Vec<String>) {
     match expr {
+        // 基础值：直接收集变量名
         Expr::Identifier { name, .. } => {
             vars.push(name.clone());
         }
+        // 不含变量的字面量
+        Expr::Number { .. }
+        | Expr::StringLiteral { .. }
+        | Expr::Unit { .. }
+        | Expr::Boolean { .. }
+        | Expr::ModuleSymbolAccess { .. }
+        | Expr::RuntimeGlobal { .. }
+        | Expr::GcRegOp { .. }
+        | Expr::Break { .. }
+        | Expr::Continue { .. } => {}
+
+        // 二元/一元操作
         Expr::BinaryOp { left, right, .. } => {
             collect_vars_recursive(left, vars);
             collect_vars_recursive(right, vars);
@@ -81,6 +98,8 @@ fn collect_vars_recursive(expr: &Expr, vars: &mut Vec<String>) {
         Expr::UnaryOp { operand, .. } => {
             collect_vars_recursive(operand, vars);
         }
+
+        // 条件表达式
         Expr::If {
             condition,
             then_branch,
@@ -99,12 +118,11 @@ fn collect_vars_recursive(expr: &Expr, vars: &mut Vec<String>) {
             collect_vars_recursive(condition, vars);
             collect_vars_recursive(body, vars);
         }
+
+        // Lambda：收集自由变量（排除lambda自身参数）
         Expr::Lambda { params, body, .. } => {
-            // 对于lambda，只收集真正的外部捕获变量，排除lambda参数
             let mut lambda_vars = Vec::new();
             collect_vars_recursive(body, &mut lambda_vars);
-
-            // 过滤掉lambda参数
             let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
             for var in lambda_vars {
                 if !param_names.contains(&var) {
@@ -112,23 +130,18 @@ fn collect_vars_recursive(expr: &Expr, vars: &mut Vec<String>) {
                 }
             }
         }
+
+        // 函数调用
         Expr::FunctionCall { function, args, .. } => {
             collect_vars_recursive(function, vars);
             for arg in args {
                 collect_vars_recursive(arg, vars);
             }
         }
-        Expr::ArrayLiteral { elements, .. } => {
-            for element in elements {
-                collect_vars_recursive(element, vars);
-            }
-        }
-        Expr::Index { array, index, .. } => {
-            collect_vars_recursive(array, vars);
-            collect_vars_recursive(index, vars);
-        }
-        Expr::ArrayLen { array, .. } => {
-            collect_vars_recursive(array, vars);
+
+        // 语句和块
+        Expr::Statement { stmt, .. } => {
+            collect_vars_in_statement(stmt, vars);
         }
         Expr::Block {
             statements,
@@ -142,15 +155,136 @@ fn collect_vars_recursive(expr: &Expr, vars: &mut Vec<String>) {
                 collect_vars_recursive(final_expr, vars);
             }
         }
-        Expr::Statement { stmt, .. } => {
-            collect_vars_in_statement(stmt, vars);
-        }
         Expr::Assignment { target, value, .. } => {
             collect_vars_recursive(target, vars);
             collect_vars_recursive(value, vars);
         }
-        // 其他表达式类型不包含变量引用
-        _ => {}
+
+        // 数组相关
+        Expr::ArrayLiteral { elements, .. } => {
+            for element in elements {
+                collect_vars_recursive(element, vars);
+            }
+        }
+        Expr::Index { array, index, .. } => {
+            collect_vars_recursive(array, vars);
+            collect_vars_recursive(index, vars);
+        }
+        Expr::ArrayLen { array, .. } => {
+            collect_vars_recursive(array, vars);
+        }
+
+        // 元组相关
+        Expr::TupleLiteral { elements, .. } => {
+            for element in elements {
+                collect_vars_recursive(element, vars);
+            }
+        }
+        Expr::TupleAccess { object, .. } => {
+            collect_vars_recursive(object, vars);
+        }
+
+        // 结构体相关
+        Expr::StructLiteral { fields, .. } => {
+            for field_init in fields {
+                collect_vars_recursive(&field_init.value, vars);
+            }
+        }
+        Expr::FieldAccess { object, .. } => {
+            collect_vars_recursive(object, vars);
+        }
+
+        // 引用与解引用
+        Expr::Reference { expr, .. } => {
+            collect_vars_recursive(expr, vars);
+        }
+        Expr::Dereference { expr, .. } => {
+            collect_vars_recursive(expr, vars);
+        }
+
+        // 代数数据类型：构造器
+        Expr::Constructor { args, .. } => {
+            for arg in args {
+                collect_vars_recursive(arg, vars);
+            }
+        }
+        Expr::QualifiedConstructor { args, .. } => {
+            for arg in args {
+                collect_vars_recursive(arg, vars);
+            }
+        }
+
+        // 模式匹配
+        Expr::Match { expr, arms, .. } => {
+            collect_vars_recursive(expr, vars);
+            for arm in arms {
+                // arm.body 中可能引用外部变量；arm.pattern 中绑定的变量是局部的
+                collect_vars_recursive(&arm.body, vars);
+            }
+        }
+
+        // 循环
+        Expr::ForIn {
+            start, end, body, ..
+        } => {
+            collect_vars_recursive(start, vars);
+            collect_vars_recursive(end, vars);
+            collect_vars_recursive(body, vars);
+        }
+
+        // 返回
+        Expr::Return { value, .. } => {
+            if let Some(value) = value {
+                collect_vars_recursive(value, vars);
+            }
+        }
+
+        // 内存管理
+        Expr::HeapAllocate { value, .. } => {
+            collect_vars_recursive(value, vars);
+        }
+        Expr::HeapFree { pointer, .. } => {
+            collect_vars_recursive(pointer, vars);
+        }
+        Expr::Retain { pointer, .. } => {
+            collect_vars_recursive(pointer, vars);
+        }
+        Expr::Release { pointer, .. } => {
+            collect_vars_recursive(pointer, vars);
+        }
+        Expr::UnsafeLoad { addr, .. } => {
+            collect_vars_recursive(addr, vars);
+        }
+        Expr::UnsafeStore {
+            addr, value, ..
+        } => {
+            collect_vars_recursive(addr, vars);
+            collect_vars_recursive(value, vars);
+        }
+
+        // 代数效应
+        Expr::EffectPerform { tag, payload, .. } => {
+            collect_vars_recursive(tag, vars);
+            collect_vars_recursive(payload, vars);
+        }
+        Expr::EffectResume { value, .. } => {
+            collect_vars_recursive(value, vars);
+        }
+        Expr::EffectHandle {
+            tag,
+            handler,
+            body,
+            ..
+        } => {
+            collect_vars_recursive(tag, vars);
+            collect_vars_recursive(handler, vars);
+            collect_vars_recursive(body, vars);
+        }
+
+        // 类型转换
+        Expr::TypeCast { expr, .. } => {
+            collect_vars_recursive(expr, vars);
+        }
     }
 }
 

@@ -194,6 +194,24 @@ impl<'a> LoweringContext<'a> {
         value: Value,
         ownership: Option<OwnershipKind>,
     ) {
+        let struct_name = match &value {
+            Value::Struct { name, .. } => Some(name.clone()),
+            _ => None,
+        };
+        self.bind_variable_with_struct_name(name, value, ownership, struct_name);
+    }
+
+    /// 绑定变量（带结构体名称）
+    ///
+    /// 当变量的结构体类型信息已知时（如从 HIR StructLiteral 表达式中获取），
+    /// 可以通过此方法将类型名称传入，用于后续闭包捕获分析
+    pub(crate) fn bind_variable_with_struct_name(
+        &mut self,
+        name: String,
+        value: Value,
+        ownership: Option<OwnershipKind>,
+        struct_name: Option<String>,
+    ) {
         let frame = self.current_scope_mut();
         frame.order.push(name.clone());
         frame.bindings.insert(
@@ -202,6 +220,7 @@ impl<'a> LoweringContext<'a> {
                 value,
                 ownership,
                 moved: false,
+                struct_name,
             },
         );
     }

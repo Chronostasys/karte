@@ -26,11 +26,20 @@ pub(crate) fn lower_statement(
             // 解析临时变量的实际值（如果是函数/闭包）
             let var_value = ctx.resolve_value(&temp_value);
 
+            // 检查值是否是结构体类型，记录结构体名称用于闭包捕获分析
+            let struct_name = match &var_value {
+                Value::Struct { name, .. } => Some(name.clone()),
+                _ => match value {
+                    karte_hir::Expr::StructLiteral { name, .. } => Some(name.clone()),
+                    _ => None,
+                },
+            };
+
             let ownership = infer_expr_ownership(ctx, value);
             if matches!(ownership, Some(OwnershipKind::RefCounted)) {
                 maybe_retain_for_expr(ctx, value, &var_value);
             }
-            ctx.bind_variable(name.clone(), var_value, ownership);
+            ctx.bind_variable_with_struct_name(name.clone(), var_value, ownership, struct_name);
         }
         karte_hir::Statement::Expression { expr, .. } => {
             // 结果被丢弃

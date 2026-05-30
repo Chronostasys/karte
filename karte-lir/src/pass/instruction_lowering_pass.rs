@@ -353,6 +353,16 @@ impl InstructionLoweringPass {
         let live_caller_saved =
             self.get_live_caller_saved_registers_at(instruction_index, analyses);
         let mut caller_saved: Vec<_> = live_caller_saved.into_iter().collect();
+        
+        // 溢出参数使用 callee-saved 寄存器传递，需要在调用前保存/恢复
+        let overflow_regs: Vec<u8> = vec![3, 13, 14, 15]; // RBX, R13, R14, R15
+        let overflow_arg_count = arg_operands.len().saturating_sub(self.calling_convention.argument_registers.len());
+        for i in 0..overflow_arg_count.min(overflow_regs.len()) {
+            if !caller_saved.contains(&overflow_regs[i]) {
+                caller_saved.push(overflow_regs[i]);
+            }
+        }
+        
         caller_saved.sort();
 
         log::debug!(
@@ -384,23 +394,49 @@ impl InstructionLoweringPass {
         }
 
         // 从栈加载到参数寄存器（逆序）
+        // 前 N 个参数弹出到 argument_registers，溢出参数弹出到 callee-saved 寄存器
+        let arg_reg_count = self.calling_convention.argument_registers.len();
+        // 溢出参数使用 callee-saved 寄存器传递（与寄存器分配器保持一致）
+        let overflow_regs: Vec<u8> = vec![3, 13, 14, 15]; // RBX, R13, R14, R15
+        
+        // 逆序弹出所有参数到对应的物理寄存器
         for i in (0..arg_operands.len()).rev() {
-            if let Some(phys_reg) = self.calling_convention.argument_registers.get(i) {
-                instructions.push(Instruction::Load64 {
-                    dst: Register::Physical(*phys_reg),
-                    addr: self.stack_pointer_reg,
-                    offset: 0,
-                    span: *span,
-                });
-                instructions.push(Instruction::Add {
-                    dst: self.stack_pointer_reg,
-                    src1: Operand::Register {
-                        id: self.stack_pointer_reg,
-                    },
-                    src2: Operand::Immediate { value: 16 },
-                    span: *span,
-                });
-            }
+            let phys_reg = if i < arg_reg_count {
+                // 前 N 个参数使用 argument_registers
+                self.calling_convention.argument_registers[i]
+            } else {
+                // 溢出参数使用 callee-saved 寄存器
+                let overflow_idx = i - arg_reg_count;
+                if overflow_idx < overflow_regs.len() {
+                    overflow_regs[overflow_idx]
+                } else {
+                    // 超过溢出寄存器数量的参数（极罕见情况）
+                    // 无法传递，跳过
+                    instructions.push(Instruction::Add {
+                        dst: self.stack_pointer_reg,
+                        src1: Operand::Register {
+                            id: self.stack_pointer_reg,
+                        },
+                        src2: Operand::Immediate { value: 16 },
+                        span: *span,
+                    });
+                    continue;
+                }
+            };
+            instructions.push(Instruction::Load64 {
+                dst: Register::Physical(phys_reg),
+                addr: self.stack_pointer_reg,
+                offset: 0,
+                span: *span,
+            });
+            instructions.push(Instruction::Add {
+                dst: self.stack_pointer_reg,
+                src1: Operand::Register {
+                    id: self.stack_pointer_reg,
+                },
+                src2: Operand::Immediate { value: 16 },
+                span: *span,
+            });
         }
 
         // 压入返回地址
@@ -494,6 +530,16 @@ impl InstructionLoweringPass {
         let live_caller_saved =
             self.get_live_caller_saved_registers_at(instruction_index, analyses);
         let mut caller_saved: Vec<_> = live_caller_saved.into_iter().collect();
+        
+        // 溢出参数使用 callee-saved 寄存器传递，需要在调用前保存/恢复
+        let overflow_regs: Vec<u8> = vec![3, 13, 14, 15]; // RBX, R13, R14, R15
+        let overflow_arg_count = arg_operands.len().saturating_sub(self.calling_convention.argument_registers.len());
+        for i in 0..overflow_arg_count.min(overflow_regs.len()) {
+            if !caller_saved.contains(&overflow_regs[i]) {
+                caller_saved.push(overflow_regs[i]);
+            }
+        }
+        
         caller_saved.sort();
 
         log::debug!(
@@ -534,23 +580,44 @@ impl InstructionLoweringPass {
         }
 
         // 从栈加载到参数寄存器（逆序）
+        // 前 N 个参数弹出到 argument_registers，溢出参数弹出到 callee-saved 寄存器
+        let arg_reg_count = self.calling_convention.argument_registers.len();
+        let overflow_regs: Vec<u8> = vec![3, 13, 14, 15]; // RBX, R13, R14, R15
+        
+        // 逆序弹出所有参数到对应的物理寄存器
         for i in (0..arg_operands.len()).rev() {
-            if let Some(phys_reg) = self.calling_convention.argument_registers.get(i) {
-                instructions.push(Instruction::Load64 {
-                    dst: Register::Physical(*phys_reg),
-                    addr: self.stack_pointer_reg,
-                    offset: 0,
-                    span: *span,
-                });
-                instructions.push(Instruction::Add {
-                    dst: self.stack_pointer_reg,
-                    src1: Operand::Register {
-                        id: self.stack_pointer_reg,
-                    },
-                    src2: Operand::Immediate { value: 16 },
-                    span: *span,
-                });
-            }
+            let phys_reg = if i < arg_reg_count {
+                self.calling_convention.argument_registers[i]
+            } else {
+                let overflow_idx = i - arg_reg_count;
+                if overflow_idx < overflow_regs.len() {
+                    overflow_regs[overflow_idx]
+                } else {
+                    instructions.push(Instruction::Add {
+                        dst: self.stack_pointer_reg,
+                        src1: Operand::Register {
+                            id: self.stack_pointer_reg,
+                        },
+                        src2: Operand::Immediate { value: 16 },
+                        span: *span,
+                    });
+                    continue;
+                }
+            };
+            instructions.push(Instruction::Load64 {
+                dst: Register::Physical(phys_reg),
+                addr: self.stack_pointer_reg,
+                offset: 0,
+                span: *span,
+            });
+            instructions.push(Instruction::Add {
+                dst: self.stack_pointer_reg,
+                src1: Operand::Register {
+                    id: self.stack_pointer_reg,
+                },
+                src2: Operand::Immediate { value: 16 },
+                span: *span,
+            });
         }
 
         // 压入返回地址
