@@ -64,9 +64,12 @@ impl LirLoweringContext {
 
         // 根据值类型确定需要的空间大小
         let size = match value {
-            Value::Boolean { .. }
-            | Value::Constructor { .. }
-            | Value::QualifiedConstructor { .. } => 16, // Tagged Union需要16字节（tag + data）
+            Value::Boolean { .. } => 16, // Tagged Union需要16字节（tag + data）
+            Value::Constructor { args, .. }
+            | Value::QualifiedConstructor { args, .. } => {
+                // tag(8字节) + 每个参数8字节
+                8 + args.len() * 8
+            }
             _ => 8, // 其他值8字节
         };
 
@@ -75,7 +78,7 @@ impl LirLoweringContext {
             // 在栈上分配空间来存储这个值
             self.add_instruction(Instruction::Alloc {
                 dst: address_register,
-                size,
+                size: size as usize,
                 alignment: 8,
                 allocation_type: AllocationType::Stack,
                 span: karte_diagnostics::Span::dummy(),
@@ -445,11 +448,10 @@ impl LirLoweringContext {
                 });
             }
 
-            Value::Constructor { name, arg, .. } => {
+            Value::Constructor { name, args, .. } => {
                 // 创建Tagged Union for constructor
-                let struct_addr = self.create_tagged_union_for_constructor(name, arg.as_deref());
+                let struct_addr = self.create_tagged_union_for_constructor(name, &args);
 
-                // 将Tagged Union的内容复制到栈位置（16字节）
                 // 复制tag字段（8字节）
                 let temp_tag = self.current_function_mut().new_register();
                 self.add_instruction(Instruction::Load64 {
@@ -479,19 +481,29 @@ impl LirLoweringContext {
                     src: Operand::Register { id: temp_data },
                     span: karte_diagnostics::Span::dummy(),
                 });
+
+                // 多参数：存储额外参数到 offset 16, 24, ...
+                for (i, arg_val) in args.iter().skip(1).enumerate() {
+                    let arg_rvalue = self.lower_to_rvalue(arg_val);
+                    self.add_instruction(Instruction::Store64 {
+                        addr: stack_addr,
+                        offset: (16 + i * 8) as i64,
+                        src: arg_rvalue,
+                        span: karte_diagnostics::Span::dummy(),
+                    });
+                }
             }
 
             Value::QualifiedConstructor {
                 type_name,
                 constructor_name,
-                arg,
+                args,
                 ..
             } => {
-                // 创建Tagged Union for qualified constructor
                 let struct_addr = self.create_tagged_union_for_qualified_constructor(
                     type_name,
                     constructor_name,
-                    arg.as_deref(),
+                    args,
                 );
 
                 // 将Tagged Union的内容复制到栈位置（16字节）
@@ -524,6 +536,17 @@ impl LirLoweringContext {
                     src: Operand::Register { id: temp_data },
                     span: karte_diagnostics::Span::dummy(),
                 });
+
+                // 多参数：存储额外参数到 offset 16, 24, ...
+                for (i, arg_val) in args.iter().skip(1).enumerate() {
+                    let arg_rvalue = self.lower_to_rvalue(arg_val);
+                    self.add_instruction(Instruction::Store64 {
+                        addr: stack_addr,
+                        offset: (16 + i * 8) as i64,
+                        src: arg_rvalue,
+                        span: karte_diagnostics::Span::dummy(),
+                    });
+                }
             }
 
             Value::Variable { .. } | Value::Temp { .. } => {
@@ -777,12 +800,12 @@ impl LirLoweringContext {
     pub(super) fn create_tagged_union_for_constructor(
         &mut self,
         name: &str,
-        arg: Option<&Value>,
+        args: &[Value],
     ) -> Register {
         let tag_id = self.tagged_union_manager.get_constructor_id(name);
         let struct_addr = self.current_function_mut().new_register();
 
-        let data_operand = arg.map(|arg_value| self.lower_to_rvalue(arg_value));
+        let data_operand = args.first().map(|arg_value| self.lower_to_rvalue(arg_value));
 
         let instructions = self.tagged_union_manager.generate_allocation_instructions(
             struct_addr,
@@ -804,14 +827,14 @@ impl LirLoweringContext {
         &mut self,
         type_name: &str,
         constructor_name: &str,
-        arg: Option<&Value>,
+        args: &[Value],
     ) -> Register {
         let tag_id = self
             .tagged_union_manager
             .get_qualified_constructor_id(type_name, constructor_name);
         let struct_addr = self.current_function_mut().new_register();
 
-        let data_operand = arg.map(|arg_value| self.lower_to_rvalue(arg_value));
+        let data_operand = args.first().map(|arg_value| self.lower_to_rvalue(arg_value));
 
         let instructions = self.tagged_union_manager.generate_allocation_instructions(
             struct_addr,
@@ -826,6 +849,7 @@ impl LirLoweringContext {
 
         struct_addr
     }
+
 
     /// 简化的值解析（移除复杂的value_mapping逻辑）
 

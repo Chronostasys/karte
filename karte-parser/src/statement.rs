@@ -363,40 +363,47 @@ impl<'a> Parser<'a> {
                 let variant_span = token.span;
                 self.advance();
 
-                // 检查是否有数据类型（解析为结构化 Type）
-                let data_type = if let Some(next_token) = self.peek() {
+                // 检查是否有数据类型（解析为结构化 Type，支持多参数）
+                let data_types = if let Some(next_token) = self.peek() {
                     if matches!(next_token.token, Token::LeftParen) {
                         self.advance(); // consume '('
 
-                        let ty = self.parse_type_expression()?;
+                        let mut types = vec![];
+                        // 解析逗号分隔的类型列表
+                        loop {
+                            let ty = self.parse_type_expression()?;
+                            types.push(ty);
 
-                        // 期望 ')'
-                        if let Some(close_token) = self.peek() {
-                            if matches!(close_token.token, Token::RightParen) {
-                                self.advance();
-                                Some(ty)
+                            if let Some(next) = self.peek() {
+                                if matches!(next.token, Token::Comma) {
+                                    self.advance(); // consume ','
+                                } else if matches!(next.token, Token::RightParen) {
+                                    self.advance(); // consume ')'
+                                    break;
+                                } else {
+                                    return Err(ParseError::UnexpectedToken {
+                                        expected: "',' or ')'".to_string(),
+                                        found: next.token.clone(),
+                                        span: next.span,
+                                    });
+                                }
                             } else {
-                                return Err(ParseError::UnexpectedToken {
-                                    expected: "')'".to_string(),
-                                    found: close_token.token.clone(),
-                                    span: close_token.span,
+                                return Err(ParseError::UnexpectedEof {
+                                    expected: "',' or ')'".to_string(),
                                 });
                             }
-                        } else {
-                            return Err(ParseError::UnexpectedEof {
-                                expected: "')'".to_string(),
-                            });
                         }
+                        types
                     } else {
-                        None
+                        vec![]
                     }
                 } else {
-                    None
+                    vec![]
                 };
 
                 karte_hir::ast::TypeVariant {
                     name,
-                    data_type,
+                    data_types,
                     span: variant_span,
                 }
             } else {

@@ -158,7 +158,7 @@ pub enum Type {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SumVariant {
     pub name: String,
-    pub data_type: Option<Type>, // 支持完整的类型，包括嵌套的sum type
+    pub data_types: Vec<Type>,
 }
 
 impl SumVariant {
@@ -166,7 +166,7 @@ impl SumVariant {
     pub fn unit(name: String) -> Self {
         Self {
             name,
-            data_type: None,
+            data_types: vec![],
         }
     }
 
@@ -174,7 +174,7 @@ impl SumVariant {
     pub fn with_data(name: String, data_type: Type) -> Self {
         Self {
             name,
-            data_type: Some(data_type),
+            data_types: vec![data_type],
         }
     }
 }
@@ -249,9 +249,11 @@ impl Type {
                     && v1.len() == v2.len()
                     && v1.iter().zip(v2.iter()).all(|(variant1, variant2)| {
                         variant1.name == variant2.name
-                            && match (&variant1.data_type, &variant2.data_type) {
-                                (None, None) => true,
-                                (Some(t1), Some(t2)) => t1.structural_eq(t2),
+                            && match (&variant1.data_types, &variant2.data_types) {
+                                (v1, v2) if v1.is_empty() && v2.is_empty() => true,
+                                (v1, v2) if v1.len() == v2.len() => {
+                                    v1.iter().zip(v2.iter()).all(|(t1, t2)| t1.structural_eq(t2))
+                                }
                                 _ => false,
                             }
                     })
@@ -329,8 +331,9 @@ impl fmt::Display for Type {
                 let variants_str = variants
                     .iter()
                     .map(|v| {
-                        if let Some(data_type) = &v.data_type {
-                            format!("{}({})", v.name, data_type)
+                        if !v.data_types.is_empty() {
+                            let types_str = v.data_types.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", ");
+                            format!("{}({})", v.name, types_str)
                         } else {
                             v.name.clone()
                         }
@@ -467,11 +470,11 @@ impl Type {
             variants: vec![
                 SumVariant {
                     name: "Some".to_string(),
-                    data_type: Some(inner),
+                    data_types: vec![inner],
                 },
                 SumVariant {
                     name: "None".to_string(),
-                    data_type: None,
+                    data_types: vec![],
                 },
             ],
         }
@@ -505,7 +508,7 @@ impl Type {
                     .iter()
                     .map(|v| SumVariant {
                         name: v.name.clone(),
-                        data_type: v.data_type.as_ref().map(|t| t.substitute(subst)),
+                        data_types: v.data_types.iter().map(|t| t.substitute(subst)).collect(),
                     })
                     .collect(),
             },
@@ -569,7 +572,7 @@ impl Type {
             Type::Sum { variants, .. } => {
                 let mut vars = Vec::new();
                 for variant in variants {
-                    if let Some(data_type) = &variant.data_type {
+                    for data_type in &variant.data_types {
                         vars.extend(data_type.free_vars());
                     }
                 }

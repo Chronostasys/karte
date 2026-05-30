@@ -9,9 +9,10 @@ fn format_pattern(pattern: &Pattern) -> String {
     match pattern {
         Pattern::Wildcard { .. } => "_".to_string(),
         Pattern::Variable { name, .. } => name.clone(),
-        Pattern::Constructor { name, arg, .. } => {
-            if let Some(arg) = arg {
-                format!("{}({})", name, format_pattern(arg))
+        Pattern::Constructor { name, args, .. } => {
+            if !args.is_empty() {
+                let args_str = args.iter().map(|a| format_pattern(a)).collect::<Vec<_>>().join(", ");
+                format!("{}({})", name, args_str)
             } else {
                 name.clone()
             }
@@ -19,15 +20,16 @@ fn format_pattern(pattern: &Pattern) -> String {
         Pattern::QualifiedConstructor {
             type_name,
             constructor_name,
-            arg,
+            args,
             ..
         } => {
-            if let Some(arg) = arg {
+            if !args.is_empty() {
+                let args_str = args.iter().map(|a| format_pattern(a)).collect::<Vec<_>>().join(", ");
                 format!(
                     "{}::{}({})",
                     type_name,
                     constructor_name,
-                    format_pattern(arg)
+                    args_str
                 )
             } else {
                 format!("{}::{}", type_name, constructor_name)
@@ -108,7 +110,7 @@ pub enum Expr {
     /// 构造器调用 (例如: Some(42), None, Left(value))
     Constructor {
         name: String,
-        arg: Option<Box<Expr>>, // Some constructors don't take arguments
+        args: Vec<Expr>,
         span: Span,
     },
 
@@ -116,7 +118,7 @@ pub enum Expr {
     QualifiedConstructor {
         type_name: String,
         constructor_name: String,
-        arg: Option<Box<Expr>>,
+        args: Vec<Expr>,
         span: Span,
     },
 
@@ -381,7 +383,7 @@ pub enum Pattern {
     /// 构造器模式 (例如: Some(x), None)
     Constructor {
         name: String,
-        arg: Option<Box<Pattern>>,
+        args: Vec<Pattern>,
         span: Span,
     },
     /// 数字字面量模式
@@ -392,7 +394,7 @@ pub enum Pattern {
     QualifiedConstructor {
         type_name: String,
         constructor_name: String,
-        arg: Option<Box<Pattern>>,
+        args: Vec<Pattern>,
         span: Span,
     },
 }
@@ -401,7 +403,7 @@ pub enum Pattern {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeVariant {
     pub name: String,
-    pub data_type: Option<Type>, // 结构化类型
+    pub data_types: Vec<Type>,
     pub span: Span,
 }
 
@@ -529,8 +531,9 @@ impl fmt::Display for Statement {
                 let variants_str = variants
                     .iter()
                     .map(|v| {
-                        if let Some(data_type) = &v.data_type {
-                            format!("{}({})", v.name, data_type)
+                        if !v.data_types.is_empty() {
+                            let types_str = v.data_types.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", ");
+                            format!("{}({})", v.name, types_str)
                         } else {
                             v.name.clone()
                         }
@@ -653,9 +656,10 @@ impl fmt::Display for Expr {
                 }
                 write!(f, "}}")
             }
-            Expr::Constructor { name, arg, .. } => {
-                if let Some(arg) = arg {
-                    write!(f, "{}({})", name, arg)
+            Expr::Constructor { name, args, .. } => {
+                if !args.is_empty() {
+                    let args_str = args.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", ");
+                    write!(f, "{}({})", name, args_str)
                 } else {
                     write!(f, "{}", name)
                 }
@@ -663,11 +667,12 @@ impl fmt::Display for Expr {
             Expr::QualifiedConstructor {
                 type_name,
                 constructor_name,
-                arg,
+                args,
                 ..
             } => {
-                if let Some(arg) = arg {
-                    write!(f, "{}::{}({})", type_name, constructor_name, arg)
+                if !args.is_empty() {
+                    let args_str = args.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", ");
+                    write!(f, "{}::{}({})", type_name, constructor_name, args_str)
                 } else {
                     write!(f, "{}::{}", type_name, constructor_name)
                 }

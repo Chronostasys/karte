@@ -285,50 +285,42 @@ pub(crate) fn convert_pattern(pattern: &karte_hir::Pattern) -> Result<Pattern, V
     match pattern {
         karte_hir::Pattern::Wildcard { .. } => Ok(Pattern::Wildcard),
         karte_hir::Pattern::Variable { name, .. } => Ok(Pattern::Variable { name: name.clone() }),
-        karte_hir::Pattern::Constructor { name, arg, .. } => {
-            let mir_arg = if let Some(arg) = arg {
-                // 对于构造器模式的参数，我们只支持变量绑定
-                match arg.as_ref() {
-                    karte_hir::Pattern::Variable { name, .. } => Some(name.clone()),
-                    _ => {
-                        return Err(vec![
-                            "Only variable patterns are supported in constructor arguments"
-                                .to_string(),
-                        ])
-                    }
-                }
-            } else {
-                None
-            };
+        karte_hir::Pattern::Constructor { name, args, .. } => {
+            let mir_args: Vec<String> = args
+                .iter()
+                .map(|arg| match arg {
+                    karte_hir::Pattern::Variable { name, .. } => Ok(name.clone()),
+                    _ => Err(vec![
+                        "Only variable patterns are supported in constructor arguments"
+                            .to_string(),
+                    ]),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             Ok(Pattern::Constructor {
                 name: name.clone(),
-                arg: mir_arg,
+                args: mir_args,
             })
         }
         karte_hir::Pattern::Number { value, .. } => Ok(Pattern::Number { value: *value }),
         karte_hir::Pattern::Boolean { value, .. } => Ok(Pattern::Boolean { value: *value }),
         karte_hir::Pattern::QualifiedConstructor {
             constructor_name,
-            arg,
+            args,
             ..
         } => {
-            let mir_arg = if let Some(arg) = arg {
-                match arg.as_ref() {
-                    karte_hir::Pattern::Variable { name, .. } => Some(name.clone()),
-                    _ => {
-                        return Err(vec![
+            let mir_args: Vec<String> = args
+                .iter()
+                .map(|arg| match arg {
+                    karte_hir::Pattern::Variable { name, .. } => Ok(name.clone()),
+                    _ => Err(vec![
                         "Only variable patterns are supported in qualified constructor arguments"
                             .to_string(),
-                    ])
-                    }
-                }
-            } else {
-                None
-            };
-            // 对于限定构造器，我们使用构造器名称
+                    ]),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             Ok(Pattern::Constructor {
                 name: constructor_name.clone(),
-                arg: mir_arg,
+                args: mir_args,
             })
         }
     }
@@ -346,43 +338,39 @@ pub(crate) fn handle_pattern_bindings(
             ctx.bind_variable(name.clone(), match_value.clone(), None);
         }
         karte_hir::Pattern::Constructor {
-            arg: Some(arg_pattern),
+            args,
             ..
         } => {
-            // 构造器模式带参数：需要提取构造器的参数
-            if let karte_hir::Pattern::Variable { name, .. } = arg_pattern.as_ref() {
-                // 创建一个临时变量来存储提取的参数
-                let arg_temp = ctx.new_temp();
-
-                // 添加一个特殊的语句来从构造器中提取参数
-                // 这个语句告诉运行时从match_value构造器中提取参数
-                ctx.add_statement(Statement::ConstructorArgExtract {
-                    target: arg_temp.clone(),
-                    constructor: match_value.clone(),
-                    arg_index: 0, // 第一个参数
-                    span: Span::new(0, 0),
-                });
-
-                ctx.bind_variable(name.clone(), arg_temp, None);
+            // 构造器模式带参数：逐个提取参数
+            for (i, arg_pattern) in args.iter().enumerate() {
+                if let karte_hir::Pattern::Variable { name, .. } = arg_pattern {
+                    let arg_temp = ctx.new_temp();
+                    ctx.add_statement(Statement::ConstructorArgExtract {
+                        target: arg_temp.clone(),
+                        constructor: match_value.clone(),
+                        arg_index: i,
+                        span: Span::new(0, 0),
+                    });
+                    ctx.bind_variable(name.clone(), arg_temp, None);
+                }
             }
         }
         karte_hir::Pattern::QualifiedConstructor {
-            arg: Some(arg_pattern),
+            args,
             ..
         } => {
             // 限定构造器模式带参数
-            if let karte_hir::Pattern::Variable { name, .. } = arg_pattern.as_ref() {
-                let arg_temp = ctx.new_temp();
-
-                // 添加构造器参数提取语句
-                ctx.add_statement(Statement::ConstructorArgExtract {
-                    target: arg_temp.clone(),
-                    constructor: match_value.clone(),
-                    arg_index: 0,
-                    span: Span::new(0, 0),
-                });
-
-                ctx.bind_variable(name.clone(), arg_temp, None);
+            for (i, arg_pattern) in args.iter().enumerate() {
+                if let karte_hir::Pattern::Variable { name, .. } = arg_pattern {
+                    let arg_temp = ctx.new_temp();
+                    ctx.add_statement(Statement::ConstructorArgExtract {
+                        target: arg_temp.clone(),
+                        constructor: match_value.clone(),
+                        arg_index: i,
+                        span: Span::new(0, 0),
+                    });
+                    ctx.bind_variable(name.clone(), arg_temp, None);
+                }
             }
         }
         _ => {

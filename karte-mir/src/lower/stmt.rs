@@ -128,6 +128,7 @@ pub(crate) fn lower_statement(
 /// 支持以下赋值目标：
 /// - 普通变量（Identifier）
 /// - 字段访问（FieldAccess）
+/// - 数组下标访问（Index）
 pub(crate) fn handle_assignment(
     ctx: &mut LoweringContext,
     target: &Expr,
@@ -183,6 +184,48 @@ pub(crate) fn handle_assignment(
                     "Complex field assignment not yet supported in MIR".to_string()
                 ]);
             }
+        }
+        Expr::Index { array, index, .. } => {
+            // 数组下标赋值：计算 element_ptr = array_base + 8 + index * 8，然后 Store
+            let array_value = lower_expression_to_temp(ctx, array)?;
+            let index_value = lower_expression_to_temp(ctx, index)?;
+
+            // scaled_index = index * 8
+            let scaled_index = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                target: scaled_index.clone(),
+                left: index_value,
+                op: crate::BinaryOperator::Multiply,
+                right: Value::Number { value: 8, ty: None },
+                span,
+            });
+
+            // data_base = array + 8（跳过长度头）
+            let data_base = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                target: data_base.clone(),
+                left: array_value,
+                op: crate::BinaryOperator::Add,
+                right: Value::Number { value: 8, ty: None },
+                span,
+            });
+
+            // element_ptr = data_base + scaled_index
+            let element_ptr = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                target: element_ptr.clone(),
+                left: data_base,
+                op: crate::BinaryOperator::Add,
+                right: scaled_index,
+                span,
+            });
+
+            // Store value to element_ptr
+            ctx.add_statement(Statement::Store {
+                target: element_ptr,
+                value: value_temp,
+                span,
+            });
         }
         _ => {
             return Err(vec!["Invalid assignment target in MIR lowering".to_string()]);

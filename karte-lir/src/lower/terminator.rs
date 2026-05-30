@@ -183,7 +183,7 @@ pub(super) fn lower_terminator(
                             span: *span,
                         });
                     }
-                    karte_mir::Pattern::Constructor { name, arg } => {
+                    karte_mir::Pattern::Constructor { name, args } => {
                         // Tagged Union构造器模式处理：检查标签并提取数据
                         let constructor_reg = match &match_operand {
                             Operand::Register { id } => *id,
@@ -214,7 +214,7 @@ pub(super) fn lower_terminator(
                         let temp_reg = ctx.current_function_mut().new_register();
                         let tag_check_instructions =
                             ctx.tagged_union_manager.generate_tag_check_instructions(
-                                constructor_reg, // 直接使用constructor_reg作为Tagged Union地址
+                                constructor_reg,
                                 expected_tag_id,
                                 temp_reg,
                                 *span,
@@ -230,23 +230,20 @@ pub(super) fn lower_terminator(
                             span: *span,
                         });
 
-                        // 如果有参数绑定，生成数据提取指令
-                        if let Some(var_name) = arg {
+                        // 多参数绑定：逐个提取参数
+                        for (i, var_name) in args.iter().enumerate() {
                             let var_reg_id = ctx.allocate_register_for_value(&Value::Variable {
                                 name: var_name.clone(),
                                 ty: None,
                             });
-                            let extract_instructions = ctx
-                                .tagged_union_manager
-                                .generate_data_extraction_instructions(
-                                    constructor_reg, // 直接使用constructor_reg作为Tagged Union地址
-                                    var_reg_id,
-                                    *span,
-                                );
-
-                            for instruction in extract_instructions {
-                                ctx.add_instruction(instruction);
-                            }
+                            // 第一个参数在 offset 8，后续在 offset 16, 24, ...
+                            let data_offset = (8 + i * 8) as i64;
+                            ctx.add_instruction(Instruction::Load64 {
+                                dst: var_reg_id,
+                                addr: constructor_reg,
+                                offset: data_offset,
+                                span: *span,
+                            });
                         }
                     }
                     karte_mir::Pattern::Variable { name: _ } => {

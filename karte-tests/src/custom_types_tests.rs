@@ -240,13 +240,13 @@ mod type_checking_tests {
                 assert_eq!(variants[1].name, "None");
 
                 // 检查Some变体的数据类型
-                match &variants[0].data_type {
-                    Some(Type::Number) => {}
-                    _ => panic!("Expected Some to have Number data type"),
+                match &variants[0].data_types {
+                    types if types.len() == 1 && matches!(&types[0], Type::Number) => {}
+                    _ => panic!("Expected Some to have [Number] data types"),
                 }
 
                 // 检查None变体没有数据类型
-                assert_eq!(variants[1].data_type, None);
+                assert!(variants[1].data_types.is_empty());
             }
             _ => panic!("Expected Sum type, got {:?}", result),
         }

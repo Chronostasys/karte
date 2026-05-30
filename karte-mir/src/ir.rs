@@ -80,7 +80,7 @@ pub enum Value {
     /// 构造器值
     Constructor {
         name: String,
-        arg: Option<Box<Value>>,
+        args: Vec<Value>,
         #[ir_codec(skip)]
         ty: Option<Type>,
     },
@@ -89,7 +89,7 @@ pub enum Value {
     QualifiedConstructor {
         type_name: String,
         constructor_name: String,
-        arg: Option<Box<Value>>,
+        args: Vec<Value>,
         #[ir_codec(skip)]
         ty: Option<Type>,
     },
@@ -547,7 +547,7 @@ pub enum Pattern {
     /// 变量绑定
     Variable { name: String },
     /// 构造器模式
-    Constructor { name: String, arg: Option<String> },
+    Constructor { name: String, args: Vec<String> },
     /// 数字模式
     Number { value: i64 },
     /// 布尔模式

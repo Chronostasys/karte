@@ -1051,20 +1051,15 @@ pub(crate) fn lower_expression(
             });
         }
 
-        Expr::Constructor { name, arg, .. } => {
-            let constructor_value = if let Some(arg) = arg {
-                let arg_val = lower_expression_to_temp(ctx, arg)?;
-                Value::Constructor {
-                    name: name.clone(),
-                    arg: Some(Box::new(arg_val)),
-                    ty: None,
-                }
-            } else {
-                Value::Constructor {
-                    name: name.clone(),
-                    arg: None,
-                    ty: None,
-                }
+        Expr::Constructor { name, args, .. } => {
+            let arg_values: Vec<Value> = args
+                .iter()
+                .map(|a| lower_expression_to_temp(ctx, a))
+                .collect::<Result<Vec<_>, _>>()?;
+            let constructor_value = Value::Constructor {
+                name: name.clone(),
+                args: arg_values,
+                ty: None,
             };
 
             ctx.add_statement(Statement::Assign {
@@ -1077,24 +1072,18 @@ pub(crate) fn lower_expression(
         Expr::QualifiedConstructor {
             type_name,
             constructor_name,
-            arg,
+            args,
             ..
         } => {
-            let constructor_value = if let Some(arg) = arg {
-                let arg_val = lower_expression_to_temp(ctx, arg)?;
-                Value::QualifiedConstructor {
-                    type_name: type_name.clone(),
-                    constructor_name: constructor_name.clone(),
-                    arg: Some(Box::new(arg_val)),
-                    ty: None,
-                }
-            } else {
-                Value::QualifiedConstructor {
-                    type_name: type_name.clone(),
-                    constructor_name: constructor_name.clone(),
-                    arg: None,
-                    ty: None,
-                }
+            let arg_values: Vec<Value> = args
+                .iter()
+                .map(|a| lower_expression_to_temp(ctx, a))
+                .collect::<Result<Vec<_>, _>>()?;
+            let constructor_value = Value::QualifiedConstructor {
+                type_name: type_name.clone(),
+                constructor_name: constructor_name.clone(),
+                args: arg_values,
+                ty: None,
             };
 
             ctx.add_statement(Statement::Assign {

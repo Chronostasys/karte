@@ -422,7 +422,7 @@ mod recursive_struct_tests {
                 assert_eq!(variants[0].name, "Some");
                 assert_eq!(variants[1].name, "None");
 
-                if let Some(Type::Reference { inner: inner_ref }) = &variants[0].data_type {
+                if let Some(Type::Reference { inner: inner_ref }) = variants[0].data_types.first() {
                     if let Type::Struct {
                         name: struct_name, ..
                     } = &**inner_ref
@@ -437,7 +437,7 @@ mod recursive_struct_tests {
                 } else {
                     panic!("Expected Some variant to have a reference type");
                 }
-                assert!(variants[1].data_type.is_none());
+                assert!(variants[1].data_types.is_empty());
             } else {
                 panic!(
                     "Expected 'next' field to be Option type, but got {:?}",

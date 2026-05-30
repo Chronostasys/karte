@@ -58,13 +58,13 @@ pub enum Value {
     /// 构造器值
     Constructor {
         name: String,
-        arg: Option<Box<Value>>,
+        args: Vec<Value>,
     },
     /// 限定构造器值
     QualifiedConstructor {
         type_name: String,
         constructor_name: String,
-        arg: Option<Box<Value>>,
+        args: Vec<Value>,
     },
     /// 函数值
     Function { name: String },
@@ -209,10 +209,9 @@ mod tests {
     fn test_value_constructor() {
         let value = Value::Constructor {
             name: "Some".to_string(),
-            arg: Some(Box::new(Value::Number { value: 42 })),
+            args: vec![Value::Number { value: 42 }],
         };
         let formatted = value.to_ir_string();
-        // 格式可能是: Constructor { name = Some, arg = Number { value = 42 } }
 
         let parsed = Value::parse_ir(&formatted).unwrap();
         assert_eq!(parsed, value);

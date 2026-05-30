@@ -330,22 +330,24 @@ impl TypeChecker {
                             all_unified = false;
                             break;
                         }
-                        match (&variant1.data_type, &variant2.data_type) {
-                            (None, None) => {
+                        match (&variant1.data_types, &variant2.data_types) {
+                            (v1, v2) if v1.is_empty() && v2.is_empty() => {
                                 // 两个都没有数据类型，匹配
                             }
-                            (Some(t1), Some(t2)) => {
-                                // 尝试统一数据类型
-                                if self
-                                    .unify_recursive(t1, t2, span, orig_t1, orig_t2, visited)
-                                    .is_err()
-                                {
-                                    all_unified = false;
-                                    break;
+                            (v1, v2) if v1.len() == v2.len() => {
+                                // 尝试统一每个对应位置的类型
+                                for (t1, t2) in v1.iter().zip(v2.iter()) {
+                                    if self
+                                        .unify_recursive(t1, t2, span, orig_t1, orig_t2, visited)
+                                        .is_err()
+                                    {
+                                        all_unified = false;
+                                        break;
+                                    }
                                 }
                             }
                             _ => {
-                                // 一个有数据类型，一个没有，不匹配
+                                // 数据类型数量不匹配
                                 all_unified = false;
                                 break;
                             }
@@ -1167,13 +1169,13 @@ impl TypeChecker {
 
             Expr::Boolean { .. } => Type::bool(),
 
-            Expr::Constructor { name, arg, span } => {
+            Expr::Constructor { name, args, span } => {
                 // 首先检查是否是已知的内置构造器
                 match name.as_str() {
                     "True" | "False" => Type::bool(),
                     "Some" | "None" => {
                         // 根据参数推断Option的内部类型
-                        if let Some(arg_expr) = arg {
+                        if let Some(arg_expr) = args.get(0) {
                             let arg_type = self.infer_expr(arg_expr, env);
                             Type::option(arg_type)
                         } else {
@@ -1189,14 +1191,16 @@ impl TypeChecker {
                                     params,
                                     return_type,
                                 } => {
-                                    if let Some(arg_expr) = arg {
-                                        if params.len() == 1 {
-                                            let arg_type = self.infer_expr(arg_expr, env);
-                                            self.add_constraint(
-                                                arg_type,
-                                                params[0].clone(),
-                                                arg_expr.span(),
-                                            );
+                                    if !args.is_empty() {
+                                        if params.len() == args.len() {
+                                            for (i, arg_expr) in args.iter().enumerate() {
+                                                let arg_type = self.infer_expr(arg_expr, env);
+                                                self.add_constraint(
+                                                    arg_type,
+                                                    params[i].clone(),
+                                                    arg_expr.span(),
+                                                );
+                                            }
                                             (**return_type).clone()
                                         } else {
                                             self.add_error(TypeCheckError::InvalidConstructor {
@@ -1215,7 +1219,7 @@ impl TypeChecker {
                                 }
                                 _ => {
                                     // 无参数构造器
-                                    if arg.is_some() {
+                                    if !args.is_empty() {
                                         self.add_error(TypeCheckError::InvalidConstructor {
                                             name: name.clone(),
                                             span: *span,
@@ -1241,7 +1245,7 @@ impl TypeChecker {
             Expr::QualifiedConstructor {
                 type_name,
                 constructor_name,
-                arg,
+                args,
                 span,
             } => {
                 // 检查类型是否存在
@@ -1250,17 +1254,27 @@ impl TypeChecker {
                         // 查找对应的构造器
                         if let Some(variant) = variants.iter().find(|v| v.name == *constructor_name)
                         {
-                            if let Some(arg_expr) = arg {
+                            if !args.is_empty() {
                                 // 有参数的构造器
-                                if let Some(expected_type) = &variant.data_type {
-                                    let arg_type = self.infer_expr(arg_expr, env);
-                                    let expected_type_clone = expected_type.clone();
-                                    self.add_constraint(
-                                        arg_type,
-                                        expected_type_clone,
-                                        arg_expr.span(),
-                                    );
-                                    sum_type.clone()
+                                if !variant.data_types.is_empty() {
+                                    // 检查参数数量是否匹配
+                                    if args.len() == variant.data_types.len() {
+                                        for (i, arg_expr) in args.iter().enumerate() {
+                                            let arg_type = self.infer_expr(arg_expr, env);
+                                            self.add_constraint(
+                                                arg_type,
+                                                variant.data_types[i].clone(),
+                                                arg_expr.span(),
+                                            );
+                                        }
+                                        sum_type.clone()
+                                    } else {
+                                        self.add_error(TypeCheckError::InvalidConstructor {
+                                            name: format!("{}::{}", type_name, constructor_name),
+                                            span: *span,
+                                        });
+                                        Type::Unknown
+                                    }
                                 } else {
                                     self.add_error(TypeCheckError::InvalidConstructor {
                                         name: format!("{}::{}", type_name, constructor_name),
@@ -1270,7 +1284,7 @@ impl TypeChecker {
                                 }
                             } else {
                                 // 无参数的构造器
-                                if variant.data_type.is_none() {
+                                if variant.data_types.is_empty() {
                                     sum_type.clone()
                                 } else {
                                     self.add_error(TypeCheckError::InvalidConstructor {
@@ -1730,6 +1744,10 @@ impl TypeChecker {
                         // 字段赋值：统一类型
                         self.add_constraint(target_type, value_type, *span);
                     }
+                    Expr::Index { .. } => {
+                        // 数组下标赋值：统一类型
+                        self.add_constraint(target_type, value_type, *span);
+                    }
                     _ => {
                         // 其他表达式不能作为赋值目标
                         self.add_error(TypeCheckError::InvalidAssignmentTarget { span: *span });
@@ -1861,14 +1879,13 @@ impl TypeChecker {
                 self.infer_expr(expr, env);
             }
             Statement::TypeDef { name, variants, .. } => {
-                // 构建加法类型的变体（data_type 已经是结构化 Type）
+                // 构建加法类型的变体（data_types 已经是结构化 Vec<Type>）
                 let sum_variants: Vec<crate::types::SumVariant> = variants
                     .iter()
                     .map(|variant| {
-                        // data_type 已经是 Option<Type>，直接使用
                         crate::types::SumVariant {
                             name: variant.name.clone(),
-                            data_type: variant.data_type.clone(),
+                            data_types: variant.data_types.clone(),
                         }
                     })
                     .collect();
@@ -1880,10 +1897,10 @@ impl TypeChecker {
 
                 // 为每个构造器添加类型到环境中
                 for variant in &sum_variants {
-                    if let Some(data_type) = &variant.data_type {
+                    if !variant.data_types.is_empty() {
                         // 有数据的构造器是函数类型
                         let constructor_type =
-                            Type::function(vec![data_type.clone()], sum_type.clone());
+                            Type::function(variant.data_types.clone(), sum_type.clone());
                         env.insert(variant.name.clone(), constructor_type);
                     } else {
                         // 无数据的构造器直接是该类型
@@ -1934,6 +1951,10 @@ impl TypeChecker {
                     }
                     Expr::FieldAccess { .. } => {
                         // 字段赋值：统一类型
+                        self.add_constraint(target_type, value_type, target.span());
+                    }
+                    Expr::Index { .. } => {
+                        // 数组下标赋值：统一类型
                         self.add_constraint(target_type, value_type, target.span());
                     }
                     _ => {
@@ -2022,13 +2043,13 @@ impl TypeChecker {
                 // 布尔模式必须匹配布尔类型
                 self.add_constraint(expected_type.clone(), Type::bool(), *span);
             }
-            crate::ast::Pattern::Constructor { name, arg, span } => {
+            crate::ast::Pattern::Constructor { name, args, span } => {
                 match name.as_str() {
                     "True" | "False" => {
                         self.add_constraint(expected_type.clone(), Type::bool(), *span);
                     }
                     "Some" => {
-                        if let Some(arg_pattern) = arg {
+                        if let Some(arg_pattern) = args.get(0) {
                             // Some(x) 模式，从 expected_type 中提取内部类型
                             match expected_type {
                                 Type::Sum { name, variants } if name == "Option" => {
@@ -2036,7 +2057,7 @@ impl TypeChecker {
                                     if let Some(some_variant) =
                                         variants.iter().find(|v| v.name == "Some")
                                     {
-                                        if let Some(inner_type) = &some_variant.data_type {
+                                        if let Some(inner_type) = some_variant.data_types.first() {
                                             self.check_pattern(arg_pattern, inner_type, env);
                                         } else {
                                             self.add_error(TypeCheckError::InvalidPattern {
@@ -2094,7 +2115,7 @@ impl TypeChecker {
             crate::ast::Pattern::QualifiedConstructor {
                 type_name,
                 constructor_name,
-                arg,
+                args,
                 span,
             } => {
                 // 检查类型是否存在
@@ -2106,9 +2127,9 @@ impl TypeChecker {
                             // 约束expected_type必须是这个sum type
                             self.add_constraint(expected_type.clone(), sum_type.clone(), *span);
 
-                            if let Some(arg_pattern) = arg {
+                            if let Some(arg_pattern) = args.get(0) {
                                 // 有参数的构造器模式
-                                if let Some(expected_arg_type) = &variant.data_type {
+                                if let Some(expected_arg_type) = variant.data_types.first() {
                                     self.check_pattern(arg_pattern, expected_arg_type, env);
                                 } else {
                                     self.add_error(TypeCheckError::InvalidPattern {
@@ -2121,7 +2142,7 @@ impl TypeChecker {
                                 }
                             } else {
                                 // 无参数的构造器模式
-                                if variant.data_type.is_some() {
+                                if !variant.data_types.is_empty() {
                                     self.add_error(TypeCheckError::InvalidPattern {
                                         message: format!(
                                             "{}::{} requires an argument",
@@ -2205,7 +2226,7 @@ impl TypeChecker {
                     .into_iter()
                     .map(|v| crate::types::SumVariant {
                         name: v.name,
-                        data_type: v.data_type.map(|t| self.apply_substitution(t)),
+                        data_types: v.data_types.into_iter().map(|t| self.apply_substitution(t)).collect(),
                     })
                     .collect(),
             },
@@ -2438,10 +2459,11 @@ impl TypeChecker {
                     .iter()
                     .map(|v| crate::types::SumVariant {
                         name: v.name.clone(),
-                        data_type: v
-                            .data_type
-                            .as_ref()
-                            .map(|dt| self.resolve_struct_field_from_parsed(dt)),
+                        data_types: v
+                            .data_types
+                            .iter()
+                            .map(|dt| self.resolve_struct_field_from_parsed(dt))
+                            .collect(),
                     })
                     .collect();
                 Type::sum(sum_name.clone(), resolved_variants)
@@ -2482,10 +2504,11 @@ impl TypeChecker {
                     .iter()
                     .map(|v| crate::types::SumVariant {
                         name: v.name.clone(),
-                        data_type: v
-                            .data_type
-                            .as_ref()
-                            .map(|dt| self.resolve_parsed_type(dt, struct_defs)),
+                        data_types: v
+                            .data_types
+                            .iter()
+                            .map(|dt| self.resolve_parsed_type(dt, struct_defs))
+                            .collect(),
                     })
                     .collect();
                 Type::sum(sum_name.clone(), resolved_variants)

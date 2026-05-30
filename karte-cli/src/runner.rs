@@ -296,8 +296,8 @@ fn canonicalize_value(value: &mut Value, symbols: &HashMap<String, String>) {
                 canonicalize_value(captured, symbols);
             }
         }
-        Value::Constructor { arg, .. } | Value::QualifiedConstructor { arg, .. } => {
-            if let Some(arg) = arg.as_deref_mut() {
+        Value::Constructor { args, .. } | Value::QualifiedConstructor { args, .. } => {
+            for arg in args {
                 canonicalize_value(arg, symbols);
             }
         }

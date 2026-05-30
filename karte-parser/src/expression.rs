@@ -1226,11 +1226,11 @@ impl<'a> Parser<'a> {
                                         if let Some(arg_token) = self.peek() {
                                             if matches!(arg_token.token, Token::LeftParen) {
                                                 self.advance(); // consume '('
-                                                let arg = if let Some(peeked) = self.peek() {
+                                                let args = if let Some(peeked) = self.peek() {
                                                     if matches!(peeked.token, Token::RightParen) {
-                                                        None
+                                                        vec![]
                                                     } else {
-                                                        Some(Box::new(self.parse_expression()?))
+                                                        vec![self.parse_expression()?]
                                                     }
                                                 } else {
                                                     return Err(ParseError::UnexpectedEof {
@@ -1250,7 +1250,7 @@ impl<'a> Parser<'a> {
                                                         Ok(Expr::QualifiedConstructor {
                                                             type_name: name,
                                                             constructor_name,
-                                                            arg,
+                                                            args,
                                                             span: full_span,
                                                         })
                                                     } else {
@@ -1272,7 +1272,7 @@ impl<'a> Parser<'a> {
                                                 Ok(Expr::QualifiedConstructor {
                                                     type_name: name,
                                                     constructor_name,
-                                                    arg: None,
+                                                    args: vec![],
                                                     span: full_span,
                                                 })
                                             }
@@ -1283,7 +1283,7 @@ impl<'a> Parser<'a> {
                                             Ok(Expr::QualifiedConstructor {
                                                 type_name: name,
                                                 constructor_name,
-                                                arg: None,
+                                                args: vec![],
                                                 span: full_span,
                                             })
                                         }
@@ -1302,19 +1302,21 @@ impl<'a> Parser<'a> {
                             } else if matches!(next_token.token, Token::LeftParen)
                                 && self.is_constructor(&name)
                             {
-                                // 只有已知构造器才处理构造器调用 Constructor(arg)
+                                // 只有已知构造器才处理构造器调用 Constructor(arg, ...)
                                 self.advance(); // consume '('
-                                let arg = if let Some(peeked) = self.peek() {
-                                    if matches!(peeked.token, Token::RightParen) {
-                                        // 无参数构造器
-                                        None
-                                    } else {
-                                        Some(Box::new(self.parse_expression()?))
+                                let mut args = Vec::new();
+                                if let Some(peeked) = self.peek() {
+                                    if !matches!(peeked.token, Token::RightParen) {
+                                        args.push(self.parse_expression()?);
+                                        while let Some(next) = self.peek() {
+                                            if matches!(next.token, Token::Comma) {
+                                                self.advance();
+                                                args.push(self.parse_expression()?);
+                                            } else {
+                                                break;
+                                            }
+                                        }
                                     }
-                                } else {
-                                    return Err(ParseError::UnexpectedEof {
-                                        expected: "expression or ')'".to_string(),
-                                    });
                                 };
 
                                 if let Some(token) = self.peek() {
@@ -1324,7 +1326,7 @@ impl<'a> Parser<'a> {
                                         let full_span = Span::new(span.start, end_span.end);
                                         Ok(Expr::Constructor {
                                             name,
-                                            arg,
+                                            args,
                                             span: full_span,
                                         })
                                     } else {
@@ -1441,7 +1443,7 @@ impl<'a> Parser<'a> {
                                     if self.is_constructor(&name) {
                                         Ok(Expr::Constructor {
                                             name,
-                                            arg: None,
+                                            args: vec![],
                                             span,
                                         })
                                     } else {
@@ -1453,7 +1455,7 @@ impl<'a> Parser<'a> {
                                 if self.is_constructor(&name) {
                                     Ok(Expr::Constructor {
                                         name,
-                                        arg: None,
+                                        args: vec![],
                                         span,
                                     })
                                 } else {
@@ -1465,7 +1467,7 @@ impl<'a> Parser<'a> {
                             if self.is_constructor(&name) {
                                 Ok(Expr::Constructor {
                                     name,
-                                    arg: None,
+                                    args: vec![],
                                     span,
                                 })
                             } else {
