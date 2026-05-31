@@ -21,6 +21,7 @@ pub mod runtime_names {
     pub const STRING_CONCAT: &str = "__karte_string_concat";
     pub const STRING_CHAR_AT: &str = "__karte_string_char_at";
     pub const TO_STRING: &str = "__karte_to_string";
+    pub const TRIM: &str = "__karte_string_trim";
     pub const PRINT_STRING: &str = "__karte_print_string";
     pub const PRINT_NUMBER: &str = "__karte_print_number";
     pub const PRINT_BOOL: &str = "__karte_print_bool";
@@ -79,6 +80,7 @@ impl X86Runtime {
         self.emit_string_equal();
         self.emit_string_concat();
         self.emit_string_char_at();
+        self.emit_trim();
         self.emit_to_string();
         self.emit_print_string();
         self.emit_print_number();
@@ -1641,6 +1643,341 @@ impl X86Runtime {
         self.code[oom_patch..oom_patch + 4].copy_from_slice(&rel.to_le_bytes());
     }
 
+    /// __karte_string_trim(str_ptr) → 新字符串指针
+    ///
+    /// RDI(7) = str_ptr
+    /// 返回 RAX = 新字符串指针（已 trim）
+    ///
+    /// 字符串布局: [length: i64][bytes...]
+    /// 算法:
+    ///   1. 空指针检查
+    ///   2. 读 len，如果 len == 0 返回原指针
+    ///   3. GC 安全：用 REP MOVSB 将源字符串数据复制到系统栈缓冲区
+    ///   4. 扫描 start：从前往后找到第一个非空格位置
+    ///   5. 扫描 end：从后往前找到第一个非空格位置
+    ///   6. 如果 trimmed_len == 0：分配 16 字节空字符串
+    ///   7. 否则：分配 total_size = 8 + ((trimmed_len + 7) & !7)，复制数据
+    ///   8. 清零尾部对齐字节
+    fn emit_trim(&mut self) {
+        self.fn_start(runtime_names::TRIM);
+
+        // 保存 callee-saved 寄存器
+        self.push(5);  // RBP
+        self.push(3);  // RBX
+        self.push(12); // R12
+        self.push(13); // R13
+
+        // RDI(7) = str_ptr
+
+        // ---- 空指针检查: str_ptr == 0 → 返回 0 ----
+        self.test_rr(7, 7); // test RDI, RDI
+        self.jz_rel32(0);
+        let null_patch = self.code.len() - 4;
+
+        // ---- 读 len = [str_ptr + 0] ----
+        // RBX = len
+        self.mov_mem_load(3, 7, 0); // RBX = [RDI+0]
+
+        // ---- 如果 len == 0 → 返回原指针 ----
+        self.test_rr(3, 3); // test RBX, RBX
+        self.jz_rel32(0);
+        let zero_len_patch = self.code.len() - 4;
+
+        // ---- R12 = str_ptr（保存，rep movsb 会破坏 RSI） ----
+        self.mov_rr(12, 7); // R12 = RDI (str_ptr)
+
+        // ---- R13 = 原始 RSP（push 之后，sub 之前） ----
+        self.mov_rr(13, 4); // R13 = RSP
+
+        // ---- 在系统栈上分配缓冲区，大小 = (len + 7) & ~7 ----
+        // RAX = (RBX + 7) & ~7
+        self.mov_rr(0, 3);  // RAX = RBX (len)
+        self.add_ri8(0, 7); // RAX += 7
+        self.and_ri32(0, 0xFFFFFFF8); // RAX &= ~7
+        // SUB RSP, RAX
+        self.sub_rr(4, 0); // RSP -= RAX
+
+        // ---- 用 REP MOVSB 将源字符串数据复制到栈缓冲区 ----
+        // RSI = str_ptr + 8 (数据起始)
+        self.mov_rr(6, 12); // RSI = R12 (str_ptr)
+        self.add_ri8(6, 8); // RSI += 8
+        // RDI = RSP (目标)
+        self.mov_rr(7, 4); // RDI = RSP
+        // RCX = RBX (len)
+        self.mov_rr(1, 3); // RCX = RBX
+        self.bs(&[0xF3, 0xA4]); // REP MOVSB
+
+        // ---- 现在 RSP 指向栈缓冲区，包含完整的字符串数据 ----
+        // ---- 扫描 start：从前往后找到第一个非空格位置 ----
+        // RBP = start = 0
+        self.xor_rr(5, 5); // RBP = 0
+
+        // scan_start_loop: while start < len && buf[start] == 0x20
+        let scan_start_loop = self.code.len();
+        // CMP RBP, RBX (start >= len?)
+        self.cmp_rr(5, 3); // CMP RBP, RBX
+        self.jae_rel32(0); // 如果 start >= len，跳到 scan_start_done
+        let scan_start_exit_patch = self.code.len() - 4;
+
+        // 检查 buf[start] == 0x20
+        // RAX 不需要保存 — 每次循环都重新计算
+        self.mov_rr(0, 4); // RAX = RSP
+        self.add_rr(0, 5); // RAX += RBP (start)
+        self.movzx_byte(11, 0, 0); // R11 = byte [RAX + 0] = buf[start]
+
+        // CMP R11, 0x20 (空格)
+        self.bs(&[0x49, 0x83, 0xFB, 0x20]); // CMP R11, 0x20
+        self.jne_rel32(0); // 如果不等于空格，跳到 scan_start_done
+        let scan_start_found_patch = self.code.len() - 4;
+
+        // start++
+        self.add_ri8(5, 1); // RBP += 1
+
+        // JMP scan_start_loop
+        self.jmp_rel32(0);
+        let jmp_scan_start_patch = self.code.len() - 4;
+        // 修补: JMP 回到 scan_start_loop
+        let rel = scan_start_loop as i32 - (jmp_scan_start_patch as i32 + 4);
+        self.code[jmp_scan_start_patch..jmp_scan_start_patch + 4].copy_from_slice(&rel.to_le_bytes());
+
+        // scan_start_done:
+        let scan_start_done = self.code.len();
+        // 修补 scan_start 退出跳转
+        let rel = scan_start_done as i32 - (scan_start_exit_patch as i32 + 4);
+        self.code[scan_start_exit_patch..scan_start_exit_patch + 4].copy_from_slice(&rel.to_le_bytes());
+        let rel = scan_start_done as i32 - (scan_start_found_patch as i32 + 4);
+        self.code[scan_start_found_patch..scan_start_found_patch + 4].copy_from_slice(&rel.to_le_bytes());
+
+        // ---- 扫描 end：从后往前找到第一个非空格位置 ----
+        // R11 = end = len (RBX)
+        self.mov_rr(11, 3); // R11 = RBX (len)
+
+        // scan_end_loop: while end > start && buf[end-1] == 0x20
+        let scan_end_loop = self.code.len();
+        // CMP R11, RBP (end <= start?)
+        self.cmp_rr(11, 5); // CMP R11, RBP
+        self.jbe_rel32(0); // 如果 end <= start，跳到 scan_end_done
+        let scan_end_exit_patch = self.code.len() - 4;
+
+        // 检查 buf[end-1] == 0x20
+        // RAX 不需要保存 — 每次循环都重新计算
+        self.mov_rr(0, 4); // RAX = RSP
+        self.add_rr(0, 11); // RAX += end
+        self.sub_ri8(0, 1); // RAX -= 1 → RAX = RSP + end - 1
+        self.movzx_byte(10, 0, 0); // R10 = byte [RAX + 0]
+
+        // CMP R10, 0x20
+        self.bs(&[0x49, 0x83, 0xFA, 0x20]); // CMP R10, 0x20
+        self.jne_rel32(0); // 如果不等于空格，跳到 scan_end_done
+        let scan_end_found_patch = self.code.len() - 4;
+
+        // end--
+        // SUB R11, 1: R11 是 reg 11, reg_ext(11) = true
+        self.bs(&[0x49, 0x83, 0xEB, 0x01]); // SUB R11, 1
+
+        // JMP scan_end_loop
+        self.jmp_rel32(0);
+        let jmp_scan_end_patch = self.code.len() - 4;
+        let rel = scan_end_loop as i32 - (jmp_scan_end_patch as i32 + 4);
+        self.code[jmp_scan_end_patch..jmp_scan_end_patch + 4].copy_from_slice(&rel.to_le_bytes());
+
+        // scan_end_done:
+        let scan_end_done = self.code.len();
+        let rel = scan_end_done as i32 - (scan_end_exit_patch as i32 + 4);
+        self.code[scan_end_exit_patch..scan_end_exit_patch + 4].copy_from_slice(&rel.to_le_bytes());
+        let rel = scan_end_done as i32 - (scan_end_found_patch as i32 + 4);
+        self.code[scan_end_found_patch..scan_end_found_patch + 4].copy_from_slice(&rel.to_le_bytes());
+
+        // ---- trimmed_len = end - start = R11 - RBP ----
+        self.mov_rr(0, 11); // RAX = R11 (end)
+        self.sub_rr(0, 5);  // RAX -= RBP (start) → RAX = trimmed_len
+
+        // ---- 如果 trimmed_len == 0：分配空字符串 ----
+        self.test_rr(0, 0);
+        self.jz_rel32(0);
+        let trimmed_zero_patch = self.code.len() - 4;
+
+        // ---- 计算 total_size = 8 + ((trimmed_len + 7) & !7) ----
+        // RAX = trimmed_len
+        // R10 = trimmed_len (保存，后面复制用)
+        self.mov_rr(10, 0);  // R10 = trimmed_len
+        self.add_ri8(0, 7);  // RAX += 7
+        self.and_ri32(0, 0xFFFFFFF8); // RAX &= ~7
+        self.add_ri8(0, 8);  // RAX += 8 → total_size
+
+        // ---- 调用 gc_alloc(total_size, 16) ----
+        self.mov_rr(7, 0);  // RDI = total_size
+        self.mov_ri(6, 16); // RSI = 16 (align)
+        let call_pos = self.code.len();
+        self.call_rel32(0); // 占位 CALL，稍后修补到 gc_alloc
+        self.functions.push(RuntimeFunction {
+            name: "__trim_call_alloc".to_string(),
+            offset: call_pos,
+            size: 5,
+        });
+
+        // ---- 检查 gc_alloc 返回值 ----
+        self.test_rr(0, 0); // RAX == 0?
+        self.jz_rel32(0);   // → OOM
+        let oom_patch = self.code.len() - 4;
+
+        // ---- 写 trimmed_len 到 [RAX + 0] ----
+        self.mov_mem_store(0, 0, 10); // MOV [RAX+0], R10 (trimmed_len)
+
+        // ---- 从栈缓冲区 [start..end] 复制到 [RAX + 8] ----
+        // RSI = RSP + start (RBP)
+        self.mov_rr(6, 4); // RSI = RSP
+        self.add_rr(6, 5); // RSI += RBP (start)
+        // RDI = RAX + 8
+        self.push(0); // 保存 RAX (result ptr)
+        self.mov_rr(7, 0); // RDI = RAX (result ptr)
+        self.add_ri8(7, 8); // RDI = RAX + 8
+        // RCX = trimmed_len (R10)
+        self.mov_rr(1, 10); // RCX = R10
+        self.bs(&[0xF3, 0xA4]); // REP MOVSB
+
+        // ---- 清零尾部对齐字节 ----
+        // remaining = trimmed_len % 8
+        // 如果 remaining == 0，不需要清零
+        // padding_start = RDI (当前已经指向数据末尾)
+        // padding_count = (8 - remaining) % 8
+        self.pop(0); // 恢复 RAX (result ptr)
+        // 计算 remaining = trimmed_len & 7
+        self.mov_rr(1, 10); // RCX = trimmed_len
+        self.and_ri32(1, 7); // RCX &= 7 → remaining
+        self.jz_rel32(0);    // 如果 remaining == 0，跳过清零
+        let no_padding_patch = self.code.len() - 4;
+        // padding_count = 8 - remaining
+        self.mov_ri(2, 8); // RDX = 8
+        self.sub_rr(2, 1); // RDX -= RCX → padding_count
+        // 计算 padding_start = RAX + 8 + trimmed_len
+        self.push(0); // 保存 RAX
+        self.add_ri8(0, 8); // RAX += 8
+        self.add_rr(0, 10); // RAX += trimmed_len → padding_start
+        // 清零循环：XOR CL(此处用 R11), MOV byte [RAX+i], CL
+        // 实际上用 R11 存 0，然后循环写
+        self.xor_rr(11, 11); // R11 = 0
+        // padding_count 最大为 7，直接逐字节写
+        // 用 RDX 作为循环计数器，RAX 作为地址
+        let pad_loop = self.code.len();
+        self.test_rr(2, 2); // TEST RDX, RDX
+        self.jz_rel32(0);   // 如果 RDX == 0，跳到 pad_done
+        let pad_done_patch = self.code.len() - 4;
+        // MOV byte [RAX], R11L
+        // REX.R=1 (R11 扩展), REX.B=0 (RAX): 0x44
+        // ModRM: reg=011(R11L低3位), r/m=000(RAX低3位), mod=00 → 0x18
+        self.bs(&[0x44, 0x88, 0x18]); // MOV byte [RAX], R11L
+        self.add_ri8(0, 1); // RAX++ (地址递增)
+        self.sub_ri8(2, 1); // RDX-- (计数递减)
+        self.jmp_rel32(0);
+        let jmp_pad_patch = self.code.len() - 4;
+        let rel = pad_loop as i32 - (jmp_pad_patch as i32 + 4);
+        self.code[jmp_pad_patch..jmp_pad_patch + 4].copy_from_slice(&rel.to_le_bytes());
+
+        let pad_done = self.code.len();
+        let rel = pad_done as i32 - (pad_done_patch as i32 + 4);
+        self.code[pad_done_patch..pad_done_patch + 4].copy_from_slice(&rel.to_le_bytes());
+        self.pop(0); // 恢复 RAX
+
+        // ---- done: 恢复 RSP，返回 RAX ----
+        let no_padding_label = self.code.len();
+        self.mov_rr(4, 13); // RSP = R13 (恢复原始 RSP)
+        self.pop(13);
+        self.pop(12);
+        self.pop(3);
+        self.pop(5);
+        self.ret();
+
+        // ---- null: 空指针，返回 0 ----
+        let null_label = self.code.len();
+        self.xor_rr(0, 0); // RAX = 0
+        self.pop(13);
+        self.pop(12);
+        self.pop(3);
+        self.pop(5);
+        self.ret();
+
+        // ---- zero_len: len == 0，返回原指针 ----
+        // 此时 RDI(7) 仍然是原指针
+        let zero_len_label = self.code.len();
+        self.mov_rr(0, 7); // RAX = RDI (原指针)
+        self.pop(13);
+        self.pop(12);
+        self.pop(3);
+        self.pop(5);
+        self.ret();
+
+        // ---- trimmed_zero: trimmed_len == 0，分配 16 字节空字符串 ----
+        let trimmed_zero_label = self.code.len();
+        self.mov_ri(7, 16); // RDI = 16 (size)
+        self.mov_ri(6, 16); // RSI = 16 (align)
+        let call_pos2 = self.code.len();
+        self.call_rel32(0); // 占位 CALL gc_alloc
+        self.functions.push(RuntimeFunction {
+            name: "__trim_call_alloc".to_string(),
+            offset: call_pos2,
+            size: 5,
+        });
+        // 检查返回值
+        self.test_rr(0, 0);
+        self.jz_rel32(0);
+        let trimmed_zero_oom_patch = self.code.len() - 4;
+        // 写入 length = 0
+        self.push(0);
+        self.xor_rr(2, 2); // RDX = 0
+        self.mov_mem_store(0, 0, 2); // [RAX+0] = 0
+        self.pop(0);
+        // 恢复 RSP 并返回
+        self.mov_rr(4, 13); // RSP = R13
+        self.pop(13);
+        self.pop(12);
+        self.pop(3);
+        self.pop(5);
+        self.ret();
+
+        // ---- oom: gc_alloc 返回 0，恢复 RSP 并返回 0 ----
+        let oom_label = self.code.len();
+        self.mov_rr(4, 13); // RSP = R13
+        self.xor_rr(0, 0);  // RAX = 0
+        self.pop(13);
+        self.pop(12);
+        self.pop(3);
+        self.pop(5);
+        self.ret();
+
+        // ---- trimmed_zero_om: trimmed_zero 中 gc_alloc 返回 0 ----
+        let trimmed_zero_oom_label = self.code.len();
+        self.mov_rr(4, 13); // RSP = R13
+        self.xor_rr(0, 0);
+        self.pop(13);
+        self.pop(12);
+        self.pop(3);
+        self.pop(5);
+        self.ret();
+
+        self.fn_end();
+
+        // ---- 修补所有跳转 ----
+        // null_patch → null_label
+        let rel = null_label as i32 - (null_patch as i32 + 4);
+        self.code[null_patch..null_patch + 4].copy_from_slice(&rel.to_le_bytes());
+        // zero_len_patch → zero_len_label
+        let rel = zero_len_label as i32 - (zero_len_patch as i32 + 4);
+        self.code[zero_len_patch..zero_len_patch + 4].copy_from_slice(&rel.to_le_bytes());
+        // trimmed_zero_patch → trimmed_zero_label
+        let rel = trimmed_zero_label as i32 - (trimmed_zero_patch as i32 + 4);
+        self.code[trimmed_zero_patch..trimmed_zero_patch + 4].copy_from_slice(&rel.to_le_bytes());
+        // oom_patch → oom_label
+        let rel = oom_label as i32 - (oom_patch as i32 + 4);
+        self.code[oom_patch..oom_patch + 4].copy_from_slice(&rel.to_le_bytes());
+        // no_padding_patch → no_padding_label
+        let rel = no_padding_label as i32 - (no_padding_patch as i32 + 4);
+        self.code[no_padding_patch..no_padding_patch + 4].copy_from_slice(&rel.to_le_bytes());
+        // trimmed_zero_oom_patch → trimmed_zero_oom_label
+        let rel = trimmed_zero_oom_label as i32 - (trimmed_zero_oom_patch as i32 + 4);
+        self.code[trimmed_zero_oom_patch..trimmed_zero_oom_patch + 4].copy_from_slice(&rel.to_le_bytes());
+    }
+
     /// __karte_to_string(value) → 新字符串指针
     ///
     /// RDI(7) = value (i64)
@@ -2150,7 +2487,7 @@ impl X86Runtime {
             .map(|f| (f.offset, f.size, gc_collect as i64))
             .collect();
         let alloc_patches: Vec<(usize, usize, i64)> = self.functions.iter()
-            .filter(|f| f.name == "__string_concat_call_alloc" || f.name == "__string_char_at_call_alloc" || f.name == "__to_string_call_alloc")
+            .filter(|f| f.name == "__string_concat_call_alloc" || f.name == "__string_char_at_call_alloc" || f.name == "__to_string_call_alloc" || f.name == "__trim_call_alloc")
             .map(|f| (f.offset, f.size, gc_alloc as i64))
             .collect();
 

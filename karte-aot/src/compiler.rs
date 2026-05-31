@@ -174,6 +174,11 @@ impl AotCompiler {
             global_labels.insert("karte_jit_runtime_string_char_at".to_string(), addr);
             global_labels.insert("__runtime_karte_jit_runtime_string_char_at".to_string(), addr);
         }
+        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::TRIM) {
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_trim".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_trim".to_string(), addr);
+        }
         if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::TO_STRING) {
             let addr = code_base + off as u64;
             global_labels.insert("karte_jit_runtime_to_string".to_string(), addr);

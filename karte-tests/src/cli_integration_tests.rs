@@ -6942,4 +6942,66 @@ fn main() -> number {
         assert_eq!(exit_code, 10, "clamp(10, 0, 10) should return 10, got {}", exit_code);
     }
 
+
+    // ================ AOT trim 回归测试 ================
+
+    #[test]
+    fn test_aot_trim_both_sides() {
+        let code = r#"fn main() -> number {
+    let s = "  hello world  ";
+    let t = trim(s);
+    len(t)
+}"#;
+        compile_and_run_aot(code, 11, "trim_both_sides");
+    }
+
+    #[test]
+    fn test_aot_trim_no_spaces() {
+        let code = r#"fn main() -> number {
+    let s = "hello";
+    let t = trim(s);
+    len(t)
+}"#;
+        compile_and_run_aot(code, 5, "trim_no_spaces");
+    }
+
+    #[test]
+    fn test_aot_trim_all_spaces() {
+        let code = r#"fn main() -> number {
+    let s = "   ";
+    let t = trim(s);
+    len(t)
+}"#;
+        compile_and_run_aot(code, 0, "trim_all_spaces");
+    }
+
+    #[test]
+    fn test_aot_trim_trailing_spaces() {
+        let code = r#"fn main() -> number {
+    let s = "hi  ";
+    let t = trim(s);
+    len(t)
+}"#;
+        compile_and_run_aot(code, 2, "trim_trailing_spaces");
+    }
+
+    #[test]
+    fn test_aot_trim_leading_spaces() {
+        let code = r#"fn main() -> number {
+    let s = "  hi";
+    let t = trim(s);
+    len(t)
+}"#;
+        compile_and_run_aot(code, 2, "trim_leading_spaces");
+    }
+
+    #[test]
+    fn test_aot_trim_single_space() {
+        let code = r#"fn main() -> number {
+    let s = " ";
+    let t = trim(s);
+    len(t)
+}"#;
+        compile_and_run_aot(code, 0, "trim_single_space");
+    }
 }
