@@ -1960,7 +1960,7 @@ impl TypeChecker {
             }
 
             Expr::ForIn {
-                var, start, end, body, ..
+                var, start, end, body, inclusive: _, ..
             } => {
                 // start 和 end 必须是数字类型
                 let start_type = self.infer_expr(start, env);

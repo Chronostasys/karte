@@ -132,6 +132,9 @@ pub enum Token {
 
     // 添加点操作符用于字段访问
     // 范围运算符（必须在 Dot 之前定义，Logos 最长匹配）
+    #[token("..=")]
+    DotDotEqual,
+
     #[token("..")]
     DoubleDot,
 
@@ -297,6 +300,7 @@ impl fmt::Display for Token {
             Token::StringLiteral(s) => write!(f, "\"{}\"", s),
             Token::Comma => write!(f, ","),
             Token::Semicolon => write!(f, ";"),
+            Token::DotDotEqual => write!(f, "..="),
             Token::DoubleDot => write!(f, ".."),
             Token::Dot => write!(f, "."),
             Token::Colon => write!(f, ":"),

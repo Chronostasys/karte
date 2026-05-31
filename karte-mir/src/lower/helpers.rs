@@ -225,7 +225,7 @@ fn collect_vars_recursive(expr: &Expr, vars: &mut Vec<String>) {
 
         // 循环
         Expr::ForIn {
-            start, end, body, ..
+            start, end, body, inclusive: _, ..
         } => {
             collect_vars_recursive(start, vars);
             collect_vars_recursive(end, vars);

@@ -150,12 +150,13 @@ pub enum Expr {
         span: Span,
     },
 
-    /// ForIn表达式 - 范围循环 for ident in start..end { body }
+    /// ForIn表达式 - 范围循环 for ident in start..end { body } 或 for ident in start..=end { body }
     ForIn {
         var: String,
         start: Box<Expr>,
         end: Box<Expr>,
         body: Box<Expr>,
+        inclusive: bool, // true 表示 ..= (inclusive), false 表示 .. (exclusive)
         span: Span,
     },
 
@@ -702,9 +703,10 @@ impl fmt::Display for Expr {
                 write!(f, "while {} do {}", condition, body)
             }
             Expr::ForIn {
-                var, start, end, body, ..
+                var, start, end, body, inclusive, ..
             } => {
-                write!(f, "for {} in {}..{} {{ {} }}", var, start, end, body)
+                let range_op = if *inclusive { "..=" } else { ".." };
+                write!(f, "for {} in {}{}{} {{ {} }}", var, start, range_op, end, body)
             }
             Expr::Break { .. } => write!(f, "break"),
             Expr::Continue { .. } => write!(f, "continue"),

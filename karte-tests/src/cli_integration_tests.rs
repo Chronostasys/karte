@@ -2178,6 +2178,34 @@ fn main() -> number {
         compile_and_run_aot(code, 0, "for_loop_phi_single_iteration");
     }
 
+    #[test]
+    fn test_for_inclusive_range() {
+        let code = r#"
+fn main() -> number {
+    let sum = 0;
+    for i in 1..=3 {
+        sum = sum + i;
+    };
+    sum
+}
+"#;
+        compile_and_run_aot(code, 6, "for_inclusive_range");
+    }
+
+    #[test]
+    fn test_for_exclusive_range() {
+        let code = r#"
+fn main() -> number {
+    let sum = 0;
+    for i in 1..3 {
+        sum = sum + i;
+    };
+    sum
+}
+"#;
+        compile_and_run_aot(code, 3, "for_exclusive_range");
+    }
+
     // ==================== 符号形式位运算符测试 ====================
 
     #[test]

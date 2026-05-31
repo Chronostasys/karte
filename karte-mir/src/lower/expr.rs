@@ -917,6 +917,7 @@ pub(crate) fn lower_expression(
             start,
             end,
             body,
+            inclusive,
             span,
         } => {
             // for var in start..end { body }
@@ -1175,12 +1176,17 @@ pub(crate) fn lower_expression(
                 }
             }
 
-            // 条件: __for_var < end
+            // 条件: __for_var < end (exclusive) 或 __for_var <= end (inclusive)
             let for_var_phi_val = phi_values.get(&for_var_name).unwrap().clone();
             let end_val_in_header = lower_expression_to_temp(ctx, end)?;
             let cond_temp = ctx.new_temp();
+            let cmp_op = if *inclusive {
+                crate::BinaryOperator::LessEqual
+            } else {
+                crate::BinaryOperator::LessThan
+            };
             ctx.add_statement(Statement::BinaryOp {
-                op: crate::BinaryOperator::LessThan,
+                op: cmp_op,
                 left: for_var_phi_val,
                 right: end_val_in_header,
                 target: cond_temp.clone(),

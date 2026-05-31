@@ -2227,22 +2227,26 @@ impl<'a> Parser<'a> {
         // 解析 start 表达式
         let start = self.parse_expression()?;
 
-        // 期望 '..'
-        if let Some(tok) = self.peek() {
-            if matches!(tok.token, Token::DoubleDot) {
+        // 期望 '..' 或 '..='
+        let inclusive = if let Some(tok) = self.peek() {
+            if matches!(tok.token, Token::DotDotEqual) {
+                self.advance(); // consume '..='
+                true
+            } else if matches!(tok.token, Token::DoubleDot) {
                 self.advance(); // consume '..'
+                false
             } else {
                 return Err(ParseError::UnexpectedToken {
-                    expected: "'..'".to_string(),
+                    expected: "'..' or '..='".to_string(),
                     found: tok.token.clone(),
                     span: tok.span,
                 });
             }
         } else {
             return Err(ParseError::UnexpectedEof {
-                expected: "'..'".to_string(),
+                expected: "'..' or '..='".to_string(),
             });
-        }
+        };
 
         // 解析 end 表达式
         let end = self.parse_expression()?;
@@ -2280,6 +2284,7 @@ impl<'a> Parser<'a> {
             start: Box::new(start),
             end: Box::new(end),
             body: Box::new(body),
+            inclusive,
             span,
         })
     }
