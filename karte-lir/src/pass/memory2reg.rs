@@ -1790,7 +1790,20 @@ impl Memory2RegPass {
             return value;
         }
 
-        // 如果找不到任何store指令，使用默认值0
+        // 🔧 修复循环回边：如果找不到任何store指令，检查前驱块是否在循环回边路径上
+        // 如果前驱块可以通过后继链到达 phi 块，说明它是循环的一部分，
+        // 变量在循环体内未被修改，phi 的 incoming 应该引用自身结果寄存器（自引用 phi）
+        if phi_blocks.contains(&phi_block_id) {
+            if let Some(&phi_reg) = phi_block_to_register.get(&phi_block_id) {
+                if self.can_reach_block_via_successors(pred_block_id, phi_block_id, basic_blocks) {
+                    info!(
+                        "🎯 前驱块 {} 可以通过后继链到达 phi 块 {}（循环回边），使用 phi 结果寄存器 {:?}",
+                        pred_block_id, phi_block_id, phi_reg
+                    );
+                    return Operand::Register { id: phi_reg };
+                }
+            }
+        }
         info!("🎯 前驱块 {} 没有找到store指令，使用默认值0", pred_block_id);
         Operand::Immediate { value: 0 }
     }
@@ -1915,6 +1928,34 @@ impl Memory2RegPass {
 
         info!("🔍 在块{}中没有找到任何store指令", block_id);
         None
+    }
+
+    /// 检查从 start_block 是否可以通过后继链到达 target_block
+    /// 用于判断某个前驱块是否在循环回边路径上（存在包含 phi 块的循环）
+    fn can_reach_block_via_successors(
+        &self,
+        start_block_id: usize,
+        target_block_id: usize,
+        basic_blocks: &HashMap<usize, BasicBlock>,
+    ) -> bool {
+        let mut visited = HashSet::new();
+        let mut stack = vec![start_block_id];
+        while let Some(current) = stack.pop() {
+            if current == target_block_id {
+                return true;
+            }
+            if !visited.insert(current) {
+                continue;
+            }
+            if let Some(block) = basic_blocks.get(&current) {
+                for &succ in &block.successors {
+                    if !visited.contains(&succ) {
+                        stack.push(succ);
+                    }
+                }
+            }
+        }
+        false
     }
 
     /// 🔧 查找前驱块对应的标签

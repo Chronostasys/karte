@@ -4724,4 +4724,74 @@ fn main() -> number {
         assert_eq!(exit_code, 2, "Expected 2, got {}", exit_code);
     }
 
+
+    #[test]
+    fn test_r8_3_for_if_array_assign() {
+        let code = r#"
+fn main() -> number {
+    let arr = [10, 20, 30, 40, 50];
+    for i in 0..5 {
+        if arr[i] > 25 {
+            arr[i] = arr[i] * 2
+        }
+    };
+    arr[0] + arr[1] + arr[2] + arr[3] + arr[4]
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 270, "Expected 270 (10+20+60+80+100), got {}", exit_code);
+    }
+
+    #[test]
+    fn test_r8_3_while_if_array_assign() {
+        let code = r#"
+fn main() -> number {
+    let arr = [10, 20, 30];
+    let i = 0;
+    while i < 3 {
+        if i > 0 {
+            arr[i] = 99
+        };
+        i = i + 1
+    };
+    arr[0] + arr[1] + arr[2]
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 208, "Expected 208 (10+99+99), got {}", exit_code);
+    }
+
+    #[test]
+    fn test_r8_3_for_array_assign_all() {
+        let code = r#"
+fn main() -> number {
+    let arr = [1, 2, 3, 4, 5];
+    for i in 0..5 {
+        arr[i] = arr[i] * 2
+    };
+    arr[0] + arr[1] + arr[2] + arr[3] + arr[4]
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 30, "Expected 30 (2+4+6+8+10), got {}", exit_code);
+    }
+
+    #[test]
+    fn test_r8_3_for_if_array_read_sum() {
+        let code = r#"
+fn main() -> number {
+    let arr = [1, 2, 3];
+    let sum = 0;
+    for i in 0..3 {
+        if arr[i] > 1 {
+            sum = sum + arr[i]
+        }
+    };
+    sum
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 5, "Expected 5 (2+3), got {}", exit_code);
+    }
+
 }
