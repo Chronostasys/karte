@@ -636,6 +636,45 @@ impl Memory2RegPass {
                     total_loads += 1;
                     debug!("🎯   - 发现load指令 [{}]: {}", i, instruction);
 
+                    // 优先检查同块内最近的 store——如果 load 和 store 在同一基本块
+                    // 且 store 在 load 之前，直接使用 store 的 src（无论 Register 还是 Immediate）。
+                    // 这避免了通过 Phi 传递值时首次迭代取到错误初始值的问题。
+                    // 根因：find_phi_result_for_instruction_position 只处理 Register 源操作数，
+                    // 对 Immediate 源操作数会跳过同块 store，转而使用循环头 Phi 的结果，
+                    // 但 Phi 首次迭代的 incoming 来自循环前（未定义/零值），导致结果错误。
+                    let mut same_block_store_src: Option<Operand> = None;
+                    let mut same_block_nearest_dist = usize::MAX;
+                    if let Some(&current_block_id) = slot.load_to_block.get(&i) {
+                        for &store_pos in &slot.stores {
+                            if store_pos < i && i - store_pos < same_block_nearest_dist {
+                                if let Some(store_block) = slot.store_to_block.get(&store_pos) {
+                                    if *store_block == current_block_id {
+                                        if let Instruction::Store64 { src, .. } =
+                                            &function.instructions[store_pos]
+                                        {
+                                            same_block_store_src = Some(src.clone());
+                                            same_block_nearest_dist = i - store_pos;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some(src) = same_block_store_src {
+                        info!(
+                            "M2R 替换load为move(direct): load64 dst: {:?}, addr: {:?} -> mov dst: {:?}, src: {:?} (同块store直接传播) at instr {}",
+                            dst, addr, dst, src, i
+                        );
+                        let new_move = Instruction::Move {
+                            dst: *dst,
+                            src,
+                            span: *span,
+                        };
+                        transformer.replace(i, new_move);
+                        found_loads += 1;
+                        continue;
+                    }
+
                     // 查找对应的phi结果寄存器
                     let phi_result_reg = self.find_phi_result_for_instruction_position(
                         i,

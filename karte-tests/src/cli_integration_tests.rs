@@ -4652,4 +4652,76 @@ fn main() -> number {
         assert_eq!(exit_code, 900, "Expected 900, got {}", exit_code);
     }
 
+    #[test]
+    fn test_r14_1_while_loop_fn_call_sum() {
+        let code = r#"
+fn id(x: number) -> number { x }
+fn main() -> number {
+    let sum = 0;
+    let i = 0;
+    while i < 3 {
+        sum = sum + id(1);
+        i = i + 1;
+    };
+    sum
+}
+        "#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 3, "Expected 3, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_r14_2_while_loop_fn_call_single_iter() {
+        let code = r#"
+fn id(x: number) -> number { x }
+fn main() -> number {
+    let sum = 0;
+    let i = 0;
+    while i < 1 {
+        sum = sum + id(1);
+        i = i + 1;
+    };
+    sum
+}
+        "#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 1, "Expected 1, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_r14_3_while_loop_fn_call_many_iter() {
+        let code = r#"
+fn id(x: number) -> number { x }
+fn main() -> number {
+    let sum = 0;
+    let i = 0;
+    while i < 10 {
+        sum = sum + id(1);
+        i = i + 1;
+    };
+    sum
+}
+        "#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 10, "Expected 10, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_r14_4_while_loop_fn_call_override_assign() {
+        let code = r#"
+fn id(x: number) -> number { x }
+fn main() -> number {
+    let sum = 0;
+    let i = 0;
+    while i < 3 {
+        sum = id(i);
+        i = i + 1;
+    };
+    sum
+}
+        "#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 2, "Expected 2, got {}", exit_code);
+    }
+
 }
