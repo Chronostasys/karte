@@ -204,6 +204,10 @@ fn collect_vars_recursive(expr: &Expr, vars: &mut Vec<String>) {
             collect_vars_recursive(index, vars);
         }
 
+        Expr::ToString { expr, .. } => {
+            collect_vars_recursive(expr, vars);
+        }
+
         // 元组相关
         Expr::TupleLiteral { elements, .. } => {
             for element in elements {

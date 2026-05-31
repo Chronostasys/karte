@@ -231,6 +231,28 @@ pub extern "C" fn karte_jit_runtime_string_char_at(str_ptr: u64, index: u64) -> 
     }
 }
 
+/// 数字转字符串：将 i64 值转换为字符串
+/// 字符串格式：[length: i64][bytes...]
+/// GC 安全：先 format 再 gc_alloc，format 不会触发 GC
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_to_string(value: i64) -> u64 {
+    let s = format!("{}", value);
+    let byte_len = s.len();
+    let total_size = ((byte_len + 7) / 8) * 8 + 8;
+    unsafe {
+        let ptr = gc_alloc(total_size, ObjectType::Conservative);
+        if ptr.is_null() {
+            return 0;
+        }
+        *(ptr as *mut i64) = byte_len as i64;
+        let data = ptr.add(8) as *mut u8;
+        std::ptr::copy_nonoverlapping(s.as_ptr(), data, byte_len);
+        let padded = ((byte_len + 7) / 8) * 8;
+        std::ptr::write_bytes(data.add(byte_len), 0, padded - byte_len);
+        ptr as u64
+    }
+}
+
 /// 字符串内容比较：逐字节比较两个字符串的内容
 /// 字符串格式：[length: i64][bytes...]
 /// 返回 1（相等）或 0（不等）

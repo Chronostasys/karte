@@ -12,6 +12,7 @@ pub enum RuntimeIntrinsic {
     StringConcat,
     StringEqual,
     StringCharAt,
+    ToString,
     PrintString,
     PrintNumber,
     PrintBool,
@@ -33,6 +34,9 @@ impl RuntimeIntrinsic {
             }
             RuntimeIntrinsic::StringCharAt => {
                 runtime::karte_jit_runtime_string_char_at as *const ()
+            }
+            RuntimeIntrinsic::ToString => {
+                runtime::karte_jit_runtime_to_string as *const ()
             }
             RuntimeIntrinsic::PrintString => {
                 runtime::karte_jit_runtime_print_string as *const ()
@@ -56,6 +60,7 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::StringConcat => "karte_jit_runtime_string_concat",
             RuntimeIntrinsic::StringEqual => "karte_jit_runtime_string_equal",
             RuntimeIntrinsic::StringCharAt => "karte_jit_runtime_string_char_at",
+            RuntimeIntrinsic::ToString => "karte_jit_runtime_to_string",
             RuntimeIntrinsic::PrintString => "karte_jit_runtime_print_string",
             RuntimeIntrinsic::PrintNumber => "karte_jit_runtime_print_number",
             RuntimeIntrinsic::PrintBool => "karte_jit_runtime_print_bool",
@@ -65,7 +70,7 @@ impl RuntimeIntrinsic {
     pub fn has_result(self) -> bool {
         matches!(
             self,
-            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual | RuntimeIntrinsic::StringCharAt
+            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual | RuntimeIntrinsic::StringCharAt | RuntimeIntrinsic::ToString
         )
     }
 }
@@ -141,6 +146,13 @@ impl RuntimeCall {
         Self {
             intrinsic: RuntimeIntrinsic::StringCharAt,
             args: vec![RuntimeArg::Register(str_reg), RuntimeArg::Register(index_reg)],
+        }
+    }
+
+    pub fn to_string(value: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::ToString,
+            args: vec![RuntimeArg::Register(value)],
         }
     }
 

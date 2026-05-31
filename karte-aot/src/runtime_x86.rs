@@ -20,6 +20,7 @@ pub mod runtime_names {
     pub const STRING_EQUAL: &str = "__karte_string_equal";
     pub const STRING_CONCAT: &str = "__karte_string_concat";
     pub const STRING_CHAR_AT: &str = "__karte_string_char_at";
+    pub const TO_STRING: &str = "__karte_to_string";
     pub const PRINT_STRING: &str = "__karte_print_string";
     pub const PRINT_NUMBER: &str = "__karte_print_number";
     pub const PRINT_BOOL: &str = "__karte_print_bool";
@@ -78,6 +79,7 @@ impl X86Runtime {
         self.emit_string_equal();
         self.emit_string_concat();
         self.emit_string_char_at();
+        self.emit_to_string();
         self.emit_print_string();
         self.emit_print_number();
         self.emit_print_bool();
@@ -1639,6 +1641,251 @@ impl X86Runtime {
         self.code[oom_patch..oom_patch + 4].copy_from_slice(&rel.to_le_bytes());
     }
 
+    /// __karte_to_string(value) → 新字符串指针
+    ///
+    /// RDI(7) = value (i64)
+    /// 返回 RAX = 新字符串指针
+    ///
+    /// 字符串布局: [length: i64][bytes...]
+    /// 算法: 在栈上构建数字字符串（最多 20 字节: -9223372036854775808），
+    /// 然后调用 gc_alloc 分配，拷贝到 GC 对象。
+    fn emit_to_string(&mut self) {
+        self.fn_start(runtime_names::TO_STRING);
+
+        // 保存 callee-saved 寄存器
+        self.push(5);  // RBP
+        self.push(3);  // RBX
+        self.push(12); // R12
+        self.push(13); // R13
+        self.push(14); // R14
+        self.push(15); // R15
+
+        // 分配 32 字节栈空间作为临时 buffer（对齐到 16 字节）
+        // 使用 RSP 下面的空间：sub rsp, 32
+        self.bs(&[0x48, 0x83, 0xEC, 0x20]); // SUB RSP, 32
+
+        // RDI(7) = value
+        // R15 = value (保存参数)
+        self.mov_rr(15, 7); // R15 = value
+
+        // R14 = buffer start = RSP (栈上 buffer 的起始地址)
+        self.mov_rr(14, 4); // R14 = RSP (buffer start)
+
+        // R12 = buffer end (写入位置，从末尾往前写)
+        // R12 = RSP + 20 (数字最多 20 字节)
+        self.mov_rr(12, 4); // R12 = RSP
+        self.add_ri8(12, 20); // R12 += 20
+
+        // 处理负数
+        // R13 = is_negative flag
+        self.xor_rr(13, 13); // R13 = 0 (false)
+        // 检查 value < 0
+        self.bs(&[0x48, 0x85, 0xFF]); // TEST RDI, RDI
+        self.bs(&[0x0F, 0x89, 0x00, 0x00, 0x00, 0x00]); // JNS skip_neg (6 bytes)
+        let neg_patch = self.code.len() - 4;
+
+        // 负数: R13 = 1, value = -value
+        self.mov_ri(13, 1); // R13 = 1 (is_negative)
+        // NEG R15
+        self.bs(&[0x49, 0xF7, 0xDF]); // NEG R15
+
+        // skip_neg:
+        let skip_neg = self.code.len();
+        let rel = skip_neg as i32 - (neg_patch as i32 + 4);
+        self.code[neg_patch..neg_patch + 4].copy_from_slice(&rel.to_le_bytes());
+
+        // 特殊情况: value == 0
+        // 使用 RBX 保存 digit count
+        self.mov_ri(3, 0); // RBX = 0 (digit count)
+        // 如果 R15 != 0, 跳到循环
+        self.test_rr(15, 15);
+        self.bs(&[0x0F, 0x85, 0x00, 0x00, 0x00, 0x00]); // JNZ digit_loop
+        let zero_patch = self.code.len() - 4;
+
+        // value == 0: 写入 '0' 到 buffer end - 1
+        self.bs(&[0x49, 0x83, 0xEE, 0x01]); // SUB R12, 1
+        // MOV byte [R12], '0' (0x30)
+        // MOV [R12], 0x30 → 使用 RAX 作为临时
+        self.push(0); // 保存 RAX
+        self.mov_ri(0, 0x30); // RAX = '0'
+        // MOV [R12], AL = 88 04 24 → 但 R12 是 R12
+        // 88 04 24 = MOV [RSP], AL
+        // R12 是寄存器 12, MODRM for [R12] needs REX.B
+        self.bs(&[0x41, 0x88, 0x04, 0x24]); // MOV [R12], AL
+        self.pop(0); // 恢复 RAX
+        self.mov_ri(3, 1); // RBX = 1 (1 digit)
+        self.bs(&[0xE9, 0x00, 0x00, 0x00, 0x00]); // JMP after_loop
+        let after_zero_patch = self.code.len() - 4;
+
+        // digit_loop: 逐位转换 (从后往前)
+        let digit_loop = self.code.len();
+        let rel = digit_loop as i32 - (zero_patch as i32 + 4);
+        self.code[zero_patch..zero_patch + 4].copy_from_slice(&rel.to_le_bytes());
+
+        // 循环: while R15 != 0
+        // digit = R15 % 10
+        // R15 = R15 / 10
+        // 这里需要除以 10, 使用乘法逆元避免 DIV 指令
+        // 或者用简单的循环减法
+
+        // 使用 XOR DX,DX + DIV 方式
+        // MOV RAX, R15
+        self.mov_rr(0, 15); // RAX = R15
+        // XOR EDX, EDX (清零 RDX)
+        self.xor_rr(2, 2);
+        // MOV RCX, 10
+        self.mov_ri(1, 10); // RCX = 10
+        // DIV RCX → RAX = R15/10, RDX = R15%10
+        self.bs(&[0x48, 0xF7, 0xF1]); // DIV RCX
+
+        // R15 = RAX (商)
+        self.mov_rr(15, 0); // R15 = quotient
+        // digit = RDX (余数) + '0'
+        self.add_ri8(2, 0x30); // RDX += '0'
+
+        // buffer[--R12] = digit
+        self.bs(&[0x49, 0x83, 0xEE, 0x01]); // SUB R12, 1
+        // MOV [R12], DL → DL 是 RDX 的低 8 位
+        // REX.B + MOV [R12], DL = 41 88 14 24
+        self.bs(&[0x41, 0x88, 0x14, 0x24]); // MOV [R12], DL
+
+        // RBX += 1 (digit count)
+        self.add_ri8(3, 1); // RBX += 1
+
+        // if R15 != 0, continue loop
+        self.test_rr(15, 15);
+        // JNZ short jump backward to digit_loop
+        // 占位 2 字节: 75 XX
+        self.bs(&[0x75, 0x00]); // 占位 JNZ
+        let jnz_pos = self.code.len() - 1;
+        let loop_back_rel = digit_loop as i32 - (jnz_pos as i32 + 1);
+        self.code[jnz_pos] = loop_back_rel as u8;
+
+        // after_loop:
+        let after_loop = self.code.len();
+        let rel = after_loop as i32 - (after_zero_patch as i32 + 4);
+        self.code[after_zero_patch..after_zero_patch + 4].copy_from_slice(&rel.to_le_bytes());
+
+        // 如果 is_negative (R13 == 1), 在前面加 '-'
+        self.test_rr(13, 13);
+        self.bs(&[0x74, 0x0B]); // JZ skip_sign (+11 bytes)
+        // buffer[--R12] = '-'
+        self.bs(&[0x49, 0x83, 0xEE, 0x01]); // SUB R12, 1
+        self.push(0); // save RAX
+        self.mov_ri(0, 0x2D); // RAX = '-'
+        self.bs(&[0x41, 0x88, 0x04, 0x24]); // MOV [R12], AL
+        self.pop(0);
+        self.add_ri8(3, 1); // RBX += 1 (负号算一个字符)
+
+        // skip_sign:
+        // 现在 R12 = 字符串起始, RBX = 字符串长度
+        // 计算分配大小: ((RBX + 7) / 8) * 8 + 8
+        // 简化: RBX + 16 足够（对齐到 8 + 8 字节 header）
+        // 使用 RAX = RBX, 向上对齐到 8, 再 +8
+        self.mov_rr(0, 3); // RAX = RBX (length)
+        self.add_ri8(0, 7); // RAX += 7
+        self.bs(&[0x48, 0x25, 0xF8, 0xFF, 0xFF, 0xFF]); // AND RAX, ~7 (clear low 3 bits)
+        self.add_ri8(0, 8); // RAX += 8 (header)
+
+        // 调用 gc_alloc(RAX, 8)
+        // RDI = size, RSI = alignment
+        self.mov_rr(7, 0); // RDI = size
+        self.mov_ri(6, 8);  // RSI = 8 (alignment)
+        let call_pos = self.code.len();
+        self.call_rel32(0); // CALL gc_alloc (占位)
+        self.functions.push(RuntimeFunction {
+            name: "__to_string_call_alloc".to_string(),
+            offset: call_pos,
+            size: 5,
+        });
+
+        // 检查 gc_alloc 返回值
+        self.test_rr(0, 0);
+        self.bs(&[0x0F, 0x84, 0x00, 0x00, 0x00, 0x00]); // JZ oom
+        let oom_patch = self.code.len() - 4;
+
+        // 写入 length header: [RAX] = RBX
+        // MOV [RAX], RBX
+        self.bs(&[0x48, 0x89, 0x18]); // MOV [RAX], RBX
+
+        // 拷贝字符串数据: [RAX+8] = [R12] for RBX bytes
+        // 使用 RSI 作为 src, RDI 作为 dst, RCX 作为 count
+        // 保存需要的寄存器
+        self.push(0); // 保存 RAX (result ptr)
+        // RSI = R12 (src)
+        self.mov_rr(6, 12); // RSI = R12 (src)
+        // RDI = RAX + 8 (dst)
+        self.add_ri8(7, 8); // RDI = RAX + 8
+        // RCX = RBX (count)
+        self.mov_rr(1, 3); // RCX = RBX
+
+        // 逐字节拷贝循环
+        // 记录循环起点
+        let copy_loop_start = self.code.len();
+        // copy_loop: if RCX == 0, done
+        self.bs(&[0x48, 0x85, 0xC9]); // TEST RCX, RCX
+        self.bs(&[0x74, 0x00]); // JZ copy_done (占位, +0)
+        let jz_copy_done_patch = self.code.len() - 1;
+
+        // MOV AL, [RSI]
+        self.bs(&[0x8A, 0x06]); // MOV AL, [RSI]
+        // MOV [RDI], AL
+        self.bs(&[0x88, 0x07]); // MOV [RDI], AL
+        // INC RSI, INC RDI, DEC RCX
+        self.bs(&[0x48, 0xFF, 0xC6]); // INC RSI
+        self.bs(&[0x48, 0xFF, 0xC7]); // INC RDI
+        self.bs(&[0x48, 0xFF, 0xC9]); // DEC RCX
+        // JMP copy_loop
+        self.bs(&[0xEB, 0x00]); // 占位 JMP
+        let jmp_back_patch = self.code.len() - 1;
+
+        // 修补: JMP back to copy_loop_start
+        let jmp_back_rel = copy_loop_start as i32 - (jmp_back_patch as i32 + 1);
+        self.code[jmp_back_patch] = jmp_back_rel as u8;
+
+        // copy_done label:
+        let copy_done_label = self.code.len();
+        // 修补: JZ copy_done
+        let jz_rel = copy_done_label as i32 - (jz_copy_done_patch as i32 + 1);
+        self.code[jz_copy_done_patch] = jz_rel as u8;
+        // copy_test 的位置是 push(1) 之后的位置
+        // 让我直接使用 copy_test_label
+
+        // copy_done:
+        // 清零填充字节 (已经由 gc_alloc 的 mmap 初始化为 0)
+        // 恢复 RAX
+        self.pop(0); // RAX = result ptr
+
+        // done: 返回 RAX
+        // 恢复栈
+        self.bs(&[0x48, 0x83, 0xC4, 0x20]); // ADD RSP, 32
+        self.pop(15); // R15
+        self.pop(14); // R14
+        self.pop(13); // R13
+        self.pop(12); // R12
+        self.pop(3);  // RBX
+        self.pop(5);  // RBP
+        self.ret();
+
+        // oom: 返回 0
+        let oom_label = self.code.len();
+        self.bs(&[0x48, 0x83, 0xC4, 0x20]); // ADD RSP, 32
+        self.pop(15);
+        self.pop(14);
+        self.pop(13);
+        self.pop(12);
+        self.pop(3);
+        self.pop(5);
+        self.xor_rr(0, 0);
+        self.ret();
+
+        self.fn_end();
+
+        // 修补 oom 跳转
+        let rel = oom_label as i32 - (oom_patch as i32 + 4);
+        self.code[oom_patch..oom_patch + 4].copy_from_slice(&rel.to_le_bytes());
+    }
+
     /// __karte_print_string(str_ptr) → 0
     ///
     /// RDI = str_ptr
@@ -1903,7 +2150,7 @@ impl X86Runtime {
             .map(|f| (f.offset, f.size, gc_collect as i64))
             .collect();
         let alloc_patches: Vec<(usize, usize, i64)> = self.functions.iter()
-            .filter(|f| f.name == "__string_concat_call_alloc" || f.name == "__string_char_at_call_alloc")
+            .filter(|f| f.name == "__string_concat_call_alloc" || f.name == "__string_char_at_call_alloc" || f.name == "__to_string_call_alloc")
             .map(|f| (f.offset, f.size, gc_alloc as i64))
             .collect();
 

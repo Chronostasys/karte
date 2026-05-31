@@ -742,6 +742,37 @@ pub(super) fn lower_statement(
                         }
                         return Ok(());
                     }
+                    "__runtime_to_string" => {
+                        let val_op = ctx.lower_to_rvalue(&args[0]);
+
+                        let val_reg = match val_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: val_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+
+                        let result_reg = ctx.current_function_mut().new_register();
+                        ctx.add_instruction(Instruction::ToString {
+                            dst: result_reg,
+                            value: val_reg,
+                            span: *span,
+                        });
+
+                        if let Some(target_value) = target {
+                            ctx.store_value_to_stack(
+                                target_value,
+                                Operand::Register { id: result_reg },
+                            );
+                        }
+                        return Ok(());
+                    }
                     "__runtime_print_string" => {
                         // 打印字符串：生成 PrintString LIR 指令
                         let ptr_op = ctx.lower_to_rvalue(&args[0]);

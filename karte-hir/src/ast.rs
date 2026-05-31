@@ -249,6 +249,11 @@ pub enum Expr {
         index: Box<Expr>,
         span: Span,
     },
+    /// 数字转字符串 to_string(expr) — 将 number 转换为字符串
+    ToString {
+        expr: Box<Expr>,
+        span: Span,
+    },
     /// 元组字面量
     TupleLiteral {
         elements: Vec<Expr>,
@@ -807,6 +812,9 @@ impl fmt::Display for Expr {
             Expr::CharAt { string, index, .. } => {
                 write!(f, "char_at({}, {})", string, index)
             }
+            Expr::ToString { expr, .. } => {
+                write!(f, "to_string({})", expr)
+            }
             Expr::TupleLiteral { elements, .. } => {
                 let elems = elements
                     .iter()
@@ -913,6 +921,7 @@ impl Expr {
             Expr::Clamp { span, .. } => *span,
             Expr::StrIndex { span, .. } => *span,
             Expr::CharAt { span, .. } => *span,
+            Expr::ToString { span, .. } => *span,
             Expr::TupleLiteral { span, .. } => *span,
             Expr::TupleAccess { span, .. } => *span,
             Expr::Reference { span, .. } => *span,

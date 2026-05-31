@@ -229,6 +229,9 @@ impl X86Compiler {
             Instruction::StringCharAt { dst, str_ptr, index, .. } => {
                 self.compile_string_char_at(dst, str_ptr, index, code_builder)
             }
+            Instruction::ToString { dst, value, .. } => {
+                self.compile_to_string(dst, value, code_builder)
+            }
             Instruction::PrintString { ptr, .. } => {
                 self.compile_print_string(ptr, code_builder)
             }
@@ -1576,6 +1579,16 @@ impl X86Compiler {
         code_builder: &mut CodeBuilder,
     ) -> crate::Result<()> {
         let call = RuntimeCall::string_char_at(*str_ptr, *index);
+        self.emit_runtime_call(code_builder, call, Some(dst))
+    }
+
+    fn compile_to_string(
+        &self,
+        dst: &Register,
+        value: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::to_string(*value);
         self.emit_runtime_call(code_builder, call, Some(dst))
     }
 

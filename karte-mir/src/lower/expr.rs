@@ -3016,6 +3016,21 @@ pub(crate) fn lower_expression(
             });
         }
 
+        // to_string(expr) — 将 number 转换为字符串
+        // 调用运行时 __runtime_to_string(value) -> str_ptr
+        Expr::ToString { expr, span } => {
+            let value = lower_expression_to_temp(ctx, expr)?;
+            ctx.add_statement(Statement::Call {
+                target: Some(destination.clone()),
+                function: Value::Function {
+                    name: "__runtime_to_string".to_string(),
+                    ty: None,
+                },
+                args: vec![value],
+                span: *span,
+            });
+        }
+
         Expr::TupleLiteral { elements, span } => {
             // 将元组转换为匿名结构体: (a, b, c) → Struct { name: "__tuple_3", fields: { _0: a, _1: b, _2: c } }
             let n = elements.len();

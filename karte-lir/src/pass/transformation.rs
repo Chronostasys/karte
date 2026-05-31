@@ -176,6 +176,7 @@ impl DeadCodeElimination {
             Instruction::StringConcat { .. } => true,
             Instruction::StringEqual { .. } => true,
             Instruction::StringCharAt { .. } => true,
+            Instruction::ToString { .. } => true,
             Instruction::PrintString { .. } => true,
             Instruction::PrintNumber { .. } => true,
             Instruction::PrintBool { .. } => true,
@@ -325,6 +326,9 @@ impl DeadCodeElimination {
                 used.push(*str_ptr);
                 used.push(*index);
             }
+            Instruction::ToString { value, .. } => {
+                used.push(*value);
+            }
             _ => {}
         }
 
@@ -367,6 +371,7 @@ impl DeadCodeElimination {
             | Instruction::StructFieldAddr { dst, .. } => Some(*dst),
             Instruction::StringEqual { dst, .. } => Some(*dst),
             Instruction::StringCharAt { dst, .. } => Some(*dst),
+            Instruction::ToString { dst, .. } => Some(*dst),
             Instruction::LoadPair { dst1, .. } => Some(*dst1),
             Instruction::Call {
                 result: Some(dst), ..

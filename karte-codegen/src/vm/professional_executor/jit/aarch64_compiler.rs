@@ -335,6 +335,9 @@ impl AArch64Compiler {
             Instruction::StringCharAt { dst, str_ptr, index, .. } => {
                 self.compile_string_char_at(dst, str_ptr, index, code_builder, instruction_index, function)
             }
+            Instruction::ToString { dst, value, .. } => {
+                self.compile_to_string(dst, value, code_builder, instruction_index, function)
+            }
             Instruction::PrintString { ptr, .. } => {
                 self.compile_print_string(ptr, code_builder, instruction_index, function)
             }
@@ -1051,6 +1054,18 @@ impl AArch64Compiler {
         function: &LirFunction,
     ) -> crate::Result<()> {
         let call = RuntimeCall::string_char_at(*str_ptr, *index);
+        self.emit_runtime_call(code_builder, call, Some(dst), instruction_index, function)
+    }
+
+    fn compile_to_string(
+        &mut self,
+        dst: &Register,
+        value: &Register,
+        code_builder: &mut CodeBuilder,
+        instruction_index: usize,
+        function: &LirFunction,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::to_string(*value);
         self.emit_runtime_call(code_builder, call, Some(dst), instruction_index, function)
     }
 

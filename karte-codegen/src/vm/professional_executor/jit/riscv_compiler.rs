@@ -534,6 +534,9 @@ impl RiscvCompiler {
             Instruction::StringCharAt { dst, str_ptr, index, .. } => {
                 self.compile_string_char_at(dst, str_ptr, index, cb)
             }
+            Instruction::ToString { dst, value, .. } => {
+                self.compile_to_string(dst, value, cb)
+            }
             Instruction::PrintString { ptr, .. } => {
                 self.compile_print_string(ptr, cb)
             }
@@ -1119,6 +1122,16 @@ impl RiscvCompiler {
         cb: &mut CodeBuilder,
     ) -> crate::Result<()> {
         let call = RuntimeCall::string_char_at(*str_ptr, *index);
+        self.emit_runtime_call(cb, call, Some(dst))
+    }
+
+    fn compile_to_string(
+        &self,
+        dst: &Register,
+        value: &Register,
+        cb: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::to_string(*value);
         self.emit_runtime_call(cb, call, Some(dst))
     }
 

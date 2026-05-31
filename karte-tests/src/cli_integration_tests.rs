@@ -6874,6 +6874,40 @@ fn main() -> number {
     }
 
     #[test]
+    fn test_to_string_positive() {
+        let source = r#"fn main() -> number { str_index(to_string(42), 0) + str_index(to_string(42), 1) }"#;
+        let exit_code = compile_project_mode_code(source);
+        let expected = 52 + 50;
+        assert_eq!(exit_code, expected, "to_string(42) chars should be '4'(52) + '2'(50) = {}, got {}", expected, exit_code);
+    }
+
+    #[test]
+    fn test_to_string_negative() {
+        let source = r#"fn main() -> number { str_index(to_string(-5), 0) + str_index(to_string(-5), 1) }"#;
+        let exit_code = compile_project_mode_code(source);
+        let expected = 45 + 53;
+        assert_eq!(exit_code, expected, "to_string(-5) chars should be '-'(45) + '5'(53) = {}, got {}", expected, exit_code);
+    }
+
+    #[test]
+    fn test_to_string_zero() {
+        let source = r#"fn main() -> number { str_index(to_string(0), 0) }"#;
+        let exit_code = compile_project_mode_code(source);
+        assert_eq!(exit_code, 48, "to_string(0) first char should be '0'(48), got {}", exit_code);
+    }
+
+    #[test]
+    fn test_to_string_large() {
+        let source = r#"fn main() -> number {
+    let s = to_string(12345);
+    str_index(s, 0) + str_index(s, 1) + str_index(s, 2) + str_index(s, 3) + str_index(s, 4)
+}"#;
+        let exit_code = compile_project_mode_code(source);
+        let expected = 49 + 50 + 51 + 52 + 53;
+        assert_eq!(exit_code, expected, "to_string(12345) chars should be '1'+'2'+'3'+'4'+'5' = {}, got {}", expected, exit_code);
+    }
+
+    #[test]
     fn test_clamp_in_range() {
         let source = r#"fn main() -> number { clamp(5, 1, 10) }"#;
         let exit_code = compile_project_mode_code(source);
