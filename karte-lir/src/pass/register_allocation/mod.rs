@@ -247,10 +247,11 @@ impl SimpleStackRegisterAllocation {
         // 收集 callee-saved 寄存器（不包括 vm_sp, vm_fp 和 effect 栈指针），
         // 用于溢出参数传递
         let overflow_regs: Vec<PhysicalRegister> = [
-            3u8,   // RBX - callee-saved
             13u8,  // R13 - callee-saved
             14u8,  // R14 - callee-saved
             15u8,  // R15 - callee-saved
+            3u8,   // RBX - callee-saved
+            5u8,   // RBP - callee-saved（不含 R12 — effect stack pointer）
         ].to_vec();
         
         for (i, &param_reg) in function.parameter_registers.iter().enumerate() {
@@ -859,8 +860,25 @@ impl SimpleStackRegisterAllocation {
         let mut current_replacements = Vec::new();
 
         // 1. 收集所有涉及溢出的虚拟寄存器
+        // 排除 Call/CallIndirect 的 args 寄存器：它们是目标寄存器
+        // （由 InstructionLoweringPass 写入参数寄存器），不是源操作数。
+        // 将 args 从溢出加载中排除可以显著降低临时寄存器压力，
+        // 因为一个 7 参数闭包调用有 7 个 args + 7 个 arg_operands = 14 个
+        // "使用"寄存器，其中 7 个 args 不需要从溢出槽加载。
+        let args_registers: HashSet<Register> = match &_function.instructions[instruction_index] {
+            crate::ir::Instruction::Call { args, .. } => {
+                args.iter().copied().collect()
+            }
+            crate::ir::Instruction::CallIndirect { args, .. } => {
+                args.iter().copied().collect()
+            }
+            _ => HashSet::new(),
+        };
         let mut spilled_operands = HashSet::new();
         for &reg in used_registers.iter().chain(def_register.iter()) {
+            if args_registers.contains(&reg) {
+                continue; // args 是目标寄存器，不需要从溢出槽加载
+            }
             if let Some(AllocationTarget::Spill(_)) = allocation_map.get(&reg) {
                 spilled_operands.insert(reg);
             }
@@ -881,7 +899,17 @@ impl SimpleStackRegisterAllocation {
             self.allocate_temp_registers_for_inst(&spilled_operands, &unavailable_registers);
 
         // 3. 处理输入操作数（Used）
+        // 跳过 Call/CallIndirect 的 args 寄存器（已在上面排除）
         for &used_reg in used_registers.iter() {
+            // args 是目标寄存器，不需要从溢出槽加载
+            if args_registers.contains(&used_reg) {
+                // 为溢出的 args 分配一个占位物理寄存器
+                // InstructionLoweringPass 不使用 args，所以任何寄存器都可以
+                if let Some(AllocationTarget::Spill(_slot_id)) = allocation_map.get(&used_reg) {
+                    current_replacements.push((used_reg, Register::Physical(0)));
+                }
+                continue;
+            }
             if let Some(AllocationTarget::Spill(slot_id)) = allocation_map.get(&used_reg) {
                 if live_registers.contains(&used_reg) {
                     let temp_physical_reg = *temp_assignments.get(&used_reg).unwrap();
@@ -1269,6 +1297,15 @@ impl LinearScanRegisterAllocation {
             calling_convention: CallingConvention::standard(),
         }
     }
+
+    /// 预处理：将 Call/CallIndirect 的 arg_operands 提取为独立的 Move 指令
+    ///
+    /// 问题：Call/CallIndirect 指令同时包含 args（目标寄存器）和 arg_operands（源操作数），
+    /// get_used_registers 返回两套寄存器，导致寄存器压力翻倍，溢出时超出临时寄存器上限。
+    ///
+    /// 解决：在寄存器分配前，将每个 arg_operand 提取为独立的 Move 指令：
+    ///   Move { dst: args[i], src: arg_operands[i] }
+    /// 然后清空 arg_operands，减少 Call/CallIndirect 的操作数数量。
 
     /// 执行寄存器分配（使用线性扫描算法）
     fn run_linear_scan(

@@ -159,6 +159,9 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
 
         for block_id in block_ids {
             if let Some(block) = mir_function.basic_blocks.get(&block_id) {
+                // 每个基本块边界清理常量缓存，防止跨控制流分支的常量污染
+                // 常量传播优化由后续 ConstantFolding pass 负责
+                context.known_constants.clear();
                 let label = context.allocate_label_for_block(block_id);
                 context.add_instruction(Instruction::Label {
                     id: label,

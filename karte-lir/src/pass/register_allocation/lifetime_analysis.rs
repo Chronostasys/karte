@@ -226,33 +226,35 @@ impl LifetimeAnalyzer {
                 }
             }
 
-            // 第三步：对每个回边，扩展循环体内寄存器的生命周期
+            // 第三步：对每个回边，扩展所有与循环范围有交集的寄存器生命周期
+            //
+            // 关键修复：之前的实现只扩展循环指令中"出现"的寄存器，
+            // 但一个在循环前部定义和使用的寄存器（如 tagged union 缓冲地址）
+            // 可能不出现于循环后部（如 bb9），导致其生命周期未被扩展到
+            // 覆盖后部代码，寄存器分配器将其与后部的中间值分配到同一物理寄存器，
+            // 循环第二次迭代时物理寄存器已被覆写，导致 SIGSEGV。
+            //
+            // 正确做法：遍历所有寄存器，只要生命周期与循环范围有交集就扩展。
             for &(jump_pos, target_pos) in &back_edges {
                 let loop_start = target_pos; // 循环头（Label 位置）
                 let loop_end = jump_pos;     // 回边跳转指令位置
 
-                // 收集循环体内出现的所有寄存器
-                for pos in loop_start..=loop_end {
-                    let (defined_regs, used_regs) =
-                        function.instructions[pos].get_defined_and_used_registers();
-                    for reg in defined_regs.iter().chain(used_regs.iter()) {
-                        if let Some(lifetime) = lifetimes.get_mut(reg) {
-                            if lifetime.is_function_parameter {
-                                continue; // 函数参数已经覆盖全范围
-                            }
-                            // 只有当寄存器的生命周期与循环范围有交集时才扩展
-                            if lifetime.start <= loop_end && lifetime.end >= loop_start {
-                                let old_start = lifetime.start;
-                                let old_end = lifetime.end;
-                                lifetime.start = lifetime.start.min(loop_start);
-                                lifetime.end = lifetime.end.max(loop_end);
-                                if lifetime.start != old_start || lifetime.end != old_end {
-                                    log::debug!(
-                                        "🔄 扩展循环寄存器 {:?} 生命周期: [{}, {}] → [{}, {}]",
-                                        reg, old_start, old_end, lifetime.start, lifetime.end
-                                    );
-                                }
-                            }
+                // 扩展所有与循环范围有交集的寄存器（不仅仅是循环体中出现的）
+                for (reg, lifetime) in lifetimes.iter_mut() {
+                    if lifetime.is_function_parameter {
+                        continue; // 函数参数已经覆盖全范围
+                    }
+                    // 如果寄存器的生命周期与循环范围有交集，扩展到覆盖整个循环
+                    if lifetime.start <= loop_end && lifetime.end >= loop_start {
+                        let old_start = lifetime.start;
+                        let old_end = lifetime.end;
+                        lifetime.start = lifetime.start.min(loop_start);
+                        lifetime.end = lifetime.end.max(loop_end);
+                        if lifetime.start != old_start || lifetime.end != old_end {
+                            log::debug!(
+                                "🔄 扩展循环寄存器 {:?} 生命周期: [{}, {}] → [{}, {}]",
+                                reg, old_start, old_end, lifetime.start, lifetime.end
+                            );
                         }
                     }
                 }

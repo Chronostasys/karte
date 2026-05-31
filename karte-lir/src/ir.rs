@@ -856,7 +856,6 @@ impl Instruction {
                 args, arg_operands, ..
             } => {
                 used.extend_from_slice(args);
-                // 添加参数操作数中使用的寄存器
                 for operand in arg_operands {
                     self.add_operand_registers(operand, &mut used);
                 }
@@ -869,7 +868,6 @@ impl Instruction {
             } => {
                 used.push(*function_register);
                 used.extend_from_slice(args);
-                // 🔧 修复：添加参数操作数中使用的寄存器
                 for operand in arg_operands {
                     self.add_operand_registers(operand, &mut used);
                 }

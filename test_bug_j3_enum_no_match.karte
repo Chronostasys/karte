@@ -1,0 +1,13 @@
+enum Shape { Cir(number) }
+fn main() -> number {
+    let x = 0;
+    for i in 0..2 {
+        x = x + 1
+    };
+    let y = 0;
+    while y < 3 {
+        x = x + 1;
+        y = y + 1
+    };
+    x + y
+}
