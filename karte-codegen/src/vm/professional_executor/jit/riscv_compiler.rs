@@ -540,6 +540,9 @@ impl RiscvCompiler {
             Instruction::StringContains { dst, str_ptr, char_code, .. } => {
                 self.compile_string_contains(dst, str_ptr, char_code, cb)
             }
+            Instruction::SplitCount { dst, str_ptr, separator, .. } => {
+                self.compile_split_count(dst, str_ptr, separator, cb)
+            }
             Instruction::ToString { dst, value, .. } => {
                 self.compile_to_string(dst, value, cb)
             }
@@ -1151,6 +1154,17 @@ impl RiscvCompiler {
         cb: &mut CodeBuilder,
     ) -> crate::Result<()> {
         let call = RuntimeCall::string_contains(*str_ptr, *char_code);
+        self.emit_runtime_call(cb, call, Some(dst))
+    }
+
+    fn compile_split_count(
+        &self,
+        dst: &Register,
+        str_ptr: &Register,
+        separator: &Register,
+        cb: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::split_count(*str_ptr, *separator);
         self.emit_runtime_call(cb, call, Some(dst))
     }
 

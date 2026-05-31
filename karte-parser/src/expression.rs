@@ -826,6 +826,27 @@ impl<'a> Parser<'a> {
                         });
                     }
                 }
+                if name == "split_count" {
+                    let next_is_lparen = self
+                        .tokens
+                        .get(self.position + 1)
+                        .map_or(false, |t| matches!(t.token, Token::LeftParen));
+                    if next_is_lparen {
+                        let start_span = token.span;
+                        self.advance(); // consume 'split_count'
+                        self.advance(); // consume '('
+                        let string = self.parse_expression()?;
+                        self.expect_token(Token::Comma)?;
+                        let separator = self.parse_expression()?;
+                        self.expect_token(Token::RightParen)?;
+                        let span = Span::new(start_span.start, self.current_span().end);
+                        return Ok(Expr::SplitCount {
+                            string: Box::new(string),
+                            separator: Box::new(separator),
+                            span,
+                        });
+                    }
+                }
                 if name == "to_string" {
                     let next_is_lparen = self
                         .tokens

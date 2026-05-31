@@ -1871,6 +1871,28 @@ impl TypeChecker {
                 }
                 if ok { Type::Number } else { Type::Unknown }
             }
+            Expr::SplitCount { string, separator, span } => {
+                let string_type = self.infer_expr(string, env);
+                let sep_type = self.infer_expr(separator, env);
+                let mut ok = true;
+                if string_type != Type::String && string_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::String,
+                        found: string_type,
+                        span: string.span(),
+                    });
+                    ok = false;
+                }
+                if sep_type != Type::Number && sep_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: sep_type,
+                        span: separator.span(),
+                    });
+                    ok = false;
+                }
+                if ok { Type::Number } else { Type::Unknown }
+            }
             Expr::ToString { expr, span } => {
                 let expr_type = self.infer_expr(expr, env);
                 let mut ok = true;

@@ -215,6 +215,11 @@ fn collect_vars_recursive(expr: &Expr, vars: &mut Vec<String>) {
             collect_vars_recursive(char_code, vars);
         }
 
+        Expr::SplitCount { string, separator, .. } => {
+            collect_vars_recursive(string, vars);
+            collect_vars_recursive(separator, vars);
+        }
+
         Expr::ToString { expr, .. } => {
             collect_vars_recursive(expr, vars);
         }

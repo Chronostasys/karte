@@ -506,6 +506,11 @@ impl DefUseAnalysis {
                 uses.push(*str_ptr);
                 uses.push(*char_code);
             }
+            Instruction::SplitCount { dst, str_ptr, separator, .. } => {
+                defs.push(*dst);
+                uses.push(*str_ptr);
+                uses.push(*separator);
+            }
             Instruction::ToString { dst, value, .. } => {
                 defs.push(*dst);
                 uses.push(*value);

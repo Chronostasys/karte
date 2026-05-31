@@ -846,6 +846,51 @@ pub(super) fn lower_statement(
                         }
                         return Ok(());
                     }
+                    "__runtime_split_count" => {
+                        let str_op = ctx.lower_to_rvalue(&args[0]);
+                        let sep_op = ctx.lower_to_rvalue(&args[1]);
+
+                        let str_reg = match str_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: str_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+                        let sep_reg = match sep_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: sep_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+
+                        let result_reg = ctx.current_function_mut().new_register();
+                        ctx.add_instruction(Instruction::SplitCount {
+                            dst: result_reg,
+                            str_ptr: str_reg,
+                            separator: sep_reg,
+                            span: *span,
+                        });
+
+                        if let Some(target_value) = target {
+                            ctx.store_value_to_stack(
+                                target_value,
+                                Operand::Register { id: result_reg },
+                            );
+                        }
+                        return Ok(());
+                    }
                     "__runtime_to_string" => {
                         let val_op = ctx.lower_to_rvalue(&args[0]);
 

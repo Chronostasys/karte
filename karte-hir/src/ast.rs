@@ -262,6 +262,12 @@ pub enum Expr {
         char_code: Box<Expr>,
         span: Span,
     },
+    /// 字符串分割计数 split_count(s, sep) — 返回按分隔符分割后的字段数量
+    SplitCount {
+        string: Box<Expr>,
+        separator: Box<Expr>,
+        span: Span,
+    },
     /// 数字转字符串 to_string(expr) — 将 number 转换为字符串
     ToString {
         expr: Box<Expr>,
@@ -831,6 +837,9 @@ impl fmt::Display for Expr {
             Expr::StrContains { string, char_code, .. } => {
                 write!(f, "str_contains({}, {})", string, char_code)
             }
+            Expr::SplitCount { string, separator, .. } => {
+                write!(f, "split_count({}, {})", string, separator)
+            }
             Expr::ToString { expr, .. } => {
                 write!(f, "to_string({})", expr)
             }
@@ -942,6 +951,7 @@ impl Expr {
             Expr::CharAt { span, .. } => *span,
             Expr::Substring { span, .. } => *span,
             Expr::StrContains { span, .. } => *span,
+            Expr::SplitCount { span, .. } => *span,
             Expr::ToString { span, .. } => *span,
             Expr::TupleLiteral { span, .. } => *span,
             Expr::TupleAccess { span, .. } => *span,

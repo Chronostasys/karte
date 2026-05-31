@@ -573,6 +573,20 @@ pub enum Instruction {
         span: Span,
     },
 
+    /// 字符串分割计数：dst = split_count(str_ptr, sep_code) — 返回字段数量
+    /// 调用运行时 karte_jit_runtime_split_count(str_ptr, sep_code) -> count
+    #[ir_codec(token = "split_count")]
+    SplitCount {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        str_ptr: Register,
+        #[ir_codec(args)]
+        separator: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
     /// 数字转字符串：dst = to_string(value) — 将 number 转换为字符串
     /// 调用运行时 karte_jit_runtime_to_string(value) -> str_ptr
     #[ir_codec(token = "to_string")]
@@ -806,6 +820,7 @@ impl Instruction {
             | Instruction::StringCharAt { dst, .. }
             | Instruction::StringSubstring { dst, .. }
             | Instruction::StringContains { dst, .. }
+            | Instruction::SplitCount { dst, .. }
             | Instruction::ToString { dst, .. } => Some(*dst),
             Instruction::LoadPair { dst1, .. } => Some(*dst1),
             Instruction::Call { result, .. } | Instruction::CallIndirect { result, .. } => *result,
@@ -847,6 +862,7 @@ impl Instruction {
             | Instruction::StringCharAt { dst, .. }
             | Instruction::StringSubstring { dst, .. }
             | Instruction::StringContains { dst, .. }
+            | Instruction::SplitCount { dst, .. }
             | Instruction::ToString { dst, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
@@ -1021,6 +1037,10 @@ impl Instruction {
             Instruction::StringContains { str_ptr, char_code, .. } => {
                 used.push(*str_ptr);
                 used.push(*char_code);
+            }
+            Instruction::SplitCount { str_ptr, separator, .. } => {
+                used.push(*str_ptr);
+                used.push(*separator);
             }
             Instruction::ToString { value, .. } => {
                 used.push(*value);
@@ -1370,6 +1390,17 @@ impl Instruction {
                     *char_code = new_reg;
                 }
             }
+            Instruction::SplitCount { dst, str_ptr, separator, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                if *str_ptr == old_reg {
+                    *str_ptr = new_reg;
+                }
+                if *separator == old_reg {
+                    *separator = new_reg;
+                }
+            }
             Instruction::ToString { dst, value, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
@@ -1640,6 +1671,11 @@ impl Instruction {
                 defined.push(*dst);
                 used.push(*str_ptr);
                 used.push(*char_code);
+            }
+            Instruction::SplitCount { dst, str_ptr, separator, .. } => {
+                defined.push(*dst);
+                used.push(*str_ptr);
+                used.push(*separator);
             }
             Instruction::ToString { dst, value, .. } => {
                 defined.push(*dst);

@@ -255,6 +255,7 @@ impl AotCompiler {
             let string_concat_ptr = RuntimeIntrinsic::StringConcat.symbol_ptr() as u64;
             let string_char_at_ptr = RuntimeIntrinsic::StringCharAt.symbol_ptr() as u64;
             let string_contains_ptr = RuntimeIntrinsic::StringContains.symbol_ptr() as u64;
+            let split_count_ptr = RuntimeIntrinsic::SplitCount.symbol_ptr() as u64;
             let to_string_ptr = RuntimeIntrinsic::ToString.symbol_ptr() as u64;
             let print_string_ptr = RuntimeIntrinsic::PrintString.symbol_ptr() as u64;
             let print_number_ptr = RuntimeIntrinsic::PrintNumber.symbol_ptr() as u64;
@@ -271,6 +272,9 @@ impl AotCompiler {
             }
             if let Some(&new) = global_labels.get("karte_jit_runtime_string_contains") {
                 runtime_ptr_map.insert(string_contains_ptr, new);
+            }
+            if let Some(&new) = global_labels.get("karte_jit_runtime_split_count") {
+                runtime_ptr_map.insert(split_count_ptr, new);
             }
             if let Some(&new) = global_labels.get("karte_jit_runtime_to_string") {
                 runtime_ptr_map.insert(to_string_ptr, new);

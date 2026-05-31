@@ -318,6 +318,31 @@ pub extern "C" fn karte_jit_runtime_string_contains(str_ptr: u64, char_code: u64
     }
 }
 
+/// 字符串分割计数：统计按分隔符字节值分割后的字段数量
+/// 字符串格式：[length: i64][bytes...]
+/// 不触发 GC（无内存分配，纯扫描计数）
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_split_count(str_ptr: u64, sep_code: u64) -> u64 {
+    unsafe {
+        if str_ptr == 0 {
+            return 1; // 空指针视为空串，1个字段
+        }
+        let len = *(str_ptr as *const i64) as usize;
+        if len == 0 {
+            return 1; // 空串是1个字段
+        }
+        let data_ptr = (str_ptr as *const u8).add(8);
+        let sep = sep_code as u8;
+        let mut count = 1; // 至少1个字段
+        for i in 0..len {
+            if *data_ptr.add(i) == sep {
+                count += 1;
+            }
+        }
+        count as u64
+    }
+}
+
 /// 数字转字符串：将 i64 值转换为字符串
 /// 字符串格式：[length: i64][bytes...]
 /// GC 安全：先 format 再 gc_alloc，format 不会触发 GC

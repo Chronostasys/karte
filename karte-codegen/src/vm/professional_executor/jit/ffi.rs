@@ -14,6 +14,7 @@ pub enum RuntimeIntrinsic {
     StringCharAt,
     StringSubstring,
     StringContains,
+    SplitCount,
     ToString,
     PrintString,
     PrintNumber,
@@ -43,6 +44,9 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::StringContains => {
                 runtime::karte_jit_runtime_string_contains as *const ()
             }
+            RuntimeIntrinsic::SplitCount => {
+                runtime::karte_jit_runtime_split_count as *const ()
+            }
             RuntimeIntrinsic::ToString => {
                 runtime::karte_jit_runtime_to_string as *const ()
             }
@@ -70,6 +74,7 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::StringCharAt => "karte_jit_runtime_string_char_at",
             RuntimeIntrinsic::StringSubstring => "karte_jit_runtime_string_substring",
             RuntimeIntrinsic::StringContains => "karte_jit_runtime_string_contains",
+            RuntimeIntrinsic::SplitCount => "karte_jit_runtime_split_count",
             RuntimeIntrinsic::ToString => "karte_jit_runtime_to_string",
             RuntimeIntrinsic::PrintString => "karte_jit_runtime_print_string",
             RuntimeIntrinsic::PrintNumber => "karte_jit_runtime_print_number",
@@ -80,7 +85,7 @@ impl RuntimeIntrinsic {
     pub fn has_result(self) -> bool {
         matches!(
             self,
-            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual | RuntimeIntrinsic::StringCharAt | RuntimeIntrinsic::StringSubstring | RuntimeIntrinsic::StringContains | RuntimeIntrinsic::ToString
+            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual | RuntimeIntrinsic::StringCharAt | RuntimeIntrinsic::StringSubstring | RuntimeIntrinsic::StringContains | RuntimeIntrinsic::SplitCount | RuntimeIntrinsic::ToString
         )
     }
 }
@@ -170,6 +175,13 @@ impl RuntimeCall {
         Self {
             intrinsic: RuntimeIntrinsic::StringContains,
             args: vec![RuntimeArg::Register(str_reg), RuntimeArg::Register(char_code_reg)],
+        }
+    }
+
+    pub fn split_count(str_reg: Register, sep_reg: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::SplitCount,
+            args: vec![RuntimeArg::Register(str_reg), RuntimeArg::Register(sep_reg)],
         }
     }
 

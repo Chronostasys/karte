@@ -3049,6 +3049,22 @@ pub(crate) fn lower_expression(
             });
         }
 
+        // split_count(s, sep) — 统计按分隔符分割后的字段数量
+        // 调用运行时 __runtime_split_count(str_ptr, sep_code) -> count
+        Expr::SplitCount { string, separator, span } => {
+            let string_val = lower_expression_to_temp(ctx, string)?;
+            let sep_val = lower_expression_to_temp(ctx, separator)?;
+            ctx.add_statement(Statement::Call {
+                target: Some(destination.clone()),
+                function: Value::Function {
+                    name: "__runtime_split_count".to_string(),
+                    ty: None,
+                },
+                args: vec![string_val, sep_val],
+                span: *span,
+            });
+        }
+
         // to_string(expr) — 将 number 转换为字符串
         // 调用运行时 __runtime_to_string(value) -> str_ptr
         Expr::ToString { expr, span } => {
