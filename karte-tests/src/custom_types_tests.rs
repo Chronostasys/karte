@@ -110,6 +110,33 @@ mod simple_custom_types {
         let result = test_evaluate(r#"{ enum Color { Red, Green, Blue }; match Blue { Blue -> 3, Red -> 1, Green -> 2 } }"#).unwrap();
         assert_eq!(result, 3);
     }
+
+    #[test]
+    fn test_or_pattern_enum_first() {
+        let result = test_evaluate(
+            r#"{ enum Color { R, G, B }; match Color::R { Color::R | Color::G => 0, Color::B => 1 } }"#,
+        )
+        .unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_or_pattern_enum_second() {
+        let result = test_evaluate(
+            r#"{ enum Color { R, G, B }; match Color::G { Color::R | Color::G => 0, Color::B => 1 } }"#,
+        )
+        .unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_or_pattern_enum_third() {
+        let result = test_evaluate(
+            r#"{ enum Color { R, G, B }; match Color::B { Color::R | Color::G => 0, Color::B => 1 } }"#,
+        )
+        .unwrap();
+        assert_eq!(result, 1);
+    }
 }
 
 mod parametric_custom_types {

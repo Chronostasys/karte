@@ -1829,8 +1829,17 @@ impl<'a> Parser<'a> {
                 break;
             }
 
-            // 解析模式
-            let pattern = self.parse_pattern()?;
+            // 解析模式（支持 or-pattern: P1 | P2 | P3）
+            let first_pattern = self.parse_pattern()?;
+            let mut patterns = vec![first_pattern];
+            while let Some(next_token) = self.peek() {
+                if matches!(next_token.token, Token::Pipe) {
+                    self.advance(); // consume '|'
+                    patterns.push(self.parse_pattern()?);
+                } else {
+                    break;
+                }
+            }
 
             // 期望 '->' 或 '=>'（match arm 分隔符，向后兼容两种语法）
             if let Some(token) = self.peek() {
@@ -1851,13 +1860,17 @@ impl<'a> Parser<'a> {
 
             // 解析分支体
             let body = self.parse_expression()?;
-            let arm_span = Span::new(pattern.span().start, body.span().end);
+            let arm_span_start = patterns[0].span().start;
+            let arm_span_end = body.span().end;
 
-            arms.push(karte_hir::MatchArm {
-                pattern,
-                body,
-                span: arm_span,
-            });
+            // 为每个 pattern 创建一个 arm（共享 body）
+            for pattern in patterns {
+                arms.push(karte_hir::MatchArm {
+                    pattern,
+                    body: body.clone(),
+                    span: Span::new(arm_span_start, arm_span_end),
+                });
+            }
 
             // 检查是否有更多分支
             if let Some(token) = self.peek() {
