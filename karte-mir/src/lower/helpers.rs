@@ -174,6 +174,20 @@ fn collect_vars_recursive(expr: &Expr, vars: &mut Vec<String>) {
             collect_vars_recursive(array, vars);
         }
 
+        Expr::Abs { value, .. } => {
+            collect_vars_recursive(value, vars);
+        }
+
+        Expr::Min { left, right, .. } => {
+            collect_vars_recursive(left, vars);
+            collect_vars_recursive(right, vars);
+        }
+
+        Expr::Max { left, right, .. } => {
+            collect_vars_recursive(left, vars);
+            collect_vars_recursive(right, vars);
+        }
+
         // 元组相关
         Expr::TupleLiteral { elements, .. } => {
             for element in elements {

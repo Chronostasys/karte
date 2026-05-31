@@ -2183,6 +2183,175 @@ pub(crate) fn lower_expression(
             });
         }
 
+        // abs(x) → if x < 0 then -x else x
+        Expr::Abs { value, span } => {
+            let value_temp = lower_expression_to_temp(ctx, value)?;
+            
+            // abs(x): 展开为 x < 0 ? -x : x
+            let neg_block = ctx.new_block();
+            let pos_block = ctx.new_block();
+            let merge_block = ctx.new_block();
+            
+            // 比较: value < 0
+            let cmp_temp = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                target: cmp_temp.clone(),
+                left: value_temp.clone(),
+                op: MirBinaryOp::LessThan,
+                right: Value::Number { value: 0, ty: None },
+                span: *span,
+            });
+            
+            ctx.set_terminator(Terminator::Branch {
+                condition: cmp_temp,
+                then_block: neg_block,
+                else_block: pos_block,
+                span: *span,
+            });
+            
+            // neg_block: result = -value
+            ctx.set_current_block(neg_block);
+            let neg_temp = ctx.new_temp();
+            ctx.add_statement(Statement::UnaryOp {
+                target: neg_temp.clone(),
+                op: crate::ir::UnaryOperator::Minus,
+                operand: value_temp.clone(),
+                span: *span,
+            });
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: neg_temp,
+                span: *span,
+            });
+            ctx.set_terminator(Terminator::Goto {
+                target: merge_block,
+                span: *span,
+            });
+            
+            // pos_block: result = value
+            ctx.set_current_block(pos_block);
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: value_temp,
+                span: *span,
+            });
+            ctx.set_terminator(Terminator::Goto {
+                target: merge_block,
+                span: *span,
+            });
+            
+            // merge_block
+            ctx.set_current_block(merge_block);
+        }
+
+        // min(a, b) → a < b ? a : b
+        Expr::Min { left, right, span } => {
+            let left_temp = lower_expression_to_temp(ctx, left)?;
+            let right_temp = lower_expression_to_temp(ctx, right)?;
+            
+            let then_block = ctx.new_block();
+            let else_block = ctx.new_block();
+            let merge_block = ctx.new_block();
+            
+            // 比较: left < right
+            let cmp_temp = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                target: cmp_temp.clone(),
+                left: left_temp.clone(),
+                op: MirBinaryOp::LessThan,
+                right: right_temp.clone(),
+                span: *span,
+            });
+            
+            ctx.set_terminator(Terminator::Branch {
+                condition: cmp_temp,
+                then_block,
+                else_block,
+                span: *span,
+            });
+            
+            // then_block: result = left (left < right)
+            ctx.set_current_block(then_block);
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: left_temp,
+                span: *span,
+            });
+            ctx.set_terminator(Terminator::Goto {
+                target: merge_block,
+                span: *span,
+            });
+            
+            // else_block: result = right
+            ctx.set_current_block(else_block);
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: right_temp,
+                span: *span,
+            });
+            ctx.set_terminator(Terminator::Goto {
+                target: merge_block,
+                span: *span,
+            });
+            
+            // merge_block
+            ctx.set_current_block(merge_block);
+        }
+
+        // max(a, b) → a > b ? a : b
+        Expr::Max { left, right, span } => {
+            let left_temp = lower_expression_to_temp(ctx, left)?;
+            let right_temp = lower_expression_to_temp(ctx, right)?;
+            
+            let then_block = ctx.new_block();
+            let else_block = ctx.new_block();
+            let merge_block = ctx.new_block();
+            
+            // 比较: left > right
+            let cmp_temp = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                target: cmp_temp.clone(),
+                left: left_temp.clone(),
+                op: MirBinaryOp::GreaterThan,
+                right: right_temp.clone(),
+                span: *span,
+            });
+            
+            ctx.set_terminator(Terminator::Branch {
+                condition: cmp_temp,
+                then_block,
+                else_block,
+                span: *span,
+            });
+            
+            // then_block: result = left (left > right)
+            ctx.set_current_block(then_block);
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: left_temp,
+                span: *span,
+            });
+            ctx.set_terminator(Terminator::Goto {
+                target: merge_block,
+                span: *span,
+            });
+            
+            // else_block: result = right
+            ctx.set_current_block(else_block);
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: right_temp,
+                span: *span,
+            });
+            ctx.set_terminator(Terminator::Goto {
+                target: merge_block,
+                span: *span,
+            });
+            
+            // merge_block
+            ctx.set_current_block(merge_block);
+        }
+
         Expr::TupleLiteral { elements, span } => {
             // 将元组转换为匿名结构体: (a, b, c) → Struct { name: "__tuple_3", fields: { _0: a, _1: b, _2: c } }
             let n = elements.len();

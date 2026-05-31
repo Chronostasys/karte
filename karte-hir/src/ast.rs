@@ -205,6 +205,23 @@ pub enum Expr {
         array: Box<Expr>,
         span: Span,
     },
+    /// 绝对值 abs(x)
+    Abs {
+        value: Box<Expr>,
+        span: Span,
+    },
+    /// 最小值 min(a, b)
+    Min {
+        left: Box<Expr>,
+        right: Box<Expr>,
+        span: Span,
+    },
+    /// 最大值 max(a, b)
+    Max {
+        left: Box<Expr>,
+        right: Box<Expr>,
+        span: Span,
+    },
     /// 元组字面量
     TupleLiteral {
         elements: Vec<Expr>,
@@ -742,6 +759,15 @@ impl fmt::Display for Expr {
             Expr::ArrayLen { array, .. } => {
                 write!(f, "len {}", array)
             }
+            Expr::Abs { value, .. } => {
+                write!(f, "abs {}", value)
+            }
+            Expr::Min { left, right, .. } => {
+                write!(f, "min({}, {})", left, right)
+            }
+            Expr::Max { left, right, .. } => {
+                write!(f, "max({}, {})", left, right)
+            }
             Expr::TupleLiteral { elements, .. } => {
                 let elems = elements
                     .iter()
@@ -841,6 +867,9 @@ impl Expr {
             Expr::ArrayLiteral { span, .. } => *span,
             Expr::Index { span, .. } => *span,
             Expr::ArrayLen { span, .. } => *span,
+            Expr::Abs { span, .. } => *span,
+            Expr::Min { span, .. } => *span,
+            Expr::Max { span, .. } => *span,
             Expr::TupleLiteral { span, .. } => *span,
             Expr::TupleAccess { span, .. } => *span,
             Expr::Reference { span, .. } => *span,

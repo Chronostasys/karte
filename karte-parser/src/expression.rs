@@ -653,6 +653,70 @@ impl<'a> Parser<'a> {
                 }
             }
 
+            // abs/min/max 内建函数
+            if let Token::Identifier(name) = &token.token {
+                if name == "abs" {
+                    let next_is_lparen = self
+                        .tokens
+                        .get(self.position + 1)
+                        .map_or(false, |t| matches!(t.token, Token::LeftParen));
+                    if next_is_lparen {
+                        let start_span = token.span;
+                        self.advance(); // consume 'abs'
+                        self.advance(); // consume '('
+                        let value = self.parse_expression()?;
+                        self.expect_token(Token::RightParen)?;
+                        let span = Span::new(start_span.start, self.current_span().end);
+                        return Ok(Expr::Abs {
+                            value: Box::new(value),
+                            span,
+                        });
+                    }
+                }
+                if name == "min" {
+                    let next_is_lparen = self
+                        .tokens
+                        .get(self.position + 1)
+                        .map_or(false, |t| matches!(t.token, Token::LeftParen));
+                    if next_is_lparen {
+                        let start_span = token.span;
+                        self.advance(); // consume 'min'
+                        self.advance(); // consume '('
+                        let left = self.parse_expression()?;
+                        self.expect_token(Token::Comma)?;
+                        let right = self.parse_expression()?;
+                        self.expect_token(Token::RightParen)?;
+                        let span = Span::new(start_span.start, self.current_span().end);
+                        return Ok(Expr::Min {
+                            left: Box::new(left),
+                            right: Box::new(right),
+                            span,
+                        });
+                    }
+                }
+                if name == "max" {
+                    let next_is_lparen = self
+                        .tokens
+                        .get(self.position + 1)
+                        .map_or(false, |t| matches!(t.token, Token::LeftParen));
+                    if next_is_lparen {
+                        let start_span = token.span;
+                        self.advance(); // consume 'max'
+                        self.advance(); // consume '('
+                        let left = self.parse_expression()?;
+                        self.expect_token(Token::Comma)?;
+                        let right = self.parse_expression()?;
+                        self.expect_token(Token::RightParen)?;
+                        let span = Span::new(start_span.start, self.current_span().end);
+                        return Ok(Expr::Max {
+                            left: Box::new(left),
+                            right: Box::new(right),
+                            span,
+                        });
+                    }
+                }
+            }
+
             match token.token {
                 Token::Plus => {
                     let op_span = token.span;

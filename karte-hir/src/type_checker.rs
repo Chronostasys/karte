@@ -1666,15 +1666,82 @@ impl TypeChecker {
                         Type::Number
                     }
                     Type::Unknown => Type::Unknown,
+                    Type::Number => {
+                        self.add_error(TypeCheckError::BuiltinFunctionError {
+                            function: "len".to_string(),
+                            message: "expects an array or string, but got a number. len() measures the length of arrays and strings, not numbers.".to_string(),
+                            span: *span,
+                        });
+                        Type::Unknown
+                    }
+                    other => {
+                        self.add_error(TypeCheckError::BuiltinFunctionError {
+                            function: "len".to_string(),
+                            message: format!("expects an array or string, but got {}", other),
+                            span: *span,
+                        });
+                        Type::Unknown
+                    }
+                }
+            }
+            Expr::Abs { value, span } => {
+                let value_type = self.infer_expr(value, env);
+                match value_type {
+                    Type::Number => Type::Number,
+                    Type::Unknown => Type::Unknown,
                     other => {
                         self.add_error(TypeCheckError::TypeMismatch {
-                            expected: Type::array(Type::Unknown),
+                            expected: Type::Number,
                             found: other,
                             span: *span,
                         });
                         Type::Unknown
                     }
                 }
+            }
+            Expr::Min { left, right, span } => {
+                let left_type = self.infer_expr(left, env);
+                let right_type = self.infer_expr(right, env);
+                let mut ok = true;
+                if left_type != Type::Number && left_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: left_type,
+                        span: left.span(),
+                    });
+                    ok = false;
+                }
+                if right_type != Type::Number && right_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: right_type,
+                        span: right.span(),
+                    });
+                    ok = false;
+                }
+                if ok { Type::Number } else { Type::Unknown }
+            }
+            Expr::Max { left, right, span } => {
+                let left_type = self.infer_expr(left, env);
+                let right_type = self.infer_expr(right, env);
+                let mut ok = true;
+                if left_type != Type::Number && left_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: left_type,
+                        span: left.span(),
+                    });
+                    ok = false;
+                }
+                if right_type != Type::Number && right_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: right_type,
+                        span: right.span(),
+                    });
+                    ok = false;
+                }
+                if ok { Type::Number } else { Type::Unknown }
             }
             Expr::Index { array, index, span } => {
                 let array_type = self.infer_expr(array, env);

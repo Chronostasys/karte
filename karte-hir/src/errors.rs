@@ -82,6 +82,12 @@ pub enum TypeCheckError {
         name: String,
         span: Span,
     },
+    /// 内建函数使用错误
+    BuiltinFunctionError {
+        function: String,
+        message: String,
+        span: Span,
+    },
 }
 
 impl fmt::Display for TypeCheckError {
@@ -166,6 +172,9 @@ impl fmt::Display for TypeCheckError {
             TypeCheckError::IndexOutOfBounds { index, length, .. } => {
                 write!(f, "Index {} out of bounds (length {})", index, length)
             }
+            TypeCheckError::BuiltinFunctionError { function, message, .. } => {
+                write!(f, "Builtin function `{}`: {}", function, message)
+            }
         }
     }
 }
@@ -190,7 +199,8 @@ impl TypeCheckError {
             | TypeCheckError::ModuleInterfaceUnavailable { span, .. }
             | TypeCheckError::UndefinedModuleSymbol { span, .. }
             | TypeCheckError::DuplicateFunctionDefinition { span, .. }
-            | TypeCheckError::IndexOutOfBounds { span, .. } => *span,
+            | TypeCheckError::IndexOutOfBounds { span, .. }
+            | TypeCheckError::BuiltinFunctionError { span, .. } => *span,
         }
     }
 }
