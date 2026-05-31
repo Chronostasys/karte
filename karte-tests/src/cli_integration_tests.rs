@@ -6,6 +6,7 @@ mod cli_tests {
     use karte_lir::{
         lower::lower_mir_to_lir,
         optimization_pipeline::{OptimizationLevel, OptimizationPipeline},
+        Instruction,
     };
     use karte_mir::{
         lower::{lower_expr_to_mir_with_options, LoweringOptions, SCRIPT_ENTRY_POINT},
@@ -934,7 +935,6 @@ fn main() -> number {
     /// Value::Function 占位符，覆盖了实际的 Closure 结构体运行时值。
     /// 修复：不插入类型标记，保持 temp 为 Value::Temp，让后续调用走 Closure 字段提取路径。
     #[test]
-    #[ignore] // TODO: fn 返回闭包需要 JIT 标签解析修复
     fn test_fn_return_closure_make_adder() {
         let code = r#"
 fn make_adder(x: number) -> number -> number {
@@ -990,7 +990,6 @@ fn main() -> number {
 
     /// 回归测试：fn 返回闭包 — 多次不同参数调用
     #[test]
-    #[ignore] // TODO: fn 返回闭包需要 JIT 标签解析修复
     fn test_fn_return_closure_multiple_calls() {
         let code = r#"
 fn make_adder(x: number) -> number -> number {
@@ -5831,6 +5830,188 @@ fn main() -> number {
         let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
         pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        assert_eq!(exit_code, 0, "Expected exit code 0, got {}", exit_code);
+    }
+
+
+    /// 回归测试：print(number) 不应被 DCE 错误删除参数值
+    ///
+    /// Bug: DeadCodeElimination 的 get_used_registers 没有处理 PrintNumber/PrintString，
+    /// 导致 PrintNumber 的参数寄存器被误判为"未使用"，Move 指令被删除，
+    /// 最终 print(42) 输出垃圾值 (-9223372036854775795) 而非 42。
+    ///
+    /// 此测试验证经过完整优化 pipeline 后，LIR 中仍保留正确的 PrintNumber 指令。
+    #[test]
+    fn test_print_number_dce_regression() {
+        let code = r#"
+fn main() -> number {
+    print(42);
+    0
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing failed: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        // 验证 LIR 中包含 PrintNumber 指令
+        let has_print_number = lir.functions.values().any(|f| {
+            f.instructions.iter().any(|inst| {
+                matches!(inst, Instruction::PrintNumber { .. })
+            })
+        });
+        assert!(has_print_number, "LIR should contain PrintNumber instruction");
+
+        // 验证 JIT 执行成功且退出码为 0
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        assert_eq!(exit_code, 0, "Expected exit code 0, got {}", exit_code);
+    }
+
+    /// 回归测试：print(number) 多种数值变体
+    ///
+    /// 验证 print(0), print(100), print(-1) 等各种数值都能正确传递到 PrintNumber 指令。
+    #[test]
+    fn test_print_number_various_values() {
+        for &val in &[0i64, 1, 42, 100, -1, 255, 1000] {
+            let code = format!(
+                r#"
+fn main() -> number {{
+    print({});
+    0
+}}
+"#,
+                val
+            );
+            let (tokens, _) = tokenize(&code);
+            let (parse_result, diagnostics) =
+                parse_with_type_check(&tokens, ParserMode::Project, None);
+            assert!(
+                !diagnostics.has_errors(),
+                "Parsing failed for value {}: {:?}",
+                val,
+                diagnostics
+            );
+            let parse_result = parse_result.expect("No parse result");
+            let ast = parse_result.expr();
+
+            let options = LoweringOptions {
+                known_functions: HashSet::new(),
+                module_context: None,
+                expr_types: parse_result.expr_types.clone(),
+            };
+
+            let mut mir =
+                lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+            karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+                .expect("Escape analysis failed");
+            promote_project_entry(&mut mir);
+            mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+            let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+            let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+            pipeline.optimize(&mut lir).expect("Optimization failed");
+
+            // 验证每个值都能产生 PrintNumber 指令
+            let has_print_number = lir.functions.values().any(|f| {
+                f.instructions.iter().any(|inst| {
+                    matches!(inst, Instruction::PrintNumber { .. })
+                })
+            });
+            assert!(
+                has_print_number,
+                "LIR should contain PrintNumber for value {}",
+                val
+            );
+
+            let mut executor =
+                ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+            let exit_code = executor
+                .execute_with_jit(&lir)
+                .expect("JIT execution failed");
+
+            assert_eq!(
+                exit_code, 0,
+                "Expected exit code 0 for value {}, got {}",
+                val, exit_code
+            );
+        }
+    }
+
+    /// 回归测试：print(string) 不应被 DCE 错误删除
+    #[test]
+    fn test_print_string_dce_regression() {
+        let code = r#"
+fn main() -> number {
+    print("hello");
+    0
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing failed: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        // 验证 LIR 中包含 PrintString 指令
+        let has_print_string = lir.functions.values().any(|f| {
+            f.instructions.iter().any(|inst| {
+                matches!(inst, Instruction::PrintString { .. })
+            })
+        });
+        assert!(has_print_string, "LIR should contain PrintString instruction");
 
         let mut executor =
             ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");

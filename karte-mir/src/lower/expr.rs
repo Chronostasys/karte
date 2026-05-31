@@ -2756,39 +2756,21 @@ fn annotate_closure_return_value(ctx: &mut LoweringContext, destination: &Value,
 
 /// 在函数调用后标注返回值的类型信息
 ///
-/// 如果函数的返回类型是Function或Closure，记录到temp_value_map中
-/// 这样后续使用时能正确识别该值为可调用类型
+/// ~~旧版~~：如果函数返回类型是 Function 或 Closure，往 temp_value_map 插入虚假占位符。
+/// 这导致运行时的真实 Closure 结构体被覆盖为 Value::Function（名字是虚假的），
+/// 后续调用生成 Statement::Call 指向不存在的函数标签，JIT 报 "未定义的标签"。
+///
+/// 正确做法：不做任何覆盖。函数返回的实际运行时值（Closure 结构体或函数指针）
+/// 已由 MIR lowering 正确生成（lower_lambda_expression / 函数体 lowering）。
+/// 保持 Value::Temp 不被覆盖，后续 resolve_value 返回 Temp 本身，
+/// 调用路径走通用的 Closure 结构体间接调用（FieldAccess + CallIndirect）。
 fn annotate_function_return_type(
-    ctx: &mut LoweringContext,
-    function_name: &str,
-    destination: &Value,
+    _ctx: &mut LoweringContext,
+    _function_name: &str,
+    _destination: &Value,
 ) {
-    if let Value::Temp { id, .. } = destination {
-        if let Some(return_type) = ctx.get_function_return_type(function_name) {
-            if LoweringContext::is_callable_type(return_type) {
-                // 返回类型是函数或闭包，创建一个类型标注值
-                let type_marker = match return_type {
-                    karte_hir::Type::Function { .. } => {
-                        // 标记为函数类型（函数名未知，使用占位符）
-                        Value::Function {
-                            name: format!("__returned_function_{}", id),
-                            ty: None,
-                        }
-                    }
-                    karte_hir::Type::Closure { .. } => {
-                        // 标记为闭包类型
-                        Value::Struct {
-                            name: "Closure".to_string(),
-                            fields: std::collections::BTreeMap::new(),
-                            ty: None,
-                        }
-                    }
-                    _ => return,
-                };
-                ctx.temp_value_map.insert(*id, type_marker);
-            }
-        }
-    }
+    // 故意为空：不再往 temp_value_map 插入虚假占位符。
+    // 运行时值由 MIR lowering 正确生成，不需要类型注解覆盖。
 }
 
 /// 降低函数调用表达式

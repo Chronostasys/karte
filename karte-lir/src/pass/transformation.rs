@@ -305,6 +305,12 @@ impl DeadCodeElimination {
                 used.push(Register::Virtual(3));
                 used.push(Register::Virtual(4));
             }
+            Instruction::PrintNumber { value, .. } => {
+                used.push(*value);
+            }
+            Instruction::PrintString { ptr, .. } => {
+                used.push(*ptr);
+            }
             _ => {}
         }
 
