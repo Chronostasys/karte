@@ -238,6 +238,9 @@ impl X86Compiler {
             Instruction::SplitCount { dst, str_ptr, separator, .. } => {
                 self.compile_split_count(dst, str_ptr, separator, code_builder)
             }
+            Instruction::Trim { dst, str_ptr, .. } => {
+                self.compile_trim(dst, str_ptr, code_builder)
+            }
             Instruction::ToString { dst, value, .. } => {
                 self.compile_to_string(dst, value, code_builder)
             }
@@ -1622,6 +1625,16 @@ impl X86Compiler {
         code_builder: &mut CodeBuilder,
     ) -> crate::Result<()> {
         let call = RuntimeCall::split_count(*str_ptr, *separator);
+        self.emit_runtime_call(code_builder, call, Some(dst))
+    }
+
+    fn compile_trim(
+        &self,
+        dst: &Register,
+        str_ptr: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::trim(*str_ptr);
         self.emit_runtime_call(code_builder, call, Some(dst))
     }
 

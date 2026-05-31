@@ -268,6 +268,11 @@ pub enum Expr {
         separator: Box<Expr>,
         span: Span,
     },
+    /// 去除字符串首尾空格 trim(s)
+    Trim {
+        string: Box<Expr>,
+        span: Span,
+    },
     /// 数字转字符串 to_string(expr) — 将 number 转换为字符串
     ToString {
         expr: Box<Expr>,
@@ -840,6 +845,9 @@ impl fmt::Display for Expr {
             Expr::SplitCount { string, separator, .. } => {
                 write!(f, "split_count({}, {})", string, separator)
             }
+            Expr::Trim { string, .. } => {
+                write!(f, "trim({})", string)
+            }
             Expr::ToString { expr, .. } => {
                 write!(f, "to_string({})", expr)
             }
@@ -952,6 +960,7 @@ impl Expr {
             Expr::Substring { span, .. } => *span,
             Expr::StrContains { span, .. } => *span,
             Expr::SplitCount { span, .. } => *span,
+            Expr::Trim { span, .. } => *span,
             Expr::ToString { span, .. } => *span,
             Expr::TupleLiteral { span, .. } => *span,
             Expr::TupleAccess { span, .. } => *span,

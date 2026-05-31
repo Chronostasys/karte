@@ -344,6 +344,9 @@ impl AArch64Compiler {
             Instruction::SplitCount { dst, str_ptr, separator, .. } => {
                 self.compile_split_count(dst, str_ptr, separator, code_builder, instruction_index, function)
             }
+            Instruction::Trim { dst, str_ptr, .. } => {
+                self.compile_trim(dst, str_ptr, code_builder, instruction_index, function)
+            }
             Instruction::ToString { dst, value, .. } => {
                 self.compile_to_string(dst, value, code_builder, instruction_index, function)
             }
@@ -1103,6 +1106,18 @@ impl AArch64Compiler {
         function: &LirFunction,
     ) -> crate::Result<()> {
         let call = RuntimeCall::split_count(*str_ptr, *separator);
+        self.emit_runtime_call(code_builder, call, Some(dst), instruction_index, function)
+    }
+
+    fn compile_trim(
+        &mut self,
+        dst: &Register,
+        str_ptr: &Register,
+        code_builder: &mut CodeBuilder,
+        instruction_index: usize,
+        function: &LirFunction,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::trim(*str_ptr);
         self.emit_runtime_call(code_builder, call, Some(dst), instruction_index, function)
     }
 

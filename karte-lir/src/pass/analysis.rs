@@ -511,6 +511,10 @@ impl DefUseAnalysis {
                 uses.push(*str_ptr);
                 uses.push(*separator);
             }
+            Instruction::Trim { dst, str_ptr, .. } => {
+                defs.push(*dst);
+                uses.push(*str_ptr);
+            }
             Instruction::ToString { dst, value, .. } => {
                 defs.push(*dst);
                 uses.push(*value);

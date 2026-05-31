@@ -343,6 +343,76 @@ pub extern "C" fn karte_jit_runtime_split_count(str_ptr: u64, sep_code: u64) -> 
     }
 }
 
+/// 去除字符串首尾空格
+/// 字符串格式：[length: i64][bytes...]
+/// GC 安全：使用 Vec<u8> 栈缓冲区在 gc_alloc 前复制源数据
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_trim(str_ptr: u64) -> u64 {
+    unsafe {
+        if str_ptr == 0 {
+            return 0;
+        }
+        let len = *(str_ptr as *const i64) as usize;
+        if len == 0 {
+            return str_ptr; // 空串直接返回
+        }
+        let data_ptr = (str_ptr as *const u8).add(8);
+
+        // 找到第一个非空格位置
+        let mut start = 0;
+        while start < len && *data_ptr.add(start) == 32 {
+            start += 1;
+        }
+
+        // 找到最后一个非空格位置
+        let mut end = len;
+        while end > start && *data_ptr.add(end - 1) == 32 {
+            end -= 1;
+        }
+
+        let trimmed_len = end - start;
+        if trimmed_len == 0 {
+            // 全是空格，返回空字符串
+            let new_ptr = gc_alloc(16, ObjectType::Conservative);
+            if new_ptr.is_null() {
+                return 0;
+            }
+            *(new_ptr as *mut i64) = 0;
+            return new_ptr as u64;
+        }
+
+        // GC 安全：先复制源数据到栈缓冲区
+        let mut buf: Vec<u8> = Vec::with_capacity(trimmed_len);
+        std::ptr::copy_nonoverlapping(data_ptr.add(start), buf.as_mut_ptr(), trimmed_len);
+        buf.set_len(trimmed_len);
+
+        // 分配新字符串
+        let total_size = 8 + ((trimmed_len + 7) & !7);
+        let new_ptr = gc_alloc(total_size, ObjectType::Conservative);
+        if new_ptr.is_null() {
+            return 0;
+        }
+
+        // 写入长度
+        *(new_ptr as *mut i64) = trimmed_len as i64;
+
+        // 拷贝数据
+        let dest = (new_ptr as *mut u8).add(8);
+        std::ptr::copy_nonoverlapping(buf.as_ptr(), dest, trimmed_len);
+
+        // 清零剩余字节
+        let remaining = trimmed_len % 8;
+        if remaining != 0 {
+            let padding_start = dest.add(trimmed_len);
+            for i in 0..(8 - remaining) {
+                *padding_start.add(i) = 0;
+            }
+        }
+
+        new_ptr as u64
+    }
+}
+
 /// 数字转字符串：将 i64 值转换为字符串
 /// 字符串格式：[length: i64][bytes...]
 /// GC 安全：先 format 再 gc_alloc，format 不会触发 GC

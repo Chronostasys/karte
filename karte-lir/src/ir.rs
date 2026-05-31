@@ -587,6 +587,18 @@ pub enum Instruction {
         span: Span,
     },
 
+    /// 去除字符串首尾空格：dst = trim(str_ptr)
+    /// 调用运行时 karte_jit_runtime_trim(str_ptr) -> new_str_ptr
+    #[ir_codec(token = "trim")]
+    Trim {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        str_ptr: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
     /// 数字转字符串：dst = to_string(value) — 将 number 转换为字符串
     /// 调用运行时 karte_jit_runtime_to_string(value) -> str_ptr
     #[ir_codec(token = "to_string")]
@@ -821,6 +833,7 @@ impl Instruction {
             | Instruction::StringSubstring { dst, .. }
             | Instruction::StringContains { dst, .. }
             | Instruction::SplitCount { dst, .. }
+            | Instruction::Trim { dst, .. }
             | Instruction::ToString { dst, .. } => Some(*dst),
             Instruction::LoadPair { dst1, .. } => Some(*dst1),
             Instruction::Call { result, .. } | Instruction::CallIndirect { result, .. } => *result,
@@ -863,6 +876,7 @@ impl Instruction {
             | Instruction::StringSubstring { dst, .. }
             | Instruction::StringContains { dst, .. }
             | Instruction::SplitCount { dst, .. }
+            | Instruction::Trim { dst, .. }
             | Instruction::ToString { dst, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
@@ -1041,6 +1055,9 @@ impl Instruction {
             Instruction::SplitCount { str_ptr, separator, .. } => {
                 used.push(*str_ptr);
                 used.push(*separator);
+            }
+            Instruction::Trim { str_ptr, .. } => {
+                used.push(*str_ptr);
             }
             Instruction::ToString { value, .. } => {
                 used.push(*value);
@@ -1401,6 +1418,14 @@ impl Instruction {
                     *separator = new_reg;
                 }
             }
+            Instruction::Trim { dst, str_ptr, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                if *str_ptr == old_reg {
+                    *str_ptr = new_reg;
+                }
+            }
             Instruction::ToString { dst, value, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
@@ -1676,6 +1701,10 @@ impl Instruction {
                 defined.push(*dst);
                 used.push(*str_ptr);
                 used.push(*separator);
+            }
+            Instruction::Trim { dst, str_ptr, .. } => {
+                defined.push(*dst);
+                used.push(*str_ptr);
             }
             Instruction::ToString { dst, value, .. } => {
                 defined.push(*dst);

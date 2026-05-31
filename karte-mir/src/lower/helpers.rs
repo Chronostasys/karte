@@ -220,6 +220,10 @@ fn collect_vars_recursive(expr: &Expr, vars: &mut Vec<String>) {
             collect_vars_recursive(separator, vars);
         }
 
+        Expr::Trim { string, .. } => {
+            collect_vars_recursive(string, vars);
+        }
+
         Expr::ToString { expr, .. } => {
             collect_vars_recursive(expr, vars);
         }

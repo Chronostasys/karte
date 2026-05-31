@@ -543,6 +543,9 @@ impl RiscvCompiler {
             Instruction::SplitCount { dst, str_ptr, separator, .. } => {
                 self.compile_split_count(dst, str_ptr, separator, cb)
             }
+            Instruction::Trim { dst, str_ptr, .. } => {
+                self.compile_trim(dst, str_ptr, cb)
+            }
             Instruction::ToString { dst, value, .. } => {
                 self.compile_to_string(dst, value, cb)
             }
@@ -1165,6 +1168,16 @@ impl RiscvCompiler {
         cb: &mut CodeBuilder,
     ) -> crate::Result<()> {
         let call = RuntimeCall::split_count(*str_ptr, *separator);
+        self.emit_runtime_call(cb, call, Some(dst))
+    }
+
+    fn compile_trim(
+        &self,
+        dst: &Register,
+        str_ptr: &Register,
+        cb: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::trim(*str_ptr);
         self.emit_runtime_call(cb, call, Some(dst))
     }
 

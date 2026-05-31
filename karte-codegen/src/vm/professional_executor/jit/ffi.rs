@@ -15,6 +15,7 @@ pub enum RuntimeIntrinsic {
     StringSubstring,
     StringContains,
     SplitCount,
+    Trim,
     ToString,
     PrintString,
     PrintNumber,
@@ -47,6 +48,9 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::SplitCount => {
                 runtime::karte_jit_runtime_split_count as *const ()
             }
+            RuntimeIntrinsic::Trim => {
+                runtime::karte_jit_runtime_trim as *const ()
+            }
             RuntimeIntrinsic::ToString => {
                 runtime::karte_jit_runtime_to_string as *const ()
             }
@@ -75,6 +79,7 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::StringSubstring => "karte_jit_runtime_string_substring",
             RuntimeIntrinsic::StringContains => "karte_jit_runtime_string_contains",
             RuntimeIntrinsic::SplitCount => "karte_jit_runtime_split_count",
+            RuntimeIntrinsic::Trim => "karte_jit_runtime_trim",
             RuntimeIntrinsic::ToString => "karte_jit_runtime_to_string",
             RuntimeIntrinsic::PrintString => "karte_jit_runtime_print_string",
             RuntimeIntrinsic::PrintNumber => "karte_jit_runtime_print_number",
@@ -85,7 +90,7 @@ impl RuntimeIntrinsic {
     pub fn has_result(self) -> bool {
         matches!(
             self,
-            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual | RuntimeIntrinsic::StringCharAt | RuntimeIntrinsic::StringSubstring | RuntimeIntrinsic::StringContains | RuntimeIntrinsic::SplitCount | RuntimeIntrinsic::ToString
+            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual | RuntimeIntrinsic::StringCharAt | RuntimeIntrinsic::StringSubstring | RuntimeIntrinsic::StringContains | RuntimeIntrinsic::SplitCount | RuntimeIntrinsic::Trim | RuntimeIntrinsic::ToString
         )
     }
 }
@@ -182,6 +187,13 @@ impl RuntimeCall {
         Self {
             intrinsic: RuntimeIntrinsic::SplitCount,
             args: vec![RuntimeArg::Register(str_reg), RuntimeArg::Register(sep_reg)],
+        }
+    }
+
+    pub fn trim(str_reg: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::Trim,
+            args: vec![RuntimeArg::Register(str_reg)],
         }
     }
 

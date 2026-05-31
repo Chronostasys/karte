@@ -536,6 +536,7 @@ fn instr_name(instr: &Instruction) -> &'static str {
         Instruction::StringSubstring { .. } => "StringSubstring",
         Instruction::StringContains { .. } => "StringContains",
         Instruction::SplitCount { .. } => "SplitCount",
+        Instruction::Trim { .. } => "Trim",
         Instruction::ToString { .. } => "ToString",
         Instruction::PrintString { .. } => "PrintString",
         Instruction::PrintNumber { .. } => "PrintNumber",

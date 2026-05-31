@@ -40,6 +40,7 @@ impl CallsiteLiveRegisterPass {
                 | Instruction::StringSubstring { .. }
                 | Instruction::StringContains { .. }
                 | Instruction::SplitCount { .. }
+                | Instruction::Trim { .. }
                 | Instruction::ToString { .. }
                 | Instruction::PrintString { .. }
                 | Instruction::PrintNumber { .. }

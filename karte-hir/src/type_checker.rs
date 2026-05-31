@@ -1893,6 +1893,19 @@ impl TypeChecker {
                 }
                 if ok { Type::Number } else { Type::Unknown }
             }
+            Expr::Trim { string, span } => {
+                let string_type = self.infer_expr(string, env);
+                if string_type != Type::String && string_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::String,
+                        found: string_type,
+                        span: string.span(),
+                    });
+                    Type::Unknown
+                } else {
+                    Type::String
+                }
+            }
             Expr::ToString { expr, span } => {
                 let expr_type = self.infer_expr(expr, env);
                 let mut ok = true;

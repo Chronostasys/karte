@@ -9,5 +9,6 @@ pub use karte_rt::ffi::{
     karte_jit_runtime_retain, karte_jit_runtime_string_char_at, karte_jit_runtime_string_concat,
     karte_jit_runtime_string_contains, karte_jit_runtime_string_equal, karte_jit_runtime_string_substring,
     karte_jit_runtime_split_count,
+    karte_jit_runtime_trim,
     karte_jit_runtime_to_string,
 };
