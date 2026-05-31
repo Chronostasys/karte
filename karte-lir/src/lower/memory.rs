@@ -267,6 +267,16 @@ impl LirLoweringContext {
                 value_key,
                 stack_addr
             );
+            // 对于构造器值（Constructor/QualifiedConstructor），即使栈槽已存在，
+            // 也需要重新生成初始化代码。因为同一个构造器可能出现在多个互斥的基本块中
+            //（例如 match 的不同 arm），它们不能共享同一次初始化。
+            // 每个引用点都必须独立初始化该栈槽，否则运行时可能读到未初始化的数据。
+            match value {
+                Value::Constructor { .. } | Value::QualifiedConstructor { .. } => {
+                    self.initialize_stack_value(value, stack_addr);
+                }
+                _ => {}
+            }
             return Operand::Register { id: stack_addr };
         }
 

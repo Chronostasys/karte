@@ -6363,4 +6363,76 @@ fn main() -> number {
         );
     }
 
+    /// 回归测试：While 循环中 match arm 包含 if-else 返回枚举值时赋值错误
+    /// 根因：LIR lowering 中 QualifiedConstructor 的栈分配缓存导致互斥基本块共享初始化
+    /// 修复：lower_to_lvalue 对 Constructor/QualifiedConstructor 缓存命中时重新生成初始化代码
+    #[test]
+    fn test_while_match_if_else_enum_assignment() {
+        let code = r#"
+enum State { Start, Reading, Writing, Done }
+fn state_to_num(s: State) -> number {
+    match s {
+        State::Start => 0,
+        State::Reading => 1,
+        State::Writing => 2,
+        State::Done => 3
+    }
+}
+fn main() -> number {
+    let state = State::Writing;
+    let count = 0;
+    let i = 8;
+    while i < 10 {
+        state = match state {
+            State::Writing => if i > 7 { State::Done } else { State::Writing },
+            State::Done => State::Done,
+            _ => State::Start
+        };
+        print(state_to_num(state));
+        count = count + 1;
+        i = i + 1
+    };
+    count
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing failed: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        // 预期：i=8 时 Writing→Done (print 3), i=9 时 Done→Done (print 3), count=2
+        assert_eq!(
+            exit_code, 2,
+            "Expected exit code 2 (count after 2 iterations), got {}",
+            exit_code
+        );
+    }
+
 }
