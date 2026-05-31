@@ -1,5 +1,0 @@
-fn main() -> number {
-    let heap = 0;
-    unsafe_store(heap, 42);
-    unsafe_load(heap)
-}
