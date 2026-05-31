@@ -5321,4 +5321,26 @@ fn main() -> number {
         assert_eq!(exit_code, 3, "Expected 3, got {}", exit_code);
     }
 
+    #[test]
+    fn test_recursive_closure_factorial() {
+        let code = r#"
+fn main() -> number {
+    let f = |n| { if n <= 1 { 1 } else { n * f(n-1) } };
+    f(5)
+}
+"#;
+        compile_and_run_aot(code, 120, "recursive_closure_factorial");
+    }
+
+    #[test]
+    fn test_recursive_closure_fibonacci() {
+        let code = r#"
+fn main() -> number {
+    let fib = |n| { if n <= 1 { n } else { fib(n-1) + fib(n-2) } };
+    fib(6)
+}
+"#;
+        compile_and_run_aot(code, 8, "recursive_closure_fibonacci");
+    }
+
 }

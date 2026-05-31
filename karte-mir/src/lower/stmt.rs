@@ -20,26 +20,66 @@ pub(crate) fn lower_statement(
     stmt: &karte_hir::Statement,
 ) -> Result<(), Vec<String>> {
     match stmt {
-        karte_hir::Statement::Let { name, value, .. } => {
-            // 求值表达式
-            let temp_value = lower_expression_to_temp(ctx, value)?;
-            // 解析临时变量的实际值（如果是函数/闭包）
-            let var_value = ctx.resolve_value(&temp_value);
+        karte_hir::Statement::Let { name, value, span, .. } => {
+            // 检查是否为递归闭包（let f = |...| { ... f ... }）
+            // 如果 value 是 Lambda，先预绑定一个占位值，使 lambda 体中可以引用自身名称
+            let is_recursive_lambda = matches!(value, karte_hir::Expr::Lambda { .. });
 
-            // 检查值是否是结构体类型，记录结构体名称用于闭包捕获分析
-            let struct_name = match &var_value {
-                Value::Struct { name, .. } => Some(name.clone()),
-                _ => match value {
-                    karte_hir::Expr::StructLiteral { name, .. } => Some(name.clone()),
+            if is_recursive_lambda {
+                // 1. 预绑定占位值，使 lambda lowering 时能通过 lookup_variable 找到 name
+                ctx.bind_variable(name.clone(), Value::Number { value: 0, ty: None }, None);
+
+                // 2. 正常 lowering lambda — name 会被当作捕获变量处理
+                let temp_value = lower_expression_to_temp(ctx, value)?;
+
+                // 3. Lambda lowering 完成后，name 的绑定已被更新为 Reference(shared_location)
+                //    需要把闭包结构体写入 shared_location
+                if let Some(binding) = ctx.lookup_variable(name) {
+                    let resolved = ctx.resolve_value(&binding.value);
+                    if let Value::Reference { value: shared_location, .. } = &resolved {
+                        ctx.add_statement(Statement::Store {
+                            target: shared_location.as_ref().clone(),
+                            value: temp_value.clone(),
+                            span: *span,
+                        });
+                    }
+                }
+
+                // 4. 同时需要将外层作用域的 name 绑定更新为闭包值
+                //    （而不是 Reference），因为外层直接引用 f 就是闭包结构体
+                let var_value = ctx.resolve_value(&temp_value);
+                let struct_name = match &var_value {
+                    Value::Struct { name, .. } => Some(name.clone()),
                     _ => None,
-                },
-            };
+                };
+                let ownership = infer_expr_ownership(ctx, value);
+                ctx.update_variable(name, var_value, ownership);
+                // 如果有 struct_name 信息需要保留，用 update_variable 可能丢失，检查一下
+                if struct_name.is_some() {
+                    // update_variable 不更新 struct_name，需要直接修改
+                    // 但通常闭包结构体的 struct_name 不需要特殊处理
+                }
+            } else {
+                // 求值表达式
+                let temp_value = lower_expression_to_temp(ctx, value)?;
+                // 解析临时变量的实际值（如果是函数/闭包）
+                let var_value = ctx.resolve_value(&temp_value);
 
-            let ownership = infer_expr_ownership(ctx, value);
-            if matches!(ownership, Some(OwnershipKind::RefCounted)) {
-                maybe_retain_for_expr(ctx, value, &var_value);
+                // 检查值是否是结构体类型，记录结构体名称用于闭包捕获分析
+                let struct_name = match &var_value {
+                    Value::Struct { name, .. } => Some(name.clone()),
+                    _ => match value {
+                        karte_hir::Expr::StructLiteral { name, .. } => Some(name.clone()),
+                        _ => None,
+                    },
+                };
+
+                let ownership = infer_expr_ownership(ctx, value);
+                if matches!(ownership, Some(OwnershipKind::RefCounted)) {
+                    maybe_retain_for_expr(ctx, value, &var_value);
+                }
+                ctx.bind_variable_with_struct_name(name.clone(), var_value, ownership, struct_name);
             }
-            ctx.bind_variable_with_struct_name(name.clone(), var_value, ownership, struct_name);
         }
         karte_hir::Statement::Expression { expr, .. } => {
             // 结果被丢弃

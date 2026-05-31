@@ -2007,9 +2007,32 @@ impl TypeChecker {
     /// 推断语句并更新环境
     fn infer_statement(&mut self, stmt: &Statement, env: &mut TypeEnvironment) {
         match stmt {
-            Statement::Let { name, value, .. } => {
-                let value_type = self.infer_expr(value, env);
-                env.insert(name.clone(), value_type);
+            Statement::Let { name, value, span, .. } => {
+                // 检查是否为递归闭包（let f = |...| { ... f ... }）
+                // 如果 value 是 Lambda，先绑定一个类型变量到 env 中，
+                // 这样 lambda 体内可以引用自身名称
+                if let Expr::Lambda { .. } = value {
+                    let rec_type_var = self.fresh_type_var();
+                    let mut rec_env = env.clone();
+                    rec_env.insert(name.clone(), Type::Var(rec_type_var));
+
+                    // 推断 lambda 体，此时 f 在环境中
+                    let value_type = self.infer_expr(value, &rec_env);
+
+                    // 统一递归类型变量和实际推断出的类型
+                    let _ = self.unify(
+                        &Type::Var(rec_type_var),
+                        &value_type,
+                        *span,
+                        &Type::Var(rec_type_var),
+                        &value_type,
+                    );
+
+                    env.insert(name.clone(), value_type);
+                } else {
+                    let value_type = self.infer_expr(value, env);
+                    env.insert(name.clone(), value_type);
+                }
             }
             Statement::Expression { expr, .. } => {
                 self.infer_expr(expr, env);
