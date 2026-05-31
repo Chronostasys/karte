@@ -223,6 +223,9 @@ impl X86Compiler {
             Instruction::StringConcat { dst, left, right, .. } => {
                 self.compile_string_concat(dst, left, right, code_builder)
             }
+            Instruction::StringEqual { dst, left, right, .. } => {
+                self.compile_string_equal(dst, left, right, code_builder)
+            }
             Instruction::PrintString { ptr, .. } => {
                 self.compile_print_string(ptr, code_builder)
             }
@@ -1545,6 +1548,17 @@ impl X86Compiler {
         code_builder: &mut CodeBuilder,
     ) -> crate::Result<()> {
         let call = RuntimeCall::string_concat(*left, *right);
+        self.emit_runtime_call(code_builder, call, Some(dst))
+    }
+
+    fn compile_string_equal(
+        &self,
+        dst: &Register,
+        left: &Register,
+        right: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::string_equal(*left, *right);
         self.emit_runtime_call(code_builder, call, Some(dst))
     }
 

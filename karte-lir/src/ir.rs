@@ -515,6 +515,20 @@ pub enum Instruction {
         span: Span,
     },
 
+    /// 字符串内容比较：dst = (left_content == right_content) ? 1 : 0
+    /// 调用运行时 karte_jit_runtime_string_equal(left_ptr, right_ptr) -> u64
+    #[ir_codec(token = "string_equal")]
+    StringEqual {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        left: Register,
+        #[ir_codec(args)]
+        right: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
     /// 打印字符串：print(ptr)
     /// 调用运行时 karte_jit_runtime_print_string(str_ptr) -> 0
     #[ir_codec(token = "print_string")]
@@ -721,7 +735,8 @@ impl Instruction {
             | Instruction::Alloc { dst, .. }
             | Instruction::MemCopy { dst, .. }
             | Instruction::CompareSet { dst, .. }
-            | Instruction::StringConcat { dst, .. } => Some(*dst),
+            | Instruction::StringConcat { dst, .. }
+            | Instruction::StringEqual { dst, .. } => Some(*dst),
             Instruction::LoadPair { dst1, .. } => Some(*dst1),
             Instruction::Call { result, .. } | Instruction::CallIndirect { result, .. } => *result,
             Instruction::Phi { dst, .. } => Some(*dst),
@@ -757,7 +772,8 @@ impl Instruction {
             | Instruction::Alloc { dst, .. }
             | Instruction::MemCopy { dst, .. }
             | Instruction::CompareSet { dst, .. }
-            | Instruction::StringConcat { dst, .. } => {
+            | Instruction::StringConcat { dst, .. }
+            | Instruction::StringEqual { dst, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
                 }
@@ -912,6 +928,10 @@ impl Instruction {
                 used.push(*value);
             }
             Instruction::StringConcat { left, right, .. } => {
+                used.push(*left);
+                used.push(*right);
+            }
+            Instruction::StringEqual { left, right, .. } => {
                 used.push(*left);
                 used.push(*right);
             }
@@ -1210,6 +1230,17 @@ impl Instruction {
                     *right = new_reg;
                 }
             }
+            Instruction::StringEqual { dst, left, right, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                if *left == old_reg {
+                    *left = new_reg;
+                }
+                if *right == old_reg {
+                    *right = new_reg;
+                }
+            }
             Instruction::PrintString { ptr, .. } => {
                 if *ptr == old_reg {
                     *ptr = new_reg;
@@ -1443,6 +1474,11 @@ impl Instruction {
                 defined.push(*dst);
             }
             Instruction::StringConcat { dst, left, right, .. } => {
+                defined.push(*dst);
+                used.push(*left);
+                used.push(*right);
+            }
+            Instruction::StringEqual { dst, left, right, .. } => {
                 defined.push(*dst);
                 used.push(*left);
                 used.push(*right);

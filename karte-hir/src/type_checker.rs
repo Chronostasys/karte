@@ -1575,8 +1575,8 @@ impl TypeChecker {
             }
             Expr::ArrayLiteral { elements, span } => {
                 if elements.is_empty() {
-                    self.add_error(TypeCheckError::CannotInferType { span: *span });
-                    Type::array(Type::Unknown)
+                    let elem_type = Type::Var(self.fresh_type_var());
+                    Type::array(elem_type)
                 } else {
                     let element_type = self.infer_expr(&elements[0], env);
                     for element in &elements[1..] {

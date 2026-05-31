@@ -531,6 +531,7 @@ fn instr_name(instr: &Instruction) -> &'static str {
         Instruction::Release { .. } => "Release",
         Instruction::Safepoint { .. } => "Safepoint",
         Instruction::StringConcat { .. } => "StringConcat",
+        Instruction::StringEqual { .. } => "StringEqual",
         Instruction::PrintString { .. } => "PrintString",
         Instruction::PrintNumber { .. } => "PrintNumber",
         Instruction::Load64 { .. } => "Load64",

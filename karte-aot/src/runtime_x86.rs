@@ -17,6 +17,10 @@ pub mod runtime_names {
     pub const FREE: &str = "__karte_free";
     pub const RETAIN: &str = "__karte_retain";
     pub const RELEASE: &str = "__karte_release";
+    pub const STRING_EQUAL: &str = "__karte_string_equal";
+    pub const STRING_CONCAT: &str = "__karte_string_concat";
+    pub const PRINT_STRING: &str = "__karte_print_string";
+    pub const PRINT_NUMBER: &str = "__karte_print_number";
 }
 
 /// 运行时函数描述
@@ -69,6 +73,10 @@ impl X86Runtime {
         self.emit_free();
         self.emit_retain();
         self.emit_release();
+        self.emit_string_equal();
+        self.emit_string_concat();
+        self.emit_print_string();
+        self.emit_print_number();
         self
     }
 
@@ -313,6 +321,12 @@ impl X86Runtime {
     /// JBE rel32
     fn jbe_rel32(&mut self, rel: i32) {
         self.bs(&[0x0F, 0x86]);
+        self.u32(rel as u32);
+    }
+
+    /// JL rel32 (有符号小于, SF!=OF)
+    fn jl_rel32(&mut self, rel: i32) {
+        self.bs(&[0x0F, 0x8C]);
         self.u32(rel as u32);
     }
 
@@ -1223,6 +1237,313 @@ impl X86Runtime {
         self.fn_start(runtime_names::RELEASE);
         self.ret();
         self.fn_end();
+    }
+
+    /// __karte_string_equal(left_ptr, right_ptr) → 1 或 0
+    ///
+    /// RDI = left_ptr, RSI = right_ptr
+    /// 返回 RAX = 1 (相等) 或 0 (不等)
+    ///
+    /// 字符串格式：[length: i64][bytes...]
+    fn emit_string_equal(&mut self) {
+        self.fn_start(runtime_names::STRING_EQUAL);
+        // 保存 callee-saved 寄存器
+        self.push(5);  // RBP
+        self.push(3);  // RBX
+        self.push(12); // R12
+
+        // RDI(7) = left_ptr, RSI(6) = right_ptr
+
+        // 同一指针比较
+        self.cmp_rr(7, 6);  // CMP RDI, RSI
+        self.je_rel32(0); // JE .equal (placeholder)
+        let equal_patch_1 = self.code.len() - 4;
+
+        // 空指针检查: test rdi, rdi
+        self.test_rr(7, 7);  // TEST RDI, RDI
+        self.jz_rel32(0);  // JZ .not_equal
+        let not_equal_patch_1 = self.code.len() - 4;
+
+        self.test_rr(6, 6);  // TEST RSI, RSI
+        self.jz_rel32(0);  // JZ .not_equal
+        let not_equal_patch_2 = self.code.len() - 4;
+
+        // 比较长度: mov rax, [rdi]; mov rcx, [rsi]; cmp rax, rcx
+        self.mov_mem_load(0, 7, 0);  // MOV RAX, [RDI+0]
+        self.mov_mem_load(1, 6, 0);  // MOV RCX, [RSI+0]
+        self.cmp_rr(0, 1);           // CMP RAX, RCX
+        self.jne_rel32(0);           // JNE .not_equal
+        let not_equal_patch_3 = self.code.len() - 4;
+
+        // 如果长度为 0 → 相等
+        self.test_rr(0, 0);          // TEST RAX, RAX
+        self.jz_rel32(0);            // JZ .equal
+        let equal_patch_2 = self.code.len() - 4;
+
+        // 逐字节比较循环
+        // RBX = index = 0
+        self.xor_rr(3, 3);  // XOR RBX, RBX
+
+        // .loop:
+        let loop_start = self.code.len();
+
+        // 使用 R12 保存 offset = index + 8 (跳过 length header)
+        self.mov_rr(12, 3);    // R12 = index
+        self.add_ri8(12, 8);   // R12 += 8
+
+        // 计算左地址并加载字节
+        self.push(7);           // 保存 RDI
+        self.add_rr(7, 12);     // RDI = RDI + offset
+        self.movzx_byte(2, 7, 0); // MOVZX RDX, byte [RDI]
+        self.pop(7);            // 恢复 RDI
+
+        // 计算右地址并加载字节
+        self.push(6);           // 保存 RSI
+        self.add_rr(6, 12);     // RSI = RSI + offset
+        self.movzx_byte(1, 6, 0); // MOVZX RCX, byte [RSI]
+        self.pop(6);            // 恢复 RSI
+
+        // CMP RDX, RCX
+        self.cmp_rr(2, 1);
+        self.jne_rel32(0);     // JNE .not_equal
+        let not_equal_patch_4 = self.code.len() - 4;
+
+        // index++
+        self.add_ri8(3, 1);     // INC RBX
+        // CMP RBX, RAX (length)
+        self.cmp_rr(3, 0);
+        self.jl_rel32(0);       // JL .loop
+        let loop_patch = self.code.len() - 4;
+
+        // .equal:
+        let equal_label = self.code.len();
+        self.mov_ri(0, 1);      // MOV RAX, 1
+        self.jmp_rel32(0);      // JMP .done
+        let done_patch_1 = self.code.len() - 4;
+
+        // .not_equal:
+        let not_equal_label = self.code.len();
+        self.xor_rr(0, 0);      // XOR RAX, RAX → 0
+
+        // .done:
+        let done_label = self.code.len();
+        self.pop(12); // R12
+        self.pop(3);  // RBX
+        self.pop(5);  // RBP
+        self.ret();
+        self.fn_end();
+
+        // 修补所有跳转
+        // equal 跳转
+        let rel = equal_label as i32 - (equal_patch_1 as i32 + 4);
+        self.code[equal_patch_1..equal_patch_1 + 4].copy_from_slice(&rel.to_le_bytes());
+        let rel = equal_label as i32 - (equal_patch_2 as i32 + 4);
+        self.code[equal_patch_2..equal_patch_2 + 4].copy_from_slice(&rel.to_le_bytes());
+
+        // not_equal 跳转
+        for patch in [not_equal_patch_1, not_equal_patch_2, not_equal_patch_3, not_equal_patch_4] {
+            let rel = not_equal_label as i32 - (patch as i32 + 4);
+            self.code[patch..patch + 4].copy_from_slice(&rel.to_le_bytes());
+        }
+
+        // loop 跳转 (向前跳转，rel 为负数)
+        let rel = loop_start as i32 - (loop_patch as i32 + 4);
+        self.code[loop_patch..loop_patch + 4].copy_from_slice(&rel.to_le_bytes());
+
+        // done 跳转
+        let rel = done_label as i32 - (done_patch_1 as i32 + 4);
+        self.code[done_patch_1..done_patch_1 + 4].copy_from_slice(&rel.to_le_bytes());
+    }
+
+    /// __karte_string_concat(left_ptr, right_ptr) → 新字符串指针
+    ///
+    /// RDI = left_ptr, RSI = right_ptr
+    /// 返回 RAX = 新字符串指针
+    ///
+    /// 当前为 stub 实现（返回 0），完整实现需要后续添加。
+    fn emit_string_concat(&mut self) {
+        self.fn_start(runtime_names::STRING_CONCAT);
+        // stub: 返回 0
+        self.xor_rr(0, 0);
+        self.ret();
+        self.fn_end();
+    }
+
+    /// __karte_print_string(str_ptr) → 0
+    ///
+    /// RDI = str_ptr
+    /// 使用 sys_write(1, data, len) 输出字符串内容
+    fn emit_print_string(&mut self) {
+        self.fn_start(runtime_names::PRINT_STRING);
+        self.push(5);  // RBP
+        self.push(3);  // RBX
+        self.push(12); // R12
+
+        // RDI(7) = str_ptr
+        // 空指针检查
+        self.test_rr(7, 7);
+        self.jz_rel32(0);
+        let null_patch = self.code.len() - 4;
+
+        // R12 = str_ptr (保存)
+        self.mov_rr(12, 7);
+
+        // 读取长度: RBX = [str_ptr]
+        self.mov_mem_load(3, 12, 0); // RBX = length
+
+        // 检查 len > 0
+        self.test_rr(3, 3);
+        self.jz_rel32(0);
+        let zero_len_patch = self.code.len() - 4;
+
+        // sys_write(1, data_ptr, len)
+        // data_ptr = str_ptr + 8
+        self.mov_ri(0, 1);           // RAX = syscall 1 (write)
+        self.mov_ri(7, 1);           // RDI = fd 1 (stdout)
+        self.mov_rr(6, 12);          // RSI = str_ptr
+        self.add_ri8(6, 8);          // RSI = str_ptr + 8 (data)
+        self.mov_rr(2, 3);           // RDX = length
+        self.syscall();
+
+        // done:
+        let done_label = self.code.len();
+        self.xor_rr(0, 0);           // RAX = 0 (Unit)
+        self.pop(12);
+        self.pop(3);
+        self.pop(5);
+        self.ret();
+        self.fn_end();
+
+        // 修补跳转
+        let rel = done_label as i32 - (null_patch as i32 + 4);
+        self.code[null_patch..null_patch + 4].copy_from_slice(&rel.to_le_bytes());
+        let rel = done_label as i32 - (zero_len_patch as i32 + 4);
+        self.code[zero_len_patch..zero_len_patch + 4].copy_from_slice(&rel.to_le_bytes());
+    }
+
+    /// __karte_print_number(value) → 0
+    ///
+    /// RDI = i64 value
+    /// 将数值转换为十进制 ASCII 并通过 sys_write 输出
+    fn emit_print_number(&mut self) {
+        self.fn_start(runtime_names::PRINT_NUMBER);
+        self.push(5);  // RBP
+        self.push(3);  // RBX
+        self.push(8);  // R8
+        self.push(9);  // R9
+
+        // RDI(7) = value
+        // RBX = 原始值备份
+        self.mov_rr(3, 7);
+
+        // 处理负数
+        self.mov_rr(0, 3);    // RAX = value
+        self.xor_rr(2, 2);    // RDX = 0 (符号: 0=正)
+        self.mov_ri(1, 0);
+        self.cmp_rr(0, 1);
+        self.jge_rel32(0);
+        let neg_skip = self.code.len() - 4;
+
+        // 负数: 标记符号, 取绝对值
+        self.mov_ri(2, 1);    // RDX = 1 (负数)
+        self.mov_rr(1, 0);    // RCX = RAX
+        self.xor_rr(0, 0);    // RAX = 0
+        self.sub_rr(0, 1);    // RAX = -RCX
+
+        // neg_skip:
+        let neg_skip_label = self.code.len();
+
+        // 初始化计数器和常量
+        self.xor_rr(8, 8);    // R8 = 字符计数 = 0
+        self.mov_ri(9, 10);   // R9 = 10
+
+        // 先推入 '\n'
+        self.sub_ri8(4, 1);   // RSP -= 1
+        self.bs(&[0xC6, 0x04, 0x24, b'\n']);
+        self.add_ri8(8, 1);   // 计数 = 1
+
+        // 处理 RAX == 0
+        self.test_rr(0, 0);
+        self.jne_rel32(0);
+        let nonzero = self.code.len() - 4;
+
+        // RAX == 0: 写 '0'
+        self.sub_ri8(4, 1);
+        self.bs(&[0xC6, 0x04, 0x24, b'0']);
+        self.add_ri8(8, 1);
+        let zero_done = self.code.len();
+        self.jmp_rel32(0); // → sys_write
+
+        // digit_loop:
+        let digit_loop = self.code.len();
+
+        self.test_rr(0, 0);
+        self.jz_rel32(0);
+        let digit_done = self.code.len() - 4;
+
+        // IDIV R9: RAX = 商, RDX = 余数
+        self.mov_rr(11, 2);   // R11 = 符号标志
+        self.bs(&[0x48, 0x99]); // CQO
+        self.bs(&[0x49, 0xF7, 0xF9]); // IDIV R9
+        self.add_ri8(2, b'0' as u8); // RDX = ASCII 数字
+        self.sub_ri8(4, 1);
+        self.bs(&[0x88, 0x14, 0x24]); // MOV byte [RSP], DL
+        self.add_ri8(8, 1);
+        self.mov_rr(2, 11);   // 恢复符号标志
+
+        // 跳回循环
+        {
+            let rel = (digit_loop as i64 - (self.code.len() as i64 + 5)) as i32;
+            self.jmp_rel32(rel);
+        }
+
+        // digit_done_label:
+        let digit_done_label = self.code.len();
+
+        // 负数推入 '-'
+        self.test_rr(2, 2);
+        self.jz_rel32(0);
+        let no_neg_sign = self.code.len() - 4;
+
+        self.sub_ri8(4, 1);
+        self.bs(&[0xC6, 0x04, 0x24, b'-']);
+        self.add_ri8(8, 1);
+
+        // no_neg_sign_label:
+        let no_neg_sign_label = self.code.len();
+
+        // sys_write(1, RSP, R8)
+        self.mov_ri(0, 1);   // syscall: write
+        self.mov_ri(7, 1);   // fd: stdout
+        self.mov_rr(6, 4);   // buf: RSP
+        self.mov_rr(2, 8);   // count: R8
+        self.syscall();
+
+        // 恢复寄存器
+        self.xor_rr(0, 0);   // RAX = 0 (Unit)
+        self.pop(9);
+        self.pop(8);
+        self.pop(3);
+        self.pop(5);
+        self.ret();
+        self.fn_end();
+
+        // 修补跳转
+        // neg_skip (JGE) → neg_skip_label
+        let rel = neg_skip_label as i32 - (neg_skip as i32 + 4);
+        self.code[neg_skip..neg_skip + 4].copy_from_slice(&rel.to_le_bytes());
+        // nonzero (JNE) → digit_loop
+        let rel = digit_loop as i32 - (nonzero as i32 + 4);
+        self.code[nonzero..nonzero + 4].copy_from_slice(&rel.to_le_bytes());
+        // zero_done (JMP) → no_neg_sign_label
+        let rel = no_neg_sign_label as i32 - (zero_done as i32 + 4);
+        self.code[zero_done..zero_done + 4].copy_from_slice(&rel.to_le_bytes());
+        // digit_done (JZ) → digit_done_label
+        let rel = digit_done_label as i32 - (digit_done as i32 + 4);
+        self.code[digit_done..digit_done + 4].copy_from_slice(&rel.to_le_bytes());
+        // no_neg_sign (JZ) → no_neg_sign_label
+        let rel = no_neg_sign_label as i32 - (no_neg_sign as i32 + 4);
+        self.code[no_neg_sign..no_neg_sign + 4].copy_from_slice(&rel.to_le_bytes());
     }
 
     /// 修补内部函数调用 (gc_alloc → gc_collect, safepoint → gc_collect)

@@ -273,12 +273,24 @@ pub(crate) fn lower_expression(
         Expr::BinaryOp {
             left, op, right, ..
         } => {
-            // 检查是否为字符串连接：Add 且操作数类型为 String
             let expr_ptr = expr as *const Expr as usize;
+
+            // 检查是否为字符串连接：Add 且操作数类型为 String
             let is_string_concat = *op == karte_hir::BinaryOperator::Add
                 && ctx
                     .expr_types
                     .get(&expr_ptr)
+                    .map(|t| matches!(t, karte_hir::Type::String))
+                    .unwrap_or(false);
+
+            // 检查是否为字符串比较：Equal/NotEqual 且操作数类型为 String
+            // 注意：Equal/NotEqual 的表达式类型是 bool，不是 String
+            // 所以需要检查左操作数的类型
+            let left_ptr = left.as_ref() as *const Expr as usize;
+            let is_string_compare = matches!(op, karte_hir::BinaryOperator::Equal | karte_hir::BinaryOperator::NotEqual)
+                && ctx
+                    .expr_types
+                    .get(&left_ptr)
                     .map(|t| matches!(t, karte_hir::Type::String))
                     .unwrap_or(false);
 
@@ -295,6 +307,42 @@ pub(crate) fn lower_expression(
                     args: vec![left_val, right_val],
                     span,
                 });
+            } else if is_string_compare {
+                // 字符串比较：调用运行时 string_equal 函数
+                let left_val = lower_expression_to_temp(ctx, left)?;
+                let right_val = lower_expression_to_temp(ctx, right)?;
+
+                // 调用 string_equal 得到 0/1 结果
+                let eq_result = ctx.new_temp();
+                ctx.add_statement(Statement::Call {
+                    target: Some(eq_result.clone()),
+                    function: Value::Function {
+                        name: "__runtime_string_equal".to_string(),
+                        ty: None,
+                    },
+                    args: vec![left_val, right_val],
+                    span,
+                });
+
+                if *op == karte_hir::BinaryOperator::Equal {
+                    // Equal: 直接使用 string_equal 的结果 (Xor 0 = 恒等)
+                    ctx.add_statement(Statement::BinaryOp {
+                        target: destination.clone(),
+                        left: eq_result,
+                        op: MirBinaryOp::BitXor,
+                        right: Value::Number { value: 0, ty: None },
+                        span,
+                    });
+                } else {
+                    // NotEqual: 对 string_equal 的结果取反 (Xor 1)
+                    ctx.add_statement(Statement::BinaryOp {
+                        target: destination.clone(),
+                        left: eq_result,
+                        op: MirBinaryOp::BitXor,
+                        right: Value::Number { value: 1, ty: None },
+                        span,
+                    });
+                }
             } else {
                 // 原有数字运算逻辑
                 let left_val = lower_expression_to_temp(ctx, left)?;

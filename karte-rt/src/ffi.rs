@@ -197,6 +197,37 @@ pub extern "C" fn karte_jit_runtime_string_concat(left_ptr: u64, right_ptr: u64)
     }
 }
 
+/// 字符串内容比较：逐字节比较两个字符串的内容
+/// 字符串格式：[length: i64][bytes...]
+/// 返回 1（相等）或 0（不等）
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_string_equal(left_ptr: u64, right_ptr: u64) -> u64 {
+    unsafe {
+        // 同一指针，内容必然相同
+        if left_ptr == right_ptr {
+            return 1;
+        }
+        if left_ptr == 0 || right_ptr == 0 {
+            return 0;
+        }
+        let left_len = *(left_ptr as *const i64) as usize;
+        let right_len = *(right_ptr as *const i64) as usize;
+        // 长度不同，内容必然不同
+        if left_len != right_len {
+            return 0;
+        }
+        // 逐字节比较内容
+        let left_bytes = (left_ptr as *const u8).add(8);
+        let right_bytes = (right_ptr as *const u8).add(8);
+        for i in 0..left_len {
+            if *left_bytes.add(i) != *right_bytes.add(i) {
+                return 0;
+            }
+        }
+        1
+    }
+}
+
 /// 打印字符串到 stdout
 /// 字符串格式：[length: i64][bytes...]
 /// 返回 0（Unit）
