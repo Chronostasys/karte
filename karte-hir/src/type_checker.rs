@@ -1026,7 +1026,8 @@ impl TypeChecker {
             Expr::Identifier { name, span } => {
                 // 内建函数
                 if name == "print" {
-                    return Type::function(vec![Type::String], Type::Unit);
+                    let alpha = self.fresh_type_var();
+                    return Type::function(vec![Type::Var(alpha)], Type::Unit);
                 }
                 // 优先检查泛型函数，若匹配则实例化
                 if let Some(scheme) = self.function_schemes.get(name).cloned() {

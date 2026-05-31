@@ -2814,10 +2814,18 @@ fn lower_function_call(
                 return Err(ctx.errors.clone());
             }
             let arg_val = lower_expression_to_temp(ctx, &args[0])?;
+
+            // 根据参数的实际推断类型选择运行时函数
+            let arg_type = ctx.get_expr_type(&args[0]);
+            let runtime_fn = match &arg_type {
+                karte_hir::Type::String => "__runtime_print_string",
+                _ => "__runtime_print_number", // Number, Bool 等都当作数字打印
+            };
+
             ctx.add_statement(Statement::Call {
                 target: Some(destination.clone()),
                 function: Value::Function {
-                    name: "__runtime_print_string".to_string(),
+                    name: runtime_fn.to_string(),
                     ty: None,
                 },
                 args: vec![arg_val],

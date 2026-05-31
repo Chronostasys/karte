@@ -532,6 +532,7 @@ fn instr_name(instr: &Instruction) -> &'static str {
         Instruction::Safepoint { .. } => "Safepoint",
         Instruction::StringConcat { .. } => "StringConcat",
         Instruction::PrintString { .. } => "PrintString",
+        Instruction::PrintNumber { .. } => "PrintNumber",
         Instruction::Load64 { .. } => "Load64",
         Instruction::LoadGlobal { .. } => "LoadGlobal",
         Instruction::GcRegOp { .. } => "GcRegOp",

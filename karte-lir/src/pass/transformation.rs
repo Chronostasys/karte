@@ -175,6 +175,7 @@ impl DeadCodeElimination {
             Instruction::Safepoint { .. } => false,
             Instruction::StringConcat { .. } => true,
             Instruction::PrintString { .. } => true,
+            Instruction::PrintNumber { .. } => true,
         }
     }
 

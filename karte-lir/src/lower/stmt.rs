@@ -661,6 +661,36 @@ pub(super) fn lower_statement(
                         }
                         return Ok(());
                     }
+                    "__runtime_print_number" => {
+                        // 打印数字：生成 PrintNumber LIR 指令
+                        let val_op = ctx.lower_to_rvalue(&args[0]);
+                        let val_reg = match val_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: val_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+
+                        ctx.add_instruction(Instruction::PrintNumber {
+                            value: val_reg,
+                            span: *span,
+                        });
+
+                        // print 返回 Unit (0)
+                        if let Some(target_value) = target {
+                            ctx.store_value_to_stack(
+                                target_value,
+                                Operand::Immediate { value: 0 },
+                            );
+                        }
+                        return Ok(());
+                    }
                     _ => {} // 继续常规处理
                 }
             }

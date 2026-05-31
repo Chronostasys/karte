@@ -531,6 +531,9 @@ impl RiscvCompiler {
             Instruction::PrintString { ptr, .. } => {
                 self.compile_print_string(ptr, cb)
             }
+            Instruction::PrintNumber { value, .. } => {
+                self.compile_print_number(value, cb)
+            }
             Instruction::Nop { .. } => {
                 self.emit_nop(cb);
                 Ok(())
@@ -1094,6 +1097,15 @@ impl RiscvCompiler {
         cb: &mut CodeBuilder,
     ) -> crate::Result<()> {
         let call = RuntimeCall::print_string(*ptr);
+        self.emit_runtime_call(cb, call, None)
+    }
+
+    fn compile_print_number(
+        &self,
+        value: &Register,
+        cb: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::print_number(*value);
         self.emit_runtime_call(cb, call, None)
     }
 }

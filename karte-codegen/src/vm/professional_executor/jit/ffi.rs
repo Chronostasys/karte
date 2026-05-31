@@ -11,6 +11,7 @@ pub enum RuntimeIntrinsic {
     GcSafepoint,
     StringConcat,
     PrintString,
+    PrintNumber,
 }
 
 impl RuntimeIntrinsic {
@@ -27,6 +28,9 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::PrintString => {
                 runtime::karte_jit_runtime_print_string as *const ()
             }
+            RuntimeIntrinsic::PrintNumber => {
+                runtime::karte_jit_runtime_print_number as *const ()
+            }
         }
     }
 
@@ -39,6 +43,7 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::GcSafepoint => "karte_jit_runtime_gc_safepoint",
             RuntimeIntrinsic::StringConcat => "karte_jit_runtime_string_concat",
             RuntimeIntrinsic::PrintString => "karte_jit_runtime_print_string",
+            RuntimeIntrinsic::PrintNumber => "karte_jit_runtime_print_number",
         }
     }
 
@@ -114,6 +119,13 @@ impl RuntimeCall {
         Self {
             intrinsic: RuntimeIntrinsic::PrintString,
             args: vec![RuntimeArg::Register(ptr)],
+        }
+    }
+
+    pub fn print_number(value: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::PrintNumber,
+            args: vec![RuntimeArg::Register(value)],
         }
     }
 

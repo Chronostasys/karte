@@ -332,6 +332,9 @@ impl AArch64Compiler {
             Instruction::PrintString { ptr, .. } => {
                 self.compile_print_string(ptr, code_builder, instruction_index, function)
             }
+            Instruction::PrintNumber { value, .. } => {
+                self.compile_print_number(value, code_builder, instruction_index, function)
+            }
             Instruction::Nop { .. } => {
                 // AArch64 NOP指令 (0xD503201F)
                 self.emit_nop(code_builder);
@@ -1024,6 +1027,17 @@ impl AArch64Compiler {
         function: &LirFunction,
     ) -> crate::Result<()> {
         let call = RuntimeCall::print_string(*ptr);
+        self.emit_runtime_call(code_builder, call, None, instruction_index, function)
+    }
+
+    fn compile_print_number(
+        &mut self,
+        value: &Register,
+        code_builder: &mut CodeBuilder,
+        instruction_index: usize,
+        function: &LirFunction,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::print_number(*value);
         self.emit_runtime_call(code_builder, call, None, instruction_index, function)
     }
 

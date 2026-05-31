@@ -4,6 +4,7 @@
 
 pub use karte_rt::ffi::{
     karte_jit_runtime_alloc, karte_jit_runtime_alloc_aligned, karte_jit_runtime_free,
-    karte_jit_runtime_gc_safepoint, karte_jit_runtime_heap_stats, karte_jit_runtime_print_string,
-    karte_jit_runtime_release, karte_jit_runtime_retain, karte_jit_runtime_string_concat,
+    karte_jit_runtime_gc_safepoint, karte_jit_runtime_heap_stats, karte_jit_runtime_print_number,
+    karte_jit_runtime_print_string, karte_jit_runtime_release, karte_jit_runtime_retain,
+    karte_jit_runtime_string_concat,
 };
