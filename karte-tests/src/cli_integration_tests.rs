@@ -4426,4 +4426,108 @@ fn main() -> number {
         let exit_code = executor.execute_with_jit(&lir).expect("JIT execution failed");
         assert_eq!(exit_code, 0, "Expected 0, got {}", exit_code);
     }
+
+    fn compile_project_mode_code(code: &str) -> i64 {
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Parsing failed: {:?}", diagnostics);
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+        let mut executor = ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        executor.execute_with_jit(&lir).expect("JIT execution failed")
+    }
+
+    #[test]
+    fn test_multi_arm_nested_enum_match() {
+        let code = r#"
+enum Color { Red, Green, Blue }
+enum Size { Small, Medium, Large }
+fn test(c: Color, s: Size) -> number {
+    match c {
+        Color::Red => match s {
+            Size::Small => 10, Size::Medium => 20, Size::Large => 30
+        },
+        Color::Green => match s {
+            Size::Small => 40, Size::Medium => 50, Size::Large => 60
+        },
+        Color::Blue => match s {
+            Size::Small => 70, Size::Medium => 80, Size::Large => 90
+        }
+    }
+}
+fn main() -> number {
+    test(Color::Red, Size::Small) + test(Color::Red, Size::Medium) +
+    test(Color::Red, Size::Large) + test(Color::Green, Size::Small) +
+    test(Color::Green, Size::Medium) + test(Color::Green, Size::Large) +
+    test(Color::Blue, Size::Small) + test(Color::Blue, Size::Medium) +
+    test(Color::Blue, Size::Large)
+}
+        "#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 450, "Expected 450, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_nested_enum_match_blue_medium() {
+        let code = r#"
+enum Color { Red, Green, Blue }
+enum Size { Small, Medium, Large }
+fn test(c: Color, s: Size) -> number {
+    match c {
+        Color::Red => match s {
+            Size::Small => 10, Size::Medium => 20, Size::Large => 30
+        },
+        Color::Green => match s {
+            Size::Small => 40, Size::Medium => 50, Size::Large => 60
+        },
+        Color::Blue => match s {
+            Size::Small => 70, Size::Medium => 80, Size::Large => 90
+        }
+    }
+}
+fn main() -> number {
+    test(Color::Blue, Size::Medium)
+}
+        "#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 80, "Expected 80, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_two_arm_nested_enum_match() {
+        let code = r#"
+enum Color { Red, Green, Blue }
+enum Size { Small, Medium, Large }
+fn test(c: Color, s: Size) -> number {
+    match c {
+        Color::Red => match s {
+            Size::Small => 10, Size::Medium => 20, Size::Large => 30
+        },
+        Color::Green => match s {
+            Size::Small => 40, Size::Medium => 50, Size::Large => 60
+        },
+        Color::Blue => 70
+    }
+}
+fn main() -> number {
+    test(Color::Green, Size::Large)
+}
+        "#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 60, "Expected 60, got {}", exit_code);
+    }
+
 }

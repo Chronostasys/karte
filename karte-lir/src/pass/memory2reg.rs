@@ -1548,55 +1548,57 @@ impl Memory2RegPass {
                     false
                 }
 
-                // 2. 对于每个合流点，检查是否需要插入phi节点
-                for &block_id in &confluence_blocks {
-                    let mut visited = HashSet::new();
-                    let has_relevant_use = block_or_successors_have_load(
-                        block_id,
-                        &analysis.basic_blocks,
-                        slot,
-                        &mut visited,
-                    );
+                // 2. 迭代式计算需要插入 phi 节点的合流点
+                // 修复：前驱块可能有直接 Store64，也可能有 Phi 节点（间接 store）
+                // 必须迭代直到收敛，因为前驱的 Phi 可能由更早的迭代产生
+                let mut changed = true;
+                while changed {
+                    changed = false;
+                    for &block_id in &confluence_blocks {
+                        if phi_blocks.contains(&block_id) {
+                            continue;
+                        }
 
-                    // 🔧 修复：检查前驱块是否有不同的 store 值
-                    // 只有当多个前驱块可能提供不同的值时才需要 phi
-                    let mut predecessors_with_stores = HashSet::new();
-                    if let Some(block) = analysis.basic_blocks.get(&block_id) {
-                        for &pred_id in &block.predecessors {
-                            // 检查该前驱块或其支配链上是否有 store
-                            if slot
-                                .store_to_block
-                                .values()
-                                .any(|&store_block| store_block == pred_id)
-                            {
-                                predecessors_with_stores.insert(pred_id);
+                        let mut visited = HashSet::new();
+                        let has_relevant_use = block_or_successors_have_load(
+                            block_id,
+                            &analysis.basic_blocks,
+                            slot,
+                            &mut visited,
+                        );
+
+                        // 检查前驱块是否有直接 Store64 或已有 Phi 节点
+                        let mut predecessors_with_stores = HashSet::new();
+                        if let Some(block) = analysis.basic_blocks.get(&block_id) {
+                            for &pred_id in &block.predecessors {
+                                let has_direct_store = slot
+                                    .store_to_block
+                                    .values()
+                                    .any(|&store_block| store_block == pred_id);
+                                let has_phi = phi_blocks.contains(&pred_id);
+                                if has_direct_store || has_phi {
+                                    predecessors_with_stores.insert(pred_id);
+                                }
                             }
                         }
-                    }
 
-                    // 需要 phi 的条件：
-                    // 1. 有相关使用（load）
-                    // 2. 多个前驱块可能提供不同的值（有不同的 store 路径）
-                    let needs_phi = has_relevant_use && analysis.basic_blocks.get(&block_id).map_or(false, |b| b.predecessors.len() > 1) && predecessors_with_stores.len() >= 1;
+                        let needs_phi = has_relevant_use
+                            && analysis.basic_blocks.get(&block_id).map_or(false, |b| b.predecessors.len() > 1)
+                            && predecessors_with_stores.len() >= 1;
 
-                    info!(
-                        "🎯 分析块{}: 有load={}, 前驱有store数={}, 需要phi={}",
-                        block_id,
-                        has_relevant_use,
-                        predecessors_with_stores.len(),
-                        needs_phi
-                    );
-
-                    if needs_phi {
-                        phi_blocks.insert(block_id);
-                        debug!("🎯 块{} 需要phi节点: 有相关使用且前驱有store", block_id);
-                    } else {
                         info!(
-                            "🎯 块{} 不需要phi节点: 有load={}, 前驱有store数={}",
+                            "🎯 分析块{}: 有load={}, 前驱有store数={}, 需要phi={}",
                             block_id,
                             has_relevant_use,
-                            predecessors_with_stores.len()
+                            predecessors_with_stores.len(),
+                            needs_phi
                         );
+
+                        if needs_phi {
+                            phi_blocks.insert(block_id);
+                            changed = true;
+                            debug!("🎯 块{} 需要phi节点: 有相关使用且前驱有store或phi", block_id);
+                        }
                     }
                 }
 
