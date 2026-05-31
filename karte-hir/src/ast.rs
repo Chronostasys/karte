@@ -230,6 +230,13 @@ pub enum Expr {
         right: Box<Expr>,
         span: Span,
     },
+    /// 限制值范围 clamp(value, min_val, max_val)
+    Clamp {
+        value: Box<Expr>,
+        min_val: Box<Expr>,
+        max_val: Box<Expr>,
+        span: Span,
+    },
     /// 字符串索引 str_index(s, i) — 返回第 i 个字节的 ASCII 值
     StrIndex {
         string: Box<Expr>,
@@ -791,6 +798,9 @@ impl fmt::Display for Expr {
             Expr::Max { left, right, .. } => {
                 write!(f, "max({}, {})", left, right)
             }
+            Expr::Clamp { value, min_val, max_val, .. } => {
+                write!(f, "clamp({}, {}, {})", value, min_val, max_val)
+            }
             Expr::StrIndex { string, index, .. } => {
                 write!(f, "str_index({}, {})", string, index)
             }
@@ -900,6 +910,7 @@ impl Expr {
             Expr::Abs { span, .. } => *span,
             Expr::Min { span, .. } => *span,
             Expr::Max { span, .. } => *span,
+            Expr::Clamp { span, .. } => *span,
             Expr::StrIndex { span, .. } => *span,
             Expr::CharAt { span, .. } => *span,
             Expr::TupleLiteral { span, .. } => *span,

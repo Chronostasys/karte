@@ -2879,6 +2879,92 @@ pub(crate) fn lower_expression(
             ctx.set_current_block(merge_block);
         }
 
+        // clamp(v, lo, hi) → if v < lo then lo else if v > hi then hi else v
+        Expr::Clamp { value, min_val, max_val, span } => {
+            let value_temp = lower_expression_to_temp(ctx, value)?;
+            let min_temp = lower_expression_to_temp(ctx, min_val)?;
+            let max_temp = lower_expression_to_temp(ctx, max_val)?;
+
+            // 5 个基本块
+            let lo_result_block = ctx.new_block();   // v < lo → result = lo
+            let cmp_hi_block = ctx.new_block();       // v >= lo → 比较 v > hi
+            let hi_result_block = ctx.new_block();    // v > hi → result = hi
+            let value_result_block = ctx.new_block(); // lo <= v <= hi → result = v
+            let merge_block = ctx.new_block();        // 汇总
+
+            // 当前块: 比较 v < lo
+            let cmp_lo_temp = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                target: cmp_lo_temp.clone(),
+                left: value_temp.clone(),
+                op: MirBinaryOp::LessThan,
+                right: min_temp.clone(),
+                span: *span,
+            });
+            ctx.set_terminator(Terminator::Branch {
+                condition: cmp_lo_temp,
+                then_block: lo_result_block,
+                else_block: cmp_hi_block,
+                span: *span,
+            });
+
+            // lo_result_block: result = min_val
+            ctx.set_current_block(lo_result_block);
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: min_temp,
+                span: *span,
+            });
+            ctx.set_terminator(Terminator::Goto {
+                target: merge_block,
+                span: *span,
+            });
+
+            // cmp_hi_block: 比较 v > hi
+            ctx.set_current_block(cmp_hi_block);
+            let cmp_hi_temp = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                target: cmp_hi_temp.clone(),
+                left: value_temp.clone(),
+                op: MirBinaryOp::GreaterThan,
+                right: max_temp.clone(),
+                span: *span,
+            });
+            ctx.set_terminator(Terminator::Branch {
+                condition: cmp_hi_temp,
+                then_block: hi_result_block,
+                else_block: value_result_block,
+                span: *span,
+            });
+
+            // hi_result_block: result = max_val
+            ctx.set_current_block(hi_result_block);
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: max_temp,
+                span: *span,
+            });
+            ctx.set_terminator(Terminator::Goto {
+                target: merge_block,
+                span: *span,
+            });
+
+            // value_result_block: result = value
+            ctx.set_current_block(value_result_block);
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: value_temp,
+                span: *span,
+            });
+            ctx.set_terminator(Terminator::Goto {
+                target: merge_block,
+                span: *span,
+            });
+
+            // merge_block
+            ctx.set_current_block(merge_block);
+        }
+
         // str_index(s, i) — 读取字符串第 i 个字节的 ASCII 值
         // 字符串内存布局: [length: i64 (8 bytes)] [byte0 byte1 ...]
         Expr::StrIndex { string, index, span } => {

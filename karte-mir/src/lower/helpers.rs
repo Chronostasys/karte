@@ -188,6 +188,12 @@ fn collect_vars_recursive(expr: &Expr, vars: &mut Vec<String>) {
             collect_vars_recursive(right, vars);
         }
 
+        Expr::Clamp { value, min_val, max_val, .. } => {
+            collect_vars_recursive(value, vars);
+            collect_vars_recursive(min_val, vars);
+            collect_vars_recursive(max_val, vars);
+        }
+
         Expr::StrIndex { string, index, .. } => {
             collect_vars_recursive(string, vars);
             collect_vars_recursive(index, vars);

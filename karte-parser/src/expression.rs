@@ -715,6 +715,30 @@ impl<'a> Parser<'a> {
                         });
                     }
                 }
+                if name == "clamp" {
+                    let next_is_lparen = self
+                        .tokens
+                        .get(self.position + 1)
+                        .map_or(false, |t| matches!(t.token, Token::LeftParen));
+                    if next_is_lparen {
+                        let start_span = token.span;
+                        self.advance(); // consume 'clamp'
+                        self.advance(); // consume '('
+                        let value = self.parse_expression()?;
+                        self.expect_token(Token::Comma)?;
+                        let min_val = self.parse_expression()?;
+                        self.expect_token(Token::Comma)?;
+                        let max_val = self.parse_expression()?;
+                        self.expect_token(Token::RightParen)?;
+                        let span = Span::new(start_span.start, self.current_span().end);
+                        return Ok(Expr::Clamp {
+                            value: Box::new(value),
+                            min_val: Box::new(min_val),
+                            max_val: Box::new(max_val),
+                            span,
+                        });
+                    }
+                }
                 if name == "str_index" {
                     let next_is_lparen = self
                         .tokens

@@ -1743,6 +1743,37 @@ impl TypeChecker {
                 }
                 if ok { Type::Number } else { Type::Unknown }
             }
+            Expr::Clamp { value, min_val, max_val, span } => {
+                let value_type = self.infer_expr(value, env);
+                let min_type = self.infer_expr(min_val, env);
+                let max_type = self.infer_expr(max_val, env);
+                let mut ok = true;
+                if value_type != Type::Number && value_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: value_type,
+                        span: value.span(),
+                    });
+                    ok = false;
+                }
+                if min_type != Type::Number && min_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: min_type,
+                        span: min_val.span(),
+                    });
+                    ok = false;
+                }
+                if max_type != Type::Number && max_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: max_type,
+                        span: max_val.span(),
+                    });
+                    ok = false;
+                }
+                if ok { Type::Number } else { Type::Unknown }
+            }
             Expr::StrIndex { string, index, span } => {
                 let string_type = self.infer_expr(string, env);
                 let index_type = self.infer_expr(index, env);

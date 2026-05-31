@@ -6873,4 +6873,39 @@ fn main() -> number {
         assert_eq!(exit_code, 104, "str_index(char_at(\"hello\", 0), 0) should equal str_index(\"hello\", 0) = 104, got {}", exit_code);
     }
 
+    #[test]
+    fn test_clamp_in_range() {
+        let source = r#"fn main() -> number { clamp(5, 1, 10) }"#;
+        let exit_code = compile_project_mode_code(source);
+        assert_eq!(exit_code, 5, "clamp(5, 1, 10) should return 5, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_clamp_below_min() {
+        let source = r#"fn main() -> number { clamp(-1, 0, 100) }"#;
+        let exit_code = compile_project_mode_code(source);
+        assert_eq!(exit_code, 0, "clamp(-1, 0, 100) should return 0, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_clamp_above_max() {
+        let source = r#"fn main() -> number { clamp(200, 0, 100) }"#;
+        let exit_code = compile_project_mode_code(source);
+        assert_eq!(exit_code, 100, "clamp(200, 0, 100) should return 100, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_clamp_equal_min() {
+        let source = r#"fn main() -> number { clamp(0, 0, 10) }"#;
+        let exit_code = compile_project_mode_code(source);
+        assert_eq!(exit_code, 0, "clamp(0, 0, 10) should return 0, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_clamp_equal_max() {
+        let source = r#"fn main() -> number { clamp(10, 0, 10) }"#;
+        let exit_code = compile_project_mode_code(source);
+        assert_eq!(exit_code, 10, "clamp(10, 0, 10) should return 10, got {}", exit_code);
+    }
+
 }
