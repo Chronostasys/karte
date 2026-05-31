@@ -846,15 +846,63 @@ impl<'a> Parser<'a> {
         self.parse_type_expression()
     }
 
-    /// 解析类型表达式，返回结构化 Type
+    /// 解析类型表达式，支持函数类型语法 T -> R 和 (T1, T2) -> R
+    /// 右结合递归：number -> number -> number 解析为 number -> (number -> number)
     pub(crate) fn parse_type_expression(&mut self) -> Result<Type, ParseError> {
+        let base_type = self.parse_base_type()?;
+
+        // 检查是否有 -> (函数类型)
+        if let Some(token) = self.peek() {
+            if matches!(token.token, Token::Arrow) {
+                self.advance(); // consume '->'
+                let return_type = self.parse_type_expression()?; // 右结合递归
+                return Ok(Type::function(vec![base_type], return_type));
+            }
+        }
+
+        Ok(base_type)
+    }
+
+    /// 解析基础类型：标识符类型、引用类型、泛型类型、括号类型
+    fn parse_base_type(&mut self) -> Result<Type, ParseError> {
         if let Some(token) = self.peek() {
             match &token.token {
                 Token::Ampersand => {
                     // 引用类型: &TypeName 或 &GenericType<T>
                     self.advance(); // consume '&'
-                    let inner_type = self.parse_type_expression()?;
+                    let inner_type = self.parse_base_type()?; // 注意用 parse_base_type 而非 parse_type_expression
                     Ok(Type::reference(inner_type))
+                }
+                Token::LeftParen => {
+                    // 括号类型：(T1, T2) -> R（多参数函数类型）或 (T)（单类型加括号）
+                    self.advance(); // consume '('
+                    let mut types = Vec::new();
+                    if !matches!(self.peek().map(|t| &t.token), Some(Token::RightParen)) {
+                        types.push(self.parse_type_expression()?);
+                        while matches!(self.peek().map(|t| &t.token), Some(Token::Comma)) {
+                            self.advance(); // consume ','
+                            types.push(self.parse_type_expression()?);
+                        }
+                    }
+                    self.expect_token(Token::RightParen)?;
+
+                    // 检查后面是否跟着 ->，如果是则解析为多参数函数类型
+                    if let Some(next_token) = self.peek() {
+                        if matches!(next_token.token, Token::Arrow) {
+                            self.advance(); // consume '->'
+                            let return_type = self.parse_type_expression()?;
+                            return Ok(Type::function(types, return_type));
+                        }
+                    }
+
+                    // 否则是括号包裹的单类型或空括号
+                    if types.is_empty() {
+                        Ok(Type::Unit)
+                    } else if types.len() == 1 {
+                        Ok(types.into_iter().next().unwrap())
+                    } else {
+                        Ok(Type::Tuple(types))
+                    }
                 }
                 Token::Identifier(type_name) => {
                     let type_name = type_name.clone();

@@ -2688,6 +2688,160 @@ fn main() -> number {
     }
 
     #[test]
+    fn test_function_type_annotation_single_param() {
+        // 测试函数参数使用单参数函数类型标注：number -> number
+        let code = r#"
+fn apply(f: number -> number, x: number) -> number { f(x) }
+
+fn add_one(n: number) -> number { n + 1 }
+
+fn main() -> number {
+    apply(add_one, 5)
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing with function type annotation failed: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        assert_eq!(exit_code, 6, "Expected apply(add_one, 5) to return 6");
+    }
+
+    #[test]
+    fn test_function_type_annotation_multi_param() {
+        // 测试函数参数使用多参数函数类型标注：(number, number) -> number
+        let code = r#"
+fn combine(f: (number, number) -> number, a: number, b: number) -> number { f(a, b) }
+
+fn multiply(x: number, y: number) -> number { x * y }
+
+fn main() -> number {
+    combine(multiply, 3, 7)
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing with multi-param function type annotation failed: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        assert_eq!(
+            exit_code, 21,
+            "Expected combine(multiply, 3, 7) to return 21"
+        );
+    }
+
+    #[test]
+    fn test_function_type_annotation_with_closure() {
+        // 测试带函数类型标注的参数接受闭包
+        let code = r#"
+fn apply(f: number -> number, x: number) -> number { f(x) }
+
+fn main() -> number {
+    apply(|n| { n * 2 }, 5)
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing with closure passed to function type annotation failed: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        assert_eq!(
+            exit_code, 10,
+            "Expected apply(|n| n * 2, 5) to return 10"
+        );
+    }
+
+    #[test]
     fn test_for_break() {
         let code = r#"fn main() -> number { let sum = 0; for i in 0..10 { if i == 5 { break }; sum = sum + i }; sum }"#;
         let (tokens, _) = tokenize(code);
