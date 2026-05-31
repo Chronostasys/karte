@@ -4829,4 +4829,49 @@ fn main() -> number {
         assert_eq!(exit_code, 20, "Expected 20 (10+10), got {}", exit_code);
     }
 
+
+    #[test]
+    fn test_9_parameter_function_call() {
+        let code = r#"
+fn f(p1: number, p2: number, p3: number, p4: number, p5: number, p6: number, p7: number, p8: number, p9: number) -> number {
+    p1 * 100000000 + p2 * 10000000 + p3 * 1000000 + p4 * 100000 + p5 * 10000 + p6 * 1000 + p7 * 100 + p8 * 10 + p9
+}
+fn main() -> number { f(1, 2, 3, 4, 5, 6, 7, 8, 9) }
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 123456789, "Expected 123456789, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_closure_8_parameters() {
+        let code = r#"
+fn main() -> number {
+    let f = |p1, p2, p3, p4, p5, p6, p7, p8| { p1 + p2 + p3 + p4 + p5 + p6 + p7 + p8 };
+    f(1, 2, 3, 4, 5, 6, 7, 8)
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 36, "Expected 36, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_for_loop_enum_array_access() {
+        let code = r#"
+enum E1 { A, B, C }
+enum E2 { D, E, F }
+fn f1(x: E1) -> number { match x { E1::A => 1, E1::B => 2, E1::C => 3 } }
+fn f2(x: E2) -> number { match x { E2::D => 100, E2::E => 10, E2::F => 1 } }
+fn main() -> number {
+    let a1 = [E1::A, E1::B, E1::C];
+    let a2 = [E2::D, E2::E, E2::F];
+    let s = 0;
+    for i in 0..3 { s = s + f1(a1[i]) };
+    let r = f2(a2[0]);
+    s
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 6, "Expected 6, got {}", exit_code);
+    }
+
 }

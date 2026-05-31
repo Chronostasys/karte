@@ -605,9 +605,39 @@ impl X86Compiler {
     ) -> crate::Result<()> {
         let dst_reg = self.get_physical_register(dst)?;
 
-        // ⚠️ 先 XOR 清零 dst（必须在 CMP 之前，否则 XOR 会破坏 CMP 的 flags）
-        // XOR dst, dst (opcode 0x31, ModRM = 11 reg r/m)
-        // 当 dst >= 8 时，reg 和 r/m 都需要 REX 扩展，所以需要 REX.R + REX.B
+        // 获取 src1/src2 的物理寄存器编号（如果有）
+        let src1_reg = match src1 {
+            Operand::Register { id } => Some(self.get_physical_register(id)?),
+            _ => None,
+        };
+        let src2_reg = match src2 {
+            Operand::Register { id } => Some(self.get_physical_register(id)?),
+            _ => None,
+        };
+
+        // 寄存器分配器可能将 dst 与 src1/src2 分配到同一物理寄存器。
+        // 由于 XOR dst, dst 会先清零目标，如果 dst == src，则 src 的值被摧毁。
+        // 解决方案：如果有冲突，先将冲突的 src 值保存到虚拟栈上的临时位置。
+        let dst_conflicts_src1 = src1_reg == Some(dst_reg);
+        let dst_conflicts_src2 = src2_reg == Some(dst_reg);
+        let vm_sp: u8 = 10; // R10 = 虚拟栈指针
+
+        // 如果 dst 与 src1 冲突，将 src1 原始值保存到 [vm_sp - 8]
+        if dst_conflicts_src1 {
+            if let Some(r) = src1_reg {
+                // vm_sp - 8 位置在当前帧之下（callee 不会触及），安全可用
+                self.emit_mov_mem_reg(code_builder, vm_sp, -8, r);
+            }
+        }
+        // 如果 dst 与 src2 冲突（且不是同一冲突），将 src2 保存到 [vm_sp - 16]
+        if dst_conflicts_src2 {
+            if let Some(r) = src2_reg {
+                let save_offset: i32 = if dst_conflicts_src1 { -16 } else { -8 };
+                self.emit_mov_mem_reg(code_builder, vm_sp, save_offset, r);
+            }
+        }
+
+        // XOR dst, dst 清零（必须在 CMP 之前，否则 XOR 会破坏 CMP 的 flags）
         if dst_reg >= 8 {
             code_builder.emit_byte(0x4D); // REX.W + REX.R + REX.B
         } else {
@@ -616,16 +646,56 @@ impl X86Compiler {
         code_builder.emit_byte(0x31); // XOR r/m, reg
         code_builder.emit_byte(0xC0 | ((dst_reg & 0x07) << 3) | (dst_reg & 0x07));
 
-        // CMP 设置 flags
+        // CMP 设置 flags，使用保存后的实际值
         match (src1, src2) {
             (Operand::Register { id: id1 }, Operand::Register { id: id2 }) => {
                 let reg1 = self.get_physical_register(id1)?;
                 let reg2 = self.get_physical_register(id2)?;
-                self.emit_cmp_reg_reg(code_builder, reg1, reg2);
+                // 如果 src1 与 dst 冲突，从临时位置加载原始值到 src1 寄存器
+                // （XOR 后 dst_reg 已为 0，但我们需要原始 src1 值来做比较）
+                // 注意：此时 src1 寄存器 = dst_reg = 0，需要恢复
+                let actual_reg1 = if dst_conflicts_src1 {
+                    // 将原始值从 [vm_sp - 8] 加载到临时位置
+                    // 用 dst_reg 本身也可以，因为 XOR 已经完成
+                    // 实际上不行——dst_reg 需要保持 0 用于后续 SETcc
+                    // 需要用另一个临时寄存器
+                    let tmp: u8 = 0; // RAX = 临时寄存器
+                    self.emit_mov_reg_mem(code_builder, tmp, vm_sp, -8);
+                    tmp
+                } else {
+                    reg1
+                };
+                let actual_reg2 = if dst_conflicts_src2 {
+                    let save_offset: i32 = if dst_conflicts_src1 { -16 } else { -8 };
+                    let tmp: u8 = 0; // RAX = 临时寄存器
+                    // 如果 src1 也冲突，RAX 已被用于加载 src1 的值
+                    // 需要用另一个临时寄存器
+                    if dst_conflicts_src1 {
+                        // src1 已加载到 RAX，现在需要 src2
+                        // CMP RAX, reg2 — reg2 此时 = dst_reg = 0
+                        // 需要把 src2 原始值放到一个可用寄存器
+                        let tmp2: u8 = 1; // RCX = 临时寄存器
+                        self.emit_mov_reg_mem(code_builder, tmp2, vm_sp, save_offset);
+                        tmp2
+                    } else {
+                        self.emit_mov_reg_mem(code_builder, tmp, vm_sp, save_offset);
+                        tmp
+                    }
+                } else {
+                    reg2
+                };
+                self.emit_cmp_reg_reg(code_builder, actual_reg1, actual_reg2);
             }
             (Operand::Register { id }, Operand::Immediate { value }) => {
                 let reg = self.get_physical_register(id)?;
-                self.emit_cmp_reg_imm32(code_builder, reg, *value as i32);
+                if dst_conflicts_src1 {
+                    // src1 寄存器被 XOR 清零了，从临时位置加载原始值
+                    let tmp: u8 = 0; // RAX
+                    self.emit_mov_reg_mem(code_builder, tmp, vm_sp, -8);
+                    self.emit_cmp_reg_imm32(code_builder, tmp, *value as i32);
+                } else {
+                    self.emit_cmp_reg_imm32(code_builder, reg, *value as i32);
+                }
             }
             _ => {
                 return Err(format!(

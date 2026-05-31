@@ -1551,19 +1551,15 @@ impl LirFunction {
         }
     }
 
-    /// 🔧 新增：创建带参数信息的函数
+    /// 创建带参数信息的函数
     pub fn new_with_params(name: String, param_count: usize) -> Self {
         let mut function = Self::new(name);
         function.parameter_count = param_count;
 
-        // 根据调用约定设置参数寄存器
-        // 使用所有架构参数寄存器最大数量（AArch64/RISC-V = 8）作为上限
-        // 实际映射在寄存器分配阶段由 CallingConvention 确定
-        const MAX_ARGUMENT_REGISTERS: usize = 8;
+        // 所有参数都加入 parameter_registers，实际映射到物理寄存器或溢出槽
+        // 由寄存器分配阶段根据 CallingConvention 确定
         for i in 0..param_count {
-            if i < MAX_ARGUMENT_REGISTERS {
-                function.parameter_registers.push(Register::Virtual(i + 1));
-            }
+            function.parameter_registers.push(Register::Virtual(i + 1));
         }
 
         // 确保后续 new_register() 调用不会分配到参数寄存器编号
