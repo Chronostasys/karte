@@ -3016,6 +3016,23 @@ pub(crate) fn lower_expression(
             });
         }
 
+        // substring(s, start, len) — 返回子字符串
+        // 调用运行时 __runtime_string_substring(str_ptr, start, len) -> new_str_ptr
+        Expr::Substring { string, start, length, span } => {
+            let string_val = lower_expression_to_temp(ctx, string)?;
+            let start_val = lower_expression_to_temp(ctx, start)?;
+            let length_val = lower_expression_to_temp(ctx, length)?;
+            ctx.add_statement(Statement::Call {
+                target: Some(destination.clone()),
+                function: Value::Function {
+                    name: "__runtime_string_substring".to_string(),
+                    ty: None,
+                },
+                args: vec![string_val, start_val, length_val],
+                span: *span,
+            });
+        }
+
         // to_string(expr) — 将 number 转换为字符串
         // 调用运行时 __runtime_to_string(value) -> str_ptr
         Expr::ToString { expr, span } => {

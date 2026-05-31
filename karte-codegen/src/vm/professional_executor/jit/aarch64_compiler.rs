@@ -335,6 +335,9 @@ impl AArch64Compiler {
             Instruction::StringCharAt { dst, str_ptr, index, .. } => {
                 self.compile_string_char_at(dst, str_ptr, index, code_builder, instruction_index, function)
             }
+            Instruction::StringSubstring { dst, str_ptr, start, length, .. } => {
+                self.compile_string_substring(dst, str_ptr, start, length, code_builder, instruction_index, function)
+            }
             Instruction::ToString { dst, value, .. } => {
                 self.compile_to_string(dst, value, code_builder, instruction_index, function)
             }
@@ -1054,6 +1057,20 @@ impl AArch64Compiler {
         function: &LirFunction,
     ) -> crate::Result<()> {
         let call = RuntimeCall::string_char_at(*str_ptr, *index);
+        self.emit_runtime_call(code_builder, call, Some(dst), instruction_index, function)
+    }
+
+    fn compile_string_substring(
+        &mut self,
+        dst: &Register,
+        str_ptr: &Register,
+        start: &Register,
+        length: &Register,
+        code_builder: &mut CodeBuilder,
+        instruction_index: usize,
+        function: &LirFunction,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::string_substring(*str_ptr, *start, *length);
         self.emit_runtime_call(code_builder, call, Some(dst), instruction_index, function)
     }
 

@@ -495,6 +495,12 @@ impl DefUseAnalysis {
                 uses.push(*str_ptr);
                 uses.push(*index);
             }
+            Instruction::StringSubstring { dst, str_ptr, start, length, .. } => {
+                defs.push(*dst);
+                uses.push(*str_ptr);
+                uses.push(*start);
+                uses.push(*length);
+            }
             Instruction::ToString { dst, value, .. } => {
                 defs.push(*dst);
                 uses.push(*value);

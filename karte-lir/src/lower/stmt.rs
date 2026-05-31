@@ -742,6 +742,65 @@ pub(super) fn lower_statement(
                         }
                         return Ok(());
                     }
+                    "__runtime_string_substring" => {
+                        let str_op = ctx.lower_to_rvalue(&args[0]);
+                        let start_op = ctx.lower_to_rvalue(&args[1]);
+                        let len_op = ctx.lower_to_rvalue(&args[2]);
+
+                        let str_reg = match str_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: str_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+                        let start_reg = match start_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: start_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+                        let len_reg = match len_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: len_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+
+                        let result_reg = ctx.current_function_mut().new_register();
+                        ctx.add_instruction(Instruction::StringSubstring {
+                            dst: result_reg,
+                            str_ptr: str_reg,
+                            start: start_reg,
+                            length: len_reg,
+                            span: *span,
+                        });
+
+                        if let Some(target_value) = target {
+                            ctx.store_value_to_stack(
+                                target_value,
+                                Operand::Register { id: result_reg },
+                            );
+                        }
+                        return Ok(());
+                    }
                     "__runtime_to_string" => {
                         let val_op = ctx.lower_to_rvalue(&args[0]);
 

@@ -1818,6 +1818,37 @@ impl TypeChecker {
                 }
                 if ok { Type::String } else { Type::Unknown }
             }
+            Expr::Substring { string, start, length, span } => {
+                let string_type = self.infer_expr(string, env);
+                let start_type = self.infer_expr(start, env);
+                let length_type = self.infer_expr(length, env);
+                let mut ok = true;
+                if string_type != Type::String && string_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::String,
+                        found: string_type,
+                        span: string.span(),
+                    });
+                    ok = false;
+                }
+                if start_type != Type::Number && start_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: start_type,
+                        span: start.span(),
+                    });
+                    ok = false;
+                }
+                if length_type != Type::Number && length_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: length_type,
+                        span: length.span(),
+                    });
+                    ok = false;
+                }
+                if ok { Type::String } else { Type::Unknown }
+            }
             Expr::ToString { expr, span } => {
                 let expr_type = self.infer_expr(expr, env);
                 let mut ok = true;

@@ -204,6 +204,12 @@ fn collect_vars_recursive(expr: &Expr, vars: &mut Vec<String>) {
             collect_vars_recursive(index, vars);
         }
 
+        Expr::Substring { string, start, length, .. } => {
+            collect_vars_recursive(string, vars);
+            collect_vars_recursive(start, vars);
+            collect_vars_recursive(length, vars);
+        }
+
         Expr::ToString { expr, .. } => {
             collect_vars_recursive(expr, vars);
         }

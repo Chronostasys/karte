@@ -231,6 +231,72 @@ pub extern "C" fn karte_jit_runtime_string_char_at(str_ptr: u64, index: u64) -> 
     }
 }
 
+/// 子字符串截取：从字符串中截取从 start 开始、长度为 length 的子串
+/// 字符串格式：[length: i64][bytes...]
+/// GC 安全：使用 Vec<u8> 栈缓冲区在 gc_alloc 前复制源数据
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_string_substring(str_ptr: u64, start: u64, length: u64) -> u64 {
+    unsafe {
+        if str_ptr == 0 {
+            return 0;
+        }
+        let src_len = *(str_ptr as *const i64) as usize;
+        let start = start as usize;
+        let length = length as usize;
+
+        // 边界检查
+        let actual_start = if start >= src_len {
+            // start 超出源字符串长度，返回空字符串
+            let new_ptr = gc_alloc(16, ObjectType::Conservative);
+            if new_ptr.is_null() {
+                return 0;
+            }
+            *(new_ptr as *mut i64) = 0;
+            return new_ptr as u64;
+        } else {
+            start
+        };
+
+        let available = src_len - actual_start;
+        let actual_length = if length > available {
+            available
+        } else {
+            length
+        };
+
+        // 先从源字符串复制数据到栈缓冲区（GC 安全）
+        let src_data = (str_ptr as *const u8).add(8 + actual_start);
+        let mut buf: Vec<u8> = Vec::with_capacity(actual_length);
+        std::ptr::copy_nonoverlapping(src_data, buf.as_mut_ptr(), actual_length);
+        buf.set_len(actual_length);
+
+        // 分配新字符串：8 字节 header + 数据对齐到 8 字节
+        let total_size = 8 + ((actual_length + 7) & !7);
+        let new_ptr = gc_alloc(total_size, ObjectType::Conservative);
+        if new_ptr.is_null() {
+            return 0;
+        }
+
+        // 写入长度
+        *(new_ptr as *mut i64) = actual_length as i64;
+
+        // 拷贝数据
+        let dest = (new_ptr as *mut u8).add(8);
+        std::ptr::copy_nonoverlapping(buf.as_ptr(), dest, actual_length);
+
+        // 清零剩余字节（对齐到 8 字节）
+        let remaining = actual_length % 8;
+        if remaining != 0 {
+            let padding_start = dest.add(actual_length);
+            for i in 0..(8 - remaining) {
+                *padding_start.add(i) = 0;
+            }
+        }
+
+        new_ptr as u64
+    }
+}
+
 /// 数字转字符串：将 i64 值转换为字符串
 /// 字符串格式：[length: i64][bytes...]
 /// GC 安全：先 format 再 gc_alloc，format 不会触发 GC

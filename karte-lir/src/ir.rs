@@ -543,6 +543,22 @@ pub enum Instruction {
         span: Span,
     },
 
+    /// 子字符串截取：dst = substring(str_ptr, start, length)
+    /// 调用运行时 karte_jit_runtime_string_substring(str_ptr, start, length) -> new_ptr
+    #[ir_codec(token = "string_substring")]
+    StringSubstring {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        str_ptr: Register,
+        #[ir_codec(args)]
+        start: Register,
+        #[ir_codec(args)]
+        length: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
     /// 数字转字符串：dst = to_string(value) — 将 number 转换为字符串
     /// 调用运行时 karte_jit_runtime_to_string(value) -> str_ptr
     #[ir_codec(token = "to_string")]
@@ -774,6 +790,7 @@ impl Instruction {
             | Instruction::StringConcat { dst, .. }
             | Instruction::StringEqual { dst, .. }
             | Instruction::StringCharAt { dst, .. }
+            | Instruction::StringSubstring { dst, .. }
             | Instruction::ToString { dst, .. } => Some(*dst),
             Instruction::LoadPair { dst1, .. } => Some(*dst1),
             Instruction::Call { result, .. } | Instruction::CallIndirect { result, .. } => *result,
@@ -813,6 +830,7 @@ impl Instruction {
             | Instruction::StringConcat { dst, .. }
             | Instruction::StringEqual { dst, .. }
             | Instruction::StringCharAt { dst, .. }
+            | Instruction::StringSubstring { dst, .. }
             | Instruction::ToString { dst, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
@@ -978,6 +996,11 @@ impl Instruction {
             Instruction::StringCharAt { str_ptr, index, .. } => {
                 used.push(*str_ptr);
                 used.push(*index);
+            }
+            Instruction::StringSubstring { str_ptr, start, length, .. } => {
+                used.push(*str_ptr);
+                used.push(*start);
+                used.push(*length);
             }
             Instruction::ToString { value, .. } => {
                 used.push(*value);
@@ -1302,6 +1325,20 @@ impl Instruction {
                     *index = new_reg;
                 }
             }
+            Instruction::StringSubstring { dst, str_ptr, start, length, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                if *str_ptr == old_reg {
+                    *str_ptr = new_reg;
+                }
+                if *start == old_reg {
+                    *start = new_reg;
+                }
+                if *length == old_reg {
+                    *length = new_reg;
+                }
+            }
             Instruction::ToString { dst, value, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
@@ -1561,6 +1598,12 @@ impl Instruction {
                 defined.push(*dst);
                 used.push(*str_ptr);
                 used.push(*index);
+            }
+            Instruction::StringSubstring { dst, str_ptr, start, length, .. } => {
+                defined.push(*dst);
+                used.push(*str_ptr);
+                used.push(*start);
+                used.push(*length);
             }
             Instruction::ToString { dst, value, .. } => {
                 defined.push(*dst);

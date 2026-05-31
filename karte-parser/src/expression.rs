@@ -781,6 +781,30 @@ impl<'a> Parser<'a> {
                         });
                     }
                 }
+                if name == "substring" {
+                    let next_is_lparen = self
+                        .tokens
+                        .get(self.position + 1)
+                        .map_or(false, |t| matches!(t.token, Token::LeftParen));
+                    if next_is_lparen {
+                        let start_span = token.span;
+                        self.advance(); // consume 'substring'
+                        self.advance(); // consume '('
+                        let string = self.parse_expression()?;
+                        self.expect_token(Token::Comma)?;
+                        let start = self.parse_expression()?;
+                        self.expect_token(Token::Comma)?;
+                        let length = self.parse_expression()?;
+                        self.expect_token(Token::RightParen)?;
+                        let span = Span::new(start_span.start, self.current_span().end);
+                        return Ok(Expr::Substring {
+                            string: Box::new(string),
+                            start: Box::new(start),
+                            length: Box::new(length),
+                            span,
+                        });
+                    }
+                }
                 if name == "to_string" {
                     let next_is_lparen = self
                         .tokens

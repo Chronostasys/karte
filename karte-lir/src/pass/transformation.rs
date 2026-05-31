@@ -176,6 +176,7 @@ impl DeadCodeElimination {
             Instruction::StringConcat { .. } => true,
             Instruction::StringEqual { .. } => true,
             Instruction::StringCharAt { .. } => true,
+            Instruction::StringSubstring { .. } => true,
             Instruction::ToString { .. } => true,
             Instruction::PrintString { .. } => true,
             Instruction::PrintNumber { .. } => true,
@@ -326,6 +327,11 @@ impl DeadCodeElimination {
                 used.push(*str_ptr);
                 used.push(*index);
             }
+            Instruction::StringSubstring { str_ptr, start, length, .. } => {
+                used.push(*str_ptr);
+                used.push(*start);
+                used.push(*length);
+            }
             Instruction::ToString { value, .. } => {
                 used.push(*value);
             }
@@ -371,6 +377,7 @@ impl DeadCodeElimination {
             | Instruction::StructFieldAddr { dst, .. } => Some(*dst),
             Instruction::StringEqual { dst, .. } => Some(*dst),
             Instruction::StringCharAt { dst, .. } => Some(*dst),
+            Instruction::StringSubstring { dst, .. } => Some(*dst),
             Instruction::ToString { dst, .. } => Some(*dst),
             Instruction::LoadPair { dst1, .. } => Some(*dst1),
             Instruction::Call {

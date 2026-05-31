@@ -12,6 +12,7 @@ pub enum RuntimeIntrinsic {
     StringConcat,
     StringEqual,
     StringCharAt,
+    StringSubstring,
     ToString,
     PrintString,
     PrintNumber,
@@ -34,6 +35,9 @@ impl RuntimeIntrinsic {
             }
             RuntimeIntrinsic::StringCharAt => {
                 runtime::karte_jit_runtime_string_char_at as *const ()
+            }
+            RuntimeIntrinsic::StringSubstring => {
+                runtime::karte_jit_runtime_string_substring as *const ()
             }
             RuntimeIntrinsic::ToString => {
                 runtime::karte_jit_runtime_to_string as *const ()
@@ -60,6 +64,7 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::StringConcat => "karte_jit_runtime_string_concat",
             RuntimeIntrinsic::StringEqual => "karte_jit_runtime_string_equal",
             RuntimeIntrinsic::StringCharAt => "karte_jit_runtime_string_char_at",
+            RuntimeIntrinsic::StringSubstring => "karte_jit_runtime_string_substring",
             RuntimeIntrinsic::ToString => "karte_jit_runtime_to_string",
             RuntimeIntrinsic::PrintString => "karte_jit_runtime_print_string",
             RuntimeIntrinsic::PrintNumber => "karte_jit_runtime_print_number",
@@ -70,7 +75,7 @@ impl RuntimeIntrinsic {
     pub fn has_result(self) -> bool {
         matches!(
             self,
-            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual | RuntimeIntrinsic::StringCharAt | RuntimeIntrinsic::ToString
+            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual | RuntimeIntrinsic::StringCharAt | RuntimeIntrinsic::StringSubstring | RuntimeIntrinsic::ToString
         )
     }
 }
@@ -146,6 +151,13 @@ impl RuntimeCall {
         Self {
             intrinsic: RuntimeIntrinsic::StringCharAt,
             args: vec![RuntimeArg::Register(str_reg), RuntimeArg::Register(index_reg)],
+        }
+    }
+
+    pub fn string_substring(str_reg: Register, start_reg: Register, length_reg: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::StringSubstring,
+            args: vec![RuntimeArg::Register(str_reg), RuntimeArg::Register(start_reg), RuntimeArg::Register(length_reg)],
         }
     }
 

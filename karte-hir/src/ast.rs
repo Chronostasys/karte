@@ -249,6 +249,13 @@ pub enum Expr {
         index: Box<Expr>,
         span: Span,
     },
+    /// 子字符串截取 substring(s, start, len)
+    Substring {
+        string: Box<Expr>,
+        start: Box<Expr>,
+        length: Box<Expr>,
+        span: Span,
+    },
     /// 数字转字符串 to_string(expr) — 将 number 转换为字符串
     ToString {
         expr: Box<Expr>,
@@ -812,6 +819,9 @@ impl fmt::Display for Expr {
             Expr::CharAt { string, index, .. } => {
                 write!(f, "char_at({}, {})", string, index)
             }
+            Expr::Substring { string, start, length, .. } => {
+                write!(f, "substring({}, {}, {})", string, start, length)
+            }
             Expr::ToString { expr, .. } => {
                 write!(f, "to_string({})", expr)
             }
@@ -921,6 +931,7 @@ impl Expr {
             Expr::Clamp { span, .. } => *span,
             Expr::StrIndex { span, .. } => *span,
             Expr::CharAt { span, .. } => *span,
+            Expr::Substring { span, .. } => *span,
             Expr::ToString { span, .. } => *span,
             Expr::TupleLiteral { span, .. } => *span,
             Expr::TupleAccess { span, .. } => *span,
