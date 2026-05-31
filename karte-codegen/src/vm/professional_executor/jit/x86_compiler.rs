@@ -1610,7 +1610,23 @@ impl X86Compiler {
         // System V ABI 参数寄存器: RDI, RSI, RDX, RCX, R8, R9
         let arg_regs = [7u8, 6, 2, 1, 8, 9]; // RDI=7, RSI=6, RDX=2, RCX=1, R8=8, R9=9
 
-        for (idx, arg) in call.args.iter().enumerate() {
+        // 参数传递：使用系统栈中转，避免寄存器交换冲突
+        // 例如 left→RSI, right→RDI 时，顺序 MOV 会导致两个参数变成同一个值
+        // Phase 1: 将所有源寄存器值压入系统栈
+        let mut reg_arg_count = 0usize;
+        for arg in call.args.iter() {
+            if let RuntimeArg::Register(reg) = arg {
+                let src_reg = self.get_physical_register(reg)?;
+                self.emit_push(code_builder, src_reg);
+                reg_arg_count += 1;
+            }
+        }
+
+        // Phase 2: 从系统栈弹出到目标寄存器（逆序弹出，因为栈是 LIFO）
+        // 压入顺序: [arg0_src, arg1_src, ...]，栈顶是最后一个
+        // 弹出逆序: 先弹 argN_src → targetN, 再弹 argN-1_src → targetN-1, ...
+        let mut pop_remaining = reg_arg_count;
+        for (idx, arg) in call.args.iter().enumerate().rev() {
             if idx >= arg_regs.len() {
                 return Err(format!(
                     "runtime call {} 超过支持的参数数量(最多 {})",
@@ -1620,15 +1636,21 @@ impl X86Compiler {
             }
             let target_reg = arg_regs[idx];
             match arg {
-                RuntimeArg::Immediate(value) => {
-                    self.emit_mov_reg_imm64(code_builder, target_reg, *value);
+                RuntimeArg::Register(_) => {
+                    self.emit_pop(code_builder, target_reg);
+                    pop_remaining -= 1;
                 }
-                RuntimeArg::Register(reg) => {
-                    let src_reg = self.get_physical_register(reg)?;
-                    if src_reg != target_reg {
-                        self.emit_mov_reg_reg(code_builder, target_reg, src_reg);
-                    }
+                RuntimeArg::Immediate(_) => {
+                    // 立即数参数不参与 push/pop，稍后设置
                 }
+            }
+        }
+
+        // Phase 3: 设置立即数参数（寄存器参数已就位，不会被立即数覆盖）
+        for (idx, arg) in call.args.iter().enumerate() {
+            if let RuntimeArg::Immediate(value) = arg {
+                let target_reg = arg_regs[idx];
+                self.emit_mov_reg_imm64(code_builder, target_reg, *value);
             }
         }
 
@@ -1895,6 +1917,23 @@ impl X86Compiler {
     fn emit_modrm(&self, code_builder: &mut CodeBuilder, mode: u8, reg: u8, rm: u8) {
         let modrm = (mode << 6) | ((reg & 0x07) << 3) | (rm & 0x07);
         code_builder.emit_byte(modrm);
+    }
+
+
+    /// push reg (64位)
+    fn emit_push(&self, code_builder: &mut CodeBuilder, reg: u8) {
+        if reg >= 8 {
+            code_builder.emit_byte(0x41); // REX.B for R8-R15
+        }
+        code_builder.emit_byte(0x50 + (reg & 0x07));
+    }
+
+    /// pop reg (64位)
+    fn emit_pop(&self, code_builder: &mut CodeBuilder, reg: u8) {
+        if reg >= 8 {
+            code_builder.emit_byte(0x41); // REX.B for R8-R15
+        }
+        code_builder.emit_byte(0x58 + (reg & 0x07));
     }
 
     /// mov reg, reg (64位)

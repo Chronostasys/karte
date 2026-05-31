@@ -2428,7 +2428,120 @@ fn main() -> number {
         compile_and_run_aot(code, 4, "shift_right");
     }
 
-    // ==================== 回归测试：字符串 ====================
+
+    // ==================== 回归测试：字符串拼接寄存器交换冲突 ====================
+
+    /// 回归测试：字符串拼接寄存器交换冲突（Round 11）
+    /// 根因：emit_runtime_call 顺序 MOV 参数时，当 left→RSI, right→RDI，
+    /// MOV RDI, RSI 后 RSI 被读入 RDI，再 MOV RSI, RDI 导致两个参数变成同一个值。
+    /// 修复：使用系统栈 PUSH/POP 中转，避免寄存器交换冲突。
+    #[test]
+    fn test_string_concat_length_correctness() {
+        let code = r#"
+fn main() -> number {
+    let a = "hello";
+    let b = " world";
+    let c = a + b;
+    len(c)
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing failed: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        assert_eq!(
+            exit_code, 11,
+            "Expected exit code 11 (concat result), got {}. Bug: string concat register swap conflict in emit_runtime_call",
+            exit_code
+        );
+    }
+
+    /// 回归测试：字符串拼接后各部分长度验证
+    #[test]
+    fn test_string_concat_full_scenario() {
+        let code = r#"
+fn main() -> number {
+    let a = "hello";
+    let b = " world";
+    let c = a + b;
+    let d = "hello world";
+    len(c) + len(a) + len(d)
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing failed: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        assert_eq!(
+            exit_code, 27,
+            "Expected exit code 27 (11 + 5 + 11), got {}.              Bug: string concat register swap conflict",
+            exit_code
+        );
+    }
+
+// ==================== 回归测试：字符串 ====================
 
     #[test]
     #[ignore] // TODO: AOT 字符串支持需要完善
