@@ -59,8 +59,28 @@ pub(super) fn lower_statement(
                 return Ok(());
             }
 
+            // 🔧 修复 struct 返回值悬挂指针：
+            // 检测当前是否在给"将被 return 返回的 temp"赋值 struct 值
+            // 如果是，则强制 struct 使用堆分配，避免函数返回后栈帧释放导致悬挂指针
+            if let Value::Struct { name, .. } = source {
+                if name != "Closure" {
+                    if let Value::Temp { id, .. } = target {
+                        if ctx.returned_temp_ids.contains(&id.0) {
+                            log::debug!(
+                                "🔧 检测到 struct 返回逃逸: temp {:?} 将被返回，强制堆分配",
+                                id
+                            );
+                            ctx.force_struct_heap = true;
+                        }
+                    }
+                }
+            }
+
             // 1. 获取源值的R-Value（值本身）
             let src_rvalue = ctx.lower_to_rvalue(source);
+
+            // 清除堆分配标志（无论是否被使用）
+            ctx.force_struct_heap = false;
             log::debug!(
                 "📝 Assign: target={:?}, source={:?}, src_rvalue={:?}",
                 target,

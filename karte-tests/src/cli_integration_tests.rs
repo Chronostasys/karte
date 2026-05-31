@@ -930,6 +930,143 @@ fn main() -> number {
         );
     }
 
+
+    /// 回归测试：多次函数调用返回 struct 时结果被覆盖
+    /// Bug: 当函数返回 struct 时，handle_struct_value 使用栈分配，
+    /// 函数返回后栈帧释放导致返回的 struct 指针悬挂。
+    /// 连续两次调用返回 struct 的函数时，第二次调用的栈帧会覆盖第一次的结果。
+    /// 修复: 当 struct 值被赋给将通过 return 返回的 temp 时，使用堆分配。
+    #[test]
+    fn test_struct_return_dangling_pointer() {
+        let code = r#"
+struct Vec2 { x: number, y: number }
+
+fn vec_add(a: Vec2, b: Vec2) -> Vec2 {
+    Vec2 { x: a.x + b.x, y: a.y + b.y }
+}
+
+fn vec_sub(a: Vec2, b: Vec2) -> Vec2 {
+    Vec2 { x: a.x - b.x, y: a.y - b.y }
+}
+
+fn main() -> number {
+    let a = Vec2 { x: 3, y: 4 };
+    let b = Vec2 { x: 1, y: 2 };
+    let c = vec_add(a, b);
+    let d = vec_sub(a, b);
+    c.x + c.y + d.x + d.y
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing failed: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        // 应用逃逸分析优化
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        // c = (3+1, 4+2) = (4, 6), d = (3-1, 4-2) = (2, 2)
+        // 4 + 6 + 2 + 2 = 14
+        assert_eq!(
+            exit_code, 14,
+            "Expected exit code 14, got {}.             If this returns 8, it means c was overwritten by d (c and d point to same memory).",
+            exit_code
+        );
+    }
+
+    /// 回归测试：三次调用返回 struct 的函数，验证堆分配确保每次结果独立
+    #[test]
+    fn test_struct_return_triple_call() {
+        let code = r#"
+struct Vec2 { x: number, y: number }
+
+fn vec_add(a: Vec2, b: Vec2) -> Vec2 {
+    Vec2 { x: a.x + b.x, y: a.y + b.y }
+}
+
+fn vec_scale(v: Vec2, s: number) -> Vec2 {
+    Vec2 { x: v.x * s, y: v.y * s }
+}
+
+fn main() -> number {
+    let a = Vec2 { x: 1, y: 1 };
+    let b = vec_add(a, a);
+    let c = vec_scale(b, 3);
+    let d = vec_add(b, c);
+    d.x + d.y
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing failed: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        // b=(2,2), c=(6,6), d=(2+6,2+6)=(8,8), 8+8=16
+        assert_eq!(
+            exit_code, 16,
+            "Expected exit code 16, got {}",
+            exit_code
+        );
+    }
+
     /// 回归测试：函数参数通过 RDX 传递时被 Div/Mod 隐式破坏
     /// x86_64 的 idiv 指令通过 CQO+IDIV 隐式修改 RDX。
     /// 当第三个参数 c 通过 RDX 传入，后续有 Mod 指令时，

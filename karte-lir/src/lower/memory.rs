@@ -693,12 +693,17 @@ impl LirLoweringContext {
 
         // 2. 分配内存
         // 闭包结构体（Closure）会在创建函数返回后被调用方使用，
-        // 栈分配的内存在函数返回后会被后续调用覆盖，因此必须使用堆分配
-        let alloc_type = if name == "Closure" {
+        // 栈分配的内存在函数返回后会被后续调用覆盖，因此必须使用堆分配。
+        // 同理，任何通过 return 逃逸的 struct 也必须使用堆分配：
+        // 如果 struct 值被赋给一个将被 return 返回的 temp，则 force_struct_heap 标志
+        // 会在 stmt lowering 阶段被设置，确保此处使用堆分配。
+        let alloc_type = if name == "Closure" || self.force_struct_heap {
             AllocationType::Heap
         } else {
             AllocationType::Stack
         };
+        // 消费 force_struct_heap 标志
+        self.force_struct_heap = false;
         let struct_ptr = self.current_function_mut().new_register();
         self.add_instruction(Instruction::Alloc {
             dst: struct_ptr,

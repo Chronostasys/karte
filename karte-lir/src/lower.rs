@@ -113,6 +113,22 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
         // 🔧 修复：使用带参数信息的函数创建方法
         context.start_function_with_params(name.clone(), &mir_function.params);
 
+        // 🔧 修复 struct 返回值悬挂指针 bug：
+        // 预扫描当前函数的所有 Return 终结符，收集被返回的 temp ID
+        // 这些 temp 持有的 struct 值需要使用堆分配（而非栈分配），
+        // 因为函数返回后栈帧会被释放，返回的 struct 指针会变为悬挂指针
+        {
+            let mut returned_temps = HashSet::new();
+            for block in mir_function.basic_blocks.values() {
+                if let Some(Terminator::Return { value: Some(val), .. }) = &block.terminator {
+                    if let Value::Temp { id, .. } = val {
+                        returned_temps.insert(id.0);
+                    }
+                }
+            }
+            context.returned_temp_ids = returned_temps;
+        }
+
         // 使用预分配的入口标签
         let entry_label = context
             .function_labels

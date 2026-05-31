@@ -4,7 +4,7 @@
 
 use crate::{tagged_union::TaggedUnionManager, Instruction, LabelId, LirFunction, StructLayout};
 use karte_mir::BasicBlockId;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::Register;
 
@@ -47,4 +47,10 @@ pub struct LirLoweringContext {
     /// key = value_to_key(value), value = 常量值
     /// 用于在 BinaryOp 等指令中直接使用立即数，避免通过栈加载导致的寄存器分配冲突
     pub(super) known_constants: HashMap<String, i64>,
+    /// 当前函数中，通过 return 语句返回的临时变量 ID 集合
+    /// 用于在 LIR lowering 时判断 struct 是否需要堆分配
+    pub(super) returned_temp_ids: HashSet<usize>,
+    /// 强制下一个 struct 分配使用堆（由逃逸分析触发）
+    /// 当 struct 值被赋给一个将通过 return 返回的 temp 时设置此标志
+    pub(super) force_struct_heap: bool,
 }
