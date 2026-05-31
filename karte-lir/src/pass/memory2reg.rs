@@ -1263,6 +1263,10 @@ impl Memory2RegPass {
         );
 
         // 向前扫描，找到最近的对该寄存器的定义
+        // 🔧 修复：如果同一寄存器在多个分支中有不同的定义（如 div 零除保护），
+        // 则不能安全传播单个分支的值，必须返回 None
+        let mut first_def_pos: Option<usize> = None;
+        let mut first_def_value: Option<Operand> = None;
         for i in (0..before_pos).rev() {
             if i >= function.instructions.len() {
                 continue;
@@ -1271,10 +1275,21 @@ impl Memory2RegPass {
             let instruction = &function.instructions[i];
             match instruction {
                 Instruction::Move { dst, src, .. } if *dst == register => {
+                    if first_def_pos.is_some() {
+                        // 找到第二个定义，说明值依赖控制流分支，不可安全传播
+                        debug!("🔍 寄存器 {:?} 有多个定义点（位置 {:?} 和 {}），跳过传播（控制流依赖）", register, first_def_pos, i);
+                        return None;
+                    }
                     debug!("🔍 找到mov定义: {:?} = {:?}", dst, src);
-                    return Some(src.clone());
+                    first_def_pos = Some(i);
+                    first_def_value = Some(src.clone());
                 }
                 Instruction::Load64 { dst, addr, .. } if *dst == register => {
+                    if first_def_pos.is_some() {
+                        // 找到第二个定义（load），说明值依赖控制流分支
+                        debug!("🔍 寄存器 {:?} 有多个定义点（位置 {:?} 和 {}），跳过传播（控制流依赖）", register, first_def_pos, i);
+                        return None;
+                    }
                     debug!("🔍 找到load定义: {:?} = [{}]", dst, addr);
                     // 🔧 修复：仅当栈槽有多个store时阻止穿透追踪
                     // 多个store意味着值依赖控制流（如match不同分支），线性追踪会选错分支的值
@@ -1334,8 +1349,15 @@ impl Memory2RegPass {
                 | Instruction::ShiftRight {
                     dst, src1, src2, ..
                 } if *dst == register => {
+                    if first_def_pos.is_some() {
+                        // 找到第二个定义（算术），说明值依赖控制流分支
+                        debug!("🔍 寄存器 {:?} 有多个定义点（位置 {:?} 和 {}），跳过传播（控制流依赖）", register, first_def_pos, i);
+                        return None;
+                    }
                     debug!("🔍 找到算术定义: {:?} = {:?} op {:?}", dst, src1, src2);
                     // 算术运算的结果无法简单追踪
+                    first_def_pos = Some(i);
+                    // 算术结果不是常量，记录位置但不传播值
                     return None;
                 }
                 Instruction::BitNot { dst, src, .. } if *dst == register => {
@@ -1352,8 +1374,14 @@ impl Memory2RegPass {
             }
         }
 
-        debug!("🔍 未找到寄存器 {:?} 的定义", register);
-        None
+        // 返回第一个定义的值（如果有）
+        if let Some(value) = first_def_value {
+            debug!("🔍 寄存器 {:?} 唯一定义值: {:?}", register, value);
+            Some(value)
+        } else {
+            debug!("🔍 未找到寄存器 {:?} 的定义", register);
+            None
+        }
     }
 
     /// 追踪栈槽的存储值
