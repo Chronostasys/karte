@@ -177,6 +177,7 @@ impl DeadCodeElimination {
             Instruction::StringEqual { .. } => true,
             Instruction::PrintString { .. } => true,
             Instruction::PrintNumber { .. } => true,
+            Instruction::PrintBool { .. } => true,
         }
     }
 
@@ -307,6 +308,9 @@ impl DeadCodeElimination {
                 used.push(Register::Virtual(4));
             }
             Instruction::PrintNumber { value, .. } => {
+                used.push(*value);
+            }
+            Instruction::PrintBool { value, .. } => {
                 used.push(*value);
             }
             Instruction::PrintString { ptr, .. } => {

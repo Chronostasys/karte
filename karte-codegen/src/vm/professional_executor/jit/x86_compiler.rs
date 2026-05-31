@@ -232,6 +232,9 @@ impl X86Compiler {
             Instruction::PrintNumber { value, .. } => {
                 self.compile_print_number(value, code_builder)
             }
+            Instruction::PrintBool { value, .. } => {
+                self.compile_print_bool(value, code_builder)
+            }
             Instruction::Nop { .. } => {
                 // x86 NOP
                 code_builder.emit_byte(0x90);
@@ -1577,6 +1580,15 @@ impl X86Compiler {
         code_builder: &mut CodeBuilder,
     ) -> crate::Result<()> {
         let call = RuntimeCall::print_number(*value);
+        self.emit_runtime_call(code_builder, call, None)
+    }
+
+    fn compile_print_bool(
+        &self,
+        value: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::print_bool(*value);
         self.emit_runtime_call(code_builder, call, None)
     }
 

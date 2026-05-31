@@ -534,6 +534,7 @@ fn instr_name(instr: &Instruction) -> &'static str {
         Instruction::StringEqual { .. } => "StringEqual",
         Instruction::PrintString { .. } => "PrintString",
         Instruction::PrintNumber { .. } => "PrintNumber",
+        Instruction::PrintBool { .. } => "PrintBool",
         Instruction::Load64 { .. } => "Load64",
         Instruction::LoadGlobal { .. } => "LoadGlobal",
         Instruction::GcRegOp { .. } => "GcRegOp",

@@ -179,6 +179,11 @@ impl AotCompiler {
             global_labels.insert("karte_jit_runtime_print_number".to_string(), addr);
             global_labels.insert("__runtime_karte_jit_runtime_print_number".to_string(), addr);
         }
+        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::PRINT_BOOL) {
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_print_bool".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_print_bool".to_string(), addr);
+        }
 
         // Karte 函数地址
         // 同时收集所有函数内部 labels → 绝对地址的映射
@@ -240,6 +245,7 @@ impl AotCompiler {
             let string_concat_ptr = RuntimeIntrinsic::StringConcat.symbol_ptr() as u64;
             let print_string_ptr = RuntimeIntrinsic::PrintString.symbol_ptr() as u64;
             let print_number_ptr = RuntimeIntrinsic::PrintNumber.symbol_ptr() as u64;
+            let print_bool_ptr = RuntimeIntrinsic::PrintBool.symbol_ptr() as u64;
 
             if let Some(&new) = global_labels.get("karte_jit_runtime_string_equal") {
                 runtime_ptr_map.insert(string_equal_ptr, new);
@@ -252,6 +258,9 @@ impl AotCompiler {
             }
             if let Some(&new) = global_labels.get("karte_jit_runtime_print_number") {
                 runtime_ptr_map.insert(print_number_ptr, new);
+            }
+            if let Some(&new) = global_labels.get("karte_jit_runtime_print_bool") {
+                runtime_ptr_map.insert(print_bool_ptr, new);
             }
         }
 
@@ -514,6 +523,11 @@ impl AotCompiler {
             let addr = code_base + off as u64;
             global_labels.insert("karte_jit_runtime_print_number".to_string(), addr);
             global_labels.insert("__runtime_karte_jit_runtime_print_number".to_string(), addr);
+        }
+        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::PRINT_BOOL) {
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_print_bool".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_print_bool".to_string(), addr);
         }
 
         for (func_name, compiled) in &compiled_functions {

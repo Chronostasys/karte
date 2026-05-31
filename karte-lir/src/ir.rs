@@ -549,6 +549,16 @@ pub enum Instruction {
         span: Span,
     },
 
+    /// 打印布尔值：print_bool(value)
+    /// 调用运行时 karte_jit_runtime_print_bool(value: i64) -> 0
+    #[ir_codec(token = "print_bool")]
+    PrintBool {
+        #[ir_codec(args)]
+        value: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
     /// 加载内存值（8字节）
     #[ir_codec(token = "load64")]
     Load64 {
@@ -941,6 +951,9 @@ impl Instruction {
             Instruction::PrintNumber { value, .. } => {
                 used.push(*value);
             }
+            Instruction::PrintBool { value, .. } => {
+                used.push(*value);
+            }
             Instruction::Phi { incoming, .. } => {
                 for (_, value) in incoming {
                     self.add_operand_registers(value, &mut used);
@@ -1251,6 +1264,11 @@ impl Instruction {
                     *value = new_reg;
                 }
             }
+            Instruction::PrintBool { value, .. } => {
+                if *value == old_reg {
+                    *value = new_reg;
+                }
+            }
             Instruction::Phi { dst, incoming, .. } => {
                 // 🔧 关键修复：替换目标寄存器
                 if *dst == old_reg {
@@ -1487,6 +1505,9 @@ impl Instruction {
                 used.push(*ptr);
             }
             Instruction::PrintNumber { value, .. } => {
+                used.push(*value);
+            }
+            Instruction::PrintBool { value, .. } => {
                 used.push(*value);
             }
             Instruction::StructFieldStore {

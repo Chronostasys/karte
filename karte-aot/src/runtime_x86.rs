@@ -21,6 +21,7 @@ pub mod runtime_names {
     pub const STRING_CONCAT: &str = "__karte_string_concat";
     pub const PRINT_STRING: &str = "__karte_print_string";
     pub const PRINT_NUMBER: &str = "__karte_print_number";
+    pub const PRINT_BOOL: &str = "__karte_print_bool";
 }
 
 /// 运行时函数描述
@@ -77,6 +78,7 @@ impl X86Runtime {
         self.emit_string_concat();
         self.emit_print_string();
         self.emit_print_number();
+        self.emit_print_bool();
         self
     }
 
@@ -152,11 +154,30 @@ impl X86Runtime {
     }
 
     /// Emit ModR/M with displacement
+    /// 处理 x86_64 特殊情况:
+    /// - base_field == 4 (RSP/R12) 需要 SIB 字节
+    /// - base_field == 5 (RBP/R13) + disp == 0 必须用 disp8=0 模式
     fn emit_modrm_offset(&mut self, reg: u8, base: u8, disp: i32) {
         let reg_field = (reg & 7) << 3;
         let base_field = base & 7;
-        if disp == 0 && base_field != 5 {
+        // RSP/R12 (base_field == 4) 需要 SIB 字节: scale=0, index=RSP(none), base=RSP/R12
+        let needs_sib = base_field == 4;
+        if disp == 0 && base_field != 5 && !needs_sib {
             self.b(0x00 | reg_field | base_field);
+        } else if needs_sib && disp == 0 {
+            // mod=00, reg, r/m=100(SIB), SIB=0x24 (no index, base=RSP/R12)
+            self.b(0x00 | reg_field | 0x04);
+            self.b(0x24); // SIB: scale=0, index=100(none), base=100(RSP/R12)
+        } else if needs_sib && disp >= -128 && disp <= 127 {
+            // mod=01, reg, r/m=100(SIB), SIB=0x24, disp8
+            self.b(0x40 | reg_field | 0x04);
+            self.b(0x24);
+            self.b(disp as u8);
+        } else if needs_sib {
+            // mod=10, reg, r/m=100(SIB), SIB=0x24, disp32
+            self.b(0x80 | reg_field | 0x04);
+            self.b(0x24);
+            self.u32(disp as u32);
         } else if disp >= -128 && disp <= 127 {
             self.b(0x40 | reg_field | base_field);
             self.b(disp as u8);
@@ -249,10 +270,23 @@ impl X86Runtime {
     }
 
     /// Emit ModR/M for r/m only (reg=0)
+    /// 处理 x86_64 特殊情况: base_field == 4 (RSP/R12) 需要 SIB 字节
     fn emit_modrm_offset_rm(&mut self, _reg: u8, base: u8, disp: i32) {
         let base_field = base & 7;
-        if disp == 0 && base_field != 5 {
+        let needs_sib = base_field == 4;
+        if disp == 0 && base_field != 5 && !needs_sib {
             self.b(0x00 | base_field);
+        } else if needs_sib && disp == 0 {
+            self.b(0x00 | 0x04); // mod=00, r/m=100(SIB)
+            self.b(0x24); // SIB
+        } else if needs_sib && disp >= -128 && disp <= 127 {
+            self.b(0x40 | 0x04);
+            self.b(0x24);
+            self.b(disp as u8);
+        } else if needs_sib {
+            self.b(0x80 | 0x04);
+            self.b(0x24);
+            self.u32(disp as u32);
         } else if disp >= -128 && disp <= 127 {
             self.b(0x40 | base_field);
             self.b(disp as u8);
@@ -624,6 +658,13 @@ impl X86Runtime {
         self.mov_rr(6, 4);  // buf = RSP
         self.mov_rr(2, 8);  // count = R8
         self.syscall();
+
+        // 恢复 RSP: 移除推入的数字字符（R8 = 字符计数，syscall 后 R8 保留）
+        // 使用 R9 作为临时: R9 还没恢复，先保存 R9 → 用 R9 保存 R8 → add rsp, r9 → 恢复
+        // 更简单: 直接 add rsp, r8（因为 R8 在 syscall 后保留）
+        // 但是 R8 在后面 pop 时被覆盖，所以要先处理
+        // 方案: 先用 RSP 加回字符数，再 pop
+        self.add_rr(4, 8);  // RSP += R8 (恢复推入的字符空间)
 
         // 恢复保存的寄存器
         self.pop(9);  // 恢复 R9
@@ -1357,16 +1398,140 @@ impl X86Runtime {
 
     /// __karte_string_concat(left_ptr, right_ptr) → 新字符串指针
     ///
-    /// RDI = left_ptr, RSI = right_ptr
+    /// RDI(7) = left_ptr, RSI(6) = right_ptr
     /// 返回 RAX = 新字符串指针
     ///
-    /// 当前为 stub 实现（返回 0），完整实现需要后续添加。
+    /// 字符串布局: [length: i64][bytes...]
+    /// 算法: 先将 left/right 数据复制到系统栈缓冲区，再调用 gc_alloc 分配，
+    /// 最后从栈缓冲区复制到 gc 结果中。避免 gc_alloc 后原始指针失效。
     fn emit_string_concat(&mut self) {
         self.fn_start(runtime_names::STRING_CONCAT);
-        // stub: 返回 0
-        self.xor_rr(0, 0);
+
+        // 保存 callee-saved 寄存器
+        self.push(5);  // RBP
+        self.push(3);  // RBX
+        self.push(12); // R12
+        self.push(13); // R13
+
+        // 空指针检查: left_ptr == 0 || right_ptr == 0 → 返回 0
+        self.test_rr(7, 7); // test RDI, RDI
+        self.jz_rel32(0);
+        let left_null_patch = self.code.len() - 4;
+
+        self.test_rr(6, 6); // test RSI, RSI
+        self.jz_rel32(0);
+        let right_null_patch = self.code.len() - 4;
+
+        // R13 = 原始 RSP（push 之后，sub 之前）
+        self.mov_rr(13, 4); // R13 = RSP
+
+        // 读长度
+        // RBX = left_len = [left_ptr + 0]
+        self.mov_mem_load(3, 7, 0); // RBX = [RDI+0]
+        // RBP = right_len = [right_ptr + 0]
+        self.mov_mem_load(5, 6, 0); // RBP = [RSI+0]
+        // R12 = right_ptr（保存，rep movsb 会破坏 RSI）
+        self.mov_rr(12, 6); // R12 = RSI
+
+        // ---- 在系统栈上分配临时缓冲区 ----
+        // stack_buf_size = (left_len + right_len + 7) & ~7
+        self.mov_rr(0, 3);  // RAX = RBX (left_len)
+        self.add_rr(0, 5);  // RAX += RBP (right_len)
+        self.add_ri8(0, 7); // RAX += 7
+        self.and_ri32(0, 0xFFFFFFF8); // RAX &= ~7 (对齐到 8)
+        // SUB RSP, RAX
+        self.sub_rr(4, 0); // RSP -= RAX
+
+        // ---- 复制 left data 到 [RSP] ----
+        // rep movsb: RSI=src, RDI=dst, RCX=count
+        self.mov_rr(6, 7);  // RSI = RDI (left_ptr)
+        self.add_ri8(6, 8); // RSI = left_ptr + 8 (数据起始)
+        self.mov_rr(7, 4);  // RDI = RSP (目标)
+        self.mov_rr(1, 3);  // RCX = RBX (left_len)
+        self.bs(&[0xF3, 0xA4]); // REP MOVSB
+
+        // ---- 复制 right data 到 [RSP + left_len] ----
+        self.mov_rr(6, 12); // RSI = R12 (right_ptr)
+        self.add_ri8(6, 8); // RSI = right_ptr + 8
+        self.mov_rr(7, 4);  // RDI = RSP
+        self.add_rr(7, 3);  // RDI += RBX (left_len)
+        self.mov_rr(1, 5);  // RCX = RBP (right_len)
+        self.bs(&[0xF3, 0xA4]); // REP MOVSB
+
+        // ---- 计算 total_size = 8 + ((left_len + right_len + 7) & ~7) ----
+        self.add_rr(3, 5);  // RBX += RBP → RBX = total_copy_len
+        self.mov_rr(0, 3);  // RAX = RBX
+        self.add_ri8(0, 7); // RAX += 7
+        self.and_ri32(0, 0xFFFFFFF8); // RAX &= ~7
+        self.add_ri8(0, 8); // RAX += 8 → total_size
+
+        // ---- 调用 gc_alloc(total_size, 16) ----
+        // RDI = total_size, RSI = 16 (align)
+        self.mov_rr(7, 0);  // RDI = RAX (total_size)
+        self.mov_ri(6, 16); // RSI = 16
+        let call_pos = self.code.len();
+        self.call_rel32(0); // 占位 CALL，稍后修补到 gc_alloc
+        self.functions.push(RuntimeFunction {
+            name: "__string_concat_call_alloc".to_string(),
+            offset: call_pos,
+            size: 5,
+        });
+
+        // ---- 检查 gc_alloc 返回值 ----
+        self.test_rr(0, 0); // RAX == 0?
+        self.jz_rel32(0);   // → OOM
+        let oom_patch = self.code.len() - 4;
+
+        // ---- 写 total_len 到 [RAX + 0] ----
+        // MOV [RAX+0], RBX (total_copy_len)
+        self.mov_mem_store(0, 0, 3);
+
+        // ---- 从栈缓冲区复制到 [RAX + 8] ----
+        self.mov_rr(7, 0);  // RDI = RAX (result ptr)
+        self.add_ri8(7, 8); // RDI = result + 8 (数据区)
+        self.mov_rr(6, 4);  // RSI = RSP (栈缓冲区)
+        self.mov_rr(1, 3);  // RCX = RBX (total_copy_len)
+        self.bs(&[0xF3, 0xA4]); // REP MOVSB
+
+        // ---- done: 恢复 RSP，返回 RAX ----
+        self.mov_rr(4, 13); // RSP = R13 (恢复原始 RSP)
+        self.pop(13);
+        self.pop(12);
+        self.pop(3);
+        self.pop(5);
         self.ret();
+
+        // ---- early_null: 空指针，返回 0 ----
+        let early_null_label = self.code.len();
+        self.xor_rr(0, 0); // RAX = 0
+        self.pop(13);
+        self.pop(12);
+        self.pop(3);
+        self.pop(5);
+        self.ret();
+
+        // ---- oom: gc_alloc 返回 0，恢复 RSP 并返回 0 ----
+        let oom_label = self.code.len();
+        self.mov_rr(4, 13); // RSP = R13 (恢复原始 RSP)
+        self.xor_rr(0, 0);  // RAX = 0
+        self.pop(13);
+        self.pop(12);
+        self.pop(3);
+        self.pop(5);
+        self.ret();
+
         self.fn_end();
+
+        // ---- 修补跳转 ----
+        // left_null_patch → early_null_label
+        let rel = early_null_label as i32 - (left_null_patch as i32 + 4);
+        self.code[left_null_patch..left_null_patch + 4].copy_from_slice(&rel.to_le_bytes());
+        // right_null_patch → early_null_label
+        let rel = early_null_label as i32 - (right_null_patch as i32 + 4);
+        self.code[right_null_patch..right_null_patch + 4].copy_from_slice(&rel.to_le_bytes());
+        // oom_patch → oom_label
+        let rel = oom_label as i32 - (oom_patch as i32 + 4);
+        self.code[oom_patch..oom_patch + 4].copy_from_slice(&rel.to_le_bytes());
     }
 
     /// __karte_print_string(str_ptr) → 0
@@ -1404,6 +1569,16 @@ impl X86Runtime {
         self.add_ri8(6, 8);          // RSI = str_ptr + 8 (data)
         self.mov_rr(2, 3);           // RDX = length
         self.syscall();
+
+        // 输出换行符: sys_write(1, &"\n", 1)
+        self.sub_ri8(4, 1);          // RSP -= 1
+        self.bs(&[0xC6, 0x04, 0x24, 0x0A]); // MOV byte [RSP], '\n'
+        self.mov_ri(0, 1);           // syscall 1 (write)
+        self.mov_ri(7, 1);           // fd 1 (stdout)
+        self.mov_rr(6, 4);           // RSI = RSP
+        self.mov_ri(2, 1);           // RDX = 1
+        self.syscall();
+        self.add_ri8(4, 1);          // RSP += 1 (恢复)
 
         // done:
         let done_label = self.code.len();
@@ -1519,6 +1694,9 @@ impl X86Runtime {
         self.mov_rr(2, 8);   // count: R8
         self.syscall();
 
+        // 恢复 RSP: 移除推入的数字字符（R8 = 字符计数，syscall 后 R8 保留）
+        self.add_rr(4, 8);  // RSP += R8
+
         // 恢复寄存器
         self.xor_rr(0, 0);   // RAX = 0 (Unit)
         self.pop(9);
@@ -1546,22 +1724,93 @@ impl X86Runtime {
         self.code[no_neg_sign..no_neg_sign + 4].copy_from_slice(&rel.to_le_bytes());
     }
 
-    /// 修补内部函数调用 (gc_alloc → gc_collect, safepoint → gc_collect)
+    /// __karte_print_bool(value) → 0
+    ///
+    /// RDI(7) = i64 value
+    /// value != 0 输出 "true\n"，value == 0 输出 "false\n"
+    fn emit_print_bool(&mut self) {
+        self.fn_start(runtime_names::PRINT_BOOL);
+
+        // RDI(7) = value
+        // 判断 value == 0
+        self.test_rr(7, 7);
+        self.jne_rel32(0); // → true_label
+        let false_skip = self.code.len() - 4;
+
+        // false 分支: 输出 "false\n" (6 bytes)
+        self.push(0);  // 在栈上分配 8 字节空间
+        self.mov_byte_mem_imm(4, 0, 0x66); // [RSP+0] = 'f'
+        self.mov_byte_mem_imm(4, 1, 0x61); // [RSP+1] = 'a'
+        self.mov_byte_mem_imm(4, 2, 0x6C); // [RSP+2] = 'l'
+        self.mov_byte_mem_imm(4, 3, 0x73); // [RSP+3] = 's'
+        self.mov_byte_mem_imm(4, 4, 0x65); // [RSP+4] = 'e'
+        self.mov_byte_mem_imm(4, 5, 0x0A); // [RSP+5] = '\n'
+        // sys_write(1, RSP, 6)
+        self.mov_ri(0, 1);  // syscall: write
+        self.mov_ri(7, 1);  // fd: stdout
+        self.mov_rr(6, 4);  // buf: RSP
+        self.mov_ri(2, 6);  // count: 6
+        self.syscall();
+        self.pop(0);  // 恢复 RSP
+        // → done
+        let false_done = self.code.len();
+        self.jmp_rel32(0);
+        let done_patch = self.code.len() - 4;
+
+        // true_label:
+        let true_label = self.code.len();
+        // 输出 "true\n" (5 bytes)
+        self.push(0);  // 在栈上分配 8 字节空间
+        self.mov_byte_mem_imm(4, 0, 0x74); // [RSP+0] = 't'
+        self.mov_byte_mem_imm(4, 1, 0x72); // [RSP+1] = 'r'
+        self.mov_byte_mem_imm(4, 2, 0x75); // [RSP+2] = 'u'
+        self.mov_byte_mem_imm(4, 3, 0x65); // [RSP+3] = 'e'
+        self.mov_byte_mem_imm(4, 4, 0x0A); // [RSP+4] = '\n'
+        // sys_write(1, RSP, 5)
+        self.mov_ri(0, 1);
+        self.mov_ri(7, 1);
+        self.mov_rr(6, 4);
+        self.mov_ri(2, 5);
+        self.syscall();
+        self.pop(0);  // 恢复 RSP
+
+        // done:
+        let done_label = self.code.len();
+        self.xor_rr(0, 0);  // RAX = 0 (Unit)
+        self.ret();
+        self.fn_end();
+
+        // 修补跳转
+        // false_skip (JNE) → true_label
+        let rel = true_label as i32 - (false_skip as i32 + 4);
+        self.code[false_skip..false_skip + 4].copy_from_slice(&rel.to_le_bytes());
+        // done_patch (JMP) → done_label
+        let rel = done_label as i32 - (done_patch as i32 + 4);
+        self.code[done_patch..done_patch + 4].copy_from_slice(&rel.to_le_bytes());
+    }
+
+    /// 修补内部函数调用 (gc_alloc → gc_collect, safepoint → gc_collect, string_concat → gc_alloc)
     pub fn patch_internal_calls(&mut self) {
         let gc_collect = self.find_offset(runtime_names::GC_COLLECT).unwrap();
-        let patches: Vec<(usize, usize)> = self.functions.iter()
+        let gc_alloc = self.find_offset(runtime_names::GC_ALLOC_ALIGNED).unwrap();
+        let patches: Vec<(usize, usize, i64)> = self.functions.iter()
             .filter(|f| f.name == "__gc_alloc_call_collect" || f.name == "__safepoint_call_collect")
-            .map(|f| (f.offset, f.size))
+            .map(|f| (f.offset, f.size, gc_collect as i64))
+            .collect();
+        let alloc_patches: Vec<(usize, usize, i64)> = self.functions.iter()
+            .filter(|f| f.name == "__string_concat_call_alloc")
+            .map(|f| (f.offset, f.size, gc_alloc as i64))
             .collect();
 
-        for (call_pos, _size) in patches {
+        let all_patches: Vec<_> = patches.into_iter().chain(alloc_patches.into_iter()).collect();
+
+        for (call_pos, _size, target) in all_patches {
             // call_pos 指向 E8 字节, rel32 在 call_pos+1
             let rel32_pos = call_pos + 1;
             // CALL rel32: target = RIP_after + rel32
             // RIP_after = call_pos + 5 (从运行时起始)
-            // rel32 = gc_collect - RIP_after
+            // rel32 = target - RIP_after
             let rip_after = (call_pos + 5) as i64;
-            let target = gc_collect as i64;
             let rel = (target - rip_after) as i32;
             self.code[rel32_pos..rel32_pos+4].copy_from_slice(&rel.to_le_bytes());
         }

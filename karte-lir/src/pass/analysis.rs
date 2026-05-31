@@ -496,6 +496,9 @@ impl DefUseAnalysis {
             Instruction::PrintNumber { value, .. } => {
                 uses.push(*value);
             }
+            Instruction::PrintBool { value, .. } => {
+                uses.push(*value);
+            }
             Instruction::StructAlloc { dst, .. } => {
                 defs.push(*dst);
             }

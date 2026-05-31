@@ -2849,7 +2849,8 @@ fn lower_function_call(
             let arg_type = ctx.get_expr_type(&args[0]);
             let runtime_fn = match &arg_type {
                 karte_hir::Type::String => "__runtime_print_string",
-                _ => "__runtime_print_number", // Number, Bool 等都当作数字打印
+                karte_hir::Type::Bool => "__runtime_print_bool",
+                _ => "__runtime_print_number",
             };
 
             ctx.add_statement(Statement::Call {

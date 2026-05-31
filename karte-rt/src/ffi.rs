@@ -262,3 +262,15 @@ pub extern "C" fn karte_jit_runtime_print_number(value: i64) -> u64 {
     }
     0
 }
+
+/// 打印布尔值到 stdout
+/// value != 0 输出 "true\n"，value == 0 输出 "false\n"
+/// 返回 0（Unit）
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_print_bool(value: i64) -> u64 {
+    let s = if value != 0 { "true\n" } else { "false\n" };
+    unsafe {
+        libc::write(1, s.as_ptr() as *const libc::c_void, s.len());
+    }
+    0
+}

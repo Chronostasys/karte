@@ -13,6 +13,7 @@ pub enum RuntimeIntrinsic {
     StringEqual,
     PrintString,
     PrintNumber,
+    PrintBool,
 }
 
 impl RuntimeIntrinsic {
@@ -35,6 +36,9 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::PrintNumber => {
                 runtime::karte_jit_runtime_print_number as *const ()
             }
+            RuntimeIntrinsic::PrintBool => {
+                runtime::karte_jit_runtime_print_bool as *const ()
+            }
         }
     }
 
@@ -49,6 +53,7 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::StringEqual => "karte_jit_runtime_string_equal",
             RuntimeIntrinsic::PrintString => "karte_jit_runtime_print_string",
             RuntimeIntrinsic::PrintNumber => "karte_jit_runtime_print_number",
+            RuntimeIntrinsic::PrintBool => "karte_jit_runtime_print_bool",
         }
     }
 
@@ -137,6 +142,13 @@ impl RuntimeCall {
     pub fn print_number(value: Register) -> Self {
         Self {
             intrinsic: RuntimeIntrinsic::PrintNumber,
+            args: vec![RuntimeArg::Register(value)],
+        }
+    }
+
+    pub fn print_bool(value: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::PrintBool,
             args: vec![RuntimeArg::Register(value)],
         }
     }
