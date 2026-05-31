@@ -628,17 +628,28 @@ impl<'a> Parser<'a> {
                 _ => {}
             }
 
-            // len 内建函数（Identifier 分支）
+            // len 内建函数：只有 len(expr) 形式才解析为 ArrayLen
+            // 否则 len 将在 parse_primary 的 Identifier 分支中被当作普通变量名
             if let Token::Identifier(name) = &token.token {
                 if name == "len" {
-                    let start_span = token.span;
-                    self.advance();
-                    let array = self.parse_primary()?;
-                    let span = Span::new(start_span.start, array.span().end);
-                    return Ok(Expr::ArrayLen {
-                        array: Box::new(array),
-                        span,
-                    });
+                    // 前瞻检查下一个 token 是否是 '('
+                    let next_is_lparen = self
+                        .tokens
+                        .get(self.position + 1)
+                        .map_or(false, |t| matches!(t.token, Token::LeftParen));
+                    if next_is_lparen {
+                        let start_span = token.span;
+                        self.advance(); // consume 'len'
+                        self.advance(); // consume '('
+                        let array = self.parse_expression()?;
+                        self.expect_token(Token::RightParen)?;
+                        let span = Span::new(start_span.start, self.current_span().end);
+                        return Ok(Expr::ArrayLen {
+                            array: Box::new(array),
+                            span,
+                        });
+                    }
+                    // 不是 len(...) 形式，fall through 让 parse_primary 当普通标识符处理
                 }
             }
 

@@ -81,7 +81,7 @@ mod mir_roundtrip_tests {
 
     #[test]
     fn test_array_len_roundtrip() {
-        let source = "let arr = [1, 2]; len arr";
+        let source = "let arr = [1, 2]; len(arr)";
         test_mir_roundtrip(source).unwrap();
     }
 

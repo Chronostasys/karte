@@ -1,4 +1,4 @@
 let data = [3, 5, 7, 9];
-let size = len data;
+let size = len(data);
 size
 

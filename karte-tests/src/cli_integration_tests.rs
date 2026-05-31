@@ -2808,7 +2808,7 @@ fn main() -> number {
     fn test_bubble_sort() {
         let code = r#"fn main() -> number {
     let arr = [5, 3, 8, 1, 9, 2, 7, 4, 6, 0];
-    let n = len arr;
+    let n = len(arr);
     for i in 0..n {
         for j in 0..(n - i - 1) {
             if arr[j] > arr[j + 1] {
@@ -5294,6 +5294,31 @@ fn main() -> number {
 "#;
         let exit_code = compile_project_mode_code(code);
         assert_eq!(exit_code, 12, "simple field assign should return 12, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_len_as_variable_name() {
+        // len 可以作为普通变量名使用
+        let code = r#"
+fn main() -> number {
+    let len = 5;
+    len
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 5, "Expected 5, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_len_builtin_with_parens() {
+        // len(...) 作为内建函数调用仍然工作
+        let code = r#"
+fn main() -> number {
+    len([1, 2, 3])
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 3, "Expected 3, got {}", exit_code);
     }
 
 }
