@@ -365,7 +365,7 @@ impl fmt::Display for Type {
                 write!(f, "&{}", inner)
             }
             Type::Var(var) => write!(f, "t{}", var.0),
-            Type::Unknown => write!(f, "?"),
+            Type::Unknown => write!(f, "unknown"),
         }
     }
 }

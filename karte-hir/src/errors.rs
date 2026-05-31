@@ -99,7 +99,7 @@ impl fmt::Display for TypeCheckError {
             TypeCheckError::TypeMismatch {
                 expected, found, ..
             } => {
-                write!(f, "Type mismatch: expected {}, found {}", expected, found)
+                write!(f, "Type mismatch: expected `{}`, found `{}`", expected, found)
             }
             TypeCheckError::ArityMismatch {
                 expected, found, ..

@@ -242,6 +242,7 @@ pub extern "C" fn karte_jit_runtime_print_string(str_ptr: u64) -> u64 {
 
         if len > 0 {
             libc::write(1, data as *const libc::c_void, len);
+            libc::write(1, b"\n" as *const u8 as *const libc::c_void, 1);
         }
         0
     }
@@ -253,9 +254,9 @@ pub extern "C" fn karte_jit_runtime_print_string(str_ptr: u64) -> u64 {
 #[no_mangle]
 pub extern "C" fn karte_jit_runtime_print_number(value: i64) -> u64 {
     let s = if value < 0 {
-        format!("-{}", (-value) as u64)
+        format!("-{}\n", (-value) as u64)
     } else {
-        format!("{}", value)
+        format!("{}\n", value)
     };
     unsafe {
         libc::write(1, s.as_ptr() as *const libc::c_void, s.len());

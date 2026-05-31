@@ -212,7 +212,8 @@ impl Diagnostic {
                         message: self.message,
                         src,
                         help: Some(
-                            "Check that the types of your expressions match what's expected"
+                            "The value type does not match what this operation requires. \
+                             'expected' shows the required type, 'found' shows the actual type."
                                 .to_string(),
                         ),
                     }
@@ -235,6 +236,13 @@ impl Diagnostic {
                         name,
                         src,
                         help: "A function with this name is already defined in this scope. Rename or remove the duplicate.".to_string(),
+                    }
+                } else if self.message.contains("Builtin function") {
+                    CompilerError::TypeError {
+                        span,
+                        message: self.message,
+                        src,
+                        help: Some("Check the argument type for this built-in function".to_string()),
                     }
                 } else if self.message.contains("Unexpected") {
                     CompilerError::ParseError {
