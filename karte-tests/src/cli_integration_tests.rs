@@ -5073,4 +5073,124 @@ fn main() -> number { let a = [1,2]; f(a, 0, 1); a[1] }
         assert_eq!(exit_code, 1, "array read+write via 3-param function should give 1, got {}", exit_code);
     }
 
+
+    #[test]
+    fn test_13_parameter_function_sum() {
+        let code = r#"
+fn sum13(a,b,c,d,e,f,g,h,i,j,k,l,m) -> number { a+b+c+d+e+f+g+h+i+j+k+l+m }
+fn main() -> number { sum13(1,2,3,4,5,6,7,8,9,10,11,12,13) }
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 91, "sum of 1..13 should be 91, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_13_parameter_function_last() {
+        let code = r#"
+fn last13(a,b,c,d,e,f,g,h,i,j,k,l,m) -> number { m }
+fn main() -> number { last13(0,0,0,0,0,0,0,0,0,0,0,0,42) }
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 42, "13th parameter should be 42, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_13_parameter_function_each_value() {
+        let code = r#"
+fn p13(a,b,c,d,e,f,g,h,i,j,k,l,m) -> number { a*1+b*2+c*3+d*4+e*5+f*6+g*7+h*8+i*9+j*10+k*11+l*12+m*13 }
+fn main() -> number { p13(1,2,3,4,5,6,7,8,9,10,11,12,13) }
+"#;
+        let exit_code = compile_project_mode_code(code);
+        let expected = 1*1+2*2+3*3+4*4+5*5+6*6+7*7+8*8+9*9+10*10+11*11+12*12+13*13;
+        assert_eq!(exit_code, expected, "weighted sum should be {}, got {}", expected, exit_code);
+    }
+
+    #[test]
+    fn test_15_parameter_function_sum() {
+        let code = r#"
+fn sum15(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o) -> number { a+b+c+d+e+f+g+h+i+j+k+l+m+n+o }
+fn main() -> number { sum15(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15) }
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 120, "sum of 1..15 should be 120, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_20_parameter_function_sum() {
+        let code = r#"
+fn sum20(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t) -> number { a+b+c+d+e+f+g+h+i+j+k+l+m+n+o+p+q+r+s+t }
+fn main() -> number { sum20(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20) }
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 210, "sum of 1..20 should be 210, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_20_parameter_function_last() {
+        let code = r#"
+fn last20(a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t) -> number { t }
+fn main() -> number { last20(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,99) }
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 99, "20th parameter should be 99, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_11_param_closure_sum() {
+        let code = r#"
+fn main() -> number {
+    let f = |a,b,c,d,e,f,g,h,i,j,k| { a+b+c+d+e+f+g+h+i+j+k };
+    f(1,2,3,4,5,6,7,8,9,10,11)
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 66, "sum of 1..11 via closure should be 66, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_11_param_closure_last_param() {
+        let code = r#"
+fn main() -> number {
+    let f = |a,b,c,d,e,f,g,h,i,j,k| { k };
+    f(0,0,0,0,0,0,0,0,0,0,42)
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 42, "11th closure param should be 42, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_12_param_closure_sum() {
+        let code = r#"
+fn main() -> number {
+    let f = |a,b,c,d,e,f,g,h,i,j,k,l| { a+b+c+d+e+f+g+h+i+j+k+l };
+    f(1,2,3,4,5,6,7,8,9,10,11,12)
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 78, "sum of 1..12 via closure should be 78, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_15_param_closure_sum() {
+        let code = r#"
+fn main() -> number {
+    let f = |a,b,c,d,e,f,g,h,i,j,k,l,m,n,o| { a+b+c+d+e+f+g+h+i+j+k+l+m+n+o };
+    f(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15)
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 120, "sum of 1..15 via closure should be 120, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_nested_call_with_many_params() {
+        let code = r#"
+fn add3(a,b,c) -> number { a+b+c }
+fn sum13(a,b,c,d,e,f,g,h,i,j,k,l,m) -> number { add3(a,b,c)+add3(d,e,f)+add3(g,h,i)+add3(j,k,l)+m }
+fn main() -> number { sum13(1,2,3,4,5,6,7,8,9,10,11,12,13) }
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 91, "nested calls with 13 params should give 91, got {}", exit_code);
+    }
 }

@@ -389,7 +389,7 @@ impl CallingConvention {
         ].into_iter().collect();
 
         let callee_saved: HashSet<PhysicalRegister> = [
-            3u8,   // RBX - callee-saved (也是 effect_resume_temp)
+            3u8,   // RBX - callee-saved
             10u8,  // R10 - vm_sp
             11u8,  // R11 - vm_fp
             12u8,  // R12 - callee-saved (effect 栈指针)
@@ -410,7 +410,7 @@ impl CallingConvention {
             effect_stack_pointer: 12,  // R12
             effect_payload_register: 0,  // RAX
             effect_tag_register: 8,  // R8
-            effect_resume_temp: 5,  // RBP（避免与 overflow_regs[3] 冲突）
+            effect_resume_temp: 5,  // RBP — callee-saved，不参与溢出参数传递，专门用于 CallIndirect 函数指针
             temp_registers: vec![7, 6, 2, 1, 8, 9, 0, 3, 13, 14, 15],
             stack_alignment: 16,
             use_system_stack_pointer: true,
@@ -536,6 +536,28 @@ impl CallingConvention {
                 !reserved.contains(&reg) && !extra_reserved.contains(&reg)
             })
             .collect()
+    }
+
+    /// 获取溢出参数寄存器列表（callee-saved，用于传递超过 argument_registers 的参数）
+    ///
+    /// 使用 callee-saved 寄存器传递溢出参数：R13, R14, R15, RBX, R12（共 5 个）。
+    /// 所有溢出寄存器都会被 callee prologue 保存/恢复，因此可以安全地用于参数传递。
+    ///
+    /// 排除的 callee-saved：
+    /// - R10(10): vm_sp（虚拟栈指针）
+    /// - R11(11): vm_fp（虚拟帧指针）
+    /// - RBP(5):  effect_resume_temp（CallIndirect 函数指针临时寄存器）
+    pub fn overflow_argument_registers(&self) -> Vec<PhysicalRegister> {
+        // x86_64 callee-saved 寄存器（排除 vm_sp/R10, vm_fp/R11）
+        // R13, R14, R15, RBX, R12 — 5 个溢出寄存器
+        vec![13, 14, 15, 3, 12]
+    }
+
+    /// 获取通过寄存器传递的参数总数（argument_registers + overflow_argument_registers）
+    ///
+    /// 超过此数量的参数通过虚拟栈传递。
+    pub fn register_passing_limit(&self) -> usize {
+        self.argument_registers.len() + self.overflow_argument_registers().len()
     }
 }
 
