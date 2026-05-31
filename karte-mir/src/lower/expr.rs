@@ -1375,6 +1375,21 @@ pub(crate) fn lower_expression(
                 }
             }
 
+            // 修复 R12-1：恢复变量绑定指向 loop_head 的 phi temp
+            // 循环体 lowering 可能修改了绑定（包括 break 后死块中的赋值），
+            // 需要恢复到 phi temp 以确保 break phi 和循环后的代码使用正确的值。
+            // 这与 while 循环在 line 822-833 的逻辑对应。
+            for (name, phi_val) in &phi_values {
+                if struct_ref_vars.contains(name) {
+                    ctx.update_variable(name, Value::Reference {
+                        value: Box::new(phi_val.clone()),
+                        ty: None,
+                    }, None);
+                } else {
+                    ctx.update_variable(name, phi_val.clone(), None);
+                }
+            }
+
             // R7-2 修复：处理 for-in 循环 break 路径的 Phi 节点
             if !for_break_sources.is_empty() {
                 ctx.set_current_block(loop_exit);

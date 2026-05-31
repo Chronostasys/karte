@@ -4530,4 +4530,54 @@ fn main() -> number {
         assert_eq!(exit_code, 60, "Expected 60, got {}", exit_code);
     }
 
+    #[test]
+    fn test_r12_1_for_break_dead_code_assignment() {
+        let code = r#"
+fn main() -> number {
+    let sum = 0;
+    for i in 0..10 {
+        break;
+        sum = sum + 1
+    };
+    sum
+}
+        "#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 0, "Expected 0, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_r12_2_for_div_match_closure() {
+        let code = r#"
+fn main() -> number {
+    let sum = 0;
+    for i in 0..6 {
+        let x = match i / 2 { 0 => 100, _ => 200 };
+        let f = || { x };
+        sum = sum + f()
+    };
+    sum
+}
+        "#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 1000, "Expected 1000, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_r12_3_for_modulo_match_closure() {
+        let code = r#"
+fn main() -> number {
+    let sum = 0;
+    for i in 0..6 {
+        let x = match i % 2 { 0 => 100, _ => 200 };
+        let f = || { x };
+        sum = sum + f()
+    };
+    sum
+}
+        "#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 900, "Expected 900, got {}", exit_code);
+    }
+
 }
