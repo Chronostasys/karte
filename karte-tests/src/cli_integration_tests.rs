@@ -4794,4 +4794,39 @@ fn main() -> number {
         assert_eq!(exit_code, 5, "Expected 5 (2+3), got {}", exit_code);
     }
 
+
+    #[test]
+    fn test_r7_3_while_reference_struct_field_assign() {
+        let code = r#"
+struct Data { val: number }
+fn main() -> number {
+    let d = Data { val: 10 };
+    let r = &d;
+    let i = 0;
+    while i < 3 {
+        d.val = d.val + (*r).val;
+        i = i + 1
+    };
+    d.val
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 80, "Expected 80 (10->20->40->80), got {}", exit_code);
+    }
+
+    #[test]
+    fn test_r7_3_reference_struct_no_while() {
+        let code = r#"
+struct Data { val: number }
+fn main() -> number {
+    let d = Data { val: 10 };
+    let r = &d;
+    d.val = d.val + (*r).val;
+    d.val
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 20, "Expected 20 (10+10), got {}", exit_code);
+    }
+
 }

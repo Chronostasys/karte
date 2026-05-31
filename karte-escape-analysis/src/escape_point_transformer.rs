@@ -123,12 +123,15 @@ impl EscapePointTransformer {
     }
 
     /// 转换取地址操作
-    /// 原始: %ref = & %var
+    /// 原始: %ref = & %var  （%var 是 struct 时）
     /// 转换为: %heap = HeapAlloc(8)
-    ///        Store { %heap, %var }
-    ///        %ref = & %heap
+    ///        %deref = Dereference(Reference(%var))   // 获取 struct 的数据地址
+    ///        Store { %heap, %deref }                  // 将数据地址存储到堆
+    ///        %ref = & %heap                            // 引用指向堆
     ///
-    /// 注意：保留 Reference 结构，但引用指向堆地址
+    /// 核心修复：对 struct 的 Store 不能直接用 %var，因为 lower_to_rvalue(%var)
+    /// 会做两次 Load64（先加载 struct 地址，再加载第一个字段值），存的是字段值而非地址。
+    /// 使用 Dereference 从 Reference 加载，只做一次 Load64，得到 struct 数据地址。
     fn transform_address_of(
         &mut self,
         value: &Value,
@@ -148,16 +151,30 @@ impl EscapePointTransformer {
             });
             trace!("  插入 HeapAlloc: {:?}", heap_temp);
 
-            // 2. 复制栈值到堆
-            new_statements.push(Statement::Store {
-                target: heap_temp.clone(),
-                value: value.clone(),
+            // 2. 使用 Dereference 从 Reference 加载，获取 struct 的数据地址
+            // 直接 Store %var 对 struct 会调用 lower_to_rvalue，做两次 Load64 存字段值
+            // Dereference 只做一次 Load64，从 %var 的栈槽加载得到 struct 数据地址
+            let deref_target = self.alloc_temp();
+            new_statements.push(Statement::Dereference {
+                target: deref_target.clone(),
+                reference: Value::Reference {
+                    value: Box::new(value.clone()),
+                    ty: None,
+                },
                 span: *span,
             });
-            trace!("  插入 Store: {:?} <- {:?}", heap_temp, value);
+            trace!("  插入 Dereference: {:?} = * & {:?}", deref_target, value);
 
-            // 3. 创建指向堆地址的引用
-            // 注意：这里 heap_temp 已经是堆地址，Reference 只是语义标记
+            // 3. 将 Dereference 结果（struct 数据地址）存储到堆
+            new_statements.push(Statement::Store {
+                target: heap_temp.clone(),
+                value: deref_target,
+                span: *span,
+            });
+            trace!("  插入 Store: {:?} <- deref_result", heap_temp);
+
+            // 4. 创建指向堆地址的引用
+            // heap_temp 已是堆地址，Reference 只是语义标记
             trace!("  插入 Assign: {:?} = & {:?}", target, heap_temp);
             new_statements.push(Statement::Assign {
                 target: target.clone(),
