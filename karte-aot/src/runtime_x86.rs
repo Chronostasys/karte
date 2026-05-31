@@ -298,6 +298,12 @@ impl X86Runtime {
         self.u32(rel as u32);
     }
 
+    /// JGE rel32 (有符号大于等于, SF=OF)
+    fn jge_rel32(&mut self, rel: i32) {
+        self.bs(&[0x0F, 0x8D]);
+        self.u32(rel as u32);
+    }
+
     /// JB rel32
     fn jb_rel32(&mut self, rel: i32) {
         self.bs(&[0x0F, 0x82]);
@@ -522,7 +528,7 @@ impl X86Runtime {
         self.mov_ri(1, 0);
         self.cmp_rr(0, 1);
         let neg_skip = self.code.len();
-        self.jae_rel32(0); // >= 0 则跳过
+        self.jge_rel32(0); // >= 0 则跳过（有符号比较）
 
         // 负数: 标记符号, 取绝对值
         self.mov_ri(2, 1); // RDX = 1 (负数)

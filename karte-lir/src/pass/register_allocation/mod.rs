@@ -244,15 +244,28 @@ impl SimpleStackRegisterAllocation {
         // 第一步：为函数参数寄存器分配固定的物理寄存器
         info!("🔧 第一步：分配函数参数寄存器");
         
-        // 收集 callee-saved 寄存器（不包括 vm_sp, vm_fp 和 effect 栈指针），
-        // 用于溢出参数传递
+        // 收集 callee-saved 寄存器（不包括 vm_sp, vm_fp），
+        // 用于溢出参数传递。R12 是 effect_stack_pointer，但在此作为溢出寄存器使用
+        // 是安全的：被调用者 prologue 会保存/恢复 callee-saved 寄存器。
+        // R12 排在 RBP 之前：避免 CallIndirect 的 temp_func_reg (RBP)
+        // 与溢出参数寄存器冲突（10+ 参数闭包需要 5 个溢出寄存器）
         let overflow_regs: Vec<PhysicalRegister> = [
             13u8,  // R13 - callee-saved
             14u8,  // R14 - callee-saved
             15u8,  // R15 - callee-saved
             3u8,   // RBX - callee-saved
-            5u8,   // RBP - callee-saved（不含 R12 — effect stack pointer）
+            12u8,  // R12 - callee-saved（也用于 effect_stack_pointer，但 prologue 会保存/恢复）
+            5u8,   // RBP - callee-saved（也是 effect_resume_temp，尽量最后使用）
         ].to_vec();
+
+
+
+
+
+
+
+
+
         
         for (i, &param_reg) in function.parameter_registers.iter().enumerate() {
             if i < self.calling_convention.argument_registers.len() {

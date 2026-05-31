@@ -2363,15 +2363,30 @@ impl TypeChecker {
     }
 
     /// 应用统一化结果到类型上
-    fn apply_substitution(&mut self, ty: Type) -> Type {
-        match ty {
-            Type::Var(var) => {
-                let value = self.unification_table.probe_value(var);
-                match value.0 {
-                    Some(resolved_type) => self.apply_substitution(resolved_type),
-                    None => Type::Var(var), // 保持未解析的类型变量
+    /// 使用 visited 集合检测类型变量循环引用，防止无限递归
+    /// 应用统一化结果到类型上
+    /// 使用循环展开 Type::Var 链，并用 visited 集合检测循环引用
+    fn apply_substitution(&mut self, mut ty: Type) -> Type {
+        // 循环展开 Type::Var 链，检测循环引用
+        let mut visited = std::collections::HashSet::new();
+        loop {
+            match ty {
+                Type::Var(var) => {
+                    // 检测循环引用：如果已经访问过此类型变量，保持为 Var
+                    if !visited.insert(var) {
+                        return Type::Var(var);
+                    }
+                    let value = self.unification_table.probe_value(var);
+                    match value.0 {
+                        Some(resolved_type) => ty = resolved_type,
+                        None => return Type::Var(var),
+                    }
                 }
+                _ => break,
             }
+        }
+        // ty 不再是 Type::Var，处理复杂类型
+        match ty {
             Type::Function {
                 params,
                 return_type,

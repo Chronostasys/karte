@@ -5017,4 +5017,60 @@ fn main() -> number {
         assert_eq!(exit_code, 6, "Expected 6, got {}", exit_code);
     }
 
+
+
+    #[test]
+    fn test_12_parameter_function() {
+        let code = r#"
+fn last(a,b,c,d,e,f,g,h,i,j,k,l) -> number { l }
+fn main() -> number { last(0,0,0,0,0,0,0,0,0,0,0,42) }
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 42, "12th parameter should be 42, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_12_parameter_function_all_values() {
+        let code = r#"
+fn sum12(a,b,c,d,e,f,g,h,i,j,k,l) -> number { a+b+c+d+e+f+g+h+i+j+k+l }
+fn main() -> number { sum12(1,2,3,4,5,6,7,8,9,10,11,12) }
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 78, "sum of 1..12 should be 78, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_10_param_closure_sum() {
+        let code = r#"
+fn main() -> number {
+    let f = |a,b,c,d,e,f,g,h,i,j| { a+b+c+d+e+f+g+h+i+j };
+    f(1,2,3,4,5,6,7,8,9,10)
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 55, "sum of 1..10 should be 55, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_10_param_closure_last_param() {
+        let code = r#"
+fn main() -> number {
+    let f = |a,b,c,d,e,f,g,h,i,j| { j };
+    f(0,0,0,0,0,0,0,0,0,42)
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 42, "10th closure param should be 42, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_3param_array_read_write() {
+        let code = r#"
+fn f(arr, i, j) { let tmp = arr[i]; arr[j] = tmp }
+fn main() -> number { let a = [1,2]; f(a, 0, 1); a[1] }
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 1, "array read+write via 3-param function should give 1, got {}", exit_code);
+    }
+
 }
