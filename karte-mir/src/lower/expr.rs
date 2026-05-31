@@ -1719,7 +1719,35 @@ pub(crate) fn lower_expression(
             });
         }
 
-        Expr::Constructor { name, args, .. } => {
+        Expr::Constructor { name, args, span: expr_span } => {
+            // 零参数 Constructor：可能是被 parser 误解析的大写变量名
+            // 先检查环境是否已绑定同名变量
+            if args.is_empty() {
+                if let Some(binding) = ctx.lookup_variable(name) {
+                    // 找到同名变量绑定，作为变量引用处理
+                    let resolved_value = ctx.resolve_value(&binding.value);
+                    match &resolved_value {
+                        Value::Reference {
+                            value: ref_target, ..
+                        } => {
+                            ctx.add_statement(Statement::Dereference {
+                                target: destination.clone(),
+                                reference: *ref_target.clone(),
+                                span: *expr_span,
+                            });
+                        }
+                        _ => {
+                            ctx.add_statement(Statement::Assign {
+                                target: destination.clone(),
+                                source: resolved_value,
+                                span: *expr_span,
+                            });
+                        }
+                    }
+                    return Ok(());
+                }
+            }
+            // 有参数或不是变量，按枚举构造器处理
             let arg_values: Vec<Value> = args
                 .iter()
                 .map(|a| lower_expression_to_temp(ctx, a))
@@ -1733,7 +1761,7 @@ pub(crate) fn lower_expression(
             ctx.add_statement(Statement::Assign {
                 target: destination.clone(),
                 source: constructor_value,
-                span,
+                span: *expr_span,
             });
         }
 

@@ -930,7 +930,66 @@ fn main() -> number {
         );
     }
 
-    /// 回归测试：fn 函数返回闭包（Bug: 返回闭包的函数导致 JIT 未定义标签错误）
+    /// 回归测试：函数参数通过 RDX 传递时被 Div/Mod 隐式破坏
+    /// x86_64 的 idiv 指令通过 CQO+IDIV 隐式修改 RDX。
+    /// 当第三个参数 c 通过 RDX 传入，后续有 Mod 指令时，
+    /// c 的值会被 CQO 指令覆盖，导致结果错误。
+    #[test]
+    fn test_rdx_clobbered_by_div_mod() {
+        let code = r#"
+fn test(a: number, b: number, c: number) -> number {
+    a = a % b;
+    let r = a + c;
+    r
+}
+fn main() -> number {
+    test(2, 1000, 10)
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing failed: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        // 应用逃逸分析优化
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        // 2 % 1000 = 2, 2 + 10 = 12
+        assert_eq!(
+            exit_code, 12,
+            "Expected exit code 12 (2 % 1000 + 10), got {}. \
+             This indicates RDX was clobbered by Div/Mod instruction.",
+            exit_code
+        );
+    }
     /// 根因：annotate_function_return_type 为 Type::Function 返回类型创建了虚假的
     /// Value::Function 占位符，覆盖了实际的 Closure 结构体运行时值。
     /// 修复：不插入类型标记，保持 temp 为 Value::Temp，让后续调用走 Closure 字段提取路径。

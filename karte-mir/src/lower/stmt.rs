@@ -213,6 +213,30 @@ pub(crate) fn handle_assignment(
                 ctx.bind_variable(name.clone(), value_temp, ownership);
             }
         }
+        Expr::Constructor { name, args, .. } if args.is_empty() => {
+            // 大写字母开头的变量被 parser 误解析为零参数 Constructor
+            // 在赋值目标位置应视为普通变量
+            if let Some(binding) = ctx.lookup_variable(name).cloned() {
+                if let Value::Reference {
+                    value: ref_target, ..
+                } = binding.value
+                {
+                    ctx.add_statement(Statement::Store {
+                        target: *ref_target,
+                        value: value_temp,
+                        span,
+                    });
+                } else {
+                    if let Some(old_binding) =
+                        ctx.update_variable(name, value_temp.clone(), ownership)
+                    {
+                        ctx.release_binding(&old_binding, span);
+                    }
+                }
+            } else {
+                ctx.bind_variable(name.clone(), value_temp, ownership);
+            }
+        }
         Expr::FieldAccess { object, field, .. } => {
             // 对 object 表达式求值，得到结构体（或嵌套结构体）的基地址
             // 支持单级赋值 (o.val = 42) 和嵌套赋值 (o.inner.val = 42)

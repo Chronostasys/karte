@@ -203,7 +203,7 @@ impl SimpleStackRegisterAllocation {
     /// 4. 上述逻辑全部失败则分配失败，需要生成栈溢出槽
     fn build_calling_convention_allocation_map(
         &mut self,
-        function: &LirFunction,
+        function: &mut LirFunction,
         virtual_registers: &[Register],
     ) -> HashMap<Register, AllocationTarget> {
         info!("🎯 开始遵循调用约定的寄存器分配：{}", function.name);
@@ -279,6 +279,60 @@ impl SimpleStackRegisterAllocation {
                     + 1;
                 allocation_map.insert(param_reg, AllocationTarget::Spill(spill_slot));
                 info!("  栈传递参数 {:?} -> 溢出槽{}", param_reg, spill_slot);
+            }
+        }
+
+        // 🔧 修复：x86_64 的 idiv 隐式修改 RDX（物理寄存器2）
+        // 如果参数被分配到 RDX 且函数中有 Div/Mod 指令，
+        // 需要将参数移到安全的寄存器，在函数开头插入一条 Move 指令
+        if !div_mod_positions.is_empty() {
+            const RDX: u8 = 2; // x86_64 RDX
+
+            // 检查是否有参数被分配到 RDX
+            let mut params_on_rdx: Vec<(Register, u8)> = Vec::new(); // (虚拟寄存器, 调用约定中的参数索引)
+            for (i, &param_reg) in function.parameter_registers.iter().enumerate() {
+                if i < register_limit {
+                    if let Some(AllocationTarget::Register(phys)) = allocation_map.get(&param_reg) {
+                        if *phys == RDX {
+                            params_on_rdx.push((param_reg, i as u8));
+                        }
+                    }
+                }
+            }
+
+            if !params_on_rdx.is_empty() {
+                // 为每个需要从 RDX 移出的参数找一个安全的物理寄存器
+                for (param_vreg, _arg_idx) in &params_on_rdx {
+                    // 寻找安全的物理寄存器（不在 used_physical_regs 中的）
+                    let safe_reg = self.calling_convention.get_allocatable_registers()
+                        .into_iter()
+                        .find(|&r| !used_physical_regs.contains(&r) && r != RDX);
+
+                    if let Some(safe_phys) = safe_reg {
+                        // 在函数开头插入 Move: safe_phys <- RDX
+                        // 找到第一个 Label 后面的位置
+                        let insert_pos = function.instructions.iter().position(|inst| {
+                            matches!(inst, Instruction::Label { .. })
+                        }).map(|p| p + 1).unwrap_or(0);
+
+                        let move_inst = Instruction::Move {
+                            dst: Register::Physical(safe_phys),
+                            src: Operand::Register { id: Register::Physical(RDX) },
+                            span: Span::dummy(),
+                        };
+                        function.instructions.insert(insert_pos, move_inst);
+
+                        // 更新分配映射：参数从 RDX 改为 safe_phys
+                        allocation_map.insert(*param_vreg, AllocationTarget::Register(safe_phys));
+                        used_physical_regs.insert(safe_phys);
+
+                        info!("  ⚠️ 参数 {:?} 从 RDX(r2) 移到 r{} (避免 Div/Mod 隐式修改)", param_vreg, safe_phys);
+                    } else {
+                        // 没有可用的安全寄存器，溢出到栈
+                        // 这种情况在参数数量少时不太可能发生
+                        info!("  ⚠️ 参数 {:?} 无法从 RDX 移出，无可用寄存器", param_vreg);
+                    }
+                }
             }
         }
 

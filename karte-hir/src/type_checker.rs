@@ -1879,6 +1879,11 @@ impl TypeChecker {
                         // 变量赋值：统一类型
                         self.add_constraint(target_type, value_type, *span);
                     }
+                    Expr::Constructor { args, .. } if args.is_empty() => {
+                        // 大写字母开头的变量被 parser 误解析为零参数 Constructor
+                        // 在赋值目标位置应视为普通变量
+                        self.add_constraint(target_type, value_type, *span);
+                    }
                     Expr::FieldAccess { .. } => {
                         // 字段赋值：统一类型
                         self.add_constraint(target_type, value_type, *span);
@@ -2110,6 +2115,19 @@ impl TypeChecker {
                             env.insert(name.clone(), value_type);
                         } else {
                             // 变量不存在，报告错误（或者可以选择自动创建）
+                            self.add_error(TypeCheckError::UndefinedVariable {
+                                name: name.clone(),
+                                span: target.span(),
+                            });
+                        }
+                    }
+                    Expr::Constructor { name, args, .. } if args.is_empty() => {
+                        // 大写字母开头的变量被 parser 误解析为零参数 Constructor
+                        // 在赋值目标位置应视为普通变量
+                        if env.contains_key(name) {
+                            self.add_constraint(target_type, value_type.clone(), target.span());
+                            env.insert(name.clone(), value_type);
+                        } else {
                             self.add_error(TypeCheckError::UndefinedVariable {
                                 name: name.clone(),
                                 span: target.span(),
