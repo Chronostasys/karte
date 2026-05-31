@@ -9,7 +9,7 @@
 //! - Phi
 
 use crate::pass::lifetime_analysis_pass::LifetimeAnalysisResult;
-use crate::pass::register_allocation::RegisterAllocationResult;
+use crate::pass::register_allocation::types::{AllocationTargetInfo, RegisterAllocationResult};
 use crate::pass::{AnalysisManager, FunctionPass, PassResult};
 use crate::{AllocationType, Instruction, LirFunction, Operand, Register, StructTypeId};
 use karte_common::calling_convention::{CallingConvention, CC};
@@ -167,6 +167,50 @@ impl InstructionLoweringPass {
     fn new_register(&mut self) -> Register {
         self.next_register += 1;
         Register::Virtual(self.next_register)
+    }
+
+    /// 解析被溢出到栈的虚拟寄存器操作数
+    ///
+    /// 寄存器分配后，虚拟寄存器可能被溢出到栈帧上的 slot。
+    /// 此方法检查操作数是否为已溢出的虚拟寄存器，
+    /// 如果是，则从栈帧加载其值到临时寄存器，返回临时寄存器操作数。
+    /// 如果不是溢出寄存器（已由 rewrite_registers 替换为物理寄存器），
+    /// 则原样返回。
+    fn resolve_spilled_operand(
+        &self,
+        op: &Operand,
+        function: &LirFunction,
+        analyses: &AnalysisManager,
+        span: &Span,
+        temp_reg: Register,
+        instructions: &mut Vec<Instruction>,
+    ) -> Operand {
+        match op {
+            Operand::Register { id: reg_id @ Register::Virtual(_) } => {
+                if let Some(ra) = analyses.get_result::<RegisterAllocationResult>("register-allocation") {
+                    if let Some(target_info) = ra.allocation_map.get(reg_id) {
+                        match target_info {
+                            AllocationTargetInfo::Spill(slot_id) => {
+                                if let Some(&fp_offset) = function.spill_slot_offsets.get(slot_id) {
+                                    instructions.push(Instruction::Load64 {
+                                        dst: temp_reg,
+                                        addr: Register::Physical(self.calling_convention.frame_pointer),
+                                        offset: fp_offset,
+                                        span: *span,
+                                    });
+                                    return Operand::Register { id: temp_reg };
+                                }
+                            }
+                            AllocationTargetInfo::Register(_) => {
+                                // 已被 rewrite_registers 替换为物理寄存器，无需处理
+                            }
+                        }
+                    }
+                }
+                op.clone()
+            }
+            _ => op.clone(),
+        }
     }
 
     /// 获取effect栈指针寄存器
@@ -376,7 +420,12 @@ impl InstructionLoweringPass {
         self.save_registers_to_stack(&caller_saved, span, instructions);
 
         // 参数传递：使用栈作为中间存储避免寄存器覆盖
+        // 用第一个参数寄存器作为临时加载目标（resolve_spilled_operand 需要）
+        let temp_operand_reg = Register::Physical(self.calling_convention.argument_registers[0]);
         for op in arg_operands.iter() {
+            let resolved_op = self.resolve_spilled_operand(
+                op, function, analyses, span, temp_operand_reg, instructions,
+            );
             instructions.push(Instruction::Sub {
                 dst: self.stack_pointer_reg,
                 src1: Operand::Register {
@@ -388,7 +437,7 @@ impl InstructionLoweringPass {
             instructions.push(Instruction::Store64 {
                 addr: self.stack_pointer_reg,
                 offset: 0,
-                src: op.clone(),
+                src: resolved_op,
                 span: *span,
             });
         }
@@ -561,8 +610,31 @@ impl InstructionLoweringPass {
             span: *span,
         });
 
+        // 🔧 RBX 冲突修复：将函数指针保存到虚拟栈（在参数之前）
+        // temp_func_reg (effect_resume_temp) 可能与溢出参数的 callee-saved 寄存器
+        // 冲突（如 RBX = overflow_regs[3]）。将函数指针压入虚拟栈，参数弹出后恢复。
+        instructions.push(Instruction::Sub {
+            dst: self.stack_pointer_reg,
+            src1: Operand::Register {
+                id: self.stack_pointer_reg,
+            },
+            src2: Operand::Immediate { value: 16 },
+            span: *span,
+        });
+        instructions.push(Instruction::Store64 {
+            addr: self.stack_pointer_reg,
+            offset: 0,
+            src: Operand::Register { id: temp_func_reg },
+            span: *span,
+        });
+
         // 参数传递：使用栈作为中间存储避免寄存器覆盖
+        // 用第一个参数寄存器作为临时加载目标（resolve_spilled_operand 需要）
+        let temp_operand_reg = Register::Physical(self.calling_convention.argument_registers[0]);
         for op in arg_operands.iter() {
+            let resolved_op = self.resolve_spilled_operand(
+                op, function, analyses, span, temp_operand_reg, instructions,
+            );
             instructions.push(Instruction::Sub {
                 dst: self.stack_pointer_reg,
                 src1: Operand::Register {
@@ -574,7 +646,7 @@ impl InstructionLoweringPass {
             instructions.push(Instruction::Store64 {
                 addr: self.stack_pointer_reg,
                 offset: 0,
-                src: op.clone(),
+                src: resolved_op,
                 span: *span,
             });
         }
@@ -619,6 +691,23 @@ impl InstructionLoweringPass {
                 span: *span,
             });
         }
+
+        // 🔧 RBX 冲突修复：从虚拟栈恢复函数指针
+        // 参数全部弹出后，栈顶指向之前保存的函数指针
+        instructions.push(Instruction::Load64 {
+            dst: temp_func_reg,
+            addr: self.stack_pointer_reg,
+            offset: 0,
+            span: *span,
+        });
+        instructions.push(Instruction::Add {
+            dst: self.stack_pointer_reg,
+            src1: Operand::Register {
+                id: self.stack_pointer_reg,
+            },
+            src2: Operand::Immediate { value: 16 },
+            span: *span,
+        });
 
         // 压入返回地址
         instructions.push(Instruction::Sub {

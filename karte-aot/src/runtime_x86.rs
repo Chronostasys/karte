@@ -488,9 +488,131 @@ impl X86Runtime {
         self.call_main_rel32_offset = self.code.len() + 1;
         self.call_rel32(0); // 占位
 
+        // ---- 将 main() 返回值 (RAX) 通过 sys_write 输出到 stdout ----
+        //
+        // Linux exit_group 只取低 8 位 (0-255)，结果 >= 256 会截断。
+        // 改为: 将 i64 转为 ASCII 十进制字符串 → sys_write(stdout) → exit_group(0)。
+        //
+        // 寄存器分配:
+        //   RAX = 当前数值 / syscall 号 / syscall 返回值
+        //   RBX = 原始返回值备份
+        //   RCX = 临时 (除法/比较)
+        //   RDX = 符号标志 (0=正, 1=负) / 除法余数
+        //   R8  = 字符计数
+        //   R9  = 常量 10 (除数)
+        //   RSP = 缓冲区 (从高地址往低地址增长)
+        //
+        // 算法:
+        //   1. 处理负数 (记录符号, 取绝对值)
+        //   2. 循环: RAX % 10 得到末位数字, RAX /= 10, 将 ASCII 数字推入栈
+        //   3. 如果是负数, 推入 '-'
+        //   4. 推入 '\n'
+        //   5. sys_write(1, RSP, R8)
+
+        // 保存 callee-saved 和工作寄存器
+        self.push(3);  // 保存 RBX
+        self.push(8);  // 保存 R8
+        self.push(9);  // 保存 R9
+
+        self.mov_rr(3, 0); // RBX = 原始返回值
+
+        // 处理负数
+        self.mov_rr(0, 3); // RAX = 返回值
+        self.xor_rr(2, 2); // RDX = 0 (符号: 0=正)
+        self.mov_ri(1, 0);
+        self.cmp_rr(0, 1);
+        let neg_skip = self.code.len();
+        self.jae_rel32(0); // >= 0 则跳过
+
+        // 负数: 标记符号, 取绝对值
+        self.mov_ri(2, 1); // RDX = 1 (负数)
+        // NEG RAX: 用 0 - RAX
+        self.mov_rr(1, 0); // RCX = RAX
+        self.xor_rr(0, 0); // RAX = 0
+        self.sub_rr(0, 1); // RAX = -RCX
+
+        // neg_skip:
+        let neg_skip_label = self.code.len();
+
+        // 初始化计数器和常量
+        self.xor_rr(8, 8); // R8 = 字符计数 = 0
+        self.mov_ri(9, 10); // R9 = 10
+
+        // 先推入 '\n' (位于高地址, 数字写在低地址, sys_write 从 RSP 往上读: 数字...'\n')
+        self.sub_ri8(4, 1);
+        self.bs(&[0xC6, 0x04, 0x24, b'\n' as u8]); // MOV byte [RSP], '\n'
+        self.add_ri8(8, 1); // 字符计数 = 1
+
+        // 处理 RAX == 0 的特殊情况
+        self.test_rr(0, 0);
+        let nonzero = self.code.len();
+        self.jne_rel32(0);
+
+        // RAX == 0: 写入 '0'
+        self.sub_ri8(4, 1); // RSP -= 1
+        self.bs(&[0xC6, 0x04, 0x24, b'0' as u8]); // MOV byte [RSP], '0'
+        self.add_ri8(8, 1); // 字符计数 = 2 (0 + \n)
+        let zero_done = self.code.len();
+        self.jmp_rel32(0); // → sys_write
+
+        // nonzero / digit_loop:
+        let nonzero_label = self.code.len();
+        let digit_loop = self.code.len();
+
+        self.test_rr(0, 0);
+        let digit_done = self.code.len();
+        self.jz_rel32(0); // RAX == 0, 退出循环
+
+        // IDIV R9: RAX = 商, RDX = 余数
+        // 需要保存符号标志 (RDX) → 存到 R11 (此时 vm_fp 不再需要)
+        self.mov_rr(11, 2);   // R11 = 符号标志
+        self.bs(&[0x48, 0x99]); // CQO: RDX:RAX = sign-extend(RAX)
+        // IDIV R9 = REX.WB(0x49) + F7 + ModRM(11_111_001 = 0xF9)
+        self.bs(&[0x49, 0xF7, 0xF9]); // IDIV R9
+        // RDX = 余数, RAX = 商
+        self.add_ri8(2, b'0' as u8); // RDX = ASCII 数字
+        self.sub_ri8(4, 1); // RSP -= 1
+        self.bs(&[0x88, 0x14, 0x24]); // MOV byte [RSP], DL
+        self.add_ri8(8, 1); // 字符计数++
+        // 恢复符号标志
+        self.mov_rr(2, 11); // RDX = 符号标志
+
+        // 跳回循环
+        {
+            let rel = (digit_loop as i64 - (self.code.len() as i64 + 5)) as i32;
+            self.jmp_rel32(rel);
+        }
+
+        // digit_done:
+        let digit_done_label = self.code.len();
+
+        // 如果是负数, 推入 '-'
+        self.test_rr(2, 2);
+        let no_neg_sign = self.code.len();
+        self.jz_rel32(0);
+
+        self.sub_ri8(4, 1);
+        self.bs(&[0xC6, 0x04, 0x24, b'-' as u8]);
+        self.add_ri8(8, 1);
+
+        // no_neg_sign:
+        let no_neg_sign_label = self.code.len();
+
+        // ---- sys_write(1, RSP, R8) ----
+        self.mov_ri(0, 1);  // syscall 号: sys_write
+        self.mov_ri(7, 1);  // fd = stdout
+        self.mov_rr(6, 4);  // buf = RSP
+        self.mov_rr(2, 8);  // count = R8
+        self.syscall();
+
+        // 恢复保存的寄存器
+        self.pop(9);  // 恢复 R9
+        self.pop(8);  // 恢复 R8
+        self.pop(3);  // 恢复 RBX
+
         self.pop(15); self.pop(14); self.pop(13); self.pop(12); self.pop(3); self.pop(5);
-        // exit_group(RAX)
-        self.mov_rr(7, 0); self.mov_ri(0, 231); self.syscall();
+        // exit_group(0)
+        self.xor_rr(7, 7); self.mov_ri(0, 231); self.syscall();
 
         // ---- 全局数据 ----
         while self.code.len() % 8 != 0 { self.nop(); }
@@ -533,6 +655,31 @@ impl X86Runtime {
         }
         let g_heap_start = g + 8;
         patch_rip_load(&mut self.code, heap_base_load, g_heap_start);
+
+        // ---- 修补 i64→ASCII 输出的跳转标签 ----
+        fn patch_jmp(code: &mut Vec<u8>, jmp_pos: usize, target: usize) {
+            // rel32 跳转: jmp_pos 是 Jcc/JMP 的位置, +6 (2字节opcode + 4字节rel32)
+            let jmp_end = (jmp_pos + 6) as i32;
+            let rel = target as i32 - jmp_end;
+            code[jmp_pos+2..jmp_pos+6].copy_from_slice(&rel.to_le_bytes());
+        }
+        fn patch_jmp_5(code: &mut Vec<u8>, jmp_pos: usize, target: usize) {
+            // JMP rel32 (E9 + 4字节): 5 字节长
+            let jmp_end = (jmp_pos + 5) as i32;
+            let rel = target as i32 - jmp_end;
+            code[jmp_pos+1..jmp_pos+5].copy_from_slice(&rel.to_le_bytes());
+        }
+
+        // neg_skip (JAE) → neg_skip_label
+        patch_jmp(&mut self.code, neg_skip, neg_skip_label);
+        // nonzero (JNE) → nonzero_label (digit_loop)
+        patch_jmp(&mut self.code, nonzero, nonzero_label);
+        // zero_done (JMP) → no_neg_sign_label (跳过数字循环, 直接到输出前的负号检查)
+        patch_jmp_5(&mut self.code, zero_done, no_neg_sign_label);
+        // digit_done (JZ) → digit_done_label
+        patch_jmp(&mut self.code, digit_done, digit_done_label);
+        // no_neg_sign (JZ) → no_neg_sign_label
+        patch_jmp(&mut self.code, no_neg_sign, no_neg_sign_label);
 
         self.fn_end();
     }

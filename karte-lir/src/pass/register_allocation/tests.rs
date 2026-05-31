@@ -61,6 +61,7 @@ fn test_register_type_analysis() {
         lowered_register_mapping: None,
         instruction_metadata: HashMap::new(),
         target_arch: None,
+        spill_slot_offsets: HashMap::new(),
     };
 
     let calling_convention = types::CallingConvention::standard();
@@ -293,6 +294,7 @@ fn test_parameter_return_conflict() {
         lowered_register_mapping: None,
         instruction_metadata: std::collections::HashMap::new(),
         target_arch: None,
+        spill_slot_offsets: std::collections::HashMap::new(),
     };
 
     let mut pass = SimpleStackRegisterAllocation::new();

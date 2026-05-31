@@ -233,6 +233,7 @@ impl LinearScanAllocator {
             register_mapping,
             spilled_registers,
             register_types,
+            allocation_map: HashMap::new(),
         }
     }
 

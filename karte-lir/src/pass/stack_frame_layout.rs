@@ -389,6 +389,21 @@ impl FunctionPass for StackFrameLayoutPass {
 
         self.lower_to_fp_offsets(function, &offset_map, &alloc_offset_map);
 
+        // 🔧 新增：从 offset_map 中提取 spill slot 的 FP 偏移
+        // spill slot 的地址寄存器编号为 Virtual(1_000_000 + slot_id)
+        for (addr_reg, fp_offset) in &offset_map {
+            if let Register::Virtual(id) = addr_reg {
+                if *id >= 1_000_000 && *id < 2_000_000 {
+                    let slot_id = *id - 1_000_000;
+                    function.spill_slot_offsets.insert(slot_id, *fp_offset);
+                    info!(
+                        "  - Spill slot {} -> FP offset {}",
+                        slot_id, fp_offset
+                    );
+                }
+            }
+        }
+
         // 6) 设置 stack_frame_size（正数）
         function.stack_frame_size = (-allocator.current_neg_offset) as usize;
         // 保持16字节对齐

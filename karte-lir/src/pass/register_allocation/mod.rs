@@ -862,22 +862,58 @@ impl SimpleStackRegisterAllocation {
         // 1. 收集所有涉及溢出的虚拟寄存器
         // 排除 Call/CallIndirect 的 args 寄存器：它们是目标寄存器
         // （由 InstructionLoweringPass 写入参数寄存器），不是源操作数。
-        // 将 args 从溢出加载中排除可以显著降低临时寄存器压力，
-        // 因为一个 7 参数闭包调用有 7 个 args + 7 个 arg_operands = 14 个
-        // "使用"寄存器，其中 7 个 args 不需要从溢出槽加载。
-        let args_registers: HashSet<Register> = match &_function.instructions[instruction_index] {
-            crate::ir::Instruction::Call { args, .. } => {
-                args.iter().copied().collect()
+        // 同时排除 arg_operands 中的溢出寄存器：它们由 InstructionLoweringPass
+        // 直接从 spill slot 加载到参数传递的栈上，不需要临时寄存器中转。
+        // 这样可以大幅降低临时寄存器压力，避免多参数调用时 panic。
+        let (args_registers, arg_operand_registers): (HashSet<Register>, HashSet<Register>) = match &_function.instructions[instruction_index] {
+            crate::ir::Instruction::Call { args, arg_operands, .. } => {
+                let args_set: HashSet<Register> = args.iter().copied().collect();
+                let arg_op_set: HashSet<Register> = arg_operands.iter()
+                    .filter_map(|op| {
+                        if let Operand::Register { id } = op {
+                            if id.is_virtual() {
+                                Some(*id)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                (args_set, arg_op_set)
             }
-            crate::ir::Instruction::CallIndirect { args, .. } => {
-                args.iter().copied().collect()
+            crate::ir::Instruction::CallIndirect { args, arg_operands, .. } => {
+                let args_set: HashSet<Register> = args.iter().copied().collect();
+                let arg_op_set: HashSet<Register> = arg_operands.iter()
+                    .filter_map(|op| {
+                        if let Operand::Register { id } = op {
+                            if id.is_virtual() {
+                                Some(*id)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                (args_set, arg_op_set)
             }
-            _ => HashSet::new(),
+            _ => (HashSet::new(), HashSet::new()),
         };
         let mut spilled_operands = HashSet::new();
         for &reg in used_registers.iter().chain(def_register.iter()) {
             if args_registers.contains(&reg) {
                 continue; // args 是目标寄存器，不需要从溢出槽加载
+            }
+            // 🔧 新增：跳过 arg_operands 中的溢出寄存器
+            // 这些寄存器由 InstructionLoweringPass 直接从 spill slot 处理，
+            // 不需要在这里分配临时寄存器
+            if arg_operand_registers.contains(&reg) {
+                if let Some(AllocationTarget::Spill(_)) = allocation_map.get(&reg) {
+                    continue; // 溢出的 arg_operand 寄存器由 InstructionLoweringPass 处理
+                }
             }
             if let Some(AllocationTarget::Spill(_)) = allocation_map.get(&reg) {
                 spilled_operands.insert(reg);
@@ -885,8 +921,16 @@ impl SimpleStackRegisterAllocation {
         }
 
         // 1.5 收集当前指令中非溢出输入操作数占用的物理寄存器
+        // 🔧 修复：排除 arg_operand_registers 中已溢出的寄存器，
+        // 因为它们不会被加载到临时物理寄存器
         let mut unavailable_registers = HashSet::new();
         for &reg in used_registers.iter() {
+            // 跳过溢出的 arg_operand 寄存器，它们不占用物理寄存器
+            if arg_operand_registers.contains(&reg) {
+                if let Some(AllocationTarget::Spill(_)) = allocation_map.get(&reg) {
+                    continue;
+                }
+            }
             if let Some(AllocationTarget::Register(phys_reg)) = allocation_map.get(&reg) {
                 unavailable_registers.insert(*phys_reg);
             } else if let Register::Physical(phys_reg) = reg {
@@ -899,7 +943,7 @@ impl SimpleStackRegisterAllocation {
             self.allocate_temp_registers_for_inst(&spilled_operands, &unavailable_registers);
 
         // 3. 处理输入操作数（Used）
-        // 跳过 Call/CallIndirect 的 args 寄存器（已在上面排除）
+        // 跳过 Call/CallIndirect 的 args 寄存器和溢出的 arg_operand 寄存器
         for &used_reg in used_registers.iter() {
             // args 是目标寄存器，不需要从溢出槽加载
             if args_registers.contains(&used_reg) {
@@ -909,6 +953,14 @@ impl SimpleStackRegisterAllocation {
                     current_replacements.push((used_reg, Register::Physical(0)));
                 }
                 continue;
+            }
+            // 🔧 新增：跳过溢出的 arg_operand 寄存器
+            // 它们由 InstructionLoweringPass 直接从 spill slot 加载
+            if arg_operand_registers.contains(&used_reg) {
+                if let Some(AllocationTarget::Spill(_slot_id)) = allocation_map.get(&used_reg) {
+                    // 不做替换，保持虚拟状态，InstructionLoweringPass 会处理
+                    continue;
+                }
             }
             if let Some(AllocationTarget::Spill(slot_id)) = allocation_map.get(&used_reg) {
                 if live_registers.contains(&used_reg) {
@@ -1232,6 +1284,7 @@ impl SimpleStackRegisterAllocation {
         let mut register_mapping = HashMap::new();
         let mut spilled_registers = HashMap::new();
         let mut register_types = HashMap::new();
+        let mut full_allocation_map = HashMap::new();
 
         // 遍历所有虚拟寄存器，构建映射和溢出信息
         for reg in virtual_registers {
@@ -1241,10 +1294,12 @@ impl SimpleStackRegisterAllocation {
                         register_mapping.insert(*reg, *phys_reg);
                         // 默认都是 Data 类型（简化处理，未来可以更精确）
                         register_types.insert(*reg, RegisterType::Data);
+                        full_allocation_map.insert(*reg, AllocationTargetInfo::Register(*phys_reg));
                     }
                     AllocationTarget::Spill(slot_id) => {
                         spilled_registers.insert(*reg, SpillSlot { slot_id: *slot_id });
                         register_types.insert(*reg, RegisterType::Data);
+                        full_allocation_map.insert(*reg, AllocationTargetInfo::Spill(*slot_id));
                     }
                 }
             }
@@ -1263,6 +1318,7 @@ impl SimpleStackRegisterAllocation {
             spilled_registers,
             register_types,
             stats,
+            allocation_map: full_allocation_map,
         }
     }
 }

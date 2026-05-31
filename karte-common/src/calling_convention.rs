@@ -410,7 +410,7 @@ impl CallingConvention {
             effect_stack_pointer: 12,  // R12
             effect_payload_register: 0,  // RAX
             effect_tag_register: 8,  // R8
-            effect_resume_temp: 3,  // RBX
+            effect_resume_temp: 5,  // RBP（避免与 overflow_regs[3] 冲突）
             temp_registers: vec![7, 6, 2, 1, 8, 9, 0, 3, 13, 14, 15],
             stack_alignment: 16,
             use_system_stack_pointer: true,

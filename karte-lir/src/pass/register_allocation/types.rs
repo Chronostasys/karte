@@ -48,6 +48,15 @@ impl RegisterType {
     }
 }
 
+/// 寄存器分配目标（物理寄存器或溢出槽）
+#[derive(Debug, Clone, Copy)]
+pub enum AllocationTargetInfo {
+    /// 分配到物理寄存器
+    Register(u8),
+    /// 溢出到栈槽
+    Spill(usize),
+}
+
 /// 寄存器分配结果
 ///
 /// 封装了一次寄存器分配操作的完整产出，包括
@@ -63,6 +72,10 @@ pub struct RegisterAllocationResult {
     pub register_types: HashMap<Register, RegisterType>,
     /// 分配统计信息
     pub stats: AllocationStats,
+    /// 🔧 新增：完整的寄存器分配映射（虚拟寄存器 -> 分配目标）
+    /// 包含所有虚拟寄存器的分配结果（物理寄存器或溢出槽），
+    /// 供 InstructionLoweringPass 查询任意虚拟寄存器的物理位置
+    pub allocation_map: HashMap<Register, AllocationTargetInfo>,
 }
 
 impl AnalysisResult for RegisterAllocationResult {

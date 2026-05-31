@@ -1531,6 +1531,11 @@ pub struct LirFunction {
     /// None 表示使用编译主机默认架构
     #[ir_codec(skip)]
     pub target_arch: Option<String>,
+    /// 🔧 新增：spill slot 到 FP 偏移的映射
+    /// 由 StackFrameLayoutPass 在栈帧布局完成后填充
+    /// key: spill slot_id, value: 相对 FP 的偏移（负数）
+    #[ir_codec(skip)]
+    pub spill_slot_offsets: HashMap<usize, i64>,
 }
 
 impl LirFunction {
@@ -1548,6 +1553,7 @@ impl LirFunction {
             lowered_register_mapping: None,
             instruction_metadata: HashMap::new(),
             target_arch: None,
+            spill_slot_offsets: HashMap::new(),
         }
     }
 

@@ -38,7 +38,10 @@ fn parse_lir_file(content: &str) -> crate::Result<LirFunction> {
         lowered_register_mapping: None,
         instruction_metadata: HashMap::new(),
         target_arch: None,
+        spill_slot_offsets: HashMap::new(),
     };
+
+    info!("🧪 测试前的函数参数: {:?}", function.parameter_registers);
 
     // 解析指令
     for (line_num, line) in lines.iter().enumerate().skip(1) {
@@ -456,9 +459,8 @@ fn test_function_parameter_register_allocation() {
         lowered_register_mapping: None,
         instruction_metadata: HashMap::new(),
         target_arch: None,
+        spill_slot_offsets: HashMap::new(),
     };
-
-    info!("🧪 测试前的函数参数: {:?}", function.parameter_registers);
 
     // 运行寄存器分配
     let mut pass = SimpleStackRegisterAllocation::new();

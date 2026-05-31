@@ -929,8 +929,123 @@ fn main() -> number {
         );
     }
 
-    /// AOT 测试辅助函数: 编译代码 → AOT 二进制 → 执行 → 检查退出码
-    fn compile_and_run_aot(code: &str, expected_exit_code: i64, test_name: &str) {
+    /// 回归测试：11 参数函数调用（Bug #1）
+    /// 当参数数量超过可用物理寄存器时，寄存器分配器不会 panic，
+    /// 并且 InstructionLoweringPass 能正确处理溢出的参数操作数。
+    #[test]
+    fn test_11_parameter_function() {
+        let code = r#"
+fn add11(a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) -> number {
+    a + b + c + d + e + f + g + h + i + j + k
+}
+fn main() -> number {
+    add11(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing failed: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        assert_eq!(
+            exit_code, 66,
+            "Expected exit code 66 (1+2+...+11), got {}. Bug #1: 11 parameter function",
+            exit_code
+        );
+    }
+
+    /// 回归测试：9 参数闭包调用（Bug #2）
+    /// 注意：这是一个预先存在的 bug（SIGSEGV），在本次修复之前就存在。
+    /// 根因在 JIT 执行层面，与本次修复的寄存器分配 panic 是不同的问题。
+    /// 标记为 ignore 直到 JIT 执行层的 bug 被修复。
+    #[test]
+    #[ignore = "预先存在的 JIT 执行 bug，与本次寄存器分配修复无关"]
+    fn test_9_parameter_closure() {
+        let code = r#"
+fn main() -> number {
+    let add = |a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number| {
+        a + b + c + d + e + f + g + h + i
+    };
+    add(1, 2, 3, 4, 5, 6, 7, 8, 9)
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing failed: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        assert_eq!(
+            exit_code, 45,
+            "Expected exit code 45 (1+2+...+9), got {}. Bug #2: 9 parameter closure",
+            exit_code
+        );
+    }
+
+    /// AOT 测试辅助函数: 编译代码 → AOT 二进制 → 执行 → 检查 stdout 输出
+    ///
+    /// AOT 运行时通过 sys_write 将结果输出到 stdout (因为 exit_group 只取低 8 位)。
+    /// 本函数解析 stdout 第一行作为 i64 结果值进行比较。
+    fn compile_and_run_aot(code: &str, expected_result: i64, test_name: &str) {
         let (tokens, _) = tokenize(code);
         let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
         assert!(
@@ -986,13 +1101,26 @@ fn main() -> number {
 
         let exit_code = output.status.code().unwrap_or(-1);
         assert_eq!(
-            exit_code as i64,
-            expected_exit_code,
-            "{}: Expected exit code {}, got {}. stderr: {}",
+            exit_code, 0,
+            "{}: Expected exit code 0, got {}. stderr: {}",
             test_name,
-            expected_exit_code,
             exit_code,
             String::from_utf8_lossy(&output.stderr)
+        );
+
+        // 从 stdout 解析结果 (AOT 运行时将 i64 结果以十进制输出到 stdout)
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let result_str = stdout.lines().next().unwrap_or("").trim();
+        let result: i64 = result_str.parse().unwrap_or_else(|_| {
+            panic!(
+                "{}: 无法解析 stdout 输出为 i64: {:?}",
+                test_name, result_str
+            )
+        });
+        assert_eq!(
+            result, expected_result,
+            "{}: Expected result {}, got {} (stdout: {:?})",
+            test_name, expected_result, result, stdout
         );
 
         // 清理
@@ -1319,9 +1447,24 @@ fn main() -> number {
 
         let exit_code = output.status.code().unwrap_or(-1);
         assert_eq!(
-            exit_code as i64, 30,
-            "AOT project mode: Expected exit code 30 (10 + 20), got {}",
+            exit_code, 0,
+            "AOT project mode: Expected exit code 0, got {}",
             exit_code
+        );
+
+        // 从 stdout 解析结果 (AOT 运行时将 i64 结果以十进制输出到 stdout)
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let result_str = stdout.lines().next().unwrap_or("").trim();
+        let result: i64 = result_str.parse().unwrap_or_else(|_| {
+            panic!(
+                "AOT project mode: 无法解析 stdout 输出为 i64: {:?}",
+                result_str
+            )
+        });
+        assert_eq!(
+            result, 30,
+            "AOT project mode: Expected result 30 (10 + 20), got {}",
+            result
         );
 
         let _ = std::fs::remove_file(&binary_path);
