@@ -5249,4 +5249,51 @@ fn main() -> number { if 1 != 2 { 1 } else { 0 } }
         let exit_code = compile_project_mode_code(code);
         assert_eq!(exit_code, 1, "1 != 2 should be 1");
     }
+    // ========== Round 7 Bug #3 回归测试：嵌套结构体字段赋值 ==========
+
+    #[test]
+    fn test_nested_struct_field_assign_two_level() {
+        let code = r#"
+struct Inner { val: number }
+struct Outer { inner: Inner }
+fn main() -> number {
+    let o = Outer { inner: Inner { val: 10 } };
+    o.inner.val = 42;
+    o.inner.val
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 42, "nested struct field assign should return 42, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_nested_struct_field_assign_three_level() {
+        let code = r#"
+struct A { x: number }
+struct B { a: A }
+struct C { b: B }
+fn main() -> number {
+    let c = C { b: B { a: A { x: 0 } } };
+    c.b.a.x = 99;
+    c.b.a.x
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 99, "three-level nested field assign should return 99, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_simple_struct_field_assign_still_works() {
+        let code = r#"
+struct Point { x: number, y: number }
+fn main() -> number {
+    let p = Point { x: 1, y: 2 };
+    p.x = 10;
+    p.x + p.y
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 12, "simple field assign should return 12, got {}", exit_code);
+    }
+
 }

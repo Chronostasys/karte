@@ -174,12 +174,12 @@ pub(crate) fn handle_assignment(
             }
         }
         Expr::FieldAccess { object, field, .. } => {
-            if let Expr::Identifier { name, .. } = object.as_ref() {
+            // 对 object 表达式求值，得到结构体（或嵌套结构体）的基地址
+            // 支持单级赋值 (o.val = 42) 和嵌套赋值 (o.inner.val = 42)
+            let object_value = if let Expr::Identifier { name, .. } = object.as_ref() {
+                // 简单变量引用：需要处理闭包捕获导致的 Reference 包装
                 if let Some(binding) = ctx.lookup_variable(name).cloned() {
-                    // 对 object 求值，正确处理被闭包捕获的 Reference 类型变量
-                    // 当变量被闭包捕获后，binding.value 是 Reference，
-                    // 需要先解引用得到实际的结构体地址，再进行字段赋值
-                    let object_value = match &binding.value {
+                    match &binding.value {
                         Value::Reference { value: ref_target, .. } => {
                             // 变量被闭包捕获：先解引用得到结构体地址
                             let derefed = ctx.new_temp();
@@ -190,17 +190,8 @@ pub(crate) fn handle_assignment(
                             });
                             derefed
                         }
-                        _ => {
-                            // 普通变量：直接使用绑定值
-                            binding.value.clone()
-                        }
-                    };
-                    ctx.add_statement(Statement::FieldAssign {
-                        object: object_value,
-                        field: field.clone(),
-                        value: value_temp,
-                        span,
-                    });
+                        _ => binding.value.clone(),
+                    }
                 } else {
                     return Err(vec![format!(
                         "Undefined variable in field assignment: {}",
@@ -208,10 +199,17 @@ pub(crate) fn handle_assignment(
                     )]);
                 }
             } else {
-                return Err(vec![
-                    "Complex field assignment not yet supported in MIR".to_string()
-                ]);
-            }
+                // 嵌套字段赋值：递归对 object 表达式求值得到中间结构体地址
+                // 例如 o.inner.val = 42 中，先求值 o.inner 得到 inner 的地址
+                lower_expression_to_temp(ctx, object)?
+            };
+
+            ctx.add_statement(Statement::FieldAssign {
+                object: object_value,
+                field: field.clone(),
+                value: value_temp,
+                span,
+            });
         }
         Expr::Index { array, index, .. } => {
             // 数组下标赋值：计算 element_ptr = array_base + 8 + index * 8，然后 Store
