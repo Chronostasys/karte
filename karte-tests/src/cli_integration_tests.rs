@@ -5193,4 +5193,60 @@ fn main() -> number { sum13(1,2,3,4,5,6,7,8,9,10,11,12,13) }
         let exit_code = compile_project_mode_code(code);
         assert_eq!(exit_code, 91, "nested calls with 13 params should give 91, got {}", exit_code);
     }
+
+    // ========== Round 7 Bug #1 回归测试：== 和 != 支持 bool/string 比较 ==========
+
+    #[test]
+    fn test_equality_bool_true_eq_true() {
+        let code = r#"
+fn main() -> number { if true == true { 1 } else { 0 } }
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 1, "true == true should be 1");
+    }
+
+    #[test]
+    fn test_equality_bool_true_ne_false() {
+        let code = r#"
+fn main() -> number { if true != false { 1 } else { 0 } }
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 1, "true != false should be 1");
+    }
+
+    #[test]
+    fn test_equality_bool_false_eq_false() {
+        let code = r#"
+fn main() -> number { if false == false { 1 } else { 0 } }
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 1, "false == false should be 1");
+    }
+
+    #[test]
+    fn test_equality_bool_true_ne_true() {
+        let code = r#"
+fn main() -> number { if true != true { 1 } else { 0 } }
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 0, "true != true should be 0");
+    }
+
+    #[test]
+    fn test_equality_number_still_works() {
+        let code = r#"
+fn main() -> number { if 42 == 42 { 1 } else { 0 } }
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 1, "42 == 42 should be 1");
+    }
+
+    #[test]
+    fn test_inequality_number_still_works() {
+        let code = r#"
+fn main() -> number { if 1 != 2 { 1 } else { 0 } }
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 1, "1 != 2 should be 1");
+    }
 }

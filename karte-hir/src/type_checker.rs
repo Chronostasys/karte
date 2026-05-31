@@ -1073,12 +1073,14 @@ impl TypeChecker {
                             }
                         }
                     }
+                    BinaryOperator::Equal | BinaryOperator::NotEqual => {
+                        // 相等比较：左右操作数必须是相同类型（支持 number、bool、string）
+                        self.add_constraint(left_type.clone(), right_type.clone(), left.span());
+                    }
                     BinaryOperator::Subtract
                     | BinaryOperator::Multiply
                     | BinaryOperator::Divide
                     | BinaryOperator::Modulo
-                    | BinaryOperator::Equal
-                    | BinaryOperator::NotEqual
                     | BinaryOperator::GreaterEqual
                     | BinaryOperator::LessEqual
                     | BinaryOperator::Greater
@@ -1088,7 +1090,7 @@ impl TypeChecker {
                     | BinaryOperator::BitXor
                     | BinaryOperator::ShiftLeft
                     | BinaryOperator::ShiftRight => {
-                        // 数字运算、比较运算、位运算：左右操作数都必须是数字类型
+                        // 数字运算、有序比较运算、位运算：左右操作数都必须是数字类型
                         self.add_constraint(left_type.clone(), Type::Number, left.span());
                         self.add_constraint(right_type.clone(), Type::Number, right.span());
                     }
