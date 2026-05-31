@@ -226,6 +226,9 @@ impl X86Compiler {
             Instruction::StringEqual { dst, left, right, .. } => {
                 self.compile_string_equal(dst, left, right, code_builder)
             }
+            Instruction::StringCharAt { dst, str_ptr, index, .. } => {
+                self.compile_string_char_at(dst, str_ptr, index, code_builder)
+            }
             Instruction::PrintString { ptr, .. } => {
                 self.compile_print_string(ptr, code_builder)
             }
@@ -1562,6 +1565,17 @@ impl X86Compiler {
         code_builder: &mut CodeBuilder,
     ) -> crate::Result<()> {
         let call = RuntimeCall::string_equal(*left, *right);
+        self.emit_runtime_call(code_builder, call, Some(dst))
+    }
+
+    fn compile_string_char_at(
+        &self,
+        dst: &Register,
+        str_ptr: &Register,
+        index: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::string_char_at(*str_ptr, *index);
         self.emit_runtime_call(code_builder, call, Some(dst))
     }
 

@@ -715,6 +715,48 @@ impl<'a> Parser<'a> {
                         });
                     }
                 }
+                if name == "str_index" {
+                    let next_is_lparen = self
+                        .tokens
+                        .get(self.position + 1)
+                        .map_or(false, |t| matches!(t.token, Token::LeftParen));
+                    if next_is_lparen {
+                        let start_span = token.span;
+                        self.advance(); // consume 'str_index'
+                        self.advance(); // consume '('
+                        let string = self.parse_expression()?;
+                        self.expect_token(Token::Comma)?;
+                        let index = self.parse_expression()?;
+                        self.expect_token(Token::RightParen)?;
+                        let span = Span::new(start_span.start, self.current_span().end);
+                        return Ok(Expr::StrIndex {
+                            string: Box::new(string),
+                            index: Box::new(index),
+                            span,
+                        });
+                    }
+                }
+                if name == "char_at" {
+                    let next_is_lparen = self
+                        .tokens
+                        .get(self.position + 1)
+                        .map_or(false, |t| matches!(t.token, Token::LeftParen));
+                    if next_is_lparen {
+                        let start_span = token.span;
+                        self.advance(); // consume 'char_at'
+                        self.advance(); // consume '('
+                        let string = self.parse_expression()?;
+                        self.expect_token(Token::Comma)?;
+                        let index = self.parse_expression()?;
+                        self.expect_token(Token::RightParen)?;
+                        let span = Span::new(start_span.start, self.current_span().end);
+                        return Ok(Expr::CharAt {
+                            string: Box::new(string),
+                            index: Box::new(index),
+                            span,
+                        });
+                    }
+                }
             }
 
             match token.token {

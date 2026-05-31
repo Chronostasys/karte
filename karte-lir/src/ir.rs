@@ -529,6 +529,20 @@ pub enum Instruction {
         span: Span,
     },
 
+    /// 字符取值：dst = char_at(str_ptr, index) — 返回第 index 字节位置的单字节字符串
+    /// 调用运行时 karte_jit_runtime_string_char_at(str_ptr, index) -> new_ptr
+    #[ir_codec(token = "string_char_at")]
+    StringCharAt {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        str_ptr: Register,
+        #[ir_codec(args)]
+        index: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
     /// 打印字符串：print(ptr)
     /// 调用运行时 karte_jit_runtime_print_string(str_ptr) -> 0
     #[ir_codec(token = "print_string")]
@@ -746,7 +760,8 @@ impl Instruction {
             | Instruction::MemCopy { dst, .. }
             | Instruction::CompareSet { dst, .. }
             | Instruction::StringConcat { dst, .. }
-            | Instruction::StringEqual { dst, .. } => Some(*dst),
+            | Instruction::StringEqual { dst, .. }
+            | Instruction::StringCharAt { dst, .. } => Some(*dst),
             Instruction::LoadPair { dst1, .. } => Some(*dst1),
             Instruction::Call { result, .. } | Instruction::CallIndirect { result, .. } => *result,
             Instruction::Phi { dst, .. } => Some(*dst),
@@ -783,7 +798,8 @@ impl Instruction {
             | Instruction::MemCopy { dst, .. }
             | Instruction::CompareSet { dst, .. }
             | Instruction::StringConcat { dst, .. }
-            | Instruction::StringEqual { dst, .. } => {
+            | Instruction::StringEqual { dst, .. }
+            | Instruction::StringCharAt { dst, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
                 }
@@ -944,6 +960,10 @@ impl Instruction {
             Instruction::StringEqual { left, right, .. } => {
                 used.push(*left);
                 used.push(*right);
+            }
+            Instruction::StringCharAt { str_ptr, index, .. } => {
+                used.push(*str_ptr);
+                used.push(*index);
             }
             Instruction::PrintString { ptr, .. } => {
                 used.push(*ptr);
@@ -1254,6 +1274,17 @@ impl Instruction {
                     *right = new_reg;
                 }
             }
+            Instruction::StringCharAt { dst, str_ptr, index, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                if *str_ptr == old_reg {
+                    *str_ptr = new_reg;
+                }
+                if *index == old_reg {
+                    *index = new_reg;
+                }
+            }
             Instruction::PrintString { ptr, .. } => {
                 if *ptr == old_reg {
                     *ptr = new_reg;
@@ -1500,6 +1531,11 @@ impl Instruction {
                 defined.push(*dst);
                 used.push(*left);
                 used.push(*right);
+            }
+            Instruction::StringCharAt { dst, str_ptr, index, .. } => {
+                defined.push(*dst);
+                used.push(*str_ptr);
+                used.push(*index);
             }
             Instruction::PrintString { ptr, .. } => {
                 used.push(*ptr);

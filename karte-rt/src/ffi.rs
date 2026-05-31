@@ -197,6 +197,40 @@ pub extern "C" fn karte_jit_runtime_string_concat(left_ptr: u64, right_ptr: u64)
     }
 }
 
+/// 字符取值：返回字符串中第 index 字节位置的单字节字符串
+/// 字符串格式：[length: i64][bytes...]
+/// GC 安全：先从源字符串读取目标字节，再分配新内存
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_string_char_at(str_ptr: u64, index: u64) -> u64 {
+    unsafe {
+        if str_ptr == 0 {
+            return 0;
+        }
+        // 先从源字符串读取目标字节（在 gc_alloc 之前）
+        let data_ptr = (str_ptr as *const u8).add(8); // 跳过 8 字节 header
+        let byte_val = *data_ptr.add(index as usize);
+
+        // 分配新字符串对象：16 字节（8字节 header + 8字节对齐数据区）
+        let new_ptr = gc_alloc(16, ObjectType::Conservative);
+        if new_ptr.is_null() {
+            return 0;
+        }
+
+        // 写入新字符串：[length: i64 = 1][byte_val][padding zeros]
+        let len_ptr = new_ptr as *mut i64;
+        *len_ptr = 1;
+        let data_start = new_ptr.add(8);
+        *data_start = byte_val;
+        // 清零剩余字节（对齐到 8 字节）
+        let remaining = data_start.add(1);
+        for i in 0..7 {
+            *remaining.add(i) = 0;
+        }
+
+        new_ptr as u64
+    }
+}
+
 /// 字符串内容比较：逐字节比较两个字符串的内容
 /// 字符串格式：[length: i64][bytes...]
 /// 返回 1（相等）或 0（不等）

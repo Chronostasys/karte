@@ -11,6 +11,7 @@ pub enum RuntimeIntrinsic {
     GcSafepoint,
     StringConcat,
     StringEqual,
+    StringCharAt,
     PrintString,
     PrintNumber,
     PrintBool,
@@ -29,6 +30,9 @@ impl RuntimeIntrinsic {
             }
             RuntimeIntrinsic::StringEqual => {
                 runtime::karte_jit_runtime_string_equal as *const ()
+            }
+            RuntimeIntrinsic::StringCharAt => {
+                runtime::karte_jit_runtime_string_char_at as *const ()
             }
             RuntimeIntrinsic::PrintString => {
                 runtime::karte_jit_runtime_print_string as *const ()
@@ -51,6 +55,7 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::GcSafepoint => "karte_jit_runtime_gc_safepoint",
             RuntimeIntrinsic::StringConcat => "karte_jit_runtime_string_concat",
             RuntimeIntrinsic::StringEqual => "karte_jit_runtime_string_equal",
+            RuntimeIntrinsic::StringCharAt => "karte_jit_runtime_string_char_at",
             RuntimeIntrinsic::PrintString => "karte_jit_runtime_print_string",
             RuntimeIntrinsic::PrintNumber => "karte_jit_runtime_print_number",
             RuntimeIntrinsic::PrintBool => "karte_jit_runtime_print_bool",
@@ -60,7 +65,7 @@ impl RuntimeIntrinsic {
     pub fn has_result(self) -> bool {
         matches!(
             self,
-            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual
+            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual | RuntimeIntrinsic::StringCharAt
         )
     }
 }
@@ -129,6 +134,13 @@ impl RuntimeCall {
         Self {
             intrinsic: RuntimeIntrinsic::StringEqual,
             args: vec![RuntimeArg::Register(left), RuntimeArg::Register(right)],
+        }
+    }
+
+    pub fn string_char_at(str_reg: Register, index_reg: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::StringCharAt,
+            args: vec![RuntimeArg::Register(str_reg), RuntimeArg::Register(index_reg)],
         }
     }
 

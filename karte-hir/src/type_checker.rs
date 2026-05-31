@@ -1743,6 +1743,50 @@ impl TypeChecker {
                 }
                 if ok { Type::Number } else { Type::Unknown }
             }
+            Expr::StrIndex { string, index, span } => {
+                let string_type = self.infer_expr(string, env);
+                let index_type = self.infer_expr(index, env);
+                let mut ok = true;
+                if string_type != Type::String && string_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::String,
+                        found: string_type,
+                        span: string.span(),
+                    });
+                    ok = false;
+                }
+                if index_type != Type::Number && index_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: index_type,
+                        span: index.span(),
+                    });
+                    ok = false;
+                }
+                if ok { Type::Number } else { Type::Unknown }
+            }
+            Expr::CharAt { string, index, span } => {
+                let string_type = self.infer_expr(string, env);
+                let index_type = self.infer_expr(index, env);
+                let mut ok = true;
+                if string_type != Type::String && string_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::String,
+                        found: string_type,
+                        span: string.span(),
+                    });
+                    ok = false;
+                }
+                if index_type != Type::Number && index_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: index_type,
+                        span: index.span(),
+                    });
+                    ok = false;
+                }
+                if ok { Type::String } else { Type::Unknown }
+            }
             Expr::Index { array, index, span } => {
                 let array_type = self.infer_expr(array, env);
                 let index_type = self.infer_expr(index, env);

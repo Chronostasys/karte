@@ -697,6 +697,51 @@ pub(super) fn lower_statement(
                         }
                         return Ok(());
                     }
+                    "__runtime_string_char_at" => {
+                        let str_op = ctx.lower_to_rvalue(&args[0]);
+                        let idx_op = ctx.lower_to_rvalue(&args[1]);
+
+                        let str_reg = match str_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: str_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+                        let idx_reg = match idx_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: idx_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+
+                        let result_reg = ctx.current_function_mut().new_register();
+                        ctx.add_instruction(Instruction::StringCharAt {
+                            dst: result_reg,
+                            str_ptr: str_reg,
+                            index: idx_reg,
+                            span: *span,
+                        });
+
+                        if let Some(target_value) = target {
+                            ctx.store_value_to_stack(
+                                target_value,
+                                Operand::Register { id: result_reg },
+                            );
+                        }
+                        return Ok(());
+                    }
                     "__runtime_print_string" => {
                         // 打印字符串：生成 PrintString LIR 指令
                         let ptr_op = ctx.lower_to_rvalue(&args[0]);

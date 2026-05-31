@@ -490,6 +490,11 @@ impl DefUseAnalysis {
                 uses.push(*left);
                 uses.push(*right);
             }
+            Instruction::StringCharAt { dst, str_ptr, index, .. } => {
+                defs.push(*dst);
+                uses.push(*str_ptr);
+                uses.push(*index);
+            }
             Instruction::PrintString { ptr, .. } => {
                 uses.push(*ptr);
             }

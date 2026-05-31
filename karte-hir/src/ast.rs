@@ -230,6 +230,18 @@ pub enum Expr {
         right: Box<Expr>,
         span: Span,
     },
+    /// 字符串索引 str_index(s, i) — 返回第 i 个字节的 ASCII 值
+    StrIndex {
+        string: Box<Expr>,
+        index: Box<Expr>,
+        span: Span,
+    },
+    /// 字符取值 char_at(s, i) — 返回第 i 个字节位置的单字节字符串
+    CharAt {
+        string: Box<Expr>,
+        index: Box<Expr>,
+        span: Span,
+    },
     /// 元组字面量
     TupleLiteral {
         elements: Vec<Expr>,
@@ -779,6 +791,12 @@ impl fmt::Display for Expr {
             Expr::Max { left, right, .. } => {
                 write!(f, "max({}, {})", left, right)
             }
+            Expr::StrIndex { string, index, .. } => {
+                write!(f, "str_index({}, {})", string, index)
+            }
+            Expr::CharAt { string, index, .. } => {
+                write!(f, "char_at({}, {})", string, index)
+            }
             Expr::TupleLiteral { elements, .. } => {
                 let elems = elements
                     .iter()
@@ -882,6 +900,8 @@ impl Expr {
             Expr::Abs { span, .. } => *span,
             Expr::Min { span, .. } => *span,
             Expr::Max { span, .. } => *span,
+            Expr::StrIndex { span, .. } => *span,
+            Expr::CharAt { span, .. } => *span,
             Expr::TupleLiteral { span, .. } => *span,
             Expr::TupleAccess { span, .. } => *span,
             Expr::Reference { span, .. } => *span,

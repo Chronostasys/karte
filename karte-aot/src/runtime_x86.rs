@@ -19,6 +19,7 @@ pub mod runtime_names {
     pub const RELEASE: &str = "__karte_release";
     pub const STRING_EQUAL: &str = "__karte_string_equal";
     pub const STRING_CONCAT: &str = "__karte_string_concat";
+    pub const STRING_CHAR_AT: &str = "__karte_string_char_at";
     pub const PRINT_STRING: &str = "__karte_print_string";
     pub const PRINT_NUMBER: &str = "__karte_print_number";
     pub const PRINT_BOOL: &str = "__karte_print_bool";
@@ -76,6 +77,7 @@ impl X86Runtime {
         self.emit_release();
         self.emit_string_equal();
         self.emit_string_concat();
+        self.emit_string_char_at();
         self.emit_print_string();
         self.emit_print_number();
         self.emit_print_bool();
@@ -1534,6 +1536,109 @@ impl X86Runtime {
         self.code[oom_patch..oom_patch + 4].copy_from_slice(&rel.to_le_bytes());
     }
 
+    /// __karte_string_char_at(str_ptr, index) → 新字符串指针
+    ///
+    /// RDI(7) = str_ptr, RSI(6) = index
+    /// 返回 RAX = 新字符串指针（单字节字符串）
+    ///
+    /// 字符串布局: [length: i64][bytes...]
+    /// 算法: 先从源字符串读取目标字节到寄存器，再调用 gc_alloc 分配，
+    /// 最后写入 length=1 和 byte_val。GC 安全。
+    fn emit_string_char_at(&mut self) {
+        self.fn_start(runtime_names::STRING_CHAR_AT);
+
+        // 保存 callee-saved 寄存器
+        self.push(5);  // RBP
+        self.push(3);  // RBX
+
+        // RDI(7) = str_ptr, RSI(6) = index
+
+        // 空指针检查: str_ptr == 0 → 返回 0
+        self.test_rr(7, 7); // test RDI, RDI
+        self.jz_rel32(0);
+        let null_patch = self.code.len() - 4;
+
+        // GC 安全：先从源字符串读取目标字节到 RBX
+        // RBX = index + 8 (跳过 length header)
+        self.mov_rr(3, 6);   // RBX = RSI (index)
+        self.add_ri8(3, 8);  // RBX += 8
+        // RBX = byte_val = [str_ptr + RBX]
+        self.push(7);         // 保存 RDI
+        self.add_rr(7, 3);    // RDI = RDI + offset
+        self.movzx_byte(3, 7, 0); // MOVZX RBX, byte [RDI]
+        self.pop(7);          // 恢复 RDI
+
+        // 现在安全地分配新内存（GC 可能移动源字符串，但我们已经读取了字节值）
+        // RDI = 16 (size), RSI = 8 (align)
+        self.mov_ri(7, 16); // RDI = 16
+        self.mov_ri(6, 8);  // RSI = 8
+        let call_pos = self.code.len();
+        self.call_rel32(0); // 占位 CALL，稍后修补到 gc_alloc
+        self.functions.push(RuntimeFunction {
+            name: "__string_char_at_call_alloc".to_string(),
+            offset: call_pos,
+            size: 5,
+        });
+
+        // 检查 gc_alloc 返回值: RAX == 0?
+        self.test_rr(0, 0); // test RAX, RAX
+        self.jz_rel32(0);   // → OOM
+        let oom_patch = self.code.len() - 4;
+
+        // 写入 length = 1 到 [RAX + 0]
+        // 使用 RBP 临时存储 1
+        self.mov_ri(5, 1);  // RBP = 1
+        self.mov_mem_store(0, 0, 5); // MOV [RAX+0], RBP (length = 1)
+
+        // 写入 byte_val 到 [RAX + 8]
+        // RAX 已经是 result ptr，需要计算 RAX+8 并存储 RBX (byte_val)
+        self.push(0);       // 保存 RAX
+        self.add_ri8(0, 8); // RAX += 8
+        // MOV byte [RAX], BL (RBX 低 8 位)
+        // 使用 MOV [RAX], BL = 88 1B (store byte from BL)
+        // RBX = register 3, BL = 0x1B modrm for [RAX]
+        self.bs(&[0x88, 0x18]); // MOV [RAX], BL
+
+        // 清零剩余 7 字节: [RAX+1]..[RAX+7] = 0
+        // 使用 XOR ECX, ECX 然后 store byte 7 次
+        self.xor_rr(1, 1);  // XOR RCX, RCX = 0
+        for i in 1..8u8 {
+            // MOV byte [RAX+i], CL = 88 48+i (modrm: [RAX+disp8])
+            self.bs(&[0x88, 0x48, i]);
+        }
+
+        self.pop(0);        // 恢复 RAX (result ptr)
+
+        // done: 返回 RAX
+        self.pop(3);  // RBX
+        self.pop(5);  // RBP
+        self.ret();
+
+        // null: 空指针，返回 0
+        let null_label = self.code.len();
+        self.xor_rr(0, 0); // RAX = 0
+        self.pop(3);  // RBX
+        self.pop(5);  // RBP
+        self.ret();
+
+        // oom: gc_alloc 返回 0，返回 0
+        let oom_label = self.code.len();
+        self.xor_rr(0, 0); // RAX = 0
+        self.pop(3);  // RBX
+        self.pop(5);  // RBP
+        self.ret();
+
+        self.fn_end();
+
+        // 修补跳转
+        // null_patch → null_label
+        let rel = null_label as i32 - (null_patch as i32 + 4);
+        self.code[null_patch..null_patch + 4].copy_from_slice(&rel.to_le_bytes());
+        // oom_patch → oom_label
+        let rel = oom_label as i32 - (oom_patch as i32 + 4);
+        self.code[oom_patch..oom_patch + 4].copy_from_slice(&rel.to_le_bytes());
+    }
+
     /// __karte_print_string(str_ptr) → 0
     ///
     /// RDI = str_ptr
@@ -1798,7 +1903,7 @@ impl X86Runtime {
             .map(|f| (f.offset, f.size, gc_collect as i64))
             .collect();
         let alloc_patches: Vec<(usize, usize, i64)> = self.functions.iter()
-            .filter(|f| f.name == "__string_concat_call_alloc")
+            .filter(|f| f.name == "__string_concat_call_alloc" || f.name == "__string_char_at_call_alloc")
             .map(|f| (f.offset, f.size, gc_alloc as i64))
             .collect();
 

@@ -6831,4 +6831,46 @@ fn main() -> number {
         compile_and_run_aot(code, 12, "for_array_continue");
     }
 
+    #[test]
+    fn test_str_index_hello_0() {
+        let source = r#"fn main() -> number { str_index("hello", 0) }"#;
+        let exit_code = compile_project_mode_code(source);
+        assert_eq!(exit_code, 104, "str_index(\"hello\", 0) should return 104 ('h'), got {}", exit_code);
+    }
+
+    #[test]
+    fn test_str_index_hello_4() {
+        let source = r#"fn main() -> number { str_index("hello", 4) }"#;
+        let exit_code = compile_project_mode_code(source);
+        assert_eq!(exit_code, 111, "str_index(\"hello\", 4) should return 111 ('o'), got {}", exit_code);
+    }
+
+    #[test]
+    fn test_str_index_ab_1() {
+        let source = r#"fn main() -> number { str_index("AB", 1) }"#;
+        let exit_code = compile_project_mode_code(source);
+        assert_eq!(exit_code, 66, "str_index(\"AB\", 1) should return 66 ('B'), got {}", exit_code);
+    }
+
+    #[test]
+    fn test_char_at_hello_0() {
+        let source = r#"fn main() -> number { str_index(char_at("hello", 0), 0) }"#;
+        let exit_code = compile_project_mode_code(source);
+        assert_eq!(exit_code, 104, "str_index(char_at(\"hello\", 0), 0) should return 104 ('h'), got {}", exit_code);
+    }
+
+    #[test]
+    fn test_char_at_hello_4() {
+        let source = r#"fn main() -> number { str_index(char_at("hello", 4), 0) }"#;
+        let exit_code = compile_project_mode_code(source);
+        assert_eq!(exit_code, 111, "str_index(char_at(\"hello\", 4), 0) should return 111 ('o'), got {}", exit_code);
+    }
+
+    #[test]
+    fn test_char_at_combined() {
+        let source = r#"fn main() -> number { str_index(char_at("hello", 0), 0) }"#;
+        let exit_code = compile_project_mode_code(source);
+        assert_eq!(exit_code, 104, "str_index(char_at(\"hello\", 0), 0) should equal str_index(\"hello\", 0) = 104, got {}", exit_code);
+    }
+
 }

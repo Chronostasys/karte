@@ -2879,6 +2879,57 @@ pub(crate) fn lower_expression(
             ctx.set_current_block(merge_block);
         }
 
+        // str_index(s, i) — 读取字符串第 i 个字节的 ASCII 值
+        // 字符串内存布局: [length: i64 (8 bytes)] [byte0 byte1 ...]
+        Expr::StrIndex { string, index, span } => {
+            let str_temp = lower_expression_to_temp(ctx, string)?;
+            let idx_temp = lower_expression_to_temp(ctx, index)?;
+
+            // data_offset = 8 + idx
+            let data_offset = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                target: data_offset.clone(),
+                left: Value::Number { value: 8, ty: None },
+                op: MirBinaryOp::Add,
+                right: idx_temp,
+                span: *span,
+            });
+
+            // addr = str_ptr + data_offset
+            let addr = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                target: addr.clone(),
+                left: str_temp,
+                op: MirBinaryOp::Add,
+                right: data_offset,
+                span: *span,
+            });
+
+            // 读取 1 字节
+            ctx.add_statement(Statement::UnsafeLoad {
+                target: destination.clone(),
+                addr,
+                byte_size: 1,
+                span: *span,
+            });
+        }
+
+        // char_at(s, i) — 返回第 i 个字节位置的单字节字符串
+        // 调用运行时 __runtime_string_char_at(str_ptr, idx) -> new_str_ptr
+        Expr::CharAt { string, index, span } => {
+            let string_val = lower_expression_to_temp(ctx, string)?;
+            let index_val = lower_expression_to_temp(ctx, index)?;
+            ctx.add_statement(Statement::Call {
+                target: Some(destination.clone()),
+                function: Value::Function {
+                    name: "__runtime_string_char_at".to_string(),
+                    ty: None,
+                },
+                args: vec![string_val, index_val],
+                span: *span,
+            });
+        }
+
         Expr::TupleLiteral { elements, span } => {
             // 将元组转换为匿名结构体: (a, b, c) → Struct { name: "__tuple_3", fields: { _0: a, _1: b, _2: c } }
             let n = elements.len();

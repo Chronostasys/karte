@@ -332,6 +332,9 @@ impl AArch64Compiler {
             Instruction::StringEqual { dst, left, right, .. } => {
                 self.compile_string_equal(dst, left, right, code_builder, instruction_index, function)
             }
+            Instruction::StringCharAt { dst, str_ptr, index, .. } => {
+                self.compile_string_char_at(dst, str_ptr, index, code_builder, instruction_index, function)
+            }
             Instruction::PrintString { ptr, .. } => {
                 self.compile_print_string(ptr, code_builder, instruction_index, function)
             }
@@ -1035,6 +1038,19 @@ impl AArch64Compiler {
         function: &LirFunction,
     ) -> crate::Result<()> {
         let call = RuntimeCall::string_equal(*left, *right);
+        self.emit_runtime_call(code_builder, call, Some(dst), instruction_index, function)
+    }
+
+    fn compile_string_char_at(
+        &mut self,
+        dst: &Register,
+        str_ptr: &Register,
+        index: &Register,
+        code_builder: &mut CodeBuilder,
+        instruction_index: usize,
+        function: &LirFunction,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::string_char_at(*str_ptr, *index);
         self.emit_runtime_call(code_builder, call, Some(dst), instruction_index, function)
     }
 

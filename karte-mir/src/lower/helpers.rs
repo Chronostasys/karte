@@ -188,6 +188,16 @@ fn collect_vars_recursive(expr: &Expr, vars: &mut Vec<String>) {
             collect_vars_recursive(right, vars);
         }
 
+        Expr::StrIndex { string, index, .. } => {
+            collect_vars_recursive(string, vars);
+            collect_vars_recursive(index, vars);
+        }
+
+        Expr::CharAt { string, index, .. } => {
+            collect_vars_recursive(string, vars);
+            collect_vars_recursive(index, vars);
+        }
+
         // 元组相关
         Expr::TupleLiteral { elements, .. } => {
             for element in elements {
