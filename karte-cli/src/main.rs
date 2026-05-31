@@ -278,7 +278,7 @@ fn load_and_execute_ir(
     stage: IrStage,
     optimization_level: OptimizationLevel,
     verbose: u8,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<i64, Box<dyn std::error::Error>> {
     let lir_program = load_ir_for_execution(filename, stage, optimization_level, verbose)?;
     runner::execute_lir(&lir_program, verbose, false)
 }
@@ -373,7 +373,7 @@ fn main() {
                     (default_mode, false)
                 };
                 if Path::new(input_str).exists() {
-                    if let Err(err) = runner::process_file(
+                    match runner::process_file(
                         input_str,
                         optimization_level,
                         cli.verbose,
@@ -384,21 +384,33 @@ fn main() {
                         mode_is_explicit,
                         emit_asm,
                     ) {
-                        error!("Error: {}", err);
-                        std::process::exit(1);
+                        Ok(exit_code) => {
+                            std::process::exit(exit_code as i32);
+                        }
+                        Err(err) => {
+                            error!("Error: {}", err);
+                            std::process::exit(1);
+                        }
                     }
-                } else if let Err(err) = runner::process_expression(
-                    input_str,
-                    optimization_level,
-                    cli.verbose,
-                    emit_lir,
-                    output.as_deref(),
-                    heap_stats,
-                    mode,
-                    emit_asm,
-                ) {
-                    error!("Error: {}", err);
-                    std::process::exit(1);
+                } else {
+                    match runner::process_expression(
+                        input_str,
+                        optimization_level,
+                        cli.verbose,
+                        emit_lir,
+                        output.as_deref(),
+                        heap_stats,
+                        mode,
+                        emit_asm,
+                    ) {
+                        Ok(exit_code) => {
+                            std::process::exit(exit_code as i32);
+                        }
+                        Err(err) => {
+                            error!("Error: {}", err);
+                            std::process::exit(1);
+                        }
+                    }
                 }
             }
             None => {
@@ -406,9 +418,14 @@ fn main() {
             }
         },
         Some(Commands::Execute { input, stage }) => {
-            if let Err(err) = load_and_execute_ir(&input, stage, optimization_level, cli.verbose) {
-                error!("Error: {}", err);
-                std::process::exit(1);
+            match load_and_execute_ir(&input, stage, optimization_level, cli.verbose) {
+                Ok(exit_code) => {
+                    std::process::exit(exit_code as i32);
+                }
+                Err(err) => {
+                    error!("Error: {}", err);
+                    std::process::exit(1);
+                }
             }
         }
         Some(Commands::Repl) => {
@@ -485,7 +502,7 @@ fn main() {
         None => {
             if let Some(ref input) = cli.input {
                 if Path::new(input).exists() {
-                    if let Err(err) = runner::process_file(
+                    match runner::process_file(
                         input,
                         optimization_level,
                         cli.verbose,
@@ -496,21 +513,33 @@ fn main() {
                         default_mode_is_explicit,
                         cli.emit_asm,
                     ) {
-                        error!("Error: {}", err);
-                        std::process::exit(1);
+                        Ok(exit_code) => {
+                            std::process::exit(exit_code as i32);
+                        }
+                        Err(err) => {
+                            error!("Error: {}", err);
+                            std::process::exit(1);
+                        }
                     }
-                } else if let Err(err) = runner::process_expression(
-                    input,
-                    optimization_level,
-                    cli.verbose,
-                    cli.emit_lir,
-                    cli.output.as_deref(),
-                    cli.heap_stats,
-                    default_mode,
-                    cli.emit_asm,
-                ) {
-                    error!("Error: {}", err);
-                    std::process::exit(1);
+                } else {
+                    match runner::process_expression(
+                        input,
+                        optimization_level,
+                        cli.verbose,
+                        cli.emit_lir,
+                        cli.output.as_deref(),
+                        cli.heap_stats,
+                        default_mode,
+                        cli.emit_asm,
+                    ) {
+                        Ok(exit_code) => {
+                            std::process::exit(exit_code as i32);
+                        }
+                        Err(err) => {
+                            error!("Error: {}", err);
+                            std::process::exit(1);
+                        }
+                    }
                 }
             } else {
                 runner::run_repl(optimization_level, cli.verbose);

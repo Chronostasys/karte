@@ -532,7 +532,7 @@ pub fn execute_lir(
     lir_program: &LirProgram,
     verbose: u8,
     emit_asm: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<i64, Box<dyn std::error::Error>> {
     if verbose > 0 {
         println!("\n--- Executing LIR ---");
     }
@@ -563,7 +563,7 @@ pub fn execute_lir(
                         executor.dump_asm();
                     }
                     println!("JIT执行完成，退出码: {}", exit_code);
-                    Ok(())
+                    Ok(exit_code)
                 }
                 Err(err) => Err(format!("JIT执行失败: {}", err).into()),
             }
@@ -634,7 +634,7 @@ pub fn process_file(
     mode: ParserMode,
     mode_is_explicit: bool,
     emit_asm: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<i64, Box<dyn std::error::Error>> {
     let entry_path = Path::new(filename);
     let project_context = ProjectBuildContext::try_new(entry_path)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
@@ -698,19 +698,20 @@ pub fn process_file(
             format!("LIR优化失败: {}", errors.join(", ")).into()
         })?;
 
-    if emit_lir {
+    let exit_code = if emit_lir {
         // 在 pipeline 之后输出优化过的 LIR
         println!("{}", lir_program.to_ir_string());
+        0
     } else {
-        execute_lir(&lir_program, verbose, emit_asm)?;
-    }
+        execute_lir(&lir_program, verbose, emit_asm)?
+    };
 
     if let Some(before) = before_stats {
         let after = capture_heap_stats();
         print_heap_stats("file", filename, before, after);
     }
 
-    Ok(())
+    Ok(exit_code)
 }
 
 /// 从 karte-stdlib/gc.karte 中提取函数定义（去掉 main），拼接到用户源码前面
@@ -832,7 +833,7 @@ pub fn process_expression(
     heap_stats: bool,
     mode: ParserMode,
     emit_asm: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<i64, Box<dyn std::error::Error>> {
     let mut lir_program = compile_to_lir(input, "input", optimization_level, verbose > 0, mode)?;
     let before_stats = heap_stats.then_some(capture_heap_stats());
 
@@ -850,19 +851,20 @@ pub fn process_expression(
             format!("LIR优化失败: {}", errors.join(", ")).into()
         })?;
 
-    if emit_lir {
+    let exit_code = if emit_lir {
         // 在 pipeline 之后输出优化过的 LIR
         println!("{}", lir_program.to_ir_string());
+        0
     } else {
-        execute_lir(&lir_program, verbose, emit_asm)?;
-    }
+        execute_lir(&lir_program, verbose, emit_asm)?
+    };
 
     if let Some(before) = before_stats {
         let after = capture_heap_stats();
         print_heap_stats("expression", "input", before, after);
     }
 
-    Ok(())
+    Ok(exit_code)
 }
 
 pub fn run_repl(optimization_level: OptimizationLevel, verbose: u8) {
