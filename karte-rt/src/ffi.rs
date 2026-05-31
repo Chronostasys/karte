@@ -297,6 +297,27 @@ pub extern "C" fn karte_jit_runtime_string_substring(str_ptr: u64, start: u64, l
     }
 }
 
+/// 字符串包含检测：检测字符串中是否包含指定 ASCII 字节值
+/// 字符串格式：[length: i64][bytes...]
+/// 不触发 GC（无内存分配，纯逐字节扫描）
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_string_contains(str_ptr: u64, char_code: u64) -> u64 {
+    unsafe {
+        if str_ptr == 0 {
+            return 0;
+        }
+        let len = *(str_ptr as *const i64) as usize;
+        let data_ptr = (str_ptr as *const u8).add(8);
+        let target = char_code as u8;
+        for i in 0..len {
+            if *data_ptr.add(i) == target {
+                return 1;
+            }
+        }
+        0
+    }
+}
+
 /// 数字转字符串：将 i64 值转换为字符串
 /// 字符串格式：[length: i64][bytes...]
 /// GC 安全：先 format 再 gc_alloc，format 不会触发 GC

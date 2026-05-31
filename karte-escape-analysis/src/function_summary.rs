@@ -291,6 +291,18 @@ impl FunctionSummaryDatabase {
             },
         );
 
+        // __runtime_string_contains: 不保存参数，不分配内存，返回数值
+        self.builtin_summaries.insert(
+            "__runtime_string_contains".to_string(),
+            FunctionSummary {
+                function_id: FunctionId("__runtime_string_contains".to_string()),
+                parameter_tags: vec![ParameterTag::NoEscape, ParameterTag::NoEscape],
+                return_source: ReturnSource::Constant,
+                modifies_global_state: false,
+                is_recursive: false,
+            },
+        );
+
         // 未来可以添加更多内置函数...
     }
 

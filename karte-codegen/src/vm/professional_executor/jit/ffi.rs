@@ -13,6 +13,7 @@ pub enum RuntimeIntrinsic {
     StringEqual,
     StringCharAt,
     StringSubstring,
+    StringContains,
     ToString,
     PrintString,
     PrintNumber,
@@ -38,6 +39,9 @@ impl RuntimeIntrinsic {
             }
             RuntimeIntrinsic::StringSubstring => {
                 runtime::karte_jit_runtime_string_substring as *const ()
+            }
+            RuntimeIntrinsic::StringContains => {
+                runtime::karte_jit_runtime_string_contains as *const ()
             }
             RuntimeIntrinsic::ToString => {
                 runtime::karte_jit_runtime_to_string as *const ()
@@ -65,6 +69,7 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::StringEqual => "karte_jit_runtime_string_equal",
             RuntimeIntrinsic::StringCharAt => "karte_jit_runtime_string_char_at",
             RuntimeIntrinsic::StringSubstring => "karte_jit_runtime_string_substring",
+            RuntimeIntrinsic::StringContains => "karte_jit_runtime_string_contains",
             RuntimeIntrinsic::ToString => "karte_jit_runtime_to_string",
             RuntimeIntrinsic::PrintString => "karte_jit_runtime_print_string",
             RuntimeIntrinsic::PrintNumber => "karte_jit_runtime_print_number",
@@ -75,7 +80,7 @@ impl RuntimeIntrinsic {
     pub fn has_result(self) -> bool {
         matches!(
             self,
-            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual | RuntimeIntrinsic::StringCharAt | RuntimeIntrinsic::StringSubstring | RuntimeIntrinsic::ToString
+            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual | RuntimeIntrinsic::StringCharAt | RuntimeIntrinsic::StringSubstring | RuntimeIntrinsic::StringContains | RuntimeIntrinsic::ToString
         )
     }
 }
@@ -158,6 +163,13 @@ impl RuntimeCall {
         Self {
             intrinsic: RuntimeIntrinsic::StringSubstring,
             args: vec![RuntimeArg::Register(str_reg), RuntimeArg::Register(start_reg), RuntimeArg::Register(length_reg)],
+        }
+    }
+
+    pub fn string_contains(str_reg: Register, char_code_reg: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::StringContains,
+            args: vec![RuntimeArg::Register(str_reg), RuntimeArg::Register(char_code_reg)],
         }
     }
 

@@ -232,6 +232,9 @@ impl X86Compiler {
             Instruction::StringSubstring { dst, str_ptr, start, length, .. } => {
                 self.compile_string_substring(dst, str_ptr, start, length, code_builder)
             }
+            Instruction::StringContains { dst, str_ptr, char_code, .. } => {
+                self.compile_string_contains(dst, str_ptr, char_code, code_builder)
+            }
             Instruction::ToString { dst, value, .. } => {
                 self.compile_to_string(dst, value, code_builder)
             }
@@ -1594,6 +1597,17 @@ impl X86Compiler {
         code_builder: &mut CodeBuilder,
     ) -> crate::Result<()> {
         let call = RuntimeCall::string_substring(*str_ptr, *start, *length);
+        self.emit_runtime_call(code_builder, call, Some(dst))
+    }
+
+    fn compile_string_contains(
+        &self,
+        dst: &Register,
+        str_ptr: &Register,
+        char_code: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::string_contains(*str_ptr, *char_code);
         self.emit_runtime_call(code_builder, call, Some(dst))
     }
 

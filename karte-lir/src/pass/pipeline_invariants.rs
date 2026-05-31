@@ -534,6 +534,7 @@ fn instr_name(instr: &Instruction) -> &'static str {
         Instruction::StringEqual { .. } => "StringEqual",
         Instruction::StringCharAt { .. } => "StringCharAt",
         Instruction::StringSubstring { .. } => "StringSubstring",
+        Instruction::StringContains { .. } => "StringContains",
         Instruction::ToString { .. } => "ToString",
         Instruction::PrintString { .. } => "PrintString",
         Instruction::PrintNumber { .. } => "PrintNumber",

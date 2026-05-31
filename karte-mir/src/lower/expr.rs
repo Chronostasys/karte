@@ -3033,6 +3033,22 @@ pub(crate) fn lower_expression(
             });
         }
 
+        // str_contains(s, ch) — 检测字符串是否包含指定 ASCII 字节值
+        // 调用运行时 __runtime_string_contains(str_ptr, char_code) -> 0|1
+        Expr::StrContains { string, char_code, span } => {
+            let string_val = lower_expression_to_temp(ctx, string)?;
+            let char_code_val = lower_expression_to_temp(ctx, char_code)?;
+            ctx.add_statement(Statement::Call {
+                target: Some(destination.clone()),
+                function: Value::Function {
+                    name: "__runtime_string_contains".to_string(),
+                    ty: None,
+                },
+                args: vec![string_val, char_code_val],
+                span: *span,
+            });
+        }
+
         // to_string(expr) — 将 number 转换为字符串
         // 调用运行时 __runtime_to_string(value) -> str_ptr
         Expr::ToString { expr, span } => {

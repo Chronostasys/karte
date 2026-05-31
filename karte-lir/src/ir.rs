@@ -559,6 +559,20 @@ pub enum Instruction {
         span: Span,
     },
 
+    /// 字符串包含检测：dst = str_contains(str_ptr, char_code) — 返回 0 或 1
+    /// 调用运行时 karte_jit_runtime_string_contains(str_ptr, char_code) -> 0|1
+    #[ir_codec(token = "string_contains")]
+    StringContains {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        str_ptr: Register,
+        #[ir_codec(args)]
+        char_code: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
     /// 数字转字符串：dst = to_string(value) — 将 number 转换为字符串
     /// 调用运行时 karte_jit_runtime_to_string(value) -> str_ptr
     #[ir_codec(token = "to_string")]
@@ -791,6 +805,7 @@ impl Instruction {
             | Instruction::StringEqual { dst, .. }
             | Instruction::StringCharAt { dst, .. }
             | Instruction::StringSubstring { dst, .. }
+            | Instruction::StringContains { dst, .. }
             | Instruction::ToString { dst, .. } => Some(*dst),
             Instruction::LoadPair { dst1, .. } => Some(*dst1),
             Instruction::Call { result, .. } | Instruction::CallIndirect { result, .. } => *result,
@@ -831,6 +846,7 @@ impl Instruction {
             | Instruction::StringEqual { dst, .. }
             | Instruction::StringCharAt { dst, .. }
             | Instruction::StringSubstring { dst, .. }
+            | Instruction::StringContains { dst, .. }
             | Instruction::ToString { dst, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
@@ -1001,6 +1017,10 @@ impl Instruction {
                 used.push(*str_ptr);
                 used.push(*start);
                 used.push(*length);
+            }
+            Instruction::StringContains { str_ptr, char_code, .. } => {
+                used.push(*str_ptr);
+                used.push(*char_code);
             }
             Instruction::ToString { value, .. } => {
                 used.push(*value);
@@ -1339,6 +1359,17 @@ impl Instruction {
                     *length = new_reg;
                 }
             }
+            Instruction::StringContains { dst, str_ptr, char_code, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                if *str_ptr == old_reg {
+                    *str_ptr = new_reg;
+                }
+                if *char_code == old_reg {
+                    *char_code = new_reg;
+                }
+            }
             Instruction::ToString { dst, value, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
@@ -1604,6 +1635,11 @@ impl Instruction {
                 used.push(*str_ptr);
                 used.push(*start);
                 used.push(*length);
+            }
+            Instruction::StringContains { dst, str_ptr, char_code, .. } => {
+                defined.push(*dst);
+                used.push(*str_ptr);
+                used.push(*char_code);
             }
             Instruction::ToString { dst, value, .. } => {
                 defined.push(*dst);

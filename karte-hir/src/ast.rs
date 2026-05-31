@@ -256,6 +256,12 @@ pub enum Expr {
         length: Box<Expr>,
         span: Span,
     },
+    /// 字符串包含检测 str_contains(s, ch) — ch 为 ASCII 字节值，返回 0 或 1
+    StrContains {
+        string: Box<Expr>,
+        char_code: Box<Expr>,
+        span: Span,
+    },
     /// 数字转字符串 to_string(expr) — 将 number 转换为字符串
     ToString {
         expr: Box<Expr>,
@@ -822,6 +828,9 @@ impl fmt::Display for Expr {
             Expr::Substring { string, start, length, .. } => {
                 write!(f, "substring({}, {}, {})", string, start, length)
             }
+            Expr::StrContains { string, char_code, .. } => {
+                write!(f, "str_contains({}, {})", string, char_code)
+            }
             Expr::ToString { expr, .. } => {
                 write!(f, "to_string({})", expr)
             }
@@ -932,6 +941,7 @@ impl Expr {
             Expr::StrIndex { span, .. } => *span,
             Expr::CharAt { span, .. } => *span,
             Expr::Substring { span, .. } => *span,
+            Expr::StrContains { span, .. } => *span,
             Expr::ToString { span, .. } => *span,
             Expr::TupleLiteral { span, .. } => *span,
             Expr::TupleAccess { span, .. } => *span,

@@ -501,6 +501,11 @@ impl DefUseAnalysis {
                 uses.push(*start);
                 uses.push(*length);
             }
+            Instruction::StringContains { dst, str_ptr, char_code, .. } => {
+                defs.push(*dst);
+                uses.push(*str_ptr);
+                uses.push(*char_code);
+            }
             Instruction::ToString { dst, value, .. } => {
                 defs.push(*dst);
                 uses.push(*value);

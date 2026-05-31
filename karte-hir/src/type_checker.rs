@@ -1849,6 +1849,28 @@ impl TypeChecker {
                 }
                 if ok { Type::String } else { Type::Unknown }
             }
+            Expr::StrContains { string, char_code, span } => {
+                let string_type = self.infer_expr(string, env);
+                let char_code_type = self.infer_expr(char_code, env);
+                let mut ok = true;
+                if string_type != Type::String && string_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::String,
+                        found: string_type,
+                        span: string.span(),
+                    });
+                    ok = false;
+                }
+                if char_code_type != Type::Number && char_code_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: char_code_type,
+                        span: char_code.span(),
+                    });
+                    ok = false;
+                }
+                if ok { Type::Number } else { Type::Unknown }
+            }
             Expr::ToString { expr, span } => {
                 let expr_type = self.infer_expr(expr, env);
                 let mut ok = true;
