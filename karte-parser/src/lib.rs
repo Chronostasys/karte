@@ -96,7 +96,7 @@ impl<'a> Parser<'a> {
         Some(ParsedProgram {
             module: self.module_decl.clone(),
             imports: self.imports.clone(),
-            body: body_expr,
+            body: Box::new(body_expr),
         })
     }
 
@@ -263,7 +263,7 @@ impl ParseResult {
 pub fn parse(tokens: &[TokenWithSpan]) -> (Option<Expr>, DiagnosticBag) {
     let mut parser = Parser::new(tokens);
     let program = parser.parse();
-    (program.map(|p| p.body), parser.into_diagnostics())
+    (program.map(|p| *p.body), parser.into_diagnostics())
 }
 
 /// 返回包含 module/import 信息的解析结果

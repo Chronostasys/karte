@@ -125,7 +125,7 @@ pub struct ParsedProgram {
     /// 导入声明列表
     pub imports: Vec<ImportDecl>,
     /// 程序主体
-    pub body: Expr,
+    pub body: Box<Expr>,
 }
 
 /// 解析器错误

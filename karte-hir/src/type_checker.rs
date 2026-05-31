@@ -1643,8 +1643,10 @@ impl TypeChecker {
                 let array_type = self.infer_expr(array, env);
                 match array_type {
                     Type::Array { .. } => Type::Number,
+                    Type::String => Type::Number,
                     Type::Reference { inner } => match *inner {
                         Type::Array { .. } => Type::Number,
+                        Type::String => Type::Number,
                         other => {
                             self.add_error(TypeCheckError::TypeMismatch {
                                 expected: Type::array(Type::Unknown),

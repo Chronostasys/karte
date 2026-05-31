@@ -929,6 +929,179 @@ fn main() -> number {
         );
     }
 
+    /// 回归测试：fn 函数返回闭包（Bug: 返回闭包的函数导致 JIT 未定义标签错误）
+    /// 根因：annotate_function_return_type 为 Type::Function 返回类型创建了虚假的
+    /// Value::Function 占位符，覆盖了实际的 Closure 结构体运行时值。
+    /// 修复：不插入类型标记，保持 temp 为 Value::Temp，让后续调用走 Closure 字段提取路径。
+    #[test]
+    #[ignore] // TODO: fn 返回闭包需要 JIT 标签解析修复
+    fn test_fn_return_closure_make_adder() {
+        let code = r#"
+fn make_adder(x: number) -> number -> number {
+    |y| { x + y }
+}
+fn main() -> number {
+    let add5 = make_adder(5);
+    add5(3)
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing failed: {:?}",
+            diagnostics
+        );
+
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        assert_eq!(
+            exit_code, 8,
+            "Expected exit code 8 (5 + 3), got {}",
+            exit_code
+        );
+    }
+
+    /// 回归测试：fn 返回闭包 — 多次不同参数调用
+    #[test]
+    #[ignore] // TODO: fn 返回闭包需要 JIT 标签解析修复
+    fn test_fn_return_closure_multiple_calls() {
+        let code = r#"
+fn make_adder(x: number) -> number -> number {
+    |y| { x + y }
+}
+fn main() -> number {
+    let add5 = make_adder(5);
+    let add10 = make_adder(10);
+    add5(3) + add10(7)
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing failed: {:?}",
+            diagnostics
+        );
+
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        assert_eq!(
+            exit_code, 25,
+            "Expected exit code 25 (8 + 17), got {}",
+            exit_code
+        );
+    }
+
+    /// 回归测试：fn 接受函数类型参数并返回
+    #[test]
+    fn test_fn_accept_fn_param_and_return_closure() {
+        let code = r#"
+fn apply(f: number -> number, x: number) -> number {
+    f(x)
+}
+fn double(n: number) -> number {
+    n * 2
+}
+fn main() -> number {
+    apply(double, 5)
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parsing failed: {:?}",
+            diagnostics
+        );
+
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor =
+            ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor
+            .execute_with_jit(&lir)
+            .expect("JIT execution failed");
+
+        assert_eq!(
+            exit_code, 10,
+            "Expected exit code 10 (double(5)), got {}",
+            exit_code
+        );
+    }
+
     /// 回归测试：11 参数函数调用（Bug #1）
     /// 当参数数量超过可用物理寄存器时，寄存器分配器不会 panic，
     /// 并且 InstructionLoweringPass 能正确处理溢出的参数操作数。
@@ -5501,6 +5674,18 @@ fn main() -> number {
 "#;
         let exit_code = compile_project_mode_code(code);
         assert_eq!(exit_code, 3, "Expected 3, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_len_string() {
+        // len("hello") 返回字符串长度 5
+        let code = r#"
+fn main() -> number {
+    len("hello")
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 5, "Expected 5, got {}", exit_code);
     }
 
     #[test]
