@@ -2052,6 +2052,28 @@ impl TypeChecker {
                 Type::Unit
             }
 
+            Expr::ForArray { var, array, body, .. } => {
+                let array_type = self.infer_expr(array, env);
+
+                let element_type = match &array_type {
+                    Type::Array { element } => element.as_ref().clone(),
+                    _ => {
+                        self.add_error(TypeCheckError::TypeMismatch {
+                            expected: Type::array(Type::Unknown),
+                            found: array_type,
+                            span: array.span(),
+                        });
+                        Type::Number
+                    }
+                };
+
+                let mut loop_env = env.clone();
+                loop_env.insert(var.clone(), element_type);
+
+                self.infer_expr(body, &loop_env);
+                Type::Unit
+            }
+
             Expr::Break { .. } => {
                 // break 返回 Unit（实际上会跳转，不会使用返回值）
                 Type::Unit

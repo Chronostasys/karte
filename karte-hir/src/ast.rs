@@ -160,6 +160,14 @@ pub enum Expr {
         span: Span,
     },
 
+    /// ForArray表达式 - 数组遍历 for ident in array_expr { body }
+    ForArray {
+        var: String,
+        array: Box<Expr>,
+        body: Box<Expr>,
+        span: Span,
+    },
+
     /// Break表达式 - 跳出当前循环
     Break {
         span: Span,
@@ -725,6 +733,9 @@ impl fmt::Display for Expr {
                 let range_op = if *inclusive { "..=" } else { ".." };
                 write!(f, "for {} in {}{}{} {{ {} }}", var, start, range_op, end, body)
             }
+            Expr::ForArray { var, array, body, .. } => {
+                write!(f, "for {} in {} {{ {} }}", var, array, body)
+            }
             Expr::Break { .. } => write!(f, "break"),
             Expr::Continue { .. } => write!(f, "continue"),
             Expr::Return { value, .. } => {
@@ -859,6 +870,7 @@ impl Expr {
             Expr::If { span, .. } => *span,
             Expr::While { span, .. } => *span,
             Expr::ForIn { span, .. } => *span,
+            Expr::ForArray { span, .. } => *span,
             Expr::Break { span, .. } => *span,
             Expr::Continue { span, .. } => *span,
             Expr::Return { span, .. } => *span,

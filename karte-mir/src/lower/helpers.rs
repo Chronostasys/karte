@@ -246,6 +246,11 @@ fn collect_vars_recursive(expr: &Expr, vars: &mut Vec<String>) {
             collect_vars_recursive(body, vars);
         }
 
+        Expr::ForArray { array, body, .. } => {
+            collect_vars_recursive(array, vars);
+            collect_vars_recursive(body, vars);
+        }
+
         // 返回
         Expr::Return { value, .. } => {
             if let Some(value) = value {

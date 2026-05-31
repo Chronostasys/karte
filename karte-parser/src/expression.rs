@@ -2301,68 +2301,104 @@ impl<'a> Parser<'a> {
             });
         }
 
-        // 解析 start 表达式
+        // 解析 start/array 表达式
         let start = self.parse_expression()?;
 
-        // 期望 '..' 或 '..='
-        let inclusive = if let Some(tok) = self.peek() {
-            if matches!(tok.token, Token::DotDotEqual) {
-                self.advance(); // consume '..='
-                true
-            } else if matches!(tok.token, Token::DoubleDot) {
-                self.advance(); // consume '..'
-                false
-            } else {
-                return Err(ParseError::UnexpectedToken {
-                    expected: "'..' or '..='".to_string(),
-                    found: tok.token.clone(),
-                    span: tok.span,
-                });
-            }
-        } else {
-            return Err(ParseError::UnexpectedEof {
-                expected: "'..' or '..='".to_string(),
-            });
-        };
-
-        // 解析 end 表达式
-        let end = self.parse_expression()?;
-
-        // 期望 '{' (或 do)
+        // 检查下一个 token 决定是范围遍历还是数组遍历
         if let Some(tok) = self.peek() {
             match &tok.token {
+                Token::DoubleDot | Token::DotDotEqual => {
+                    // 范围遍历: for ident in start..end { body }
+                    let inclusive = if matches!(tok.token, Token::DotDotEqual) {
+                        self.advance(); // consume '..='
+                        true
+                    } else {
+                        self.advance(); // consume '..'
+                        false
+                    };
+
+                    // 解析 end 表达式
+                    let end = self.parse_expression()?;
+
+                    // 期望 '{' (或 do)
+                    if let Some(tok) = self.peek() {
+                        match &tok.token {
+                            Token::LeftBrace => {
+                                // 允许 for x in 0..10 { ... } 语法，不需要 consume
+                            }
+                            Token::Identifier(name) if name == "do" => {
+                                self.advance(); // consume 'do'
+                            }
+                            _ => {
+                                return Err(ParseError::UnexpectedToken {
+                                    expected: "'{' or 'do'".to_string(),
+                                    found: tok.token.clone(),
+                                    span: tok.span,
+                                });
+                            }
+                        }
+                    } else {
+                        return Err(ParseError::UnexpectedEof {
+                            expected: "'{' or 'do'".to_string(),
+                        });
+                    }
+
+                    // 解析循环体
+                    let body = self.parse_expression()?;
+                    let end_span = body.span();
+                    let span = Span::new(start_span.start, end_span.end);
+
+                    Ok(Expr::ForIn {
+                        var,
+                        start: Box::new(start),
+                        end: Box::new(end),
+                        body: Box::new(body),
+                        inclusive,
+                        span,
+                    })
+                }
                 Token::LeftBrace => {
-                    // 允许 for x in 0..10 { ... } 语法，不需要 consume
+                    // 数组遍历: for ident in array { body }
+                    // 不需要 consume '{'，parse_expression 内部的 parse_block 会处理
+                    let array_expr = start;
+                    let body = self.parse_expression()?;
+                    let end_span = body.span();
+                    let span = Span::new(start_span.start, end_span.end);
+
+                    Ok(Expr::ForArray {
+                        var,
+                        array: Box::new(array_expr),
+                        body: Box::new(body),
+                        span,
+                    })
                 }
                 Token::Identifier(name) if name == "do" => {
+                    // 数组遍历: for ident in array do body
                     self.advance(); // consume 'do'
+                    let array_expr = start;
+                    let body = self.parse_expression()?;
+                    let end_span = body.span();
+                    let span = Span::new(start_span.start, end_span.end);
+
+                    Ok(Expr::ForArray {
+                        var,
+                        array: Box::new(array_expr),
+                        body: Box::new(body),
+                        span,
+                    })
                 }
                 _ => {
-                    return Err(ParseError::UnexpectedToken {
-                        expected: "'{' or 'do'".to_string(),
+                    Err(ParseError::UnexpectedToken {
+                        expected: "'..' or '..=' or '{'".to_string(),
                         found: tok.token.clone(),
                         span: tok.span,
-                    });
+                    })
                 }
             }
         } else {
-            return Err(ParseError::UnexpectedEof {
-                expected: "'{' or 'do'".to_string(),
-            });
+            Err(ParseError::UnexpectedEof {
+                expected: "'..' or '..=' or '{'".to_string(),
+            })
         }
-
-        // 解析循环体
-        let body = self.parse_expression()?;
-        let end_span = body.span();
-        let span = Span::new(start_span.start, end_span.end);
-
-        Ok(Expr::ForIn {
-            var,
-            start: Box::new(start),
-            end: Box::new(end),
-            body: Box::new(body),
-            inclusive,
-            span,
-        })
     }
 }

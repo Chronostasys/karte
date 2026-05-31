@@ -6631,4 +6631,91 @@ fn main() -> number {
         );
     }
 
+    #[test]
+    fn test_for_array_basic_sum() {
+        let code = r#"fn main() -> number {
+    let arr = [1, 2, 3, 4, 5];
+    let sum = 0;
+    for x in arr {
+        sum = sum + x
+    };
+    sum
+}"#;
+        compile_and_run_aot(code, 15, "for_array_basic_sum");
+    }
+
+    #[test]
+    fn test_for_array_empty() {
+        let code = r#"fn main() -> number {
+    let arr = [];
+    let sum = 0;
+    for x in arr {
+        sum = sum + x
+    };
+    sum
+}"#;
+        compile_and_run_aot(code, 0, "for_array_empty");
+    }
+
+    #[test]
+    fn test_for_array_phi_accumulator() {
+        let code = r#"fn main() -> number {
+    let arr = [10, 20, 30];
+    let acc = 1;
+    for x in arr {
+        acc = acc * x
+    };
+    acc
+}"#;
+        compile_and_run_aot(code, 6000, "for_array_phi_accumulator");
+    }
+
+    #[test]
+    fn test_for_array_nested() {
+        let code = r#"fn main() -> number {
+    let a = [1, 2];
+    let b = [10, 20];
+    let sum = 0;
+    for x in a {
+        for y in b {
+            sum = sum + x * y
+        }
+    };
+    sum
+}"#;
+        compile_and_run_aot(code, 90, "for_array_nested");
+    }
+
+    #[test]
+    fn test_for_array_break() {
+        let code = r#"fn main() -> number {
+    let arr = [1, 2, 3, 4, 5];
+    let sum = 0;
+    for x in arr {
+        if x == 3 {
+            break
+        };
+        sum = sum + x
+    };
+    sum
+}"#;
+        compile_and_run_aot(code, 3, "for_array_break");
+    }
+
+    #[test]
+    fn test_for_array_continue() {
+        let code = r#"fn main() -> number {
+    let arr = [1, 2, 3, 4, 5];
+    let sum = 0;
+    for x in arr {
+        if x == 3 {
+            continue
+        };
+        sum = sum + x
+    };
+    sum
+}"#;
+        compile_and_run_aot(code, 12, "for_array_continue");
+    }
+
 }

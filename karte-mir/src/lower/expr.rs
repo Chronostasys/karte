@@ -1496,6 +1496,533 @@ pub(crate) fn lower_expression(
             });
         }
 
+        Expr::ForArray { var, array, body, span } => {
+            // 数组遍历 for item in arr { body }
+            // 展开为：
+            //   let __arr = arr
+            //   let __len = *__arr (解引用首8字节获取长度)
+            //   let mut __for_idx = 0
+            //   loop {
+            //       if __for_idx < __len {
+            //           let item = arr[__idx]  (数组下标访问)
+            //           body
+            //           __for_idx = __for_idx + 1
+            //       } else {
+            //           break
+            //       }
+            //   }
+
+            let loop_head = ctx.new_block();
+            let loop_body = ctx.new_block();
+            let increment_block = ctx.new_block();
+            let loop_exit = ctx.new_block();
+
+            let pre_loop_block = ctx.current_block();
+
+            // 预计算数组表达式
+            let array_value = lower_expression_to_temp(ctx, array)?;
+
+            // 获取数组长度: 解引用首8字节
+            let arr_len = ctx.new_temp();
+            ctx.add_statement(Statement::Dereference {
+                target: arr_len.clone(),
+                reference: array_value.clone(),
+                span: *span,
+            });
+
+            // 创建循环计数器 __for_idx
+            let for_idx_name = format!("__for_idx_{}", ctx.lambda_counter);
+            ctx.lambda_counter += 1;
+            let for_idx_temp = ctx.new_temp();
+            ctx.add_statement(Statement::Assign {
+                target: for_idx_temp.clone(),
+                source: Value::Number { value: 0, ty: None },
+                span: *span,
+            });
+            ctx.bind_variable(for_idx_name.clone(), for_idx_temp.clone(), None);
+
+            // 快照所有作用域的变量绑定
+            let pre_loop_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
+                ctx.scopes
+                    .iter()
+                    .rev()
+                    .flat_map(|scope| scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership))))
+                    .collect();
+
+            // === 第一步：预分析循环体，找出被更新的变量 ===
+            ctx.loop_stack.push(super::types::LoopContext {
+                continue_target: increment_block,
+                break_target: loop_exit,
+                continue_sources: Vec::new(),
+                break_sources: Vec::new(),
+            });
+
+            ctx.analysis_mode = true;
+            let pre_analysis_block_count = ctx.current_function_mut().basic_blocks.len();
+            let saved_block = ctx.current_block();
+            let analysis_block = ctx.new_block();
+            ctx.set_current_block(analysis_block);
+
+            // 在分析块中绑定循环变量（占位）
+            let analysis_var_temp = ctx.new_temp();
+            ctx.bind_variable(var.clone(), analysis_var_temp, None);
+            // 模拟递增
+            let analysis_inc_temp = ctx.new_temp();
+            ctx.add_statement(Statement::Assign {
+                target: analysis_inc_temp.clone(),
+                source: Value::Number { value: 1, ty: None },
+                span: *span,
+            });
+
+            let temp_result = ctx.new_temp();
+            let _ = lower_expression(ctx, body, &temp_result);
+            ctx.analysis_mode = false;
+
+            ctx.loop_stack.pop();
+
+            let post_loop_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
+                ctx.scopes
+                    .iter()
+                    .rev()
+                    .flat_map(|scope| scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership))))
+                    .collect();
+
+            let all_block_ids: Vec<_> = ctx.current_function_mut().basic_blocks.keys().cloned().collect();
+            let analysis_blocks: Vec<_> = all_block_ids[pre_analysis_block_count..].to_vec();
+            for block_id in &analysis_blocks {
+                ctx.remove_block(*block_id);
+            }
+
+            let mut updated_vars: Vec<(String, Value, Value)> = Vec::new();
+            for (name, (post_value, _)) in &post_loop_bindings {
+                if let Some((pre_value, _)) = pre_loop_bindings.get(name) {
+                    if post_value != pre_value {
+                        updated_vars.push((name.clone(), pre_value.clone(), post_value.clone()));
+                    }
+                }
+            }
+
+            // === 第二步：恢复状态 ===
+            ctx.remove_block(analysis_block);
+            for (name, (value, ownership)) in &pre_loop_bindings {
+                ctx.update_variable(name, value.clone(), *ownership);
+            }
+            ctx.bind_variable(for_idx_name.clone(), for_idx_temp.clone(), None);
+
+            // === 第 2.5 步：预转换结构体变量 ===
+            ctx.set_current_block(saved_block);
+            let mut struct_ref_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for (name, initial_value, loop_value) in &mut updated_vars {
+                let is_struct = ctx.scopes.iter().rev()
+                    .find_map(|scope| scope.bindings.get(name))
+                    .and_then(|b| b.struct_name.clone())
+                    .is_some();
+                let becomes_ref = matches!(loop_value, Value::Reference { .. });
+                if is_struct && becomes_ref {
+                    let struct_name = ctx.scopes.iter().rev()
+                        .find_map(|scope| scope.bindings.get(name))
+                        .and_then(|b| b.struct_name.clone())
+                        .unwrap();
+                    let struct_size = ctx.program.get_struct_type(&struct_name)
+                        .map(|t| t.fields.len().max(1) * 8)
+                        .unwrap_or(8);
+
+                    let heap_copy = ctx.new_temp();
+                    ctx.add_statement(Statement::HeapAlloc {
+                        target: heap_copy.clone(),
+                        size: struct_size,
+                        object_type: "struct_copy".to_string(),
+                        span: *span,
+                    });
+                    ctx.add_statement(Statement::Store {
+                        target: heap_copy.clone(),
+                        value: initial_value.clone(),
+                        span: *span,
+                    });
+
+                    let shared_location = ctx.new_temp();
+                    ctx.add_statement(Statement::HeapAlloc {
+                        target: shared_location.clone(),
+                        size: 8,
+                        object_type: "shared_var".to_string(),
+                        span: *span,
+                    });
+                    ctx.add_statement(Statement::Store {
+                        target: shared_location.clone(),
+                        value: heap_copy,
+                        span: *span,
+                    });
+
+                    let ref_value = Value::Reference {
+                        value: Box::new(shared_location),
+                        ty: None,
+                    };
+                    *initial_value = ref_value;
+                    struct_ref_vars.insert(name.clone());
+                    ctx.update_variable(name, initial_value.clone(), None);
+                }
+            }
+
+            // === 第三步：创建 phi temp ===
+            let mut phi_values: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+            let for_idx_phi = ctx.new_temp();
+            phi_values.insert(for_idx_name.clone(), for_idx_phi.clone());
+
+            for (name, initial_value, _loop_value) in &updated_vars {
+                let phi_temp = ctx.new_temp();
+                phi_values.insert(name.clone(), phi_temp);
+            }
+
+            for (name, phi_val) in &phi_values {
+                if struct_ref_vars.contains(name) {
+                    ctx.update_variable(name, Value::Reference {
+                        value: Box::new(phi_val.clone()),
+                        ty: None,
+                    }, None);
+                } else {
+                    ctx.update_variable(name, phi_val.clone(), None);
+                }
+            }
+
+            // Jump to loop head
+            ctx.set_current_block(saved_block);
+            ctx.set_terminator(Terminator::Goto {
+                target: loop_head,
+                span: *span,
+            });
+
+            // === 第四步：生成循环头（phi + 条件判断）===
+            ctx.set_current_block(loop_head);
+
+            // Phi 节点（用户变量）
+            for (name, initial_value, _loop_value) in &updated_vars {
+                let phi_temp = phi_values.get(name).unwrap().clone();
+                let phi_initial = if struct_ref_vars.contains(name) {
+                    if let Value::Reference { value: inner, .. } = initial_value {
+                        inner.as_ref().clone()
+                    } else {
+                        initial_value.clone()
+                    }
+                } else {
+                    initial_value.clone()
+                };
+                ctx.add_statement(Statement::Phi {
+                    target: phi_temp,
+                    incoming: vec![
+                        (pre_loop_block, phi_initial.clone()),
+                        (increment_block, phi_initial),
+                    ],
+                    span: *span,
+                });
+            }
+            // __for_idx 的 phi
+            ctx.add_statement(Statement::Phi {
+                target: for_idx_phi.clone(),
+                incoming: vec![
+                    (pre_loop_block, for_idx_temp.clone()),
+                    (increment_block, for_idx_temp.clone()),
+                ],
+                span: *span,
+            });
+
+            // 更新 context 中变量指向 phi 结果
+            for (name, phi_val) in &phi_values {
+                if struct_ref_vars.contains(name) {
+                    ctx.update_variable(name, Value::Reference {
+                        value: Box::new(phi_val.clone()),
+                        ty: None,
+                    }, None);
+                } else {
+                    ctx.update_variable(name, phi_val.clone(), None);
+                }
+            }
+
+            // 条件: __for_idx < __len
+            let for_idx_phi_val = phi_values.get(&for_idx_name).unwrap().clone();
+            let cond_temp = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                op: crate::BinaryOperator::LessThan,
+                left: for_idx_phi_val,
+                right: arr_len.clone(),
+                target: cond_temp.clone(),
+                span: *span,
+            });
+
+            ctx.set_terminator(Terminator::Branch {
+                condition: cond_temp,
+                then_block: loop_body,
+                else_block: loop_exit,
+                span: *span,
+            });
+
+            // === 第五步：生成循环体 ===
+            ctx.set_current_block(loop_body);
+
+            // 数组索引访问：获取 element_ptr = array_value + 8 + for_idx_phi * element_size
+            let el_type = ctx.get_expr_type(array);
+            let element_size = if let Type::Array { element } = &el_type {
+                element.byte_size().max(8)
+            } else {
+                8
+            };
+
+            let current_idx = phi_values.get(&for_idx_name).unwrap().clone();
+
+            // scaled_index = current_idx * element_size
+            let scaled_index = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                target: scaled_index.clone(),
+                left: current_idx,
+                op: MirBinaryOp::Multiply,
+                right: Value::Number { value: element_size as i64, ty: None },
+                span: *span,
+            });
+
+            // data_base = array_value + 8
+            let data_base = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                target: data_base.clone(),
+                left: array_value.clone(),
+                op: MirBinaryOp::Add,
+                right: Value::Number { value: 8, ty: None },
+                span: *span,
+            });
+
+            // element_ptr = data_base + scaled_index
+            let element_ptr = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                target: element_ptr.clone(),
+                left: data_base,
+                op: MirBinaryOp::Add,
+                right: scaled_index,
+                span: *span,
+            });
+
+            // 区分结构体元素 vs 简单类型
+            let is_struct = match &el_type {
+                Type::Array { element } => matches!(element.as_ref(),
+                    Type::Struct { .. } | Type::Tuple(_)
+                ),
+                _ => false,
+            };
+
+            // 绑定循环变量
+            let user_var_temp = ctx.new_temp();
+            if is_struct {
+                ctx.add_statement(Statement::Assign {
+                    target: user_var_temp.clone(),
+                    source: element_ptr,
+                    span: *span,
+                });
+            } else {
+                ctx.add_statement(Statement::Dereference {
+                    target: user_var_temp.clone(),
+                    reference: element_ptr,
+                    span: *span,
+                });
+            }
+            ctx.bind_variable(var.clone(), user_var_temp.clone(), None);
+
+            // 推入循环上下文（break/continue）
+            ctx.loop_stack.push(super::types::LoopContext {
+                continue_target: increment_block,
+                break_target: loop_exit,
+                continue_sources: Vec::new(),
+                break_sources: Vec::new(),
+            });
+
+            let temp_body_result = ctx.new_temp();
+            lower_expression(ctx, body, &temp_body_result)?;
+
+            let popped_for_ctx = ctx.loop_stack.pop().unwrap();
+            let for_continue_sources = popped_for_ctx.continue_sources;
+            let for_break_sources = popped_for_ctx.break_sources;
+
+            let normal_end_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
+                ctx.scopes
+                    .iter()
+                    .rev()
+                    .flat_map(|scope| {
+                        scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
+                    })
+                    .collect();
+
+            ctx.set_terminator(Terminator::Goto {
+                target: increment_block,
+                span: body.span(),
+            });
+
+            let normal_end_block = ctx.current_block();
+
+            // === 第六步：生成递增块 ===
+            ctx.set_current_block(increment_block);
+
+            let mut inc_phi_values: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+            if !for_continue_sources.is_empty() {
+                for (name, _initial_value, _loop_value) in &updated_vars {
+                    let inc_phi_temp = ctx.new_temp();
+                    let normal_value = normal_end_bindings.get(name)
+                        .map(|(v, _)| v.clone())
+                        .unwrap_or_else(|| _initial_value.clone());
+                    let mut incoming = vec![(normal_end_block, normal_value)];
+                    for (source_block, cont_bindings) in &for_continue_sources {
+                        let cont_value = cont_bindings.get(name)
+                            .cloned()
+                            .unwrap_or_else(|| _initial_value.clone());
+                        incoming.push((*source_block, cont_value));
+                    }
+                    ctx.add_statement(Statement::Phi {
+                        target: inc_phi_temp.clone(),
+                        incoming,
+                        span: *span,
+                    });
+                    inc_phi_values.insert(name.clone(), inc_phi_temp);
+                }
+                for (name, inc_phi_val) in &inc_phi_values {
+                    ctx.update_variable(name, inc_phi_val.clone(), None);
+                }
+            }
+
+            // 递增 __for_idx = __for_idx + 1
+            let inc_temp = lower_expression_to_temp(ctx, &Expr::BinaryOp {
+                left: Box::new(Expr::Identifier {
+                    name: for_idx_name.clone(),
+                    span: *span,
+                }),
+                op: karte_hir::BinaryOperator::Add,
+                right: Box::new(Expr::Number { value: 1, span: *span }),
+                span: *span,
+            })?;
+            ctx.update_variable(&for_idx_name, inc_temp.clone(), None);
+
+            let final_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
+                ctx.scopes
+                    .iter()
+                    .rev()
+                    .flat_map(|scope| {
+                        scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
+                    })
+                    .collect();
+
+            let mut actual_backedge_values: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+            for (name, _initial_value, _loop_value) in &updated_vars {
+                if let Some((final_value, _)) = final_bindings.get(name) {
+                    if let Value::Reference { value: ref_target, .. } = final_value {
+                        if struct_ref_vars.contains(name) {
+                            actual_backedge_values.insert(name.clone(), ref_target.as_ref().clone());
+                        } else {
+                            let derefed = ctx.new_temp();
+                            ctx.add_statement(Statement::Dereference {
+                                target: derefed.clone(),
+                                reference: *ref_target.clone(),
+                                span: body.span(),
+                            });
+                            actual_backedge_values.insert(name.clone(), derefed);
+                        }
+                    }
+                }
+            }
+
+            ctx.set_terminator(Terminator::Goto {
+                target: loop_head,
+                span: *span,
+            });
+
+            // === 第七步：修正 loop_head 中 phi 的 back-edge incoming 值 ===
+            let loop_head_block = ctx.current_function_mut().basic_blocks.get_mut(&loop_head).unwrap();
+            for stmt in &mut loop_head_block.statements {
+                if let Statement::Phi { target, incoming, .. } = stmt {
+                    for (block, value) in incoming.iter_mut() {
+                        if *block == increment_block {
+                            if *target == for_idx_phi {
+                                *value = final_bindings.get(&for_idx_name)
+                                    .map(|(v, _)| v.clone())
+                                    .unwrap_or_else(|| for_idx_temp.clone());
+                            } else {
+                                let var_name = phi_values.iter()
+                                    .find(|(_, v)| **v == *target)
+                                    .map(|(k, _)| k.clone());
+                                if let Some(name) = var_name {
+                                    if let Some(actual) = actual_backedge_values.get(&name) {
+                                        *value = actual.clone();
+                                    } else {
+                                        *value = final_bindings.get(&name)
+                                            .map(|(v, _)| v.clone())
+                                            .unwrap_or_else(|| {
+                                                pre_loop_bindings.get(&name)
+                                                    .map(|(v, _)| v.clone())
+                                                    .unwrap_or_else(|| value.clone())
+                                            });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 恢复变量绑定指向 loop_head 的 phi temp
+            for (name, phi_val) in &phi_values {
+                if struct_ref_vars.contains(name) {
+                    ctx.update_variable(name, Value::Reference {
+                        value: Box::new(phi_val.clone()),
+                        ty: None,
+                    }, None);
+                } else {
+                    ctx.update_variable(name, phi_val.clone(), None);
+                }
+            }
+
+            // 处理 break 路径的 Phi 节点
+            if !for_break_sources.is_empty() {
+                ctx.set_current_block(loop_exit);
+
+                for (name, _initial_value, _loop_value) in &updated_vars {
+                    let normal_value = phi_values.get(name)
+                        .map(|v| v.clone())
+                        .unwrap_or_else(|| _initial_value.clone());
+
+                    let mut need_phi = false;
+                    for (_source_block, break_bindings) in &for_break_sources {
+                        let break_value = break_bindings.get(name)
+                            .cloned()
+                            .unwrap_or_else(|| normal_value.clone());
+                        if break_value != normal_value {
+                            need_phi = true;
+                            break;
+                        }
+                    }
+
+                    if need_phi {
+                        let exit_phi_temp = ctx.new_temp();
+                        let mut incoming = vec![
+                            (loop_head, normal_value.clone()),
+                        ];
+                        for (source_block, break_bindings) in &for_break_sources {
+                            let break_value = break_bindings.get(name)
+                                .cloned()
+                                .unwrap_or_else(|| normal_value.clone());
+                            incoming.push((*source_block, break_value));
+                        }
+                        ctx.add_statement(Statement::Phi {
+                            target: exit_phi_temp.clone(),
+                            incoming,
+                            span: *span,
+                        });
+                        ctx.update_variable(name, exit_phi_temp, None);
+                    }
+                }
+            }
+
+            // Continue from exit block
+            ctx.set_current_block(loop_exit);
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: Value::Unit,
+                span: *span,
+            });
+        }
+
 
         Expr::Break { span, .. } => {
             // break: 跳转到当前循环的退出块，同时记录当前变量绑定
