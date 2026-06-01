@@ -548,9 +548,23 @@ impl CallingConvention {
     /// - R11(11): vm_fp（虚拟帧指针）
     /// - RBP(5):  effect_resume_temp（CallIndirect 函数指针临时寄存器）
     pub fn overflow_argument_registers(&self) -> Vec<PhysicalRegister> {
-        // x86_64 callee-saved 寄存器（排除 vm_sp/R10, vm_fp/R11）
-        // R13, R14, R15, RBX, R12 — 5 个溢出寄存器
-        vec![13, 14, 15, 3, 12]
+        #[cfg(target_arch = "x86_64")]
+        {
+            // x86_64 callee-saved 寄存器（排除 vm_sp/R10, vm_fp/R11）
+            // R13, R14, R15, RBX, R12 — 5 个溢出寄存器
+            vec![13, 14, 15, 3, 12]
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            // AArch64 callee-saved 寄存器（X19-X28）作为溢出参数寄存器
+            // 排除 vm_sp(当前是 SP=31，不在 callee-saved 中) 和 vm_fp(X29)
+            // X19-X28 共 10 个 callee-saved，去掉 X29(FP) = 9 个可用
+            vec![19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            vec![]
+        }
     }
 
     /// 获取通过寄存器传递的参数总数（argument_registers + overflow_argument_registers）
