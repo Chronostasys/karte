@@ -777,35 +777,42 @@ impl AotCompiler {
                     let patch_abs = code_base + runtime_size as u64 + patch_pos as u64;
                     let offset = target_addr as i64 - patch_abs as i64;
 
+                    // 读取原始指令，保留操作码位，只替换偏移量
+                    let current_instr = u32::from_le_bytes(
+                        karte_code[patch_pos..patch_pos + 4].try_into().unwrap()
+                    );
+                    // AArch64 跳转偏移以 4 字节为单位
+                    let target_offset = (target_addr as i64 - patch_abs as i64) >> 2;
+
                     match pending.jump_type {
-                        karte_codegen::vm::professional_executor::jit::code_buffer::JumpType::Call => {
-                            // BL offset: 26-bit signed, ±128MB
-                            if offset < -(1i64 << 27) || offset > (1i64 << 27) - 1 {
-                                return Err(format!("BL 距离超出范围: offset={}", offset));
-                            }
-                            let imm26 = ((offset / 4) as u32) & 0x3FFFFFF;
-                            let instr = (0b100101u32 << 26) | imm26;
-                            karte_code[patch_pos..patch_pos + 4].copy_from_slice(&instr.to_le_bytes());
-                        }
+                        karte_codegen::vm::professional_executor::jit::code_buffer::JumpType::Call |
                         karte_codegen::vm::professional_executor::jit::code_buffer::JumpType::Unconditional => {
-                            // B offset: 26-bit signed
-                            if offset < -(1i64 << 27) || offset > (1i64 << 27) - 1 {
-                                return Err(format!("B 距离超出范围: offset={}", offset));
+                            // B offset26 (0x14000000) / BL offset26 (0x94000000)
+                            // imm26 在 bits [25:0]，操作码在 bits [31:26]
+                            // ±128MB 范围检查
+                            if target_offset < -(1i64 << 25) || target_offset > (1i64 << 25) - 1 {
+                                return Err(format!("B/BL 距离超出范围: offset={}", target_offset << 2));
                             }
-                            let imm26 = ((offset / 4) as u32) & 0x3FFFFFF;
-                            let instr = (0b000101u32 << 26) | imm26;
-                            karte_code[patch_pos..patch_pos + 4].copy_from_slice(&instr.to_le_bytes());
+                            let new_instr = (current_instr & 0xFC000000) | ((target_offset as u32) & 0x03FFFFFF);
+                            karte_code[patch_pos..patch_pos + 4].copy_from_slice(&new_instr.to_le_bytes());
+                            if self.debug {
+                                eprintln!("AOT(AArch64): 修补 B/BL '{}' in '{}': patch_pos=0x{:X}, offset={}",
+                                    target_label, func_name, patch_pos, target_offset << 2);
+                            }
                         }
                         _ => {
-                            // B.cond offset: 19-bit signed, ±1MB
-                            if offset < -(1 << 20) || offset > (1 << 20) - 1 {
-                                return Err(format!("B.cond 距离超出范围: offset={}", offset));
+                            // B.cond offset19 (0x54000000 | (imm19 << 5) | cond)
+                            // imm19 在 bits [23:5]，cond 在 bits [4:0]，操作码在 bits [31:24]
+                            // ±1MB 范围检查
+                            if target_offset < -(1i64 << 18) || target_offset > (1i64 << 18) - 1 {
+                                return Err(format!("B.cond 距离超出范围: offset={}", target_offset << 2));
                             }
-                            let orig = u32::from_le_bytes(karte_code[patch_pos..patch_pos + 4].try_into().unwrap());
-                            let cond = orig & 0xF;
-                            let imm19 = ((offset / 4) as u32) & 0x7FFFF;
-                            let instr = (0b0101010u32 << 22) | (imm19 << 5) | cond;
-                            karte_code[patch_pos..patch_pos + 4].copy_from_slice(&instr.to_le_bytes());
+                            let new_instr = (current_instr & 0xFF00001F) | (((target_offset as u32) & 0x7FFFF) << 5);
+                            karte_code[patch_pos..patch_pos + 4].copy_from_slice(&new_instr.to_le_bytes());
+                            if self.debug {
+                                eprintln!("AOT(AArch64): 修补 B.cond '{}' in '{}': patch_pos=0x{:X}, offset={}",
+                                    target_label, func_name, patch_pos, target_offset << 2);
+                            }
                         }
                     }
                 }
