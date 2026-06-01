@@ -1414,6 +1414,11 @@ fn main() -> number {
     /// AOT 运行时通过 sys_write 将结果输出到 stdout (因为 exit_group 只取低 8 位)。
     /// 本函数解析 stdout 第一行作为 i64 结果值进行比较。
     fn compile_and_run_aot(code: &str, expected_result: i64, test_name: &str) {
+        // AOT 生成 ELF 二进制，macOS 不支持执行 ELF
+        if cfg!(target_os = "macos") {
+            eprintln!("跳过 {} - AOT (ELF) 不支持 macOS", test_name);
+            return;
+        }
         let (tokens, _) = tokenize(code);
         let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
         assert!(

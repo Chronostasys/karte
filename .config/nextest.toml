@@ -7,3 +7,5 @@ test-threads = 4
 [profile.ci]
 retries = 0
 test-threads = 8
+# CI 中每个测试最多运行 30 秒，避免 SIGSEGV 测试无限挂起
+slow-timeout = { period = "30s", terminate-after = 1 }
