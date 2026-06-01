@@ -24,7 +24,14 @@ pub enum AotTarget {
 }
 
 impl Default for AotTarget {
-    fn default() -> Self { Self::X86_64 }
+    fn default() -> Self {
+        #[cfg(target_arch = "x86_64")]
+        { Self::X86_64 }
+        #[cfg(target_arch = "aarch64")]
+        { Self::AArch64 }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        { Self::X86_64 }
+    }
 }
 
 /// AOT 编译器
@@ -457,9 +464,387 @@ impl AotCompiler {
         Ok(binary)
     }
 
-    /// AArch64 AOT 编译 (TODO)
-    fn compile_aarch64(&self, _program: &LirProgram) -> Result<Vec<u8>, String> {
-        Err("AArch64 AOT 编译尚未实现".to_string())
+    /// AArch64 AOT 编译
+    fn compile_aarch64(&self, program: &LirProgram) -> Result<Vec<u8>, String> {
+        use crate::runtime_aarch64::AArch64Runtime;
+        use karte_codegen::vm::professional_executor::jit::AArch64Compiler;
+
+        // 1. 生成运行时
+        let runtime = AArch64Runtime::new().generate();
+        let runtime_code = runtime.code.clone();
+        let runtime_size = runtime_code.len();
+        if self.debug {
+            eprintln!("AOT(AArch64): 运行时代码大小: {} 字节", runtime_size);
+            for f in &runtime.functions {
+                if f.size > 0 {
+                    eprintln!("  {} @ offset={}, size={}", f.name, f.offset, f.size);
+                }
+            }
+        }
+
+        // 2. 编译 Karte 函数
+        let mut compiler = AArch64Compiler::new(self.debug)
+            .map_err(|e| format!("创建 AArch64 编译器失败: {}", e))?;
+
+        let mut compiled_functions = Vec::new();
+        let mut karte_code: Vec<u8> = Vec::new();
+        let mut function_offsets: HashMap<String, usize> = HashMap::new();
+
+        let main_name = program.main_function.as_deref().unwrap_or("main");
+        let mut func_names: Vec<String> = program.functions.keys().cloned().collect();
+        func_names.sort_by(|a, b| {
+            if a == main_name { std::cmp::Ordering::Greater }
+            else if b == main_name { std::cmp::Ordering::Less }
+            else { a.cmp(b) }
+        });
+
+        for func_name in &func_names {
+            let func = program.functions.get(func_name).unwrap();
+            let compiled = compiler.compile_function(func, program)
+                .map_err(|e| format!("编译函数 '{}' 失败: {}", func_name, e))?;
+            // 4 字节对齐
+            while karte_code.len() % 4 != 0 {
+                karte_code.push(0x1F); // NOP padding
+            }
+            let offset = karte_code.len();
+            function_offsets.insert(func_name.clone(), offset);
+            karte_code.extend_from_slice(compiled.machine_code());
+            compiled_functions.push((func_name.clone(), compiled));
+        }
+
+        // 3. 构建全局标签表
+        let code_base: u64 = 0x400000;
+        let mut global_labels: HashMap<String, u64> = HashMap::new();
+
+        // 运行时函数地址（使用常量，保证与 runtime_x86.rs 中 fn_start 注册的名字一致）
+        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::GC_ALLOC_ALIGNED) {
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_alloc_aligned".to_string(), addr);
+            global_labels.insert("karte_jit_runtime_alloc".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_alloc_aligned".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_alloc".to_string(), addr);
+        }
+        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::FREE) {
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_free".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_free".to_string(), addr);
+        }
+        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::RETAIN) {
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_retain".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_retain".to_string(), addr);
+        }
+        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::RELEASE) {
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_release".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_release".to_string(), addr);
+        }
+        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::GC_SAFEPOINT) {
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_gc_safepoint".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_gc_safepoint".to_string(), addr);
+        }
+        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::GC_UPDATE_STACK_TOP) {
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_update_stack_top".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_update_stack_top".to_string(), addr);
+        }
+
+        // Karte 函数地址
+        for (func_name, compiled) in &compiled_functions {
+            let func_offset = function_offsets.get(func_name).unwrap();
+            let abs_addr = code_base + runtime_size as u64 + *func_offset as u64;
+            global_labels.insert(format!("func_{}", func_name), abs_addr);
+            global_labels.insert(func_name.clone(), abs_addr);
+            for (label_name, label_offset) in &compiled.labels {
+                global_labels.insert(label_name.clone(), abs_addr + *label_offset as u64);
+            }
+        }
+
+        // 4. 修补运行时调用 (MOV X16, imm64; BLR X16 模式)
+        // AArch64 JIT emit_runtime_dispatch 生成:
+        //   MOVZ X16, #lo16      (4 bytes)
+        //   MOVK X16, #mid16, LSL #16  (4 bytes)
+        //   MOVK X16, #mid32, LSL #32  (4 bytes)
+        //   MOVK X16, #hi16, LSL #48   (4 bytes)
+        //   BLR X16               (4 bytes)
+        // 共 20 字节
+        use karte_codegen::vm::professional_executor::jit::ffi::RuntimeIntrinsic;
+
+        let mut runtime_ptr_map: HashMap<u64, u64> = HashMap::new();
+        let alloc_ptr = RuntimeIntrinsic::AllocAligned.symbol_ptr() as u64;
+        let free_ptr = RuntimeIntrinsic::Free.symbol_ptr() as u64;
+        let retain_ptr = RuntimeIntrinsic::Retain.symbol_ptr() as u64;
+        let release_ptr = RuntimeIntrinsic::Release.symbol_ptr() as u64;
+        let safepoint_ptr = RuntimeIntrinsic::GcSafepoint.symbol_ptr() as u64;
+        let update_stack_top_ptr = karte_rt::ffi::karte_jit_runtime_update_stack_top as u64;
+
+        if let Some(&new) = global_labels.get("karte_jit_runtime_alloc_aligned") {
+            runtime_ptr_map.insert(alloc_ptr, new);
+        }
+        if let Some(&new) = global_labels.get("karte_jit_runtime_free") {
+            runtime_ptr_map.insert(free_ptr, new);
+        }
+        if let Some(&new) = global_labels.get("karte_jit_runtime_retain") {
+            runtime_ptr_map.insert(retain_ptr, new);
+        }
+        if let Some(&new) = global_labels.get("karte_jit_runtime_release") {
+            runtime_ptr_map.insert(release_ptr, new);
+        }
+        if let Some(&new) = global_labels.get("karte_jit_runtime_gc_safepoint") {
+            runtime_ptr_map.insert(safepoint_ptr, new);
+        }
+        if let Some(&new) = global_labels.get("karte_jit_runtime_update_stack_top") {
+            runtime_ptr_map.insert(update_stack_top_ptr, new);
+        }
+
+        // 字符串相关运行时函数
+        let string_intrinsics = [
+            (RuntimeIntrinsic::StringEqual, "karte_jit_runtime_string_equal"),
+            (RuntimeIntrinsic::StringConcat, "karte_jit_runtime_string_concat"),
+            (RuntimeIntrinsic::StringCharAt, "karte_jit_runtime_string_char_at"),
+            (RuntimeIntrinsic::StringContains, "karte_jit_runtime_string_contains"),
+            (RuntimeIntrinsic::SplitCount, "karte_jit_runtime_split_count"),
+            (RuntimeIntrinsic::Trim, "karte_jit_runtime_trim"),
+            (RuntimeIntrinsic::ToString, "karte_jit_runtime_to_string"),
+            (RuntimeIntrinsic::PrintString, "karte_jit_runtime_print_string"),
+            (RuntimeIntrinsic::PrintNumber, "karte_jit_runtime_print_number"),
+            (RuntimeIntrinsic::PrintBool, "karte_jit_runtime_print_bool"),
+        ];
+        for (intrinsic, label) in &string_intrinsics {
+            let ptr = intrinsic.symbol_ptr() as u64;
+            if let Some(&new) = global_labels.get(*label) {
+                runtime_ptr_map.insert(ptr, new);
+            }
+        }
+
+        // 扫描并修补 MOV X16, imm64; BLR X16 模式 (20 bytes)
+        // BLR X16 = 0xD63F0200
+        let blr_x16: [u8; 4] = 0xD63F0200u32.to_le_bytes();
+        let mut patched_count = 0;
+        let mut i = 0;
+        while i + 20 <= karte_code.len() {
+            // 检查最后 4 字节是否是 BLR X16
+            if karte_code[i + 16..i + 20] == blr_x16 {
+                // 前 16 字节是 MOV X16, imm64 (4条MOVZ/MOVK)
+                // 解析 imm64: 从4条指令中提取
+                let w0 = u32::from_le_bytes(karte_code[i..i + 4].try_into().unwrap());
+                let w1 = u32::from_le_bytes(karte_code[i + 4..i + 8].try_into().unwrap());
+                let w2 = u32::from_le_bytes(karte_code[i + 8..i + 12].try_into().unwrap());
+                let w3 = u32::from_le_bytes(karte_code[i + 12..i + 16].try_into().unwrap());
+
+                // 验证是 MOVZ/MOVK X16 序列
+                let rd0 = w0 & 0x1F;
+                let rd1 = w1 & 0x1F;
+                let rd2 = w2 & 0x1F;
+                let rd3 = w3 & 0x1F;
+
+                if rd0 == 16 && (rd1 == 16 || (w1 == 0 && rd1 == 0)) {
+                    // 提取 imm64
+                    let imm0 = (w0 >> 5) & 0xFFFF;
+                    let hw0 = (w0 >> 21) & 0x3;
+                    let mut val = imm0 << (hw0 * 16);
+
+                    if rd1 == 16 {
+                        let imm1 = (w1 >> 5) & 0xFFFF;
+                        let hw1 = (w1 >> 21) & 0x3;
+                        val |= imm1 << (hw1 * 16);
+                    }
+                    if rd2 == 16 {
+                        let imm2 = (w2 >> 5) & 0xFFFF;
+                        let hw2 = (w2 >> 21) & 0x3;
+                        val |= imm2 << (hw2 * 16);
+                    }
+                    if rd3 == 16 {
+                        let imm3 = (w3 >> 5) & 0xFFFF;
+                        let hw3 = (w3 >> 21) & 0x3;
+                        val |= imm3 << (hw3 * 16);
+                    }
+
+                    if let Some(&new_addr) = runtime_ptr_map.get(&(val as u64)) {
+                        // 重写 MOV X16, new_addr
+                        let v = new_addr as u64;
+                        let hw0 = 0u32;
+                        let new_w0 = (1u32 << 31) | (0b10 << 29) | (0b100101 << 23) | (hw0 << 21) | (((v & 0xFFFF) as u32) << 5) | 16;
+                        karte_code[i..i + 4].copy_from_slice(&new_w0.to_le_bytes());
+
+                        let hw1 = 1u32;
+                        let new_w1 = (1u32 << 31) | (0b11 << 29) | (0b100101 << 23) | (hw1 << 21) | ((((v >> 16) & 0xFFFF) as u32) << 5) | 16;
+                        karte_code[i + 4..i + 8].copy_from_slice(&new_w1.to_le_bytes());
+
+                        let hw2 = 2u32;
+                        let new_w2 = (1u32 << 31) | (0b11 << 29) | (0b100101 << 23) | (hw2 << 21) | ((((v >> 32) & 0xFFFF) as u32) << 5) | 16;
+                        karte_code[i + 8..i + 12].copy_from_slice(&new_w2.to_le_bytes());
+
+                        let hw3 = 3u32;
+                        let new_w3 = (1u32 << 31) | (0b11 << 29) | (0b100101 << 23) | (hw3 << 21) | ((((v >> 48) & 0xFFFF) as u32) << 5) | 16;
+                        karte_code[i + 12..i + 16].copy_from_slice(&new_w3.to_le_bytes());
+
+                        patched_count += 1;
+                    }
+                }
+            }
+            i += 4; // AArch64 指令对齐到 4 字节
+        }
+
+        if self.debug {
+            eprintln!("AOT(AArch64): 修补了 {} 个运行时调用", patched_count);
+        }
+
+        // 5. 修补 pending_label_addresses
+        for (func_name, compiled) in &compiled_functions {
+            let func_offset = function_offsets.get(func_name).unwrap();
+            for pending in &compiled.pending_label_addresses {
+                let target_label = &pending.target_label;
+                // 全局变量标签
+                if let Some(global_name) = target_label.strip_prefix("__global_") {
+                    let runtime_global_name = match global_name {
+                        "heap_base" => "__heap_start".to_string(),
+                        "heap_limit" => "__heap_limit".to_string(),
+                        "stack_bottom" => "__vstack_bottom".to_string(),
+                        "stack_top" => "__vstack_top".to_string(),
+                        _ => format!("__{}", global_name),
+                    };
+                    // AArch64 runtime 没有注册独立的全局标签函数
+                    // 全局数据在 runtime 末尾的 globals_data_offset 处
+                    if let Some(runtime_fn) = runtime.functions.iter().find(|f| f.name == runtime_global_name) {
+                        let addr = code_base + runtime_fn.offset as u64;
+                        let pos = func_offset + pending.patch_position;
+                        karte_code[pos..pos + 8].copy_from_slice(&addr.to_le_bytes());
+                        continue;
+                    }
+                }
+                if let Some(&addr) = global_labels.get(target_label) {
+                    let pos = func_offset + pending.patch_position;
+                    karte_code[pos..pos + 8].copy_from_slice(&addr.to_le_bytes());
+                }
+            }
+
+            // 5b. 修补 pending_adrs (ADR/ADRP 模式)
+            for pending in &compiled.pending_adrs {
+                let target_label = &pending.target_label;
+                if let Some(&target_addr) = global_labels.get(target_label) {
+                    let patch_pos = func_offset + pending.patch_position;
+                    let patch_abs = code_base + runtime_size as u64 + patch_pos as u64;
+                    use karte_codegen::vm::professional_executor::jit::code_buffer::AdrPatchType;
+                    match &pending.patch_type {
+                        AdrPatchType::Adr { dst_register: rd } => {
+                            // ADR Rd, offset: 21-bit signed offset from PC
+                            let off = target_addr as i64 - patch_abs as i64;
+                            if off < -(1 << 20) || off > (1 << 20) - 1 {
+                                return Err(format!("ADR 距离超出范围: offset={}", off));
+                            }
+                            let immlo = (off as u32) & 0x3;
+                            let immhi = ((off as u32) >> 2) & 0x7FFFF;
+                            let instr = (0b10000u32 << 24) | (immlo << 29) | (immhi << 5) | (*rd as u32);
+                            karte_code[patch_pos..patch_pos + 4].copy_from_slice(&instr.to_le_bytes());
+                        }
+                        AdrPatchType::Adrp { dst_register: rd } => {
+                            // ADRP Rd, page_offset: 页对齐的 33-bit 偏移
+                            let pc_page = (patch_abs as usize) & !0xFFF;
+                            let target_page = (target_addr as usize) & !0xFFF;
+                            let page_off = target_page as i64 - pc_page as i64;
+                            let immhi = ((page_off as u64) >> 12) as u32;
+                            let immlo = ((page_off as u64) >> 2) as u32 & 0x3;
+                            let instr = (0b10000u32 << 24) | (immlo << 29) | ((immhi & 0x7FFFF) << 5) | (*rd as u32);
+                            karte_code[patch_pos..patch_pos + 4].copy_from_slice(&instr.to_le_bytes());
+                        }
+                        AdrPatchType::AddLabel { dst_register: _ } => {
+                            // ADD Rd, Rn, #page_inner: 12-bit 页内偏移
+                            let page_inner = (target_addr as u32) & 0xFFF;
+                            let orig = u32::from_le_bytes(karte_code[patch_pos..patch_pos + 4].try_into().unwrap());
+                            let rd = orig & 0x1F;
+                            let rn = (orig >> 5) & 0x1F;
+                            let instr = (1u32 << 31) | (0b100010 << 23) | ((page_inner & 0xFFF) << 10) | ((rn as u32) << 5) | (rd as u32);
+                            karte_code[patch_pos..patch_pos + 4].copy_from_slice(&instr.to_le_bytes());
+                        }
+                        AdrPatchType::Store { base_register: _, offset: _ } => {
+                            // Store: 直接将目标地址的某个偏移写入指令的 immediate 字段
+                            // 暂时不处理
+                        }
+                    }
+                }
+            }
+        }
+
+        // 6. 修补 pending_jumps (AArch64 B/BL/B.cond)
+        for (func_name, compiled) in &compiled_functions {
+            let func_offset = function_offsets.get(func_name).unwrap();
+            for pending in &compiled.pending_jumps {
+                let target_label = &pending.target_label;
+                if let Some(&target_addr) = global_labels.get(target_label) {
+                    let patch_pos = func_offset + pending.patch_position;
+                    let patch_abs = code_base + runtime_size as u64 + patch_pos as u64;
+                    let offset = target_addr as i64 - patch_abs as i64;
+
+                    match pending.jump_type {
+                        karte_codegen::vm::professional_executor::jit::code_buffer::JumpType::Call => {
+                            // BL offset: 26-bit signed, ±128MB
+                            if offset < -(1i64 << 27) || offset > (1i64 << 27) - 1 {
+                                return Err(format!("BL 距离超出范围: offset={}", offset));
+                            }
+                            let imm26 = ((offset / 4) as u32) & 0x3FFFFFF;
+                            let instr = (0b100101u32 << 26) | imm26;
+                            karte_code[patch_pos..patch_pos + 4].copy_from_slice(&instr.to_le_bytes());
+                        }
+                        karte_codegen::vm::professional_executor::jit::code_buffer::JumpType::Unconditional => {
+                            // B offset: 26-bit signed
+                            if offset < -(1i64 << 27) || offset > (1i64 << 27) - 1 {
+                                return Err(format!("B 距离超出范围: offset={}", offset));
+                            }
+                            let imm26 = ((offset / 4) as u32) & 0x3FFFFFF;
+                            let instr = (0b000101u32 << 26) | imm26;
+                            karte_code[patch_pos..patch_pos + 4].copy_from_slice(&instr.to_le_bytes());
+                        }
+                        _ => {
+                            // B.cond offset: 19-bit signed, ±1MB
+                            if offset < -(1 << 20) || offset > (1 << 20) - 1 {
+                                return Err(format!("B.cond 距离超出范围: offset={}", offset));
+                            }
+                            let orig = u32::from_le_bytes(karte_code[patch_pos..patch_pos + 4].try_into().unwrap());
+                            let cond = orig & 0xF;
+                            let imm19 = ((offset / 4) as u32) & 0x7FFFF;
+                            let instr = (0b0101010u32 << 22) | (imm19 << 5) | cond;
+                            karte_code[patch_pos..patch_pos + 4].copy_from_slice(&instr.to_le_bytes());
+                        }
+                    }
+                }
+            }
+        }
+
+        // 7. 修补 _start 的 BL main
+        let main_offset = function_offsets.get(main_name)
+            .ok_or_else(|| format!("未找到主函数 '{}'", main_name))?;
+        let main_addr = code_base + runtime_size as u64 + *main_offset as u64;
+
+        let mut runtime_code_mut = runtime.code;
+        let call_bl_offset = runtime.call_main_offset;
+        let bl_pc = code_base + call_bl_offset as u64;
+        let bl_offset = main_addr as i64 - bl_pc as i64;
+
+        let imm26 = ((bl_offset / 4) as u32) & 0x3FFFFFF;
+        let bl_instr = (0b100101u32 << 26) | imm26;
+        runtime_code_mut[call_bl_offset..call_bl_offset + 4]
+            .copy_from_slice(&bl_instr.to_le_bytes());
+
+        if self.debug {
+            eprintln!("AOT(AArch64): main @ 0x{:X}, BL offset = {}", main_addr, bl_offset);
+        }
+
+        // 8. 生成 ELF
+        let mut elf = ElfWriter::new(ElfArch::AArch64, code_base, 0x800000);
+        elf.set_entry_offset(0);
+        elf.append_code(&runtime_code_mut);
+        elf.append_code(&karte_code);
+
+        let binary = elf.generate()
+            .map_err(|e| format!("生成 ELF 失败: {}", e))?;
+
+        if self.debug {
+            eprintln!("AOT(AArch64): 可执行文件大小: {} 字节", binary.len());
+        }
+
+        Ok(binary)
     }
 
     /// RISC-V 64 位 AOT 编译
