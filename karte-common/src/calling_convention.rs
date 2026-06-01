@@ -315,17 +315,63 @@ impl CallingConvention {
     /// 创建当前目标架构的标准调用约定
     #[cfg(target_arch = "aarch64")]
     pub fn standard() -> Self {
-        let mut caller_saved = HashSet::new();
-        // x0-x18 都是 caller-saved (易失寄存器)
-        for reg in 0..=18u8 {
-            caller_saved.insert(reg);
-        }
+        // AArch64 (AAPCS64) 调用约定 — Karte 虚拟编号体系
+        //
+        // 关键设计：vm_sp 和 vm_fp 使用独立于硬件 SP 的寄存器（X9/X10），
+        // 与 x86 使用 R10/R11 管理虚拟栈完全一致。
+        // 硬件 SP(31) 始终保留给系统栈，用于 C FFI 调用和 callee-saved 保存。
+        //
+        // 寄存器分配策略：
+        //   X0-X7:   参数寄存器（caller-saved）
+        //   X8:      间接结果位置（caller-saved）
+        //   X9:      vm_sp（callee-saved in Karte convention，保存虚拟栈指针）
+        //   X10:     vm_fp（callee-saved in Karte convention，保存虚拟帧指针）
+        //   X11:     effect_tag（caller-saved）
+        //   X12:     effect_stack_pointer（callee-saved）
+        //   X13-X15: 临时寄存器（caller-saved）
+        //   X16-X17: 过程调用临时寄存器（caller-saved）
+        //   X18:     平台寄存器（caller-saved）
+        //   X19-X28: callee-saved（溢出参数传递 + 通用 callee-saved）
+        //   X29:     硬件帧指针（callee-saved）
+        //   X30:     链接寄存器 LR（callee-saved）
+        //   X31/SP:  系统栈指针（不在 Karte 寄存器池中）
 
-        let mut callee_saved = HashSet::new();
-        // x19-x31 是 callee-saved (非易失寄存器)
-        for reg in 19..=31u8 {
-            callee_saved.insert(reg);
-        }
+        let caller_saved: HashSet<PhysicalRegister> = [
+            0u8,  // X0 - 参数0/返回值
+            1u8,  // X1 - 参数1
+            2u8,  // X2 - 参数2
+            3u8,  // X3 - 参数3
+            4u8,  // X4 - 参数4
+            5u8,  // X5 - 参数5
+            6u8,  // X6 - 参数6
+            7u8,  // X7 - 参数7
+            8u8,  // X8 - 间接结果位置
+            11u8, // X11 - effect_tag_register
+            13u8, // X13 - 临时寄存器
+            14u8, // X14 - 临时寄存器
+            15u8, // X15 - effect_resume_temp
+            16u8, // X16 - IP0 (过程调用临时)
+            17u8, // X17 - IP1 (过程调用临时)
+            18u8, // X18 - 平台寄存器
+        ].into_iter().collect();
+
+        let callee_saved: HashSet<PhysicalRegister> = [
+            9u8,  // X9  - vm_sp（Karte 调用约定中 callee-saved）
+            10u8, // X10 - vm_fp（Karte 调用约定中 callee-saved）
+            12u8, // X12 - effect_stack_pointer
+            19u8, // X19 - callee-saved (溢出参数)
+            20u8, // X20 - callee-saved (溢出参数)
+            21u8, // X21 - callee-saved (溢出参数)
+            22u8, // X22 - callee-saved (溢出参数)
+            23u8, // X23 - callee-saved (溢出参数)
+            24u8, // X24 - callee-saved (溢出参数)
+            25u8, // X25 - callee-saved (溢出参数)
+            26u8, // X26 - callee-saved (溢出参数)
+            27u8, // X27 - callee-saved (溢出参数)
+            28u8, // X28 - callee-saved (溢出参数)
+            29u8, // X29 - 硬件帧指针 (callee-saved)
+            30u8, // X30 - 链接寄存器 LR (callee-saved)
+        ].into_iter().collect();
 
         Self {
             argument_registers: vec![
@@ -334,20 +380,20 @@ impl CallingConvention {
             return_register: REG_X0,
             caller_saved,
             callee_saved,
-            stack_pointer: REG_SP,
-            frame_pointer: REG_X29,
-            return_address: REG_X30,
-            effect_stack_pointer: REG_X12,
-            effect_payload_register: REG_X0,
-            effect_tag_register: REG_X10,
-            effect_resume_temp: REG_X15,
+            stack_pointer: REG_X9,            // X9 = vm_sp（独立于硬件 SP）
+            frame_pointer: REG_X10,           // X10 = vm_fp（独立于硬件 FP）
+            return_address: REG_X30,          // X30 = LR
+            effect_stack_pointer: REG_X12,    // X12
+            effect_payload_register: REG_X0,  // X0
+            effect_tag_register: REG_X11,     // X11（从 X10 移开，避免与 vm_fp 冲突）
+            effect_resume_temp: REG_X15,      // X15
             temp_registers: {
                 let mut temps = Vec::new();
                 temps.extend_from_slice(&[
                     REG_X0, REG_X1, REG_X2, REG_X3, REG_X4, REG_X5, REG_X6, REG_X7,
                 ]);
                 temps.extend_from_slice(&[
-                    REG_X8, REG_X9, REG_X10, REG_X11, REG_X12, REG_X13, REG_X14, REG_X15,
+                    REG_X8, REG_X11, REG_X13, REG_X14, REG_X15,
                 ]);
                 temps.extend_from_slice(&[REG_X16, REG_X17, REG_X18]);
                 for reg in 19..=28u8 {
