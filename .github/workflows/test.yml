@@ -52,3 +52,5 @@ jobs:
 
       - name: Run tests with nextest
         run: cargo nextest run --workspace --profile ci --target ${{ matrix.platform.target }}
+        env:
+          RUST_MIN_STACK: 8388608
