@@ -495,6 +495,17 @@ impl AArch64Compiler {
                 // ADD dst, src1, #imm
                 self.emit_add_reg_reg_imm(code_builder, dst_reg, src1_reg, *value as i32);
             }
+            // 加法可交换：Immediate + Register = Register + Immediate
+            (Operand::Immediate { value }, Operand::Register { id: src2_id }) => {
+                let src2_reg = self.get_physical_register(src2_id)?;
+                // ADD dst, src2, #imm
+                self.emit_add_reg_reg_imm(code_builder, dst_reg, src2_reg, *value as i32);
+            }
+            // 两个立即数：先加载到临时寄存器
+            (Operand::Immediate { value: v1 }, Operand::Immediate { value: v2 }) => {
+                let result = v1 + v2;
+                self.emit_mov_reg_imm64(code_builder, dst_reg, result);
+            }
             _ => {
                 return Err(format!("不支持的加法操作数组合: {:?}, {:?}", src1, src2).into());
             }
@@ -570,6 +581,13 @@ impl AArch64Compiler {
                 self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
                 self.emit_mul_reg_reg_reg(code_builder, dst_reg, src1_reg, temp_reg);
             }
+            // 乘法可交换：Immediate * Register = Register * Immediate
+            (Operand::Immediate { value }, Operand::Register { id: src2_id }) => {
+                let src2_reg = self.get_physical_register(src2_id)?;
+                let temp_reg = AArch64Register::X16 as u8;
+                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
+                self.emit_mul_reg_reg_reg(code_builder, dst_reg, temp_reg, src2_reg);
+            }
             _ => {
                 return Err(format!("不支持的乘法操作数组合: {:?}, {:?}", src1, src2).into());
             }
@@ -601,6 +619,13 @@ impl AArch64Compiler {
                 let temp_reg = AArch64Register::X16 as u8;
                 self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
                 self.emit_div_reg_reg_reg(code_builder, dst_reg, src1_reg, temp_reg);
+            }
+            // 除法不可交换：dst = imm / reg，需要先加载 imm 到临时寄存器
+            (Operand::Immediate { value }, Operand::Register { id: src2_id }) => {
+                let temp_reg = AArch64Register::X16 as u8;
+                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
+                let src2_reg = self.get_physical_register(src2_id)?;
+                self.emit_div_reg_reg_reg(code_builder, dst_reg, temp_reg, src2_reg);
             }
             _ => {
                 return Err(format!("不支持的除法操作数组合: {:?}, {:?}", src1, src2).into());
@@ -641,6 +666,21 @@ impl AArch64Compiler {
                 self.emit_div_reg_reg_reg(code_builder, temp_quot, src1_reg, temp_divisor);
                 // MSUB dst, temp_quot, temp_divisor, src1
                 self.emit_msub(code_builder, dst_reg, temp_quot, temp_divisor, src1_reg);
+            }
+            // 取余不可交换：dst = imm % reg = imm - (imm/reg) * reg
+            // MSUB Xd, Xn, Xm, Xa = Xa - Xn * Xm
+            // 需要同时保留 quotient 和 imm，利用 dst_reg 保存 imm
+            (Operand::Immediate { value }, Operand::Register { id: src2_id }) => {
+                let src2_reg = self.get_physical_register(src2_id)?;
+                // 先把 imm 加载到 dst_reg（作为 MSUB 的 Xa 参数）
+                self.emit_mov_reg_imm64(code_builder, dst_reg, *value);
+                // 保存除数到 temp_divisor (X17)
+                self.emit_mov_reg_reg(code_builder, temp_divisor, src2_reg);
+                // SDIV temp_quot, dst_reg, temp_divisor → temp_quot = imm / reg
+                self.emit_div_reg_reg_reg(code_builder, temp_quot, dst_reg, temp_divisor);
+                // MSUB dst, temp_quot, temp_divisor, dst_reg
+                // = dst_reg - temp_quot * temp_divisor = imm - quotient * divisor ✓
+                self.emit_msub(code_builder, dst_reg, temp_quot, temp_divisor, dst_reg);
             }
             _ => {
                 return Err(format!("不支持的取余操作数组合: {:?}, {:?}", src1, src2).into());
@@ -1000,6 +1040,13 @@ impl AArch64Compiler {
                 // CMP src1, #imm
                 self.emit_cmp_reg_imm(code_builder, src1_reg, *value as i32);
             }
+            // 比较不可交换：cmp imm, reg 需要先加载 imm 到临时寄存器
+            (Operand::Immediate { value }, Operand::Register { id: src2_id }) => {
+                let temp_reg = AArch64Register::X16 as u8;
+                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
+                let src2_reg = self.get_physical_register(src2_id)?;
+                self.emit_cmp_reg_reg(code_builder, temp_reg, src2_reg);
+            }
             _ => {
                 return Err(format!("不支持的比较操作数组合: {:?}, {:?}", src1, src2).into());
             }
@@ -1027,6 +1074,13 @@ impl AArch64Compiler {
             (Operand::Register { id: src1_id }, Operand::Immediate { value }) => {
                 let src1_reg = self.get_physical_register(src1_id)?;
                 self.emit_cmp_reg_imm(code_builder, src1_reg, *value as i32);
+            }
+            // 比较不可交换：cmp imm, reg 需要先加载 imm 到临时寄存器
+            (Operand::Immediate { value }, Operand::Register { id: src2_id }) => {
+                let temp_reg = AArch64Register::X16 as u8;
+                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
+                let src2_reg = self.get_physical_register(src2_id)?;
+                self.emit_cmp_reg_reg(code_builder, temp_reg, src2_reg);
             }
             _ => {
                 return Err(format!("不支持的setcc操作数组合: {:?}, {:?}", src1, src2).into());
