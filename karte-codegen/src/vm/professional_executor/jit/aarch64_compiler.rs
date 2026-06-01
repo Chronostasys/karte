@@ -364,86 +364,6 @@ impl AArch64Compiler {
                 self.emit_nop(code_builder);
                 Ok(())
             }
-            // ====== 位运算指令 ======
-            Instruction::BitAnd {
-                dst, src1, src2, ..
-            } => self.compile_bitand(dst, src1, src2, code_builder),
-            Instruction::BitOr {
-                dst, src1, src2, ..
-            } => self.compile_bitor(dst, src1, src2, code_builder),
-            Instruction::BitXor {
-                dst, src1, src2, ..
-            } => self.compile_bitxor(dst, src1, src2, code_builder),
-            Instruction::ShiftLeft {
-                dst, src1, src2, ..
-            } => self.compile_shift_left(dst, src1, src2, code_builder),
-            Instruction::ShiftRight {
-                dst, src1, src2, ..
-            } => self.compile_shift_right(dst, src1, src2, code_builder),
-            Instruction::BitNot { dst, src, .. } => {
-                self.compile_bitnot(dst, src, code_builder)
-            }
-            // ====== 整数类型转换 ======
-            Instruction::IntCast {
-                dst,
-                src,
-                src_bits,
-                dst_bits,
-                signed,
-                ..
-            } => self.compile_intcast(dst, src, *src_bits, *dst_bits, *signed, code_builder),
-            // ====== 间接调用 ======
-            Instruction::CallIndirect {
-                function_register,
-                args,
-                arg_operands,
-                result,
-                ..
-            } => self.compile_call_indirect(
-                function_register,
-                args,
-                arg_operands,
-                result.as_ref(),
-                code_builder,
-            ),
-            // ====== 结构体操作（应已被降级，保留兜底） ======
-            Instruction::StructAlloc { .. } => {
-                Err("StructAlloc 应该已经被降级为 Alloc".into())
-            }
-            Instruction::StructFieldLoad {
-                dst,
-                struct_addr,
-                field_offset,
-                ..
-            } => self.compile_struct_field_load(dst, struct_addr, *field_offset, code_builder),
-            Instruction::StructFieldStore {
-                struct_addr,
-                field_offset,
-                src,
-                ..
-            } => self.compile_struct_field_store(struct_addr, *field_offset, src, code_builder),
-            Instruction::StructFieldAddr {
-                dst,
-                struct_addr,
-                field_offset,
-                ..
-            } => self.compile_struct_field_addr(dst, struct_addr, *field_offset, code_builder),
-            Instruction::MemCopy { .. } => {
-                Err("MemCopy 应该已经被降级为多条 Load64/Store64".into())
-            }
-            // ====== 全局变量 ======
-            Instruction::LoadGlobal { dst, name, .. } => {
-                self.compile_load_global(dst, name, code_builder)
-            }
-            // ====== GC 寄存器操作 ======
-            Instruction::GcRegOp { is_push, .. } => {
-                self.compile_gc_reg_op(*is_push, code_builder)
-            }
-            // ====== Phi 节点（应已被消除） ======
-            Instruction::Phi { .. } => {
-                log::warn!("Phi 指令出现在 JIT 编译阶段，这表明 SSA 降级不完整");
-                Ok(())
-            }
             _ => Err(format!("不支持的AArch64指令类型: {:?}", instruction).into()),
         }
     }
@@ -661,418 +581,6 @@ impl AArch64Compiler {
         Ok(())
     }
 
-    /// 编译位与指令
-    fn compile_bitand(
-        &mut self,
-        dst: &Register,
-        src1: &Operand,
-        src2: &Operand,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let dst_reg = self.get_physical_register(dst)?;
-        // 编译期常量折叠
-        if let (Operand::Immediate { value: v1 }, Operand::Immediate { value: v2 }) = (src1, src2) {
-            self.emit_mov_reg_imm64(code_builder, dst_reg, v1 & v2);
-            return Ok(());
-        }
-        match (src1, src2) {
-            (Operand::Register { id: src1_id }, Operand::Register { id: src2_id }) => {
-                let src1_reg = self.get_physical_register(src1_id)?;
-                let src2_reg = self.get_physical_register(src2_id)?;
-                // AND Xd, Xn, Xm
-                self.emit_and_reg_reg(code_builder, dst_reg, src1_reg, src2_reg);
-            }
-            (Operand::Register { id: src1_id }, Operand::Immediate { value }) => {
-                let src1_reg = self.get_physical_register(src1_id)?;
-                let temp_reg = AArch64Register::X16 as u8;
-                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
-                self.emit_and_reg_reg(code_builder, dst_reg, src1_reg, temp_reg);
-            }
-            (Operand::Immediate { value }, Operand::Register { id: src2_id }) => {
-                let src2_reg = self.get_physical_register(src2_id)?;
-                let temp_reg = AArch64Register::X16 as u8;
-                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
-                self.emit_and_reg_reg(code_builder, dst_reg, temp_reg, src2_reg);
-            }
-            _ => {
-                return Err(format!("不支持的位与操作数组合: {:?}, {:?}", src1, src2).into());
-            }
-        }
-        Ok(())
-    }
-
-    /// 编译位或指令
-    fn compile_bitor(
-        &mut self,
-        dst: &Register,
-        src1: &Operand,
-        src2: &Operand,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let dst_reg = self.get_physical_register(dst)?;
-        // 编译期常量折叠
-        if let (Operand::Immediate { value: v1 }, Operand::Immediate { value: v2 }) = (src1, src2) {
-            self.emit_mov_reg_imm64(code_builder, dst_reg, v1 | v2);
-            return Ok(());
-        }
-        match (src1, src2) {
-            (Operand::Register { id: src1_id }, Operand::Register { id: src2_id }) => {
-                let src1_reg = self.get_physical_register(src1_id)?;
-                let src2_reg = self.get_physical_register(src2_id)?;
-                // ORR Xd, Xn, Xm
-                self.emit_orr_reg_reg(code_builder, dst_reg, src1_reg, src2_reg);
-            }
-            (Operand::Register { id: src1_id }, Operand::Immediate { value }) => {
-                let src1_reg = self.get_physical_register(src1_id)?;
-                let temp_reg = AArch64Register::X16 as u8;
-                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
-                self.emit_orr_reg_reg(code_builder, dst_reg, src1_reg, temp_reg);
-            }
-            (Operand::Immediate { value }, Operand::Register { id: src2_id }) => {
-                let src2_reg = self.get_physical_register(src2_id)?;
-                let temp_reg = AArch64Register::X16 as u8;
-                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
-                self.emit_orr_reg_reg(code_builder, dst_reg, temp_reg, src2_reg);
-            }
-            _ => {
-                return Err(format!("不支持的位或操作数组合: {:?}, {:?}", src1, src2).into());
-            }
-        }
-        Ok(())
-    }
-
-    /// 编译位异或指令
-    fn compile_bitxor(
-        &mut self,
-        dst: &Register,
-        src1: &Operand,
-        src2: &Operand,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let dst_reg = self.get_physical_register(dst)?;
-        // 编译期常量折叠
-        if let (Operand::Immediate { value: v1 }, Operand::Immediate { value: v2 }) = (src1, src2) {
-            self.emit_mov_reg_imm64(code_builder, dst_reg, v1 ^ v2);
-            return Ok(());
-        }
-        match (src1, src2) {
-            (Operand::Register { id: src1_id }, Operand::Register { id: src2_id }) => {
-                let src1_reg = self.get_physical_register(src1_id)?;
-                let src2_reg = self.get_physical_register(src2_id)?;
-                // EOR Xd, Xn, Xm
-                self.emit_eor_reg_reg(code_builder, dst_reg, src1_reg, src2_reg);
-            }
-            (Operand::Register { id: src1_id }, Operand::Immediate { value }) => {
-                let src1_reg = self.get_physical_register(src1_id)?;
-                let temp_reg = AArch64Register::X16 as u8;
-                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
-                self.emit_eor_reg_reg(code_builder, dst_reg, src1_reg, temp_reg);
-            }
-            (Operand::Immediate { value }, Operand::Register { id: src2_id }) => {
-                let src2_reg = self.get_physical_register(src2_id)?;
-                let temp_reg = AArch64Register::X16 as u8;
-                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
-                self.emit_eor_reg_reg(code_builder, dst_reg, temp_reg, src2_reg);
-            }
-            _ => {
-                return Err(format!("不支持的位异或操作数组合: {:?}, {:?}", src1, src2).into());
-            }
-        }
-        Ok(())
-    }
-
-    /// 编译左移指令
-    fn compile_shift_left(
-        &mut self,
-        dst: &Register,
-        src1: &Operand,
-        src2: &Operand,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let dst_reg = self.get_physical_register(dst)?;
-        // 编译期常量折叠
-        if let (Operand::Immediate { value: v1 }, Operand::Immediate { value: v2 }) = (src1, src2) {
-            self.emit_mov_reg_imm64(code_builder, dst_reg, v1 << (v2 & 63));
-            return Ok(());
-        }
-        match (src1, src2) {
-            (Operand::Register { id: src1_id }, Operand::Register { id: src2_id }) => {
-                let src1_reg = self.get_physical_register(src1_id)?;
-                let src2_reg = self.get_physical_register(src2_id)?;
-                // LSL Xd, Xn, Xm
-                self.emit_lsl_reg(code_builder, dst_reg, src1_reg, src2_reg);
-            }
-            (Operand::Register { id: src1_id }, Operand::Immediate { value }) => {
-                let src1_reg = self.get_physical_register(src1_id)?;
-                let shift = (*value as u32) & 63;
-                // LSL Xd, Xn, #imm6 (encoded in UBFM)
-                self.emit_lsl_imm(code_builder, dst_reg, src1_reg, shift);
-            }
-            (Operand::Immediate { value }, Operand::Register { id: src2_id }) => {
-                let src2_reg = self.get_physical_register(src2_id)?;
-                let temp_reg = AArch64Register::X16 as u8;
-                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
-                self.emit_lsl_reg(code_builder, dst_reg, temp_reg, src2_reg);
-            }
-            _ => {
-                return Err(format!("不支持的左移操作数组合: {:?}, {:?}", src1, src2).into());
-            }
-        }
-        Ok(())
-    }
-
-    /// 编译右移指令（算术右移）
-    fn compile_shift_right(
-        &mut self,
-        dst: &Register,
-        src1: &Operand,
-        src2: &Operand,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let dst_reg = self.get_physical_register(dst)?;
-        // 编译期常量折叠
-        if let (Operand::Immediate { value: v1 }, Operand::Immediate { value: v2 }) = (src1, src2) {
-            // 算术右移
-            self.emit_mov_reg_imm64(code_builder, dst_reg, v1 >> (v2 & 63));
-            return Ok(());
-        }
-        match (src1, src2) {
-            (Operand::Register { id: src1_id }, Operand::Register { id: src2_id }) => {
-                let src1_reg = self.get_physical_register(src1_id)?;
-                let src2_reg = self.get_physical_register(src2_id)?;
-                // ASR Xd, Xn, Xm
-                self.emit_asr_reg(code_builder, dst_reg, src1_reg, src2_reg);
-            }
-            (Operand::Register { id: src1_id }, Operand::Immediate { value }) => {
-                let src1_reg = self.get_physical_register(src1_id)?;
-                let shift = (*value as u32) & 63;
-                // ASR Xd, Xn, #imm6 (encoded in SBFM)
-                self.emit_asr_imm(code_builder, dst_reg, src1_reg, shift);
-            }
-            (Operand::Immediate { value }, Operand::Register { id: src2_id }) => {
-                let src2_reg = self.get_physical_register(src2_id)?;
-                let temp_reg = AArch64Register::X16 as u8;
-                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
-                self.emit_asr_reg(code_builder, dst_reg, temp_reg, src2_reg);
-            }
-            _ => {
-                return Err(format!("不支持的右移操作数组合: {:?}, {:?}", src1, src2).into());
-            }
-        }
-        Ok(())
-    }
-
-    /// 编译位取反指令
-    fn compile_bitnot(
-        &mut self,
-        dst: &Register,
-        src: &Operand,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let dst_reg = self.get_physical_register(dst)?;
-        match src {
-            Operand::Register { id } => {
-                let src_reg = self.get_physical_register(id)?;
-                // MVN Xd, Xm (ORN Xd, XZR, Xm)
-                self.emit_mvn(code_builder, dst_reg, src_reg);
-            }
-            Operand::Immediate { value } => {
-                // 编译期求反
-                self.emit_mov_reg_imm64(code_builder, dst_reg, !value);
-            }
-            _ => {
-                return Err(format!("不支持的位取反操作数: {:?}", src).into());
-            }
-        }
-        Ok(())
-    }
-
-    /// 编译整数类型转换指令
-    fn compile_intcast(
-        &mut self,
-        dst: &Register,
-        src: &Operand,
-        _src_bits: u8,
-        _dst_bits: u8,
-        _signed: bool,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        // AArch64 的 X 寄存器是 64 位，对于 64->64 位转换，直接 MOV
-        // 对于更小位宽的截断/扩展，在 LIR 层面通常已经处理好
-        // 简单实现：将 src 加载到 dst
-        let dst_reg = self.get_physical_register(dst)?;
-        match src {
-            Operand::Register { id } => {
-                let src_reg = self.get_physical_register(id)?;
-                if dst_reg != src_reg {
-                    self.emit_mov_reg_reg(code_builder, dst_reg, src_reg);
-                }
-            }
-            Operand::Immediate { value } => {
-                self.emit_mov_reg_imm64(code_builder, dst_reg, *value);
-            }
-            _ => {
-                return Err(format!("不支持的类型转换操作数: {:?}", src).into());
-            }
-        }
-        Ok(())
-    }
-
-    /// 编译间接函数调用指令
-    fn compile_call_indirect(
-        &mut self,
-        function_register: &Register,
-        _args: &[Register],
-        _arg_operands: &[Operand],
-        _result: Option<&Register>,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let func_reg = self.get_physical_register(function_register)?;
-
-        // 使用X16作为跳转目标寄存器
-        let target_reg = AArch64Register::X16 as u8;
-        if func_reg != target_reg {
-            self.emit_mov_reg_reg(code_builder, target_reg, func_reg);
-        }
-
-        // BLR X16 — 间接调用（保存返回地址到LR）
-        // 注意：CallIndirect 是"带链接"的间接调用，需要保存返回地址
-        let instruction = 0xD63F0000u32 | ((target_reg as u32) << 5);
-        code_builder.emit_u32(instruction);
-
-        Ok(())
-    }
-
-    /// 编译结构体字段加载（兜底实现，应已被降级为 Load64）
-    fn compile_struct_field_load(
-        &mut self,
-        dst: &Register,
-        struct_addr: &Register,
-        field_offset: usize,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let dst_reg = self.get_physical_register(dst)?;
-        let addr_reg = self.get_physical_register(struct_addr)?;
-        // LDR dst, [addr, #offset]
-        self.emit_ldr_reg_mem(code_builder, dst_reg, addr_reg, field_offset as i32);
-        Ok(())
-    }
-
-    /// 编译结构体字段存储（兜底实现，应已被降级为 Store64）
-    fn compile_struct_field_store(
-        &mut self,
-        struct_addr: &Register,
-        field_offset: usize,
-        src: &Operand,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let addr_reg = self.get_physical_register(struct_addr)?;
-        match src {
-            Operand::Register { id } => {
-                let src_reg = self.get_physical_register(id)?;
-                self.emit_str_reg_mem(code_builder, src_reg, addr_reg, field_offset as i32);
-            }
-            Operand::Immediate { value } => {
-                let temp_reg = AArch64Register::X16 as u8;
-                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
-                self.emit_str_reg_mem(code_builder, temp_reg, addr_reg, field_offset as i32);
-            }
-            _ => {
-                return Err(format!("不支持的结构体字段存储操作数: {:?}", src).into());
-            }
-        }
-        Ok(())
-    }
-
-    /// 编译结构体字段地址计算
-    fn compile_struct_field_addr(
-        &mut self,
-        dst: &Register,
-        struct_addr: &Register,
-        field_offset: usize,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let dst_reg = self.get_physical_register(dst)?;
-        let addr_reg = self.get_physical_register(struct_addr)?;
-        // ADD dst, addr, #field_offset
-        self.emit_add_reg_reg_imm(code_builder, dst_reg, addr_reg, field_offset as i32);
-        Ok(())
-    }
-
-    /// 编译 LoadGlobal 指令 — 从 runtime 全局数据区加载值
-    fn compile_load_global(
-        &mut self,
-        dst: &Register,
-        name: &str,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let dst_reg = self.get_physical_register(dst)?;
-
-        // vm_sp 是动态值（虚拟栈指针寄存器），需要特殊处理
-        if name == "vm_sp" {
-            let vm_sp_reg = self.vm_calling_convention.stack_pointer;
-            if dst_reg != vm_sp_reg {
-                self.emit_mov_reg_reg(code_builder, dst_reg, vm_sp_reg);
-            }
-            return Ok(());
-        }
-
-        // stack_top 是动态值
-        if name == "stack_top" {
-            let vm_fp_reg = self.vm_calling_convention.frame_pointer;
-            self.emit_mov_reg_reg(code_builder, dst_reg, vm_fp_reg);
-            self.emit_add_reg_reg_imm(code_builder, dst_reg, dst_reg, 65520);
-            return Ok(());
-        }
-
-        // 通用全局变量：使用标签加载
-        let global_label = format!("__global_{}", name);
-        // ADRP + ADD 加载全局变量地址
-        code_builder.emit_adrp(dst_reg, &global_label);
-        code_builder.emit_add_reg_label(dst_reg, &global_label);
-        // 从地址加载值：LDR dst, [dst]
-        self.emit_ldr_reg_mem(code_builder, dst_reg, dst_reg, 0);
-
-        Ok(())
-    }
-
-    /// 编译 GC 寄存器保存/恢复指令
-    fn compile_gc_reg_op(
-        &mut self,
-        is_push: bool,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let vm_sp_reg = self.vm_calling_convention.stack_pointer;
-
-        if is_push {
-            // gc_push_regs: 将所有 VM callee-saved 寄存器保存到虚拟栈
-            let regs = self.get_vm_callee_saved_registers();
-            let stack_space = ((regs.len() * 8 + 15) / 16) * 16; // 16字节对齐
-
-            // 调整虚拟栈指针
-            self.emit_add_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, -(stack_space as i32));
-
-            // 逐个保存寄存器
-            for (idx, &reg) in regs.iter().enumerate() {
-                self.emit_str_reg_mem(code_builder, reg, vm_sp_reg, (idx * 8) as i32);
-            }
-        } else {
-            // gc_pop_regs: 从虚拟栈恢复所有 VM callee-saved 寄存器
-            let regs = self.get_vm_callee_saved_registers();
-            let stack_space = ((regs.len() * 8 + 15) / 16) * 16;
-
-            // 逐个恢复寄存器
-            for (idx, &reg) in regs.iter().enumerate() {
-                self.emit_ldr_reg_mem(code_builder, reg, vm_sp_reg, (idx * 8) as i32);
-            }
-
-            // 恢复虚拟栈指针
-            self.emit_add_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, stack_space as i32);
-        }
-
-        Ok(())
-    }
-
     /// 编译比较指令
     fn compile_compare(
         &mut self,
@@ -1143,11 +651,11 @@ impl AArch64Compiler {
         let xzr = 31u32; // XZR 在 AArch64 中编码为 31
 
         // CSINC Xd, XZR, XZR, invert(cond)
-        // CSINC 编码: sf=1(31), 00(30:29), 110101(28:23), 00(22:21), Rm(20:16), cond(15:12), 01(11:10), Rn(9:5), Rd(4:0)
-        // Base = 0x9A800400
-        let csinc_base: u32 = (1u32 << 31) | (0b110101u32 << 23) | (0b01u32 << 10);
-
-        let instr: u32 = csinc_base
+        let instr: u32 = (1u32 << 31)     // sf = 1 (64-bit)
+            | (0b01 << 29)                // opc = 01
+            | (0b01010 << 24)             // fixed
+            | (0 << 23)                   // S = 0
+            | (0 << 22)                   // fixed
             | (xzr << 16)                 // Rm = XZR (31)
             | (inverted_cond << 12)       // condition (inverted)
             | (xzr << 5)                  // Rn = XZR (31)
@@ -1946,14 +1454,14 @@ impl AArch64Compiler {
         let raw_stack_space = regs_to_virtual_stack.len() * 8;
         let virtual_stack_space = ((raw_stack_space + 15) / 16) * 16;
 
-        // 步骤1：保存寄存器到虚拟栈（使用 X9 作为 vm_sp）
+        // 步骤1：保存 r0-r5 到虚拟栈
         if !regs_to_virtual_stack.is_empty() {
             // 一次性调整虚拟栈指针（向下增长）
             self.emit_sub_reg_reg_imm(
                 code_builder,
                 karte_virtual_sp_reg,
                 karte_virtual_sp_reg,
-                virtual_stack_space as i32,
+                virtual_stack_space as i32 + 32,
             );
 
             // 保存所有寄存器到调整后的虚拟栈上
@@ -1962,19 +1470,19 @@ impl AArch64Compiler {
             }
         }
 
-        // 步骤2：在系统栈（SP）上保存 vm_fp(X10)
+        // 步骤2：只在系统栈保存 VM 帧指针，SP 依靠栈平衡自动恢复
         let vm_fp_reg = self.vm_calling_convention.frame_pointer;
         if self.debug_mode {
             log::debug!("保存 VM 帧寄存器到系统栈: fp=p{}", vm_fp_reg);
         }
-        // 在系统栈上分配 16 字节
-        self.emit_sub_reg_reg_imm(
+        // 依旧分配 16 字节，保持与原 STP 相同的栈平衡
+        self.emit_add_reg_reg_imm(
             code_builder,
             AArch64Register::SP as u8,
             AArch64Register::SP as u8,
-            16,
+            -16,
         );
-        // 保存 vm_fp 到 [SP, #8]
+        // 与之前 STP 的 second slot 对齐，写入 [SP, #8]
         self.emit_str_reg_mem(code_builder, vm_fp_reg, AArch64Register::SP as u8, 8);
 
         (regs_to_virtual_stack, virtual_stack_space)
@@ -1985,12 +1493,11 @@ impl AArch64Compiler {
         regs: &[u8],
         stack_space: usize,
     ) {
-        // 新设计：vm_sp=X9, vm_fp=X10
-        // 恢复顺序与保存顺序相反
-        // 1. 先从系统栈恢复 vm_fp(X10)
-        // 2. 再从虚拟栈恢复寄存器
+        // 🔧 关键修复：恢复顺序与保存顺序相反
+        // 1. 先从系统栈恢复 VM 栈/帧指针
+        // 2. 再从虚拟栈恢复 r0-r5
 
-        // 步骤1：从系统栈恢复 vm_fp
+        // 步骤1：恢复 VM 帧指针，并保持与保存步骤相同的栈调整
         let vm_fp_reg = self.vm_calling_convention.frame_pointer;
         self.emit_ldr_reg_mem(code_builder, vm_fp_reg, AArch64Register::SP as u8, 8);
         self.emit_add_reg_reg_imm(
@@ -2000,7 +1507,7 @@ impl AArch64Compiler {
             16,
         );
 
-        // 步骤2：从虚拟栈恢复寄存器
+        // 步骤2：恢复 r0-r5 从虚拟栈
         if !regs.is_empty() {
             let karte_virtual_sp_reg = self.vm_calling_convention.stack_pointer;
 
@@ -2014,7 +1521,7 @@ impl AArch64Compiler {
                 code_builder,
                 karte_virtual_sp_reg,
                 karte_virtual_sp_reg,
-                stack_space as i32,
+                stack_space as i32 + 32,
             );
         }
     }
@@ -2102,88 +1609,6 @@ impl AArch64Compiler {
         code_builder.emit_bytes(&instruction.to_le_bytes());
     }
 
-    /// 生成ORR三寄存器指令
-    fn emit_orr_reg_reg(&self, code_builder: &mut CodeBuilder, dst: u8, src1: u8, src2: u8) {
-        // ORR <Xd>, <Xn>, <Xm>
-        // 31|30|29|28 27 26 25 24 23 22 21|20 16|15 10|9 5|4 0
-        // 1 |0 |1 |0  1  0  1  0  0  0  0 |Xm   |0     |Xn |Xd
-        let instruction =
-            0xAA000000u32 | ((src2 as u32) << 16) | ((src1 as u32) << 5) | (dst as u32);
-        code_builder.emit_bytes(&instruction.to_le_bytes());
-    }
-
-    /// 生成EOR三寄存器指令
-    fn emit_eor_reg_reg(&self, code_builder: &mut CodeBuilder, dst: u8, src1: u8, src2: u8) {
-        // EOR <Xd>, <Xn>, <Xm>
-        // 31|30|29|28 27 26 25 24 23 22 21|20 16|15 10|9 5|4 0
-        // 1 |1 |0 |0  1  0  1  0  0  0  0 |Xm   |0     |Xn |Xd
-        let instruction =
-            0xCA000000u32 | ((src2 as u32) << 16) | ((src1 as u32) << 5) | (dst as u32);
-        code_builder.emit_bytes(&instruction.to_le_bytes());
-    }
-
-    /// 生成LSL寄存器版本指令: LSL Xd, Xn, Xm
-    fn emit_lsl_reg(&self, code_builder: &mut CodeBuilder, dst: u8, src1: u8, src2: u8) {
-        // LSLV Xd, Xn, Xm (逻辑左移，寄存器版本)
-        // sf=1, 00, 11010110, Rm, 001000, Rn, Rd
-        let instruction =
-            0x9AC02000u32 | ((src2 as u32) << 16) | ((src1 as u32) << 5) | (dst as u32);
-        code_builder.emit_bytes(&instruction.to_le_bytes());
-    }
-
-    /// 生成LSL立即数版本指令: LSL Xd, Xn, #imm6
-    fn emit_lsl_imm(&self, code_builder: &mut CodeBuilder, dst: u8, src: u8, shift: u32) {
-        // LSL Xd, Xn, #imm = UBFM Xd, Xn, (-imm mod 64), (63-imm)
-        // 编码: sf=1, opc=10, 100110, immr=(-imm mod 64), imms=(63-imm), Rn, Rd
-        // immr = (64 - shift) & 63
-        // imms = 63 - shift
-        let immr = (64 - shift) & 63;
-        let imms = 63 - shift;
-        let instruction = (1u32 << 31)     // sf=1
-            | (0b10 << 29)                  // opc=10 (UBFM)
-            | (0b100110 << 23)              // UBFM opcode
-            | (immr << 16)
-            | (imms << 10)
-            | ((src as u32) << 5)
-            | (dst as u32);
-        code_builder.emit_bytes(&instruction.to_le_bytes());
-    }
-
-    /// 生成ASR寄存器版本指令: ASR Xd, Xn, Xm
-    fn emit_asr_reg(&self, code_builder: &mut CodeBuilder, dst: u8, src1: u8, src2: u8) {
-        // ASRV Xd, Xn, Xm (算术右移，寄存器版本)
-        // sf=1, 00, 11010110, Rm, 001010, Rn, Rd
-        let instruction =
-            0x9AC02800u32 | ((src2 as u32) << 16) | ((src1 as u32) << 5) | (dst as u32);
-        code_builder.emit_bytes(&instruction.to_le_bytes());
-    }
-
-    /// 生成ASR立即数版本指令: ASR Xd, Xn, #imm6
-    fn emit_asr_imm(&self, code_builder: &mut CodeBuilder, dst: u8, src: u8, shift: u32) {
-        // ASR Xd, Xn, #imm = SBFM Xd, Xn, #imm, #63
-        // 编码: sf=1, opc=00, 100110, N=1, immr=shift, imms=011111, Rn, Rd
-        let instruction = (1u32 << 31)     // sf=1
-            | (0b00 << 29)                  // opc=00 (SBFM)
-            | (0b100110 << 23)              // SBFM opcode
-            | (shift << 16)                 // immr = shift
-            | (63u32 << 10)                 // imms = 63
-            | ((src as u32) << 5)
-            | (dst as u32);
-        code_builder.emit_bytes(&instruction.to_le_bytes());
-    }
-
-    /// 生成MVN指令: MVN Xd, Xm = ORN Xd, XZR, Xm
-    fn emit_mvn(&self, code_builder: &mut CodeBuilder, dst: u8, src: u8) {
-        // ORN Xd, XZR, Xm
-        // 31|30|29|28 27 26 25 24 23 22 21|20 16|15 10|9  5|4 0
-        // 1 |0 |1 |0  1  0  1  0  0  0  0 |Xm   |0     |XZR|Xd
-        // ORR with inverted operand (ORN): bit 29=0, bit 28=1 (vs ORR: bit29=0, bit28=1 for ORN)
-        // Actually: ORN = 0xAA200000 base
-        let instruction =
-            0xAA200000u32 | ((src as u32) << 16) | (31u32 << 5) | (dst as u32);
-        code_builder.emit_bytes(&instruction.to_le_bytes());
-    }
-
     /// 生成MUL三寄存器指令
     fn emit_mul_reg_reg_reg(&self, code_builder: &mut CodeBuilder, dst: u8, src1: u8, src2: u8) {
         // MUL <Xd>, <Xn>, <Xm>
@@ -2197,9 +1622,10 @@ impl AArch64Compiler {
     /// 生成DIV三寄存器指令
     fn emit_div_reg_reg_reg(&self, code_builder: &mut CodeBuilder, dst: u8, src1: u8, src2: u8) {
         // SDIV <Xd>, <Xn>, <Xm> (有符号除法)
-        // sf=1, 00, 11010110, Rm, 000011, Rn, Rd
+        // 31|30|29|28 27 26 25 24 23|22 21|20 16|15|14 10|9 5|4 0
+        // 1 |0 |0 |1  1  0  1  1  0 |0  0 |Xm   |0 |0 0 0 1|Xn |Xd
         let instruction =
-            0x9AC00C00u32 | ((src2 as u32) << 16) | ((src1 as u32) << 5) | (dst as u32);
+            0x9AC00800u32 | ((src2 as u32) << 16) | ((src1 as u32) << 5) | (dst as u32);
         code_builder.emit_bytes(&instruction.to_le_bytes());
     }
 
@@ -2445,109 +1871,95 @@ impl AArch64Compiler {
     }
 
     fn get_vm_callee_saved_registers(&self) -> Vec<u8> {
-        let vm_sp = self.vm_calling_convention.stack_pointer;
-        let vm_fp = self.vm_calling_convention.frame_pointer;
         self.vm_calling_convention
             .get_callee_save_registers(&self.current_function_use_regs)
-            .into_iter()
-            .filter(|&reg| reg != vm_sp && reg != vm_fp)
-            .collect()
     }
 
-    /// 生成函数序言（主函数入口，被 C 代码通过 AAPCS64 调用）
+    /// 生成函数序言
     fn emit_function_prologue(&self, code_builder: &mut CodeBuilder) -> crate::Result<()> {
-        // AArch64 AAPCS64 调用约定：X0 和 X1 为前两个参数
-        // X0 = 虚拟栈顶地址，X1 = 虚拟栈底地址
-        //
-        // 新设计：vm_sp=X9, vm_fp=X10，与硬件 SP(31) 完全分离
-        // 1. 在系统栈保存 AAPCS64 callee-saved (X19-X30)
-        // 2. 将虚拟栈参数移动到 X9/X10
-        // 3. 在虚拟栈上保存系统 SP 和返回地址 X30
-        // 4. 分配返回值槽
-        // 5. 设置帧指针
-
-        let vm_sp = self.vm_calling_convention.stack_pointer;  // X9
-        let vm_fp = self.vm_calling_convention.frame_pointer;   // X10
-        let sys_sp = AArch64Register::SP as u8;                 // 31
-        let tmp_reg = AArch64Register::X16 as u8;               // X16 临时寄存器
+        // AArch64 AAPCS64调用约定：X0和X1为前两个参数
+        // 参考x86实现，将参数移动到虚拟机寄存器
+        let x0 = AArch64Register::X0 as u8; // 第一个参数：虚拟栈顶地址
+        let x1 = AArch64Register::X1 as u8; // 第二个参数：虚拟栈底地址
+        let vm_sp = self.vm_calling_convention.stack_pointer;
+        let vm_fp = self.vm_calling_convention.frame_pointer;
 
         if self.debug_mode {
-            log::debug!("序言开始：生成符合 AAPCS64 的函数序言 (vm_sp=X9, vm_fp=X10)");
+            log::debug!("序言开始：生成符合 AAPCS64 的函数序言");
         }
 
-        // 步骤1：在系统栈上保存 AAPCS64 callee-saved 寄存器
-        // AAPCS64 callee-saved: X19-X28, X29(FP), X30(LR) = 12 个寄存器 = 96 字节
-        // 额外保存 X9(XZR 配对) 以防万一，但 X9/X10 是 Karte callee-saved，
-        // 在 AAPCS64 中是 caller-saved，不需要在这里保存。
-        // 只保存 AAPCS64 callee-saved: X19-X30 = 12 个寄存器
-        // 12 * 8 = 96 字节，向上对齐到 16 的倍数 = 96 (已对齐)
-        // 使用 STP 成对保存（pre-index 模式）
-        // 保存顺序（从高地址到低地址）：X29/X30, X27/X28, X25/X26, X23/X24, X21/X22, X19/X20
-        // 对齐计算：进入函数时 SP % 16 == 0（AAPCS64 要求调用者已对齐）
-        // 12 个寄存器 = 6 对 STP = 96 字节，96 % 16 == 0 ✓
+        // AAPCS64 标准序言：
+        // 1. 为系统栈分配帧空间（32字节）
+        // SUB SP, SP, #32
+        self.emit_add_reg_reg_imm(
+            code_builder,
+            AArch64Register::SP as u8,
+            AArch64Register::SP as u8,
+            -32,
+        );
 
-        // STP X29, X30, [SP, #-16]!
-        let stp_x29_x30 = 0xA9BF03E0u32
-            | ((AArch64Register::X29 as u32 & 0x1F) << 0)
-            | ((AArch64Register::X30 as u32 & 0x1F) << 10);
-        code_builder.emit_bytes(&stp_x29_x30.to_le_bytes());
+        // 2. 保存 x29 到系统栈（X30稍后保存到虚拟栈）
+        // STR X29, [SP, #0]
+        self.emit_str_reg_mem(
+            code_builder,
+            AArch64Register::X29 as u8,
+            AArch64Register::SP as u8,
+            0,
+        );
 
-        // STP X27, X28, [SP, #-16]!
-        let stp_x27_x28 = 0xA9BF03E0u32
-            | ((AArch64Register::X27 as u32 & 0x1F) << 0)
-            | ((AArch64Register::X28 as u32 & 0x1F) << 10);
-        code_builder.emit_bytes(&stp_x27_x28.to_le_bytes());
+        // 3. 设置新帧指针
+        // MOV X29, SP
+        self.emit_mov_reg_reg(
+            code_builder,
+            AArch64Register::X29 as u8,
+            AArch64Register::SP as u8,
+        );
 
-        // STP X25, X26, [SP, #-16]!
-        let stp_x25_x26 = 0xA9BF03E0u32
-            | ((AArch64Register::X25 as u32 & 0x1F) << 0)
-            | ((AArch64Register::X26 as u32 & 0x1F) << 10);
-        code_builder.emit_bytes(&stp_x25_x26.to_le_bytes());
+        // 4. 保存其他 callee-saved 寄存器（如果有的话）
+        self.save_callee_saved_registers(code_builder)?;
 
-        // STP X23, X24, [SP, #-16]!
-        let stp_x23_x24 = 0xA9BF03E0u32
-            | ((AArch64Register::X23 as u32 & 0x1F) << 0)
-            | ((AArch64Register::X24 as u32 & 0x1F) << 10);
-        code_builder.emit_bytes(&stp_x23_x24.to_le_bytes());
+        // 5. 保存系统SP到X16
+        // MOV X16, SP
+        self.emit_mov_reg_reg(code_builder, 16, AArch64Register::SP as u8);
 
-        // STP X21, X22, [SP, #-16]!
-        let stp_x21_x22 = 0xA9BF03E0u32
-            | ((AArch64Register::X21 as u32 & 0x1F) << 0)
-            | ((AArch64Register::X22 as u32 & 0x1F) << 10);
-        code_builder.emit_bytes(&stp_x21_x22.to_le_bytes());
+        // 6. 切换到虚拟栈
+        // MOV SP, X0 (x0 = 虚拟栈顶地址)
+        // MOV X29, X1 (x1 = 虚拟栈底地址)
+        self.emit_mov_reg_reg(code_builder, vm_sp, x0);
+        self.emit_mov_reg_reg(code_builder, vm_fp, x1);
 
-        // STP X19, X20, [SP, #-16]!
-        let stp_x19_x20 = 0xA9BF03E0u32
-            | ((AArch64Register::X19 as u32 & 0x1F) << 0)
-            | ((AArch64Register::X20 as u32 & 0x1F) << 10);
-        code_builder.emit_bytes(&stp_x19_x20.to_le_bytes());
+        // 7. 在虚拟栈保存系统SP和X30
+        // SUB SP, SP, #16
+        // STR X16, [SP, #0]  (系统SP)
+        // STR X30, [SP, #8]  (返回地址)
+        self.emit_add_reg_reg_imm(
+            code_builder,
+            AArch64Register::SP as u8,
+            AArch64Register::SP as u8,
+            -16,
+        );
+        self.emit_str_reg_mem(code_builder, 16, AArch64Register::SP as u8, 0);
+        self.emit_str_reg_mem(
+            code_builder,
+            AArch64Register::X30 as u8,
+            AArch64Register::SP as u8,
+            8,
+        );
 
-        if self.debug_mode {
-            log::debug!("序言：已保存 12 个 AAPCS64 callee-saved 寄存器到系统栈 (96 字节)");
-        }
-
-        // 步骤2：将虚拟栈参数移动到虚拟栈寄存器
-        // X0(虚拟栈顶) → X9(vm_sp), X1(虚拟栈底) → X10(vm_fp)
-        self.emit_mov_reg_reg(code_builder, vm_sp, AArch64Register::X0 as u8);
-        self.emit_mov_reg_reg(code_builder, vm_fp, AArch64Register::X1 as u8);
-
-        // 步骤3：在虚拟栈上保存系统 SP 和返回地址 X30
-        // SUB X9, X9, #16
-        self.emit_sub_reg_reg_imm(code_builder, vm_sp, vm_sp, 16);
-        // 注意：AArch64 中 Rt=31 在 STR 中代表 XZR（零寄存器），不是 SP
-        // 所以必须先将 SP 复制到临时寄存器 X16，再存储 X16
-        // ADD X16, SP, #0 (= MOV X16, SP)
-        self.emit_add_reg_reg_imm(code_builder, tmp_reg, sys_sp, 0);
-        // STR X16, [X9, #0] (保存系统 SP 的值)
-        self.emit_str_reg_mem(code_builder, tmp_reg, vm_sp, 0);
-        // STR X30, [X9, #8] (保存返回地址)
-        self.emit_str_reg_mem(code_builder, AArch64Register::X30 as u8, vm_sp, 8);
-
-        // 步骤4：为返回值槽分配空间（16 字节）
+        // 8. 为返回值槽分配空间（16字节对齐）
         self.save_return_slot_pointer(code_builder);
 
+        // AAPCS64 要求：栈必须在函数入口处16字节对齐
+        // 检查当前栈使用情况：
+        // - 每个 STP 指令分配 16 字节
+        // - callee-saved 寄存器数量决定栈使用量
+        let stack_usage = 16 * (2 + (self.get_c_ffi_callee_saved_registers().len() + 1) / 2); // X29/X30 + X6/X7 + callee-saved
         if self.debug_mode {
-            log::debug!("序言完成：系统栈保存完毕，虚拟栈已初始化");
+            log::debug!("序言：栈使用量 = {} 字节", stack_usage);
+            log::debug!(
+                "序言：{} 个 callee-saved 寄存器",
+                self.get_c_ffi_callee_saved_registers().len()
+            );
         }
 
         Ok(())
@@ -2558,57 +1970,46 @@ impl AArch64Compiler {
         &self,
         code_builder: &mut CodeBuilder,
     ) -> crate::Result<()> {
-        // 新设计：vm_sp=X9, vm_fp=X10
-        // 1. 保存旧 vm_sp(X9) 值到临时寄存器(X16)
-        // 2. 在虚拟栈上分配空间保存 FP 和 SP
-        // 3. 保存 callee-saved 寄存器到虚拟栈（排除 vm_sp=X9 和 vm_fp=X10）
-        let vm_sp_reg = self.vm_calling_convention.stack_pointer;  // X9
-        let vm_fp_reg = self.vm_calling_convention.frame_pointer;  // X10
-        let tmp_reg = AArch64Register::X16 as u8;                   // X16 临时寄存器
-
-        // 步骤1：保存旧 vm_sp 值到临时寄存器
-        self.emit_mov_reg_reg(code_builder, tmp_reg, vm_sp_reg);
-
-        // 步骤2：在虚拟栈上分配空间保存 FP 和 SP
-        // SUB X9, X9, #16
+        // 首先存fp sp，然后保存callee-saved寄存器
+        // 获取虚拟栈指针寄存器
+        let vm_sp_reg = self.vm_calling_convention.stack_pointer;
+        let vm_fp_reg = self.vm_calling_convention.frame_pointer;
+        // 保存fp sp到虚拟栈
         self.emit_sub_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 16);
-        // STR X10, [X9, #8] (保存 vm_fp)
         self.emit_str_reg_mem(code_builder, vm_fp_reg, vm_sp_reg, 8);
-        // STR X16, [X9, #0] (保存旧 vm_sp)
-        self.emit_str_reg_mem(code_builder, tmp_reg, vm_sp_reg, 0);
+        self.emit_str_reg_mem(code_builder, vm_sp_reg, vm_sp_reg, 0);
 
-        // 步骤3：保存 callee-saved 寄存器到虚拟栈
-        // get_vm_callee_saved_registers() 已过滤掉 vm_sp(X9) 和 vm_fp(X10)
+        // 使用LIR寄存器分配器计算的实际使用的callee-saved寄存器
         let callee_saved = &self.get_vm_callee_saved_registers();
 
+        // 早期返回：如果没有需要保存的寄存器
         if callee_saved.is_empty() {
             if self.debug_mode {
-                log::debug!("生成内部函数序言：无需保存 callee-saved 寄存器");
+                log::debug!("生成内部函数序言：无需保存寄存器");
             }
-        } else {
-            if self.debug_mode {
-                log::debug!("生成内部函数序言：保存 {} 个 callee-saved 寄存器", callee_saved.len());
-            }
-
-            for &reg in callee_saved {
-                // 每次分配16字节确保对齐
-                self.emit_sub_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 16);
-                self.emit_str_reg_mem(code_builder, reg, vm_sp_reg, 0);
-            }
-
-            if self.debug_mode {
-                log::debug!(
-                    "保存了 {} 个 callee-saved 寄存器到虚拟栈",
-                    callee_saved.len()
-                );
-            }
+            return Ok(());
         }
 
-        // 步骤4：设置帧指针
-        // vm_fp = vm_sp + frame_size（如果有帧大小）
-        // 注意：当前 AArch64 编译器没有 current_stack_frame_size 字段
-        // 帧指针直接设为 vm_sp 当前值
-        self.emit_mov_reg_reg(code_builder, vm_fp_reg, vm_sp_reg);
+        if self.debug_mode {
+            log::debug!("生成内部函数序言：保存 {} 个寄存器", callee_saved.len());
+        }
+
+        // 保存每个 callee-saved 寄存器到虚拟栈
+        // 每次分配16字节以确保SP保持16字节对齐
+        for &reg in callee_saved {
+            // 先压入虚拟栈（16字节对齐）
+            self.emit_sub_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 16);
+
+            // 存储寄存器值到虚拟栈
+            self.emit_str_reg_mem(code_builder, reg, vm_sp_reg, 0);
+        }
+
+        if self.debug_mode {
+            eprintln!(
+                "保存了 {} 个 callee-saved 寄存器到虚拟栈",
+                callee_saved.len()
+            );
+        }
 
         Ok(())
     }
@@ -2618,126 +2019,262 @@ impl AArch64Compiler {
         &self,
         code_builder: &mut CodeBuilder,
     ) -> crate::Result<()> {
-        // 新设计：vm_sp=X9, vm_fp=X10
-        // 1. 恢复 callee-saved 寄存器（逆序）
-        // 2. 恢复 vm_sp 和 vm_fp 从虚拟栈
-        let vm_sp_reg = self.vm_calling_convention.stack_pointer;  // X9
-        let vm_fp_reg = self.vm_calling_convention.frame_pointer;  // X10
-        let tmp_reg = AArch64Register::X16 as u8;                   // X16 临时寄存器
+        let vm_sp_reg = self.vm_calling_convention.stack_pointer;
+        let vm_fp_reg = self.vm_calling_convention.frame_pointer;
 
-        // 步骤1：恢复 callee-saved 寄存器（逆序）
+        // 使用LIR寄存器分配器计算的实际使用的callee-saved寄存器
         let callee_saved = &self.get_vm_callee_saved_registers();
 
+        // 按逆序恢复寄存器（后进先出）
         for &reg in callee_saved.iter().rev() {
+            // 从虚拟栈加载寄存器值
             self.emit_ldr_reg_mem(code_builder, reg, vm_sp_reg, 0);
+
+            // 弹出虚拟栈（16字节对齐）
             self.emit_add_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 16);
         }
 
-        if self.debug_mode && !callee_saved.is_empty() {
+        if self.debug_mode {
             log::debug!(
                 "恢复了 {} 个 callee-saved 寄存器从虚拟栈",
                 callee_saved.len()
             );
         }
 
-        // 步骤2：恢复 vm_sp 和 vm_fp
-        // LDR X16, [X9, #0] (旧 vm_sp)
-        self.emit_ldr_reg_mem(code_builder, tmp_reg, vm_sp_reg, 0);
-        // LDR X10, [X9, #8] (旧 vm_fp)
+        // 恢复fp sp从虚拟栈
+        self.emit_ldr_reg_mem(code_builder, vm_sp_reg, vm_sp_reg, 0);
         self.emit_ldr_reg_mem(code_builder, vm_fp_reg, vm_sp_reg, 8);
-        // ADD X9, X9, #16 (回收空间)
         self.emit_add_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 16);
-        // MOV X9, X16 (恢复旧 vm_sp)
-        self.emit_mov_reg_reg(code_builder, vm_sp_reg, tmp_reg);
 
         Ok(())
     }
 
-    /// 生成主函数尾声（恢复系统栈并返回）
+    /// 生成主函数尾声（用于与宿主环境交互的main函数）
     fn emit_function_epilogue(&self, code_builder: &mut CodeBuilder) -> crate::Result<()> {
-        // 新设计尾声（对应新序言）：
-        // compile_return 已经弹出了返回值槽（+16字节），所以 vm_sp(X9) 现在指向：
-        //   [X9+0]: 系统SP
-        //   [X9+8]: X30（返回地址）
-        //
-        // 步骤：
-        // 1. 从虚拟栈读取系统SP和X30
+        // AAPCS64 标准尾声：按照序言的逆序恢复寄存器
+        // 注意：进入尾声时，SP指向虚拟栈，X29可能也指向虚拟栈
+
+        // 1. 不处理返回值槽（由 compile_return 负责）
+
+        // 2. 从系统栈帧恢复系统SP（需要知道系统栈帧的X29值）
+        // 问题：X29现在指向虚拟栈，无法直接访问系统栈帧
+        // 解决方案：系统栈帧的X29保存在系统栈 [系统SP, #0] 位置
+        // 但我们需要先知道系统SP...这是个循环依赖
+
+        // 新方案：利用虚拟栈底（X1参数）来定位保存的系统栈指针
+        // 实际上，我们应该在序言中将系统栈信息保存到一个固定可访问的位置
+
+        // 临时方案：使用X19作为系统栈帧指针寄存器
+        // 在序言中保存系统X29到X19，这里从X19恢复
+
+        // 但这不可行，因为X19可能被使用...
+
+        // 正确方案：恢复系统栈的流程应该是：
+        // 1. 从某个已知位置读取保存的系统SP
+        // 2. MOV SP, 系统SP
+        // 3. 从系统栈恢复 callee-saved 寄存器
+        // 4. 从系统栈恢复 X29, X30
+        // 5. 释放系统栈帧
+
+        // 关键问题：如何从虚拟栈状态访问系统栈保存的值？
+        // 答案：在序言中，我们将系统SP保存到了 [X29(系统帧), #16]
+        // 但现在X29指向虚拟栈，我们无法访问系统帧的X29
+
+        // 解决方案：在序言中，除了将系统SP保存到系统栈，也保存到虚拟栈的固定位置
+        // 或者：使用一个callee-saved寄存器（如X19）来保存系统帧指针
+
+        // 让我重新设计：使用X19保存系统栈帧指针
+        // 序言：MOV X19, X29（系统帧）
+        // 尾声：LDR X16, [X19, #16]（从系统帧读取保存的系统SP）
+
+        // 但这要求X19不被使用，或者需要额外保存X19...
+
+        // 最简单的方案：将系统SP保存到虚拟栈底（通过X1参数）的固定偏移位置
+        // 但这会污染虚拟栈
+
+        // 实际上，让我重新思考整个设计：
+        // 目标：支持从虚拟栈恢复到系统栈
+        // 约束：切换到虚拟栈后，无法直接访问系统栈帧
+        // 解决方案选项：
+        // 1. 使用 callee-saved 寄存器保存系统栈信息（但需要额外保存该寄存器）
+        // 2. 将系统栈信息保存到虚拟栈（简单但占用虚拟栈空间）
+        // 3. 使用全局变量保存系统栈信息（线程不安全）
+
+        // 选择方案2：将系统SP保存到虚拟栈顶部固定位置
+
+        // 修改后的设计：
+        // 序言：
+        // 1. 在系统栈分配帧并保存X29/X30
+        // 2. 保存callee-saved寄存器到系统栈
+        // 3. 切换到虚拟栈
+        // 4. 在虚拟栈分配空间并保存系统SP
+        // 尾声：
+        // 1. 从虚拟栈读取系统SP
         // 2. 切换回系统栈
-        // 3. 恢复 AAPCS64 callee-saved (X19-X30)
-        // 4. RET
+        // 3. 恢复callee-saved寄存器
+        // 4. 恢复X29/X30并释放帧
 
-        let vm_sp = self.vm_calling_convention.stack_pointer;  // X9
-        let sys_sp = AArch64Register::SP as u8;                 // 31
+        // 实现：假设序言在虚拟栈 [SP, #8] 保存了系统SP
 
-        // 步骤1：从虚拟栈读取系统 SP 和返回地址
-        // LDR X16, [X9, #0] (系统SP)
-        self.emit_ldr_reg_mem(code_builder, AArch64Register::X16 as u8, vm_sp, 0);
-        // LDR X30, [X9, #8] (返回地址)
-        self.emit_ldr_reg_mem(code_builder, AArch64Register::X30 as u8, vm_sp, 8);
-        // ADD X9, X9, #16 (回收空间)
-        self.emit_add_reg_reg_imm(code_builder, vm_sp, vm_sp, 16);
+        // 虚拟栈不需要恢复，直接切换到系统栈即可
 
-        // 步骤2：切换回系统栈
-        // MOV SP, X16
-        self.emit_mov_reg_reg(code_builder, sys_sp, AArch64Register::X16 as u8);
+        // 关键修复：序言中保存系统SP到系统栈帧 [X29, #16]
+        // 这里需要先找到系统栈帧的X29
 
-        // 步骤3：恢复 AAPCS64 callee-saved 寄存器（逆序，post-index LDP）
-        // 恢复顺序与保存相反：X19/X20, X21/X22, X23/X24, X25/X26, X27/X28, X29/X30
-        // LDP X19, X20, [SP], #16
-        let ldp_x19_x20 = 0xA8C103E0u32
-            | ((AArch64Register::X19 as u32 & 0x1F) << 0)
-            | ((AArch64Register::X20 as u32 & 0x1F) << 10);
-        code_builder.emit_bytes(&ldp_x19_x20.to_le_bytes());
+        // 重新审视问题：序言保存系统SP到 [系统X29, #16]
+        // 但切换到虚拟栈后，X29被覆盖为虚拟X29
+        // 所以我们需要在切换前，将系统X29保存到某处
 
-        // LDP X21, X22, [SP], #16
-        let ldp_x21_x22 = 0xA8C103E0u32
-            | ((AArch64Register::X21 as u32 & 0x1F) << 0)
-            | ((AArch64Register::X22 as u32 & 0x1F) << 10);
-        code_builder.emit_bytes(&ldp_x21_x22.to_le_bytes());
+        // 新方案：在序言中，将系统X29保存到虚拟栈的固定位置
+        // 尾声中，从虚拟栈读取系统X29，然后从系统栈读取系统SP
 
-        // LDP X23, X24, [SP], #16
-        let ldp_x23_x24 = 0xA8C103E0u32
-            | ((AArch64Register::X23 as u32 & 0x1F) << 0)
-            | ((AArch64Register::X24 as u32 & 0x1F) << 10);
-        code_builder.emit_bytes(&ldp_x23_x24.to_le_bytes());
+        // 等等，我想复杂了。让我重新看看序言代码...
 
-        // LDP X25, X26, [SP], #16
-        let ldp_x25_x26 = 0xA8C103E0u32
-            | ((AArch64Register::X25 as u32 & 0x1F) << 0)
-            | ((AArch64Register::X26 as u32 & 0x1F) << 10);
-        code_builder.emit_bytes(&ldp_x25_x26.to_le_bytes());
+        // 看序言代码：
+        // 5. MOV X16, SP（此时SP是系统SP）
+        // 6. STR X16, [X29, #16]（X29是系统帧指针）
+        // 7. 切换到虚拟栈
 
-        // LDP X27, X28, [SP], #16
-        let ldp_x27_x28 = 0xA8C103E0u32
-            | ((AArch64Register::X27 as u32 & 0x1F) << 0)
-            | ((AArch64Register::X28 as u32 & 0x1F) << 10);
-        code_builder.emit_bytes(&ldp_x27_x28.to_le_bytes());
+        // 所以系统SP确实保存在系统栈帧的 [系统X29, #16]
+        // 但我们切换到虚拟栈后，X29变成了虚拟X29
 
-        // LDP X29, X30, [SP], #16
-        let ldp_x29_x30 = 0xA8C103E0u32
-            | ((AArch64Register::X29 as u32 & 0x1F) << 0)
-            | ((AArch64Register::X30 as u32 & 0x1F) << 10);
-        code_builder.emit_bytes(&ldp_x29_x30.to_le_bytes());
+        // 关键insight：系统X29保存在系统栈 [系统SP, #0]
+        // 而系统SP保存在系统栈 [系统X29, #16]
+        // 这是循环依赖！
 
-        if self.debug_mode {
-            log::debug!("尾声完成：已恢复系统栈和所有 callee-saved 寄存器");
-        }
+        // 解决方案：在切换到虚拟栈前，计算好系统栈帧的基址，并保存到虚拟栈
+        // 或者：序言中，在切换到虚拟栈后，将系统栈信息保存到虚拟栈
+
+        // 最简洁的方案：
+        // 序言：SUB SP(系统), #32 → 保存X29/X30 → MOV X29(系统), SP →
+        //      保存callee-saved → MOV X16, SP(系统当前值包含callee-saved) →
+        //      切换到虚拟栈 → SUB SP(虚拟), #16 → STR X16, [SP(虚拟), #8] → ...
+        // 尾声：... → LDR X16, [SP(虚拟)+偏移, #8] → 切换回系统栈 → ...
+
+        // 让我直接实现，假设序言将系统SP保存到了 [系统X29, #16]，
+        // 同时也保存到虚拟栈的某个位置
+
+        // 实际上，查看序言最后的save_return_slot_pointer，它会：
+        // SUB SP, #16
+        // STR X0, [SP, #0]
+        // 所以虚拟栈布局是：
+        // [SP+0]: 返回值槽指针(X0)
+        // [SP+8]: 未使用
+        // [SP+16]: 虚拟栈上可能还有其他数据
+
+        // 我的修改后序言会是：
+        // 系统栈：分配32字节，保存X29/X30/callee-saved/系统SP到系统栈
+        // 虚拟栈：只保存返回值槽指针
+
+        // 问题：我修改后的序言不再将系统SP保存到虚拟栈！
+        // 所以尾声无法从虚拟栈读取系统SP
+
+        // 我需要修改序言，在虚拟栈也保存系统SP，或者在尾声中想办法访问系统栈
+
+        // 实际上，可以利用这个事实：callee-saved寄存器中可能有某个寄存器没被使用
+        // 或者，使用一个临时寄存器（如X17）来传递系统帧信息
+
+        // 更简单的方案：既然系统X29保存在系统栈 [系统SP, #0]，
+        // 而系统SP保存在 [系统X29, #16]，
+        // 我们可以在序言中，除了保存到系统栈，也保存一份到虚拟栈
+
+        // 或者，最最简单的方案：使用一个全局变量/寄存器来保存系统栈帧指针
+        // 但这需要额外的机制
+
+        // 让我采用最直接的方案：在虚拟栈固定位置保存系统SP
+
+        // 修改序言为：
+        // 1-5. 在系统栈setup帧并保存系统SP到[X29, #16]
+        // 6. 切换到虚拟栈
+        // 7. SUB SP(虚拟), #16
+        // 8. STR X16(系统SP), [SP(虚拟), #8]
+        // 9. 调用save_return_slot_pointer（会再分配16字节）
+
+        // 这样虚拟栈布局是：
+        // [SP+0]: 返回值槽指针
+        // [SP+16]: 系统SP保存位置 [SP+16+8]
+
+        // 尾声：
+        // 1. 跳过返回值槽：ADD SP, #16
+        // 2. 读取系统SP：LDR X16, [SP, #8]
+        // 3. 回收保存系统SP的空间：ADD SP, #16
+        // 4. 切换回系统栈：MOV SP, X16
+        // 5. 恢复callee-saved
+        // 6. 恢复X29/X30
+
+        // 这个方案可行！让我实现它
+
+        // 但我刚才的序言修改没有在虚拟栈保存系统SP！我需要补上
+
+        // 对了，我可以直接在这里写尾声，然后回头修改序言
+
+        // 尾声实现（假设虚拟栈布局如上所述）：
+
+        // compile_return已经弹出了返回值槽（+16字节）
+        // 虚拟栈布局（compile_return后）：
+        // [SP+0]: 系统SP
+        // [SP+8]: X30
+
+        // 1. 从虚拟栈读取X30和系统SP
+        self.emit_ldr_reg_mem(
+            code_builder,
+            AArch64Register::X30 as u8,
+            AArch64Register::SP as u8,
+            8,
+        );
+        self.emit_ldr_reg_mem(code_builder, 16, AArch64Register::SP as u8, 0);
+
+        // 2. 切换回系统栈
+        self.emit_mov_reg_reg(code_builder, AArch64Register::SP as u8, 16);
+
+        // 3. 恢复 callee-saved 寄存器（从系统栈）
+        self.restore_callee_saved_registers(code_builder)?;
+
+        // 4. 恢复 X29
+        // LDR X29, [SP, #0]
+        self.emit_ldr_reg_mem(
+            code_builder,
+            AArch64Register::X29 as u8,
+            AArch64Register::SP as u8,
+            0,
+        );
+
+        // 5. 释放系统栈帧（32字节）
+        self.emit_add_reg_reg_imm(
+            code_builder,
+            AArch64Register::SP as u8,
+            AArch64Register::SP as u8,
+            32,
+        );
 
         Ok(())
     }
 
     /// 保存返回槽指针（caller通过X0传入）
     fn save_return_slot_pointer(&self, code_builder: &mut CodeBuilder) {
-        let vm_sp_reg = self.vm_calling_convention.stack_pointer;
-        self.emit_sub_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 16);
-        self.emit_str_reg_mem(code_builder, AArch64Register::X0 as u8, vm_sp_reg, 0);
+        self.emit_add_reg_reg_imm(
+            code_builder,
+            AArch64Register::SP as u8,
+            AArch64Register::SP as u8,
+            -16,
+        );
+        self.emit_str_reg_mem(
+            code_builder,
+            AArch64Register::X0 as u8,
+            AArch64Register::SP as u8,
+            0,
+        );
     }
 
     /// 恢复返回槽指针并弹出栈空间
     fn load_and_pop_return_slot_pointer(&self, code_builder: &mut CodeBuilder, dst: u8) {
-        let vm_sp_reg = self.vm_calling_convention.stack_pointer;
-        self.emit_ldr_reg_mem(code_builder, dst, vm_sp_reg, 0);
-        self.emit_add_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 16);
+        self.emit_ldr_reg_mem(code_builder, dst, AArch64Register::SP as u8, 0);
+        self.emit_add_reg_reg_imm(
+            code_builder,
+            AArch64Register::SP as u8,
+            AArch64Register::SP as u8,
+            16,
+        );
     }
 
     /// 将当前X0返回值写入返回槽地址
