@@ -2364,13 +2364,15 @@ impl AArch64Compiler {
         // StackFrameLayoutPass 使用 FP + 负偏移量访问栈槽
         // 分配栈帧空间后设置 FP，使得 FP - 8, FP - 16 等位于已分配区域
         // 与 x86 编译器 emit_main_function_prologue 完全一致
+        // 注意：AArch64 ADD 不支持负立即数，必须用 SUB
         if self.current_stack_frame_size > 0 {
+            let frame_size = self.current_stack_frame_size as u32;
             // SUB vm_sp, vm_sp, frame_size
-            self.emit_add_reg_reg_imm(
+            self.emit_sub_reg_reg_imm(
                 code_builder,
                 vm_sp,
                 vm_sp,
-                -(self.current_stack_frame_size as i32),
+                frame_size as i32,
             );
             // MOV vm_fp, vm_sp
             self.emit_mov_reg_reg(code_builder, vm_fp, vm_sp);
@@ -2379,7 +2381,7 @@ impl AArch64Compiler {
                 code_builder,
                 vm_fp,
                 vm_fp,
-                self.current_stack_frame_size as i32,
+                frame_size as i32,
             );
         } else {
             // MOV vm_fp, vm_sp
@@ -2443,19 +2445,21 @@ impl AArch64Compiler {
 
         // 设置帧指针：vm_fp = vm_sp + frame_size
         // 与主函数 prologue 和 x86 emit_internal_function_prologue 一致
+        // 注意：AArch64 ADD 不支持负立即数，必须用 SUB
         if self.current_stack_frame_size > 0 {
-            self.emit_add_reg_reg_imm(
+            let frame_size = self.current_stack_frame_size as u32;
+            self.emit_sub_reg_reg_imm(
                 code_builder,
                 vm_sp_reg,
                 vm_sp_reg,
-                -(self.current_stack_frame_size as i32),
+                frame_size as i32,
             );
             self.emit_mov_reg_reg(code_builder, vm_fp_reg, vm_sp_reg);
             self.emit_add_reg_reg_imm(
                 code_builder,
                 vm_fp_reg,
                 vm_fp_reg,
-                self.current_stack_frame_size as i32,
+                frame_size as i32,
             );
         } else {
             self.emit_mov_reg_reg(code_builder, vm_fp_reg, vm_sp_reg);
