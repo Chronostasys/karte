@@ -2634,21 +2634,17 @@ impl AArch64Compiler {
         self.emit_mov_reg_reg(code_builder, vm_sp, x0);
         self.emit_mov_reg_reg(code_builder, vm_fp, x1);
 
-        // 7. 在虚拟栈保存系统SP和X30
-        // SUB SP, SP, #16
-        // STR X16, [SP, #0]  (系统SP)
-        // STR X30, [SP, #8]  (返回地址)
-        self.emit_add_reg_reg_imm(
-            code_builder,
-            AArch64Register::SP as u8,
-            AArch64Register::SP as u8,
-            -16,
-        );
-        self.emit_str_reg_mem(code_builder, 16, AArch64Register::SP as u8, 0);
+        // 7. 在虚拟栈上保存系统SP和返回地址
+        // 注意：必须使用 vm_sp (X10)，不能使用系统 SP
+        // SUB vm_sp, vm_sp, #16
+        // STR X16, [vm_sp, #0]  (系统SP，已在步骤5保存到X16)
+        // STR X30, [vm_sp, #8]  (返回地址)
+        self.emit_sub_reg_reg_imm(code_builder, vm_sp, vm_sp, 16);
+        self.emit_str_reg_mem(code_builder, 16, vm_sp, 0);
         self.emit_str_reg_mem(
             code_builder,
             AArch64Register::X30 as u8,
-            AArch64Register::SP as u8,
+            vm_sp,
             8,
         );
 
@@ -2704,14 +2700,21 @@ impl AArch64Compiler {
         &self,
         code_builder: &mut CodeBuilder,
     ) -> crate::Result<()> {
-        // 首先存fp sp，然后保存callee-saved寄存器
-        // 获取虚拟栈指针寄存器
+        // 首先保存 old_sp 和 old_fp，然后保存 callee-saved 寄存器
+        // 与 x86 emit_internal_function_prologue 一致
         let vm_sp_reg = self.vm_calling_convention.stack_pointer;
         let vm_fp_reg = self.vm_calling_convention.frame_pointer;
-        // 保存fp sp到虚拟栈
+        let tmp_reg = AArch64Register::X16 as u8; // 临时寄存器
+
+        // 1. 先保存旧 vm_sp 到临时寄存器（在 SUB 之前！）
+        self.emit_mov_reg_reg(code_builder, tmp_reg, vm_sp_reg);
+
+        // 2. 在虚拟栈上分配空间
         self.emit_sub_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 16);
-        self.emit_str_reg_mem(code_builder, vm_fp_reg, vm_sp_reg, 8);
-        self.emit_str_reg_mem(code_builder, vm_sp_reg, vm_sp_reg, 0);
+
+        // 3. 保存 old_fp 和 old_sp
+        self.emit_str_reg_mem(code_builder, vm_fp_reg, vm_sp_reg, 8);    // [vm_sp+8] = old_fp
+        self.emit_str_reg_mem(code_builder, tmp_reg, vm_sp_reg, 0);      // [vm_sp+0] = old_sp (使用临时寄存器中的旧值)
 
         // 使用LIR寄存器分配器计算的实际使用的callee-saved寄存器
         let callee_saved = &self.get_vm_callee_saved_registers();
@@ -2995,10 +2998,10 @@ impl AArch64Compiler {
         self.emit_ldr_reg_mem(
             code_builder,
             AArch64Register::X30 as u8,
-            AArch64Register::SP as u8,
+            vm_sp_reg,
             8,
         );
-        self.emit_ldr_reg_mem(code_builder, 16, AArch64Register::SP as u8, 0);
+        self.emit_ldr_reg_mem(code_builder, 16, vm_sp_reg, 0);
 
         // 2. 切换回系统栈
         self.emit_mov_reg_reg(code_builder, AArch64Register::SP as u8, 16);
@@ -3028,27 +3031,19 @@ impl AArch64Compiler {
 
     /// 保存返回槽指针（caller通过X0传入）
     fn save_return_slot_pointer(&self, code_builder: &mut CodeBuilder) {
-        self.emit_add_reg_reg_imm(
-            code_builder,
-            AArch64Register::SP as u8,
-            AArch64Register::SP as u8,
-            -16,
-        );
-        self.emit_str_reg_mem(
-            code_builder,
-            AArch64Register::X0 as u8,
-            AArch64Register::SP as u8,
-            0,
-        );
+        let vm_sp = self.vm_calling_convention.stack_pointer;
+        self.emit_sub_reg_reg_imm(code_builder, vm_sp, vm_sp, 16);
+        self.emit_str_reg_mem(code_builder, AArch64Register::X0 as u8, vm_sp, 0);
     }
 
     /// 恢复返回槽指针并弹出栈空间
     fn load_and_pop_return_slot_pointer(&self, code_builder: &mut CodeBuilder, dst: u8) {
-        self.emit_ldr_reg_mem(code_builder, dst, AArch64Register::SP as u8, 0);
+        let vm_sp = self.vm_calling_convention.stack_pointer;
+        self.emit_ldr_reg_mem(code_builder, dst, vm_sp, 0);
         self.emit_add_reg_reg_imm(
             code_builder,
-            AArch64Register::SP as u8,
-            AArch64Register::SP as u8,
+            vm_sp,
+            vm_sp,
             16,
         );
     }
