@@ -540,13 +540,18 @@ impl CallingConvention {
 
     /// 获取溢出参数寄存器列表（callee-saved，用于传递超过 argument_registers 的参数）
     ///
-    /// 使用 callee-saved 寄存器传递溢出参数：R13, R14, R15, RBX, R12（共 5 个）。
     /// 所有溢出寄存器都会被 callee prologue 保存/恢复，因此可以安全地用于参数传递。
+    #[cfg(target_arch = "aarch64")]
+    pub fn overflow_argument_registers(&self) -> Vec<PhysicalRegister> {
+        // AArch64 callee-saved 寄存器：X19-X28（排除 X29/FP, X30/LR, X31/SP）
+        // 共 10 个溢出寄存器
+        vec![19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
+    }
+
+    /// 获取溢出参数寄存器列表（callee-saved，用于传递超过 argument_registers 的参数）
     ///
-    /// 排除的 callee-saved：
-    /// - R10(10): vm_sp（虚拟栈指针）
-    /// - R11(11): vm_fp（虚拟帧指针）
-    /// - RBP(5):  effect_resume_temp（CallIndirect 函数指针临时寄存器）
+    /// 所有溢出寄存器都会被 callee prologue 保存/恢复，因此可以安全地用于参数传递。
+    #[cfg(target_arch = "x86_64")]
     pub fn overflow_argument_registers(&self) -> Vec<PhysicalRegister> {
         // x86_64 callee-saved 寄存器（排除 vm_sp/R10, vm_fp/R11）
         // R13, R14, R15, RBX, R12 — 5 个溢出寄存器
