@@ -391,6 +391,35 @@ impl AArch64Compiler {
             Instruction::IntCast { dst, src, src_bits, dst_bits, signed, span: _ } => {
                 self.compile_intcast(dst, src, *src_bits, *dst_bits, *signed, code_builder)
             }
+            Instruction::CallIndirect {
+                function_register,
+                ..
+            } => self.compile_call_indirect(function_register, code_builder),
+            Instruction::StructAlloc { .. } => {
+                // StructAlloc 在指令降级后应该是 Alloc
+                Err("StructAlloc 应该已经被降级为 Alloc".into())
+            }
+            Instruction::StructFieldLoad { .. }
+            | Instruction::StructFieldStore { .. }
+            | Instruction::StructFieldAddr { .. } => {
+                // 这些应该已经被降级为 Load64/Store64
+                Err(format!("Struct 操作应该已经被降级: {:?}", instruction).into())
+            }
+            Instruction::LoadGlobal { dst, name, .. } => {
+                self.compile_load_global(dst, name, code_builder)
+            }
+            Instruction::GcRegOp { is_push, .. } => {
+                self.compile_gc_reg_op(*is_push, code_builder)
+            }
+            Instruction::Phi { .. } => {
+                // Phi 应该已经被消除
+                log::warn!("Phi 指令出现在 JIT 编译阶段，这表明 SSA 降级不完整");
+                Ok(())
+            }
+            Instruction::MemCopy { .. } => {
+                // MemCopy 应该已经被降级为多条 Load64/Store64
+                Err("MemCopy 应该已经被降级".into())
+            }
             _ => Err(format!("不支持的AArch64指令类型: {:?}", instruction).into()),
         }
     }
@@ -1056,6 +1085,119 @@ impl AArch64Compiler {
         // 🔧 优化：在连续内存架构中，优先使用相对跳转（BL指令）
         // BL指令支持±128MB的相对跳转范围，足够覆盖我们的代码段
         code_builder.emit_jump(JumpType::Call, &label_name);
+
+        Ok(())
+    }
+
+    /// 编译间接函数调用指令
+    ///
+    /// 通过寄存器中的函数指针进行间接调用。
+    /// 在 Karte 闭包调用中，function_register 指向闭包结构体地址，
+    /// 需要先读取 function_ptr 字段（offset 0），然后通过 BLR 间接调用。
+    fn compile_call_indirect(
+        &mut self,
+        function_register: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let func_reg = self.get_physical_register(function_register)?;
+
+        // 闭包结构体 { function_ptr: i64, env_ptr: i64 }
+        // function_ptr 在 offset 0
+        // 从闭包结构体地址加载函数指针到 X16（间接跳转专用寄存器）
+        let target_reg = AArch64Register::X16 as u8;
+
+        // LDR X16, [func_reg, #0] — 读取 function_ptr
+        self.emit_ldr_reg_mem(code_builder, target_reg, func_reg, 0);
+
+        // BLR X16 — 间接调用（保存返回地址到 LR）
+        // 编码: 0xD63F0000 | (Rn << 5)
+        let instruction = 0xD63F0000u32 | ((target_reg as u32) << 5);
+        code_builder.emit_u32(instruction);
+
+        Ok(())
+    }
+
+    /// 编译 LoadGlobal 指令 - 从 runtime 全局数据区加载值
+    fn compile_load_global(
+        &mut self,
+        dst: &Register,
+        name: &str,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+        let vm_sp_reg = self.vm_calling_convention.stack_pointer;
+
+        // vm_sp 是动态值（SP 寄存器），直接读取
+        if name == "vm_sp" {
+            if dst_reg != vm_sp_reg {
+                self.emit_mov_reg_reg(code_builder, dst_reg, vm_sp_reg);
+            }
+            return Ok(());
+        }
+
+        // stack_top = vstack_bottom + 65520
+        if name == "stack_top" {
+            let global_label = "__global_stack_bottom".to_string();
+            let target_reg = AArch64Register::X16 as u8;
+            // ADRP X16, global_label; LDR X16, [X16, :lo12:global_label]
+            code_builder.emit_adrp(target_reg, &global_label);
+            code_builder.emit_add_reg_label(target_reg, &global_label);
+            // dst = vstack_bottom 地址，加载值
+            self.emit_ldr_reg_mem(code_builder, dst_reg, target_reg, 0);
+            // dst += 65520
+            self.emit_add_reg_reg_imm(code_builder, dst_reg, dst_reg, 65520);
+            return Ok(());
+        }
+
+        // 生成: ADRP + ADD 加载全局变量地址，然后 LDR 读取值
+        let global_label = format!("__global_{}", name);
+        let target_reg = AArch64Register::X16 as u8;
+        code_builder.emit_adrp(target_reg, &global_label);
+        code_builder.emit_add_reg_label(target_reg, &global_label);
+        // dst = 全局变量的地址
+        if dst_reg != target_reg {
+            self.emit_mov_reg_reg(code_builder, dst_reg, target_reg);
+        }
+        // 从地址加载值
+        self.emit_ldr_reg_mem(code_builder, dst_reg, dst_reg, 0);
+
+        Ok(())
+    }
+
+    /// 编译 GC 寄存器保存/恢复指令
+    /// gc_push_regs: 把所有 callee-saved 寄存器 dump 到虚拟栈
+    /// gc_pop_regs: 从虚拟栈恢复所有 callee-saved 寄存器
+    ///
+    /// 保存的寄存器: X19-X28 (callee-saved, 10 个)
+    /// 不保存: X0-X18 (caller-saved), X29 (FP), X30 (LR), SP
+    fn compile_gc_reg_op(
+        &mut self,
+        is_push: bool,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        const REGS: [u8; 10] = [19, 20, 21, 22, 23, 24, 25, 26, 27, 28];
+        const NUM_REGS: i64 = 10;
+        const FRAME_SIZE: i64 = NUM_REGS * 8; // 80
+
+        let vm_sp_reg = self.vm_calling_convention.stack_pointer;
+
+        if is_push {
+            // sub sp, sp, #80
+            self.emit_sub_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, FRAME_SIZE as i32);
+            // STR Xn, [sp, #offset] 逐个保存
+            for (i, &reg) in REGS.iter().enumerate() {
+                let offset = (i as i32) * 8;
+                self.emit_str_reg_mem(code_builder, reg, vm_sp_reg, offset);
+            }
+        } else {
+            // LDR Xn, [sp, #offset] 逐个恢复
+            for (i, &reg) in REGS.iter().enumerate() {
+                let offset = (i as i32) * 8;
+                self.emit_ldr_reg_mem(code_builder, reg, vm_sp_reg, offset);
+            }
+            // add sp, sp, #80
+            self.emit_add_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, FRAME_SIZE as i32);
+        }
 
         Ok(())
     }
