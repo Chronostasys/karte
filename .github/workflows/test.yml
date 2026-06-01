@@ -40,7 +40,6 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
           key: ${{ matrix.platform.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ matrix.platform.target }}-cargo-
 
