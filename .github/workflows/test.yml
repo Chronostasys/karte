@@ -45,7 +45,9 @@ jobs:
           restore-keys: ${{ matrix.platform.target }}-cargo-
 
       - name: Install cargo-nextest
-        run: cargo install cargo-nextest --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
 
       - name: Build
         run: cargo build --workspace --target ${{ matrix.platform.target }}
