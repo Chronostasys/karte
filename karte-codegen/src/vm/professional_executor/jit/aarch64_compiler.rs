@@ -1107,7 +1107,9 @@ impl AArch64Compiler {
         let xzr = 31u32; // XZR 在 AArch64 中编码为 31
 
         // CSINC Xd, XZR, XZR, invert(cond)
-        let instr: u32 = 0xDA800000u32       // CSINC base (sf=1, opc=10, 11010, 1, 0)
+        // CSINC 编码: sf=1, 00, 11010_100, Rm, cond, 01, Rn, Rd
+        // 注意: bits[11:10] = 01 区分 CSINC 和 CSEL (bits[11:10] = 00)
+        let instr: u32 = 0x9A800400u32      // CSINC base (sf=1, bits11-10=01)
             | (xzr << 16)                     // Rm = XZR (31)
             | (inverted_cond << 12)           // condition (inverted)
             | (xzr << 5)                      // Rn = XZR (31)
