@@ -1414,6 +1414,15 @@ fn main() -> number {
     /// AOT 运行时通过 sys_write 将结果输出到 stdout (因为 exit_group 只取低 8 位)。
     /// 本函数解析 stdout 第一行作为 i64 结果值进行比较。
     fn compile_and_run_aot(code: &str, expected_result: i64, test_name: &str) {
+        // x86_64 AOT 目前是唯一实现的 AOT 目标，非 x86_64 平台跳过
+        if cfg!(not(target_arch = "x86_64")) {
+            eprintln!(
+                "跳过 AOT 测试 {}: 当前平台不支持 x86_64 AOT 编译",
+                test_name
+            );
+            return;
+        }
+
         let (tokens, _) = tokenize(code);
         let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
         assert!(
@@ -1780,6 +1789,12 @@ fn main() -> number {
 
     #[test]
     fn aot_test_compile_and_run_project_mode() {
+        // x86_64 AOT 目前是唯一实现的 AOT 目标，非 x86_64 平台跳过
+        if cfg!(not(target_arch = "x86_64")) {
+            eprintln!("跳过 AOT project mode 测试: 当前平台不支持 x86_64 AOT 编译");
+            return;
+        }
+
         let mut entry_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         entry_path.pop();
         entry_path.push("test_project");
