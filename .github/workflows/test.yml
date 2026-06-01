@@ -27,6 +27,7 @@ jobs:
             os: macos-latest
             target: aarch64-apple-darwin
 
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
