@@ -637,6 +637,8 @@ impl AArch64Compiler {
 
         // CSET dst, condition
         // CSET 是 CSINC 的别名：CSET Xd, cond = CSINC Xd, XZR, XZR, invert(cond)
+        // CSINC 编码: sf=1, 1101 0110, Rm, cond, Rn, Rd
+        // base = 0x9A800000
         let aarch64_cond = match condition {
             ComparisonCondition::Equal => 0x0,        // EQ
             ComparisonCondition::NotEqual => 0x1,     // NE
@@ -651,15 +653,11 @@ impl AArch64Compiler {
         let xzr = 31u32; // XZR 在 AArch64 中编码为 31
 
         // CSINC Xd, XZR, XZR, invert(cond)
-        let instr: u32 = (1u32 << 31)     // sf = 1 (64-bit)
-            | (0b01 << 29)                // opc = 01
-            | (0b01010 << 24)             // fixed
-            | (0 << 23)                   // S = 0
-            | (0 << 22)                   // fixed
-            | (xzr << 16)                 // Rm = XZR (31)
-            | (inverted_cond << 12)       // condition (inverted)
-            | (xzr << 5)                  // Rn = XZR (31)
-            | (dst_enc & 0x1F);           // Rd
+        let instr: u32 = 0x9A800000u32       // CSINC base (sf=1, 1101 0110)
+            | (xzr << 16)                     // Rm = XZR (31)
+            | (inverted_cond << 12)           // condition (inverted)
+            | (xzr << 5)                      // Rn = XZR (31)
+            | (dst_enc & 0x1F);              // Rd
 
         code_builder.emit_u32(instr);
         Ok(())
