@@ -144,7 +144,7 @@ impl AArch64Runtime {
 
     // 位操作
     fn and_reg(&mut self, rd: u8, rn: u8, rm: u8) {
-        self.w((1u32 << 31) | (0b01010 << 24) | ((rm as u32) << 16) | ((rn as u32) << 5) | (rd as u32));
+        self.w((1u32 << 31) | (0b00u32 << 29) | (0b01010u32 << 24) | (0u32 << 21) | ((rm as u32) << 16) | ((rn as u32) << 5) | (rd as u32));
     }
 
     // 移动
@@ -153,18 +153,20 @@ impl AArch64Runtime {
             self.add_imm(rd, rn, 0);
         } else {
             // ORR Xd, XZR, Xn
-            self.w((1u32 << 31) | (0b01010 << 24) | ((rn as u32) << 16) | ((XZR as u32) << 5) | (rd as u32));
+            self.w((1u32 << 31) | (0b01u32 << 29) | (0b01010u32 << 24) | (0u32 << 21) | ((rn as u32) << 16) | ((XZR as u32) << 5) | (rd as u32));
         }
     }
 
     // 内存
     fn ldr_offset(&mut self, rt: u8, rn: u8, offset: i32) {
         let imm12 = (offset as u32 / 8) & 0xFFF;
-        self.w((1u32 << 31) | (0b111 << 27) | (0b01 << 22) | (imm12 << 10) | ((rn as u32) << 5) | (rt as u32));
+        // LDR (unsigned offset): size=11, 111, V=0, 01, opc=01, imm12, Rn, Rt
+        self.w((0b11u32 << 30) | (0b111u32 << 27) | (0b01u32 << 24) | (0b01u32 << 22) | (imm12 << 10) | ((rn as u32) << 5) | (rt as u32));
     }
     fn str_offset(&mut self, rt: u8, rn: u8, offset: i32) {
         let imm12 = (offset as u32 / 8) & 0xFFF;
-        self.w((1u32 << 31) | (0b111 << 27) | (0b00 << 22) | (imm12 << 10) | ((rn as u32) << 5) | (rt as u32));
+        // STR (unsigned offset): size=11, 111, V=0, 01, opc=00, imm12, Rn, Rt
+        self.w((0b11u32 << 30) | (0b111u32 << 27) | (0b01u32 << 24) | (0b00u32 << 22) | (imm12 << 10) | ((rn as u32) << 5) | (rt as u32));
     }
 
     // 比较
@@ -185,7 +187,7 @@ impl AArch64Runtime {
     fn ret(&mut self) { self.w(0xD65F03C0); }
     fn b_cond(&mut self, cond: u8, offset: i32) {
         let imm19 = ((offset / 4) as u32) & 0x7FFFF;
-        self.w((0b0101010u32 << 22) | (imm19 << 5) | (cond as u32 & 0xF));
+        self.w((0b0101010u32 << 25) | (0u32 << 24) | (imm19 << 5) | (cond as u32 & 0xF));
     }
     fn svc0(&mut self) { self.w(0xD4000001); }
     fn nop(&mut self) { self.w(0xD503201F); }
@@ -382,7 +384,7 @@ impl AArch64Runtime {
         let bge_word = u32::from_le_bytes(self.code[bge_pos..bge_pos + 4].try_into().unwrap());
         let cond = bge_word & 0xF;
         let imm19 = ((bge_off / 4) as u32) & 0x7FFFF;
-        let new_bge = (0b0101010u32 << 22) | (imm19 << 5) | cond;
+        let new_bge = (0b0101010u32 << 25) | (0u32 << 24) | (imm19 << 5) | cond;
         self.code[bge_pos..bge_pos + 4].copy_from_slice(&new_bge.to_le_bytes());
 
         self.mov_imm64(X0, 0);
