@@ -503,6 +503,14 @@ impl JitMemoryManager {
                     error, aligned_address as *mut u8, aligned_size
                 ).into())
             } else {
+                // AArch64 特有：刷新指令缓存
+                // I-Cache 和 D-Cache 在 AArch64 上不自动一致，
+                // 写入代码内存后必须手动刷新，否则 CPU 执行旧指令
+                #[cfg(target_arch = "aarch64")]
+                {
+                    self.flush_instruction_cache(aligned_address as *mut u8, aligned_size);
+                }
+
                 if self.debug_mode {
                     debug!(
                         "内存权限设置为可执行: {:p}, 大小: {}",
@@ -511,6 +519,58 @@ impl JitMemoryManager {
                 }
                 Ok(())
             }
+        }
+    }
+
+    /// 刷新指令缓存（AArch64 特有）
+    /// 在写入 JIT 代码后，必须刷新 I-Cache 以确保 CPU 执行最新代码
+    #[cfg(target_arch = "aarch64")]
+    fn flush_instruction_cache(&self, addr: *mut u8, size: usize) {
+        // AArch64 cache line 大小通常是 64 字节
+        const CACHE_LINE_SIZE: usize = 64;
+        let start = addr as usize;
+        let end = start + size;
+        // 对齐到 cache line 边界
+        let aligned_start = start & !(CACHE_LINE_SIZE - 1);
+        let aligned_end = (end + CACHE_LINE_SIZE - 1) & !(CACHE_LINE_SIZE - 1);
+
+        unsafe {
+            // 遍历每个 cache line 执行 DC CVAU (Clean Data Cache by VA to PoU)
+            let mut ptr = aligned_start;
+            while ptr < aligned_end {
+                // DC CVAU, X0: 清除数据缓存到 Point of Unification
+                core::arch::asm!(
+                    "dc cvau, {ptr}",
+                    ptr = in(reg) ptr,
+                );
+                ptr += CACHE_LINE_SIZE;
+            }
+            // DSB ISH: 数据同步屏障（Inner Shareable）
+            core::arch::asm!("dsb ish");
+
+            // 遍历每个 cache line 执行 IC IVAU (Invalidate Instruction Cache by VA to PoU)
+            let mut ptr = aligned_start;
+            while ptr < aligned_end {
+                // IC IVAU, X0: 使指令缓存无效
+                core::arch::asm!(
+                    "ic ivau, {ptr}",
+                    ptr = in(reg) ptr,
+                );
+                ptr += CACHE_LINE_SIZE;
+            }
+            // DSB ISH: 数据同步屏障
+            core::arch::asm!("dsb ish");
+            // ISB: 指令同步屏障，刷新流水线
+            core::arch::asm!("isb");
+        }
+
+        if self.debug_mode {
+            debug!(
+                "已刷新指令缓存: 范围 {:p} - {:p}, 大小 {}",
+                aligned_start as *mut u8,
+                aligned_end as *mut u8,
+                aligned_end - aligned_start
+            );
         }
     }
 
