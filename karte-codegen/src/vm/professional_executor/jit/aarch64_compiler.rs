@@ -364,6 +364,27 @@ impl AArch64Compiler {
                 self.emit_nop(code_builder);
                 Ok(())
             }
+            Instruction::BitAnd {
+                dst, src1, src2, ..
+            } => self.compile_bitand(dst, src1, src2, code_builder),
+            Instruction::BitOr {
+                dst, src1, src2, ..
+            } => self.compile_bitor(dst, src1, src2, code_builder),
+            Instruction::BitXor {
+                dst, src1, src2, ..
+            } => self.compile_bitxor(dst, src1, src2, code_builder),
+            Instruction::BitNot { dst, src, .. } => {
+                self.compile_bitnot(dst, src, code_builder)
+            }
+            Instruction::ShiftLeft {
+                dst, src1, src2, ..
+            } => self.compile_shift_left(dst, src1, src2, code_builder),
+            Instruction::ShiftRight {
+                dst, src1, src2, ..
+            } => self.compile_shift_right(dst, src1, src2, code_builder),
+            Instruction::IntCast { dst, src, src_bits, dst_bits, signed, span: _ } => {
+                self.compile_intcast(dst, src, *src_bits, *dst_bits, *signed, code_builder)
+            }
             _ => Err(format!("不支持的AArch64指令类型: {:?}", instruction).into()),
         }
     }
@@ -578,6 +599,338 @@ impl AArch64Compiler {
                 return Err(format!("不支持的取余操作数组合: {:?}, {:?}", src1, src2).into());
             }
         }
+        Ok(())
+    }
+
+    /// 编译按位与指令
+    fn compile_bitand(
+        &mut self,
+        dst: &Register,
+        src1: &Operand,
+        src2: &Operand,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+
+        // 编译期常量折叠
+        if let (Operand::Immediate { value: v1 }, Operand::Immediate { value: v2 }) = (src1, src2) {
+            self.emit_mov_reg_imm64(code_builder, dst_reg, v1 & v2);
+            return Ok(());
+        }
+
+        match (src1, src2) {
+            (Operand::Register { id: src1_id }, Operand::Register { id: src2_id }) => {
+                let src1_reg = self.get_physical_register(src1_id)?;
+                let src2_reg = self.get_physical_register(src2_id)?;
+                // AND Xd, Xn, Xm
+                self.emit_and_reg_reg(code_builder, dst_reg, src1_reg, src2_reg);
+            }
+            (Operand::Register { id: src1_id }, Operand::Immediate { value }) => {
+                let src1_reg = self.get_physical_register(src1_id)?;
+                // AArch64 AND 没有直接支持任意立即数，先加载到临时寄存器
+                let temp_reg = AArch64Register::X16 as u8;
+                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
+                self.emit_and_reg_reg(code_builder, dst_reg, src1_reg, temp_reg);
+            }
+            (Operand::Immediate { value }, Operand::Register { id: src2_id }) => {
+                let src2_reg = self.get_physical_register(src2_id)?;
+                let temp_reg = AArch64Register::X16 as u8;
+                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
+                self.emit_and_reg_reg(code_builder, dst_reg, temp_reg, src2_reg);
+            }
+            _ => {
+                return Err(format!("不支持的按位与操作数组合: {:?}, {:?}", src1, src2).into());
+            }
+        }
+        Ok(())
+    }
+
+    /// 编译按位或指令
+    fn compile_bitor(
+        &mut self,
+        dst: &Register,
+        src1: &Operand,
+        src2: &Operand,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+
+        // 编译期常量折叠
+        if let (Operand::Immediate { value: v1 }, Operand::Immediate { value: v2 }) = (src1, src2) {
+            self.emit_mov_reg_imm64(code_builder, dst_reg, v1 | v2);
+            return Ok(());
+        }
+
+        match (src1, src2) {
+            (Operand::Register { id: src1_id }, Operand::Register { id: src2_id }) => {
+                let src1_reg = self.get_physical_register(src1_id)?;
+                let src2_reg = self.get_physical_register(src2_id)?;
+                // ORR Xd, Xn, Xm
+                self.emit_orr_reg_reg(code_builder, dst_reg, src1_reg, src2_reg);
+            }
+            (Operand::Register { id: src1_id }, Operand::Immediate { value }) => {
+                let src1_reg = self.get_physical_register(src1_id)?;
+                let temp_reg = AArch64Register::X16 as u8;
+                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
+                self.emit_orr_reg_reg(code_builder, dst_reg, src1_reg, temp_reg);
+            }
+            (Operand::Immediate { value }, Operand::Register { id: src2_id }) => {
+                let src2_reg = self.get_physical_register(src2_id)?;
+                let temp_reg = AArch64Register::X16 as u8;
+                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
+                self.emit_orr_reg_reg(code_builder, dst_reg, temp_reg, src2_reg);
+            }
+            _ => {
+                return Err(format!("不支持的按位或操作数组合: {:?}, {:?}", src1, src2).into());
+            }
+        }
+        Ok(())
+    }
+
+    /// 编译按位异或指令
+    fn compile_bitxor(
+        &mut self,
+        dst: &Register,
+        src1: &Operand,
+        src2: &Operand,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+
+        // 编译期常量折叠
+        if let (Operand::Immediate { value: v1 }, Operand::Immediate { value: v2 }) = (src1, src2) {
+            self.emit_mov_reg_imm64(code_builder, dst_reg, v1 ^ v2);
+            return Ok(());
+        }
+
+        match (src1, src2) {
+            (Operand::Register { id: src1_id }, Operand::Register { id: src2_id }) => {
+                let src1_reg = self.get_physical_register(src1_id)?;
+                let src2_reg = self.get_physical_register(src2_id)?;
+                // EOR Xd, Xn, Xm
+                self.emit_eor_reg_reg(code_builder, dst_reg, src1_reg, src2_reg);
+            }
+            (Operand::Register { id: src1_id }, Operand::Immediate { value }) => {
+                let src1_reg = self.get_physical_register(src1_id)?;
+                let temp_reg = AArch64Register::X16 as u8;
+                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
+                self.emit_eor_reg_reg(code_builder, dst_reg, src1_reg, temp_reg);
+            }
+            (Operand::Immediate { value }, Operand::Register { id: src2_id }) => {
+                let src2_reg = self.get_physical_register(src2_id)?;
+                let temp_reg = AArch64Register::X16 as u8;
+                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
+                self.emit_eor_reg_reg(code_builder, dst_reg, temp_reg, src2_reg);
+            }
+            _ => {
+                return Err(format!("不支持的按位异或操作数组合: {:?}, {:?}", src1, src2).into());
+            }
+        }
+        Ok(())
+    }
+
+    /// 编译按位取反指令
+    fn compile_bitnot(
+        &mut self,
+        dst: &Register,
+        src: &Operand,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+
+        if let Operand::Immediate { value } = src {
+            self.emit_mov_reg_imm64(code_builder, dst_reg, !value);
+            return Ok(());
+        }
+
+        match src {
+            Operand::Register { id } => {
+                let src_reg = self.get_physical_register(id)?;
+                // MVN Xd, Xm (等价于 ORR Xd, XZR, Xm)
+                self.emit_mvn_reg_reg(code_builder, dst_reg, src_reg);
+            }
+            _ => {
+                return Err(format!("不支持的按位取反操作数: {:?}", src).into());
+            }
+        }
+        Ok(())
+    }
+
+    /// 编译左移指令
+    fn compile_shift_left(
+        &mut self,
+        dst: &Register,
+        src1: &Operand,
+        src2: &Operand,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+
+        // 编译期常量折叠
+        if let (Operand::Immediate { value: v1 }, Operand::Immediate { value: v2 }) = (src1, src2) {
+            self.emit_mov_reg_imm64(code_builder, dst_reg, v1 << (v2 & 63));
+            return Ok(());
+        }
+
+        match (src1, src2) {
+            (Operand::Register { id: src1_id }, Operand::Register { id: src2_id }) => {
+                let src1_reg = self.get_physical_register(src1_id)?;
+                let src2_reg = self.get_physical_register(src2_id)?;
+                // LSLV Xd, Xn, Xm
+                self.emit_lslv_reg_reg(code_builder, dst_reg, src1_reg, src2_reg);
+            }
+            (Operand::Register { id: src1_id }, Operand::Immediate { value }) => {
+                let src1_reg = self.get_physical_register(src1_id)?;
+                let temp_reg = AArch64Register::X16 as u8;
+                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
+                self.emit_lslv_reg_reg(code_builder, dst_reg, src1_reg, temp_reg);
+            }
+            (Operand::Immediate { value }, Operand::Register { id: src2_id }) => {
+                let src2_reg = self.get_physical_register(src2_id)?;
+                let temp_reg = AArch64Register::X16 as u8;
+                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
+                self.emit_lslv_reg_reg(code_builder, dst_reg, temp_reg, src2_reg);
+            }
+            _ => {
+                return Err(format!("不支持的左移操作数组合: {:?}, {:?}", src1, src2).into());
+            }
+        }
+        Ok(())
+    }
+
+    /// 编译右移指令（算术右移）
+    fn compile_shift_right(
+        &mut self,
+        dst: &Register,
+        src1: &Operand,
+        src2: &Operand,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+
+        // 编译期常量折叠
+        if let (Operand::Immediate { value: v1 }, Operand::Immediate { value: v2 }) = (src1, src2) {
+            // 算术右移
+            self.emit_mov_reg_imm64(code_builder, dst_reg, v1 >> (v2 & 63));
+            return Ok(());
+        }
+
+        match (src1, src2) {
+            (Operand::Register { id: src1_id }, Operand::Register { id: src2_id }) => {
+                let src1_reg = self.get_physical_register(src1_id)?;
+                let src2_reg = self.get_physical_register(src2_id)?;
+                // ASRV Xd, Xn, Xm
+                self.emit_asrv_reg_reg(code_builder, dst_reg, src1_reg, src2_reg);
+            }
+            (Operand::Register { id: src1_id }, Operand::Immediate { value }) => {
+                let src1_reg = self.get_physical_register(src1_id)?;
+                let temp_reg = AArch64Register::X16 as u8;
+                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
+                self.emit_asrv_reg_reg(code_builder, dst_reg, src1_reg, temp_reg);
+            }
+            (Operand::Immediate { value }, Operand::Register { id: src2_id }) => {
+                let src2_reg = self.get_physical_register(src2_id)?;
+                let temp_reg = AArch64Register::X16 as u8;
+                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
+                self.emit_asrv_reg_reg(code_builder, dst_reg, temp_reg, src2_reg);
+            }
+            _ => {
+                return Err(format!("不支持的右移操作数组合: {:?}, {:?}", src1, src2).into());
+            }
+        }
+        Ok(())
+    }
+
+    /// 编译整数类型转换指令（截断/零扩展/符号扩展）
+    fn compile_intcast(
+        &mut self,
+        dst: &Register,
+        src: &Operand,
+        src_bits: u8,
+        dst_bits: u8,
+        signed: bool,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+
+        // 将源操作数加载到目标寄存器
+        match src {
+            Operand::Register { id } => {
+                let src_reg = self.get_physical_register(id)?;
+                if dst_reg != src_reg {
+                    self.emit_mov_reg_reg(code_builder, dst_reg, src_reg);
+                }
+            }
+            Operand::Immediate { value } => {
+                self.emit_mov_reg_imm64(code_builder, dst_reg, *value);
+            }
+            _ => return Err(format!("intcast不支持的src: {:?}", src).into()),
+        }
+
+        // 使用临时寄存器存放掩码
+        let temp_reg = AArch64Register::X16 as u8;
+
+        match (src_bits, dst_bits) {
+            // 64 → 32：用 AND 掩码截断
+            (64, 32) => {
+                self.emit_mov_reg_imm64(code_builder, temp_reg, 0xFFFFFFFF);
+                self.emit_and_reg_reg(code_builder, dst_reg, dst_reg, temp_reg);
+            }
+            // 64 → 16：用 AND 掩码截断
+            (64, 16) => {
+                self.emit_mov_reg_imm64(code_builder, temp_reg, 0xFFFF);
+                self.emit_and_reg_reg(code_builder, dst_reg, dst_reg, temp_reg);
+            }
+            // 64 → 8：用 AND 掩码截断
+            (64, 8) => {
+                self.emit_mov_reg_imm64(code_builder, temp_reg, 0xFF);
+                self.emit_and_reg_reg(code_builder, dst_reg, dst_reg, temp_reg);
+            }
+            // 32 → 64：零扩展或符号扩展
+            (32, 64) => {
+                if signed {
+                    // 符号扩展：先将值截断到32位，再算术右移32位再左移32位
+                    // SBFM Xd, Xn, #0, #31 — 等价于 SXTW
+                    // SBFM encoding: 0x93000000 | (immr << 16) | (imms << 10) | (Rn << 5) | Rd
+                    // SXTW: SBFM Xd, Xn, #0, #31 → immr=0, imms=31
+                    let instruction =
+                        0x93000000u32 | (0u32 << 16) | (31u32 << 10) | ((dst_reg as u32) << 5) | (dst_reg as u32);
+                    code_builder.emit_bytes(&instruction.to_le_bytes());
+                }
+                // 无符号：32位值存储在64位寄存器中，需要先 AND 0xFFFFFFFF 清除高位
+                // （AArch64 不会自动零扩展）
+                self.emit_mov_reg_imm64(code_builder, temp_reg, 0xFFFFFFFF);
+                self.emit_and_reg_reg(code_builder, dst_reg, dst_reg, temp_reg);
+            }
+            // 16 → 64：零扩展或符号扩展
+            (16, 64) => {
+                if signed {
+                    // SBFM Xd, Xn, #0, #15 — 等价于 SXTH
+                    let instruction =
+                        0x93000000u32 | (0u32 << 16) | (15u32 << 10) | ((dst_reg as u32) << 5) | (dst_reg as u32);
+                    code_builder.emit_bytes(&instruction.to_le_bytes());
+                } else {
+                    self.emit_mov_reg_imm64(code_builder, temp_reg, 0xFFFF);
+                    self.emit_and_reg_reg(code_builder, dst_reg, dst_reg, temp_reg);
+                }
+            }
+            // 8 → 64：零扩展或符号扩展
+            (8, 64) => {
+                if signed {
+                    // SBFM Xd, Xn, #0, #7 — 等价于 SXTB
+                    let instruction =
+                        0x93000000u32 | (0u32 << 16) | (7u32 << 10) | ((dst_reg as u32) << 5) | (dst_reg as u32);
+                    code_builder.emit_bytes(&instruction.to_le_bytes());
+                } else {
+                    self.emit_mov_reg_imm64(code_builder, temp_reg, 0xFF);
+                    self.emit_and_reg_reg(code_builder, dst_reg, dst_reg, temp_reg);
+                }
+            }
+            // 同位宽或不需要转换
+            _ => {}
+        }
+
+        let _ = signed;
         Ok(())
     }
 
@@ -1604,6 +1957,60 @@ impl AArch64Compiler {
         // 1 |0 |0 |0  0  0  1  0  0  0  0 |Xm   |0     |Xn |Xd
         let instruction =
             0x8A000000u32 | ((src2 as u32) << 16) | ((src1 as u32) << 5) | (dst as u32);
+        code_builder.emit_bytes(&instruction.to_le_bytes());
+    }
+
+    /// 生成ORR三寄存器指令: ORR <Xd>, <Xn>, <Xm>
+    fn emit_orr_reg_reg(&self, code_builder: &mut CodeBuilder, dst: u8, src1: u8, src2: u8) {
+        // ORR <Xd>, <Xn>, <Xm>
+        // 31|30|29|28 27 26 25 24 23 22 21|20 16|15 10|9 5|4 0
+        // 1 |0 |1 |0  0  0  1  0  0  0  0 |Xm   |0     |Xn |Xd
+        let instruction =
+            0xAA000000u32 | ((src2 as u32) << 16) | ((src1 as u32) << 5) | (dst as u32);
+        code_builder.emit_bytes(&instruction.to_le_bytes());
+    }
+
+    /// 生成EOR三寄存器指令: EOR <Xd>, <Xn>, <Xm>
+    fn emit_eor_reg_reg(&self, code_builder: &mut CodeBuilder, dst: u8, src1: u8, src2: u8) {
+        // EOR <Xd>, <Xn>, <Xm>
+        // 31|30|29|28 27 26 25 24 23 22 21|20 16|15 10|9 5|4 0
+        // 1 |1 |0 |0  0  0  1  0  0  0  0 |Xm   |0     |Xn |Xd
+        let instruction =
+            0xCA000000u32 | ((src2 as u32) << 16) | ((src1 as u32) << 5) | (dst as u32);
+        code_builder.emit_bytes(&instruction.to_le_bytes());
+    }
+
+    /// 生成MVN指令: MVN <Xd>, <Xm> (等价于 ORR <Xd>, XZR, <Xm>)
+    fn emit_mvn_reg_reg(&self, code_builder: &mut CodeBuilder, dst: u8, src: u8) {
+        // ORR <Xd>, XZR, <Xm> — 即 MVN <Xd>, <Xm>
+        // 31|30|29|28 27 26 25 24 23 22 21|20 16|15 10|9 5|4 0
+        // 1 |0 |1 |0  0  0  1  0  0  0  0 |Xm   |0     |Xn |Xd
+        // XZR 编码为 31
+        let xzr = 31u32;
+        let instruction =
+            0xAA000000u32 | ((src as u32) << 16) | (xzr << 5) | (dst as u32);
+        code_builder.emit_bytes(&instruction.to_le_bytes());
+    }
+
+    /// 生成LSLV指令（逻辑左移）: LSLV <Xd>, <Xn>, <Xm>
+    fn emit_lslv_reg_reg(&self, code_builder: &mut CodeBuilder, dst: u8, src1: u8, src2: u8) {
+        // LSLV <Xd>, <Xn>, <Xm>
+        // 31|30|29|28 27 26 25 24 23 22 21|20 16|15|14 10|9 5|4 0
+        // 1 |0 |0 |1  1  0  1  0  0  0  0 |Xm   |0 |0 1 0 0|Xn |Xd
+        // op2=0x08 (LSLV)
+        let instruction =
+            0x9AC02000u32 | ((src2 as u32) << 16) | ((src1 as u32) << 5) | (dst as u32);
+        code_builder.emit_bytes(&instruction.to_le_bytes());
+    }
+
+    /// 生成ASRV指令（算术右移）: ASRV <Xd>, <Xn>, <Xm>
+    fn emit_asrv_reg_reg(&self, code_builder: &mut CodeBuilder, dst: u8, src1: u8, src2: u8) {
+        // ASRV <Xd>, <Xn>, <Xm>
+        // 31|30|29|28 27 26 25 24 23 22 21|20 16|15|14 10|9 5|4 0
+        // 1 |0 |0 |1  1  0  1  0  1  0  0 |Xm   |0 |0 1 0 0|Xn |Xd
+        // op2=0x0A (ASRV)
+        let instruction =
+            0x9AC02800u32 | ((src2 as u32) << 16) | ((src1 as u32) << 5) | (dst as u32);
         code_builder.emit_bytes(&instruction.to_le_bytes());
     }
 
