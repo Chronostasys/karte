@@ -26,6 +26,10 @@ pub struct AArch64Compiler {
     current_function_use_regs: Vec<PhysicalRegister>,
     /// 当前编译的函数名（用于生成唯一label）
     current_function_name: String,
+    /// 当前函数的栈帧大小（由 StackFrameLayoutPass 计算）
+    current_stack_frame_size: usize,
+    /// epilogue 需要跳过的帧大小
+    stack_frame_size_for_epilogue: usize,
 }
 
 /// AArch64寄存器枚举
@@ -79,6 +83,8 @@ impl AArch64Compiler {
             unique_label_counter: 0,
             current_function_use_regs: Vec::new(),
             current_function_name: String::new(),
+            current_stack_frame_size: 0,
+            stack_frame_size_for_epilogue: 0,
         };
 
         // 初始化寄存器映射
@@ -2354,6 +2360,32 @@ impl AArch64Compiler {
         // 8. 为返回值槽分配空间（16字节对齐）
         self.save_return_slot_pointer(code_builder);
 
+        // 9. 设置帧指针：vm_fp = vm_sp + frame_size
+        // StackFrameLayoutPass 使用 FP + 负偏移量访问栈槽
+        // 分配栈帧空间后设置 FP，使得 FP - 8, FP - 16 等位于已分配区域
+        // 与 x86 编译器 emit_main_function_prologue 完全一致
+        if self.current_stack_frame_size > 0 {
+            // SUB vm_sp, vm_sp, frame_size
+            self.emit_add_reg_reg_imm(
+                code_builder,
+                vm_sp,
+                vm_sp,
+                -(self.current_stack_frame_size as i32),
+            );
+            // MOV vm_fp, vm_sp
+            self.emit_mov_reg_reg(code_builder, vm_fp, vm_sp);
+            // ADD vm_fp, vm_fp, frame_size
+            self.emit_add_reg_reg_imm(
+                code_builder,
+                vm_fp,
+                vm_fp,
+                self.current_stack_frame_size as i32,
+            );
+        } else {
+            // MOV vm_fp, vm_sp
+            self.emit_mov_reg_reg(code_builder, vm_fp, vm_sp);
+        }
+
         // AAPCS64 要求：栈必须在函数入口处16字节对齐
         // 检查当前栈使用情况：
         // - 每个 STP 指令分配 16 字节
@@ -2409,6 +2441,26 @@ impl AArch64Compiler {
             self.emit_str_reg_mem(code_builder, reg, vm_sp_reg, 0);
         }
 
+        // 设置帧指针：vm_fp = vm_sp + frame_size
+        // 与主函数 prologue 和 x86 emit_internal_function_prologue 一致
+        if self.current_stack_frame_size > 0 {
+            self.emit_add_reg_reg_imm(
+                code_builder,
+                vm_sp_reg,
+                vm_sp_reg,
+                -(self.current_stack_frame_size as i32),
+            );
+            self.emit_mov_reg_reg(code_builder, vm_fp_reg, vm_sp_reg);
+            self.emit_add_reg_reg_imm(
+                code_builder,
+                vm_fp_reg,
+                vm_fp_reg,
+                self.current_stack_frame_size as i32,
+            );
+        } else {
+            self.emit_mov_reg_reg(code_builder, vm_fp_reg, vm_sp_reg);
+        }
+
         if self.debug_mode {
             eprintln!(
                 "保存了 {} 个 callee-saved 寄存器到虚拟栈",
@@ -2426,6 +2478,16 @@ impl AArch64Compiler {
     ) -> crate::Result<()> {
         let vm_sp_reg = self.vm_calling_convention.stack_pointer;
         let vm_fp_reg = self.vm_calling_convention.frame_pointer;
+
+        // 恢复 vm_sp 跳过帧空间（与 prologue 中分配的帧空间对应）
+        if self.stack_frame_size_for_epilogue > 0 {
+            self.emit_add_reg_reg_imm(
+                code_builder,
+                vm_sp_reg,
+                vm_sp_reg,
+                self.stack_frame_size_for_epilogue as i32,
+            );
+        }
 
         // 使用LIR寄存器分配器计算的实际使用的callee-saved寄存器
         let callee_saved = &self.get_vm_callee_saved_registers();
@@ -2613,12 +2675,22 @@ impl AArch64Compiler {
 
         // 对了，我可以直接在这里写尾声，然后回头修改序言
 
-        // 尾声实现（假设虚拟栈布局如上所述）：
-
+        // 尾声实现：
         // compile_return已经弹出了返回值槽（+16字节）
-        // 虚拟栈布局（compile_return后）：
+        // 虚拟栈布局（compile_return后 + 帧空间恢复后）：
         // [SP+0]: 系统SP
         // [SP+8]: X30
+
+        // 先恢复 vm_sp 跳过帧空间
+        let vm_sp_reg = self.vm_calling_convention.stack_pointer;
+        if self.stack_frame_size_for_epilogue > 0 {
+            self.emit_add_reg_reg_imm(
+                code_builder,
+                vm_sp_reg,
+                vm_sp_reg,
+                self.stack_frame_size_for_epilogue as i32,
+            );
+        }
 
         // 1. 从虚拟栈读取X30和系统SP
         self.emit_ldr_reg_mem(
@@ -2898,6 +2970,12 @@ impl JitCompiler for AArch64Compiler {
 
         // 缓存当前函数的 callee-saved 信息
         self.current_function_use_regs = function.get_used_regs().to_vec();
+
+        // 计算栈帧大小（与 x86 编译器一致）
+        // prologue 不分配帧空间——由 LIR 的 Sub vm_sp, N 指令分配
+        self.current_stack_frame_size = 0;
+        // epilogue 需要知道帧大小来跳过帧区域
+        self.stack_frame_size_for_epilogue = function.stack_frame_size as usize;
 
         // 🔧 活跃寄存器信息已由 CallsiteLiveRegisterPass 预先计算并存储在 instruction_metadata 中
         // 无需在 JIT 编译时重新运行生命周期分析
