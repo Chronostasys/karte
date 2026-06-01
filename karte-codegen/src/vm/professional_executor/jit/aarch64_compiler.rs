@@ -2469,6 +2469,7 @@ impl AArch64Compiler {
         let vm_sp = self.vm_calling_convention.stack_pointer;  // X9
         let vm_fp = self.vm_calling_convention.frame_pointer;   // X10
         let sys_sp = AArch64Register::SP as u8;                 // 31
+        let tmp_reg = AArch64Register::X16 as u8;               // X16 临时寄存器
 
         if self.debug_mode {
             log::debug!("序言开始：生成符合 AAPCS64 的函数序言 (vm_sp=X9, vm_fp=X10)");
@@ -2533,8 +2534,12 @@ impl AArch64Compiler {
         // 步骤3：在虚拟栈上保存系统 SP 和返回地址 X30
         // SUB X9, X9, #16
         self.emit_sub_reg_reg_imm(code_builder, vm_sp, vm_sp, 16);
-        // STR SP(31), [X9, #0] (保存系统 SP)
-        self.emit_str_reg_mem(code_builder, sys_sp, vm_sp, 0);
+        // 注意：AArch64 中 Rt=31 在 STR 中代表 XZR（零寄存器），不是 SP
+        // 所以必须先将 SP 复制到临时寄存器 X16，再存储 X16
+        // ADD X16, SP, #0 (= MOV X16, SP)
+        self.emit_add_reg_reg_imm(code_builder, tmp_reg, sys_sp, 0);
+        // STR X16, [X9, #0] (保存系统 SP 的值)
+        self.emit_str_reg_mem(code_builder, tmp_reg, vm_sp, 0);
         // STR X30, [X9, #8] (保存返回地址)
         self.emit_str_reg_mem(code_builder, AArch64Register::X30 as u8, vm_sp, 8);
 
