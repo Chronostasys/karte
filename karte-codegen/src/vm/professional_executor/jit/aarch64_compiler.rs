@@ -2783,15 +2783,8 @@ impl AArch64Compiler {
         let vm_sp_reg = self.vm_calling_convention.stack_pointer;
         let vm_fp_reg = self.vm_calling_convention.frame_pointer;
 
-        // 恢复 vm_sp 跳过帧空间（与 prologue 中分配的帧空间对应）
-        if self.stack_frame_size_for_epilogue > 0 {
-            self.emit_add_reg_reg_imm(
-                code_builder,
-                vm_sp_reg,
-                vm_sp_reg,
-                self.stack_frame_size_for_epilogue as i32,
-            );
-        }
+        // 注意：LIR 的 stack_frame_layout pass 已经在 Return 前恢复了帧空间
+        // 所以这里不需要再恢复。
 
         // 使用LIR寄存器分配器计算的实际使用的callee-saved寄存器
         let callee_saved = &self.get_vm_callee_saved_registers();
@@ -2985,16 +2978,12 @@ impl AArch64Compiler {
         // [SP+0]: 系统SP
         // [SP+8]: X30
 
-        // 先恢复 vm_sp 跳过帧空间
+        // 注意：LIR 的 stack_frame_layout pass 已经在 Return 前通过
+        // "add vm_sp, frame_size" 恢复了帧空间，所以这里不需要再恢复。
+        // 如果这里额外恢复一次，vm_sp 会指向错误位置，导致读取到
+        // 错误的系统SP和返回地址，引发 SIGSEGV。
+
         let vm_sp_reg = self.vm_calling_convention.stack_pointer;
-        if self.stack_frame_size_for_epilogue > 0 {
-            self.emit_add_reg_reg_imm(
-                code_builder,
-                vm_sp_reg,
-                vm_sp_reg,
-                self.stack_frame_size_for_epilogue as i32,
-            );
-        }
 
         // 1. 从虚拟栈读取X30和系统SP
         self.emit_ldr_reg_mem(
