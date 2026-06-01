@@ -291,6 +291,18 @@ impl AArch64Compiler {
             Instruction::Store64 {
                 addr, offset, src, ..
             } => self.compile_store64(addr, *offset, src, code_builder),
+            Instruction::Load32 { dst, addr, offset, .. } => {
+                self.compile_load32(dst, addr, *offset, code_builder)
+            }
+            Instruction::Store32 { addr, offset, src, .. } => {
+                self.compile_store32(addr, *offset, src, code_builder)
+            }
+            Instruction::Load8 { dst, addr, offset, .. } => {
+                self.compile_load8(dst, addr, *offset, code_builder)
+            }
+            Instruction::Store8 { addr, offset, src, .. } => {
+                self.compile_store8(addr, *offset, src, code_builder)
+            }
             Instruction::StorePair {
                 addr,
                 offset,
@@ -1347,6 +1359,93 @@ impl AArch64Compiler {
             _ => {
                 return Err(format!("不支持的存储操作数类型: {:?}", src).into());
             }
+        }
+        Ok(())
+    }
+
+    /// 编译32位加载指令: LDR Wd, [Xn, #offset]
+    fn compile_load32(
+        &mut self,
+        dst: &Register,
+        addr: &Register,
+        offset: i64,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+        let addr_reg = self.get_physical_register(addr)?;
+        // LDR Wd, [Xn, #offset]: 0xB9400000 | ((offset/4 & 0xFFF) << 10) | (Rn << 5) | Rt
+        let scaled_offset = (offset / 4) as u32;
+        let instruction = 0xB9400000u32 | (scaled_offset << 10) | ((addr_reg as u32) << 5) | (dst_reg as u32);
+        code_builder.emit_u32(instruction);
+        Ok(())
+    }
+
+    /// 编译32位存储指令: STR Wn, [Xn, #offset]
+    fn compile_store32(
+        &mut self,
+        addr: &Register,
+        offset: i64,
+        src: &Operand,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let addr_reg = self.get_physical_register(addr)?;
+        match src {
+            Operand::Register { id } => {
+                let src_reg = self.get_physical_register(id)?;
+                let scaled_offset = (offset / 4) as u32;
+                let instruction = 0xB9000000u32 | (scaled_offset << 10) | ((addr_reg as u32) << 5) | (src_reg as u32);
+                code_builder.emit_u32(instruction);
+            }
+            Operand::Immediate { value } => {
+                let temp_reg = AArch64Register::X16 as u8;
+                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
+                let scaled_offset = (offset / 4) as u32;
+                let instruction = 0xB9000000u32 | (scaled_offset << 10) | ((addr_reg as u32) << 5) | (temp_reg as u32);
+                code_builder.emit_u32(instruction);
+            }
+            _ => return Err(format!("不支持的 Store32 操作数类型: {:?}", src).into()),
+        }
+        Ok(())
+    }
+
+    /// 编译8位加载指令: LDRB Wd, [Xn, #offset]
+    fn compile_load8(
+        &mut self,
+        dst: &Register,
+        addr: &Register,
+        offset: i64,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let dst_reg = self.get_physical_register(dst)?;
+        let addr_reg = self.get_physical_register(addr)?;
+        // LDRB Wd, [Xn, #offset]: 0x39400000 | ((offset & 0xFFF) << 10) | (Rn << 5) | Rt
+        let instruction = 0x39400000u32 | (((offset as u32) & 0xFFF) << 10) | ((addr_reg as u32) << 5) | (dst_reg as u32);
+        code_builder.emit_u32(instruction);
+        Ok(())
+    }
+
+    /// 编译8位存储指令: STRB Wn, [Xn, #offset]
+    fn compile_store8(
+        &mut self,
+        addr: &Register,
+        offset: i64,
+        src: &Operand,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        let addr_reg = self.get_physical_register(addr)?;
+        match src {
+            Operand::Register { id } => {
+                let src_reg = self.get_physical_register(id)?;
+                let instruction = 0x39000000u32 | (((offset as u32) & 0xFFF) << 10) | ((addr_reg as u32) << 5) | (src_reg as u32);
+                code_builder.emit_u32(instruction);
+            }
+            Operand::Immediate { value } => {
+                let temp_reg = AArch64Register::X16 as u8;
+                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
+                let instruction = 0x39000000u32 | (((offset as u32) & 0xFFF) << 10) | ((addr_reg as u32) << 5) | (temp_reg as u32);
+                code_builder.emit_u32(instruction);
+            }
+            _ => return Err(format!("不支持的 Store8 操作数类型: {:?}", src).into()),
         }
         Ok(())
     }
