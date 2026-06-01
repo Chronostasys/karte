@@ -15,6 +15,10 @@ id = "std.algorithm"
 path = "algorithm.karte"
 
 [[modules]]
+id = "std.euler"
+path = "euler.karte"
+
+[[modules]]
 id = "std.prelude"
 path = "prelude.karte"
 deps = ["std.core"]

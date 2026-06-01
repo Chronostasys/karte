@@ -1,0 +1,214 @@
+module std.euler
+
+fn problem_1(n: number) -> number {
+    let sum = 0;
+    let i = 1;
+    while i < n {
+        if i % 3 == 0 {
+            sum = sum + i
+        } else {
+            if i % 5 == 0 {
+                sum = sum + i
+            } else {
+                sum = sum
+            }
+        };
+        i = i + 1
+    };
+    sum
+}
+
+fn problem_2(limit: number) -> number {
+    let a = 1;
+    let b = 2;
+    let sum = 0;
+    while b < limit {
+        if b % 2 == 0 {
+            sum = sum + b
+        } else {
+            sum = sum
+        };
+        let temp = a + b;
+        a = b;
+        b = temp
+    };
+    sum
+}
+
+fn problem_3(n: number) -> number {
+    let x = n;
+    let largest = 1;
+    let i = 2;
+    while i * i <= x {
+        while x % i == 0 {
+            largest = i;
+            x = x / i
+        };
+        i = i + 1
+    };
+    if x > largest {
+        x
+    } else {
+        largest
+    }
+}
+
+fn problem_5(n: number) -> number {
+    let result = 1;
+    let i = 2;
+    while i <= n {
+        let g = result;
+        let h = i;
+        while h != 0 {
+            let t = h;
+            h = g % h;
+            g = t
+        };
+        result = result / g * i;
+        i = i + 1
+    };
+    result
+}
+
+fn problem_6(n: number) -> number {
+    let sum = 0;
+    let sum_sq = 0;
+    let i = 1;
+    while i <= n {
+        sum = sum + i;
+        sum_sq = sum_sq + i * i;
+        i = i + 1
+    };
+    sum * sum - sum_sq
+}
+
+fn problem_7(n: number) -> number {
+    let count = 0;
+    let candidate = 2;
+    while count < n {
+        let is_p = 1;
+        let j = 2;
+        while j * j <= candidate {
+            if candidate % j == 0 {
+                is_p = 0;
+                j = candidate
+            } else {
+                j = j + 1
+            }
+        };
+        if is_p != 0 {
+            count = count + 1
+        } else {
+            count = count
+        };
+        if count < n {
+            candidate = candidate + 1
+        } else {
+            candidate = candidate
+        }
+    };
+    candidate
+}
+
+fn problem_9(target: number) -> number {
+    let result = 0;
+    let a = 1;
+    while a < target / 3 {
+        let b = a + 1;
+        while b < target / 2 {
+            let c = target - a - b;
+            if a * a + b * b == c * c {
+                result = a * b * c;
+                b = target
+            } else {
+                b = b + 1
+            }
+        };
+        if result != 0 {
+            a = target
+        } else {
+            a = a + 1
+        }
+    };
+    result
+}
+
+fn problem_10(n: number) -> number {
+    let sum = 0;
+    let i = 2;
+    while i < n {
+        let is_p = 1;
+        let j = 2;
+        while j * j <= i {
+            if i % j == 0 {
+                is_p = 0;
+                j = i
+            } else {
+                j = j + 1
+            }
+        };
+        if is_p != 0 {
+            sum = sum + i
+        } else {
+            sum = sum
+        };
+        i = i + 1
+    };
+    sum
+}
+
+fn problem_12(min_divisors: number) -> number {
+    let n = 1;
+    let tri = 1;
+    let found = 0;
+    while found == 0 {
+        let divs = 0;
+        let i = 1;
+        while i * i <= tri {
+            if tri % i == 0 {
+                divs = divs + 1;
+                if i != tri / i {
+                    divs = divs + 1
+                } else {
+                    divs = divs
+                }
+            } else {
+                divs = divs
+            };
+            i = i + 1
+        };
+        if divs > min_divisors {
+            found = 1
+        } else {
+            n = n + 1;
+            tri = tri + n
+        }
+    };
+    tri
+}
+
+fn problem_14(limit: number) -> number {
+    let max_n = 0;
+    let max_len = 0;
+    let i = 1;
+    while i < limit {
+        let x = i;
+        let len = 1;
+        while x != 1 {
+            if x % 2 == 0 {
+                x = x / 2
+            } else {
+                x = 3 * x + 1
+            };
+            len = len + 1
+        };
+        if len > max_len {
+            max_len = len;
+            max_n = i
+        } else {
+            max_len = max_len
+        };
+        i = i + 1
+    };
+    max_n
+}
