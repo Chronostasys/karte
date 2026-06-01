@@ -1,0 +1,16 @@
+[[modules]]
+id = "std.core"
+path = "core.karte"
+
+[[modules]]
+id = "std.math"
+path = "math.karte"
+
+[[modules]]
+id = "std.list"
+path = "list.karte"
+
+[[modules]]
+id = "std.prelude"
+path = "prelude.karte"
+deps = ["std.core"]
