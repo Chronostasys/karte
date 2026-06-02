@@ -2124,20 +2124,17 @@ impl AArch64Compiler {
             }
         }
 
-        // 步骤2：只在系统栈保存 VM 帧指针，SP 依靠栈平衡自动恢复
+        // 步骤2：在系统栈保存 vm_sp 和 vm_fp
+        // C 函数（通过 BLR 调用的 allocator 等）会破坏 X9-X15（caller-saved），
+        // 包括 vm_sp(X10)。必须在系统栈保存 vm_sp，restore 时先恢复它。
+        let vm_sp_reg = self.vm_calling_convention.stack_pointer;
         let vm_fp_reg = self.vm_calling_convention.frame_pointer;
-        if self.debug_mode {
-            log::debug!("保存 VM 帧寄存器到系统栈: fp=p{}", vm_fp_reg);
-        }
-        // 依旧分配 16 字节，保持与原 STP 相同的栈平衡
-        self.emit_add_reg_reg_imm(
-            code_builder,
-            AArch64Register::SP as u8,
-            AArch64Register::SP as u8,
-            -16,
-        );
-        // 与之前 STP 的 second slot 对齐，写入 [SP, #8]
-        self.emit_str_reg_mem(code_builder, vm_fp_reg, AArch64Register::SP as u8, 8);
+        // STP vm_sp, vm_fp, [SP, #-16]!
+        let stp_pre = 0xA9BF0000u32
+            | ((vm_fp_reg as u32) << 10)
+            | ((AArch64Register::SP as u32) << 5)
+            | (vm_sp_reg as u32);
+        code_builder.emit_u32(stp_pre);
 
         (regs_to_virtual_stack, virtual_stack_space)
     }
@@ -2147,34 +2144,29 @@ impl AArch64Compiler {
         regs: &[u8],
         stack_space: usize,
     ) {
-        // 🔧 关键修复：恢复顺序与保存顺序相反
-        // 1. 先从系统栈恢复 VM 栈/帧指针
-        // 2. 再从虚拟栈恢复 r0-r5
-
-        // 步骤1：恢复 VM 帧指针，并保持与保存步骤相同的栈调整
+        // 步骤1：先从系统栈恢复 vm_sp 和 vm_fp
+        // 这必须在用 vm_sp 读取虚拟栈之前完成，因为 C 函数可能破坏了 X10
+        let vm_sp_reg = self.vm_calling_convention.stack_pointer;
         let vm_fp_reg = self.vm_calling_convention.frame_pointer;
-        self.emit_ldr_reg_mem(code_builder, vm_fp_reg, AArch64Register::SP as u8, 8);
-        self.emit_add_reg_reg_imm(
-            code_builder,
-            AArch64Register::SP as u8,
-            AArch64Register::SP as u8,
-            16,
-        );
+        // LDP vm_sp, vm_fp, [SP], #16 (post-index)
+        let ldp_post = 0xA8C10000u32
+            | ((vm_fp_reg as u32) << 10)
+            | ((AArch64Register::SP as u32) << 5)
+            | (vm_sp_reg as u32);
+        code_builder.emit_u32(ldp_post);
 
-        // 步骤2：恢复 r0-r5 从虚拟栈
+        // 步骤2：从虚拟栈恢复寄存器
         if !regs.is_empty() {
-            let karte_virtual_sp_reg = self.vm_calling_convention.stack_pointer;
-
             // 先用偏移加载所有寄存器（保持虚拟SP不变）
             for (idx, reg) in regs.iter().enumerate() {
-                self.emit_ldr_reg_mem(code_builder, *reg, karte_virtual_sp_reg, (idx * 8) as i32);
+                self.emit_ldr_reg_mem(code_builder, *reg, vm_sp_reg, (idx * 8) as i32);
             }
 
-            // 然后一次性恢复虚拟栈指针（向上增长）
+            // 然后一次性恢复虚拟栈指针
             self.emit_add_reg_reg_imm(
                 code_builder,
-                karte_virtual_sp_reg,
-                karte_virtual_sp_reg,
+                vm_sp_reg,
+                vm_sp_reg,
                 stack_space as i32 + 32,
             );
         }
