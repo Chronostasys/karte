@@ -84,11 +84,11 @@ mod macos_sigsegv_diagnostic {
             test_name,
             lir.functions.len()
         );
-        for func in &lir.functions {
+        for (name, func) in &lir.functions {
             eprintln!(
                 "[DIAG] {}   {} = {} instructions, stack_frame={}",
                 test_name,
-                func.name,
+                name,
                 func.instructions.len(),
                 func.stack_frame_size
             );
