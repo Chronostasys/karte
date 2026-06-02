@@ -348,12 +348,18 @@ impl JitMemoryManager {
 
         #[cfg(not(target_os = "windows"))]
         {
+            // macOS Apple Silicon 需要 MAP_JIT 来支持 W+X 内存
+            // 没有 MAP_JIT，JIT 代码可能无法正确执行
+            let flags = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS;
+            #[cfg(target_os = "macos")]
+            let flags = flags | libc::MAP_JIT;
+            
             let addr = unsafe {
                 libc::mmap(
                     std::ptr::null_mut(),
                     size,
                     libc::PROT_NONE, // 无权限，只保留地址空间
-                    libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                    flags,
                     -1,
                     0,
                 )
