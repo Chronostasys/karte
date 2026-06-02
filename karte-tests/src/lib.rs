@@ -14,9 +14,6 @@ pub mod parser_tests;
 pub mod reference_tests;
 pub mod struct_tests;
 pub mod sum_types_tests;
-
-#[cfg(all(test, target_arch = "aarch64"))]
-mod macos_diagnostic;
 pub mod type_checker_tests;
 
 use karte_diagnostics::Span;
