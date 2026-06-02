@@ -1159,6 +1159,8 @@ pub fn patch_executable_memory(
                     let target_page = target_addr & !0xFFF;
                     let page_offset = ((target_page as i64) - (current_page as i64)) >> 12;
 
+
+
                     if !(-(1 << 20)..(1 << 20)).contains(&page_offset) {
                         return Err(format!(
                             "ADRP页偏移超出范围: {} (应在 ±1M 范围内)",
@@ -1180,11 +1182,6 @@ pub fn patch_executable_memory(
                     let immlo = imm & 0x3;
                     instruction |= (immhi << 5) | (immlo << 29);
 
-                    log::debug!(
-                        "🔧 ADRP修补: 页偏移={}, 修补后指令: 0x{:08X}",
-                        page_offset,
-                        instruction
-                    );
 
                     unsafe { write_u32_at(memory_ptr, pending.patch_position, instruction) };
                 }
@@ -1199,11 +1196,6 @@ pub fn patch_executable_memory(
                     instruction &= 0xFFC003FF;
                     instruction |= ((page_offset as u32) & 0xFFF) << 10;
 
-                    log::debug!(
-                        "🔧 ADD修补: 页内偏移=0x{:X}, 修补后指令: 0x{:08X}",
-                        page_offset,
-                        instruction
-                    );
 
                     unsafe { write_u32_at(memory_ptr, pending.patch_position, instruction) };
                 }

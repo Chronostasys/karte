@@ -316,14 +316,20 @@ impl CallingConvention {
     #[cfg(target_arch = "aarch64")]
     pub fn standard() -> Self {
         let mut caller_saved = HashSet::new();
-        // x0-x18 都是 caller-saved (易失寄存器)
-        for reg in 0..=18u8 {
+        // x0-x9, x12-x18 是 caller-saved
+        // x10(vm_sp), x11(vm_fp) 作为 callee-saved，与 x86_64 的 R10/R11 一致
+        for reg in 0..=9u8 {
+            caller_saved.insert(reg);
+        }
+        for reg in 12..=18u8 {
             caller_saved.insert(reg);
         }
 
         let mut callee_saved = HashSet::new();
-        // x19-x31 是 callee-saved (非易失寄存器)
-        for reg in 19..=31u8 {
+        // x10(vm_sp), x11(vm_fp), x19-x28 是 callee-saved
+        callee_saved.insert(REG_X10);
+        callee_saved.insert(REG_X11);
+        for reg in 19..=28u8 {
             callee_saved.insert(reg);
         }
 
@@ -334,12 +340,12 @@ impl CallingConvention {
             return_register: REG_X0,
             caller_saved,
             callee_saved,
-            stack_pointer: REG_SP,
-            frame_pointer: REG_X29,
+            stack_pointer: REG_X10,   // vm_sp（与 x86_64 的 R10 一致）
+            frame_pointer: REG_X11,    // vm_fp（与 x86_64 的 R11 一致）
             return_address: REG_X30,
             effect_stack_pointer: REG_X12,
             effect_payload_register: REG_X0,
-            effect_tag_register: REG_X10,
+            effect_tag_register: REG_X9,   // 改用 X9（之前 X10 与 vm_sp 冲突）
             effect_resume_temp: REG_X15,
             temp_registers: {
                 let mut temps = Vec::new();
@@ -347,7 +353,7 @@ impl CallingConvention {
                     REG_X0, REG_X1, REG_X2, REG_X3, REG_X4, REG_X5, REG_X6, REG_X7,
                 ]);
                 temps.extend_from_slice(&[
-                    REG_X8, REG_X9, REG_X10, REG_X11, REG_X12, REG_X13, REG_X14, REG_X15,
+                    REG_X8, REG_X9, REG_X12, REG_X13, REG_X14, REG_X15,
                 ]);
                 temps.extend_from_slice(&[REG_X16, REG_X17, REG_X18]);
                 for reg in 19..=28u8 {
