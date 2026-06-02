@@ -2136,19 +2136,6 @@ impl AArch64Compiler {
             | (vm_sp_reg as u32);
         code_builder.emit_u32(stp_pre);
 
-        // 步骤3：通知 GC 当前的虚拟栈位置
-        // GC 需要知道 save 区域的位置，以便正确扫描其中的堆指针
-        // 调用 karte_jit_runtime_update_stack_top(vm_sp)
-        {
-            let update_fn = super::runtime::karte_jit_runtime_update_stack_top as *const () as i64;
-            // save 已完成，caller-saved 寄存器已在虚拟栈上
-            // X0/X16 是 caller-saved，可以安全使用
-            self.emit_mov_reg_reg(code_builder, AArch64Register::X0 as u8, vm_sp_reg);
-            self.emit_mov_reg_imm64(code_builder, AArch64Register::X16 as u8, update_fn);
-            let blr = 0xD63F0000u32 | ((AArch64Register::X16 as u32) << 5);
-            code_builder.emit_u32(blr);
-        }
-
         (regs_to_virtual_stack, virtual_stack_space)
     }
     fn restore_call_clobbered_registers(
