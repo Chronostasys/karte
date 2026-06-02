@@ -562,10 +562,41 @@ impl DefUseAnalysis {
             | Instruction::Nop { .. } => {
                 // 这些指令不涉及寄存器
             }
-            // 未知指令类型的默认处理
+            // 间接跳转：使用函数指针寄存器（不定义任何寄存器）
+            Instruction::JumpIndirect { function_register, .. } => {
+                uses.push(*function_register);
+            }
+            // 寄存器跳转：使用目标寄存器
+            Instruction::JumpRegister { target_register, .. } => {
+                uses.push(*target_register);
+            }
+            // 函数调用：不直接涉及寄存器（参数传递已通过独立指令完成）
+            Instruction::Call { .. } => {
+                // Call 使用标签目标，不涉及寄存器操作数
+            }
+            // 间接调用：使用函数指针寄存器
+            Instruction::CallIndirect { function_register, args, arg_operands, result, .. } => {
+                uses.push(*function_register);
+                for arg in args {
+                    uses.push(*arg);
+                }
+                for op in arg_operands {
+                    self.analyze_operand_uses(op, &mut uses);
+                }
+                if let Some(dst) = result {
+                    defs.push(*dst);
+                }
+            }
+            // 返回指令：使用返回值寄存器
+            Instruction::Return { value, .. } => {
+                if let Some(reg) = value {
+                    uses.push(*reg);
+                }
+            }
+            // 其他指令类型：不需要 def/use 分析
             _ => {
-                warn!("警告: DefUseAnalysis遇到未知指令类型: {:?}", instruction);
-                // 不返回任何定义或使用
+                // 包括：算术指令（已上方处理）、Alloc/Free（已上方处理）、
+                // 位运算、比较、类型转换等（它们有自己的 match 分支）
             }
         }
 

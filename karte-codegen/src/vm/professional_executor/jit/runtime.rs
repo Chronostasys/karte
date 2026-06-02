@@ -11,4 +11,5 @@ pub use karte_rt::ffi::{
     karte_jit_runtime_split_count,
     karte_jit_runtime_trim,
     karte_jit_runtime_to_string,
+    karte_jit_runtime_update_stack_top,
 };
