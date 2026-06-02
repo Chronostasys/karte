@@ -49,6 +49,7 @@ mod macos_sigsegv_diagnostic {
         };
         use karte_mir::lower::{lower_expr_to_mir_with_options, LoweringOptions};
         use karte_parser::{parse_with_type_check, ParserMode};
+        use karte_module_system::optimize_mir_with_escape_analysis;
         use std::collections::HashSet;
 
         eprintln!("[DIAG] {} starting", test_name);
@@ -71,6 +72,14 @@ mod macos_sigsegv_diagnostic {
         let mut mir = lower_expr_to_mir_with_options(&ast, options)
             .unwrap_or_else(|e| panic!("{} MIR lowering error: {:?}", test_name, e));
 
+        // 应用逃逸分析
+        optimize_mir_with_escape_analysis(&mut mir, false)
+            .unwrap_or_else(|e| panic!("{} escape analysis error: {:?}", test_name, e));
+
+        // 删除 script_entry，设置 main 为入口
+        promote_project_entry(&mut mir);
+        mir.functions.remove("__script_entry__");
+
         let mut lir = lower_mir_to_lir(&mir)
             .unwrap_or_else(|e| panic!("{} LIR lowering error: {:?}", test_name, e));
 
@@ -89,7 +98,7 @@ mod macos_sigsegv_diagnostic {
             }
         }
 
-        eprintln!("[DIAG] {} executing...", test_name);
+        eprintln!("[DIAG] {} executing, main_function={:?}", test_name, lir.main_function);
 
         let mut executor = ProfessionalExecutor::new_with_jit(false)
             .unwrap_or_else(|e| panic!("{} JIT executor error: {:?}", test_name, e));
@@ -117,5 +126,29 @@ mod macos_sigsegv_diagnostic {
         }
 
         eprintln!("[DIAG] {} PASSED", test_name);
+    }
+
+    fn promote_project_entry(mir_program: &mut karte_mir::MirProgram) {
+        if let Some(script_entry) = mir_program.functions.get("__script_entry__") {
+            let is_trivial = if let Some(entry_block) =
+                script_entry.basic_blocks.get(&script_entry.entry_block)
+            {
+                entry_block.statements.iter().all(|stmt| {
+                    matches!(
+                        stmt,
+                        karte_mir::Statement::Assign {
+                            source: karte_mir::Value::Unit,
+                            ..
+                        }
+                    )
+                })
+            } else {
+                true
+            };
+
+            if is_trivial && mir_program.functions.contains_key("main") {
+                mir_program.set_main("main".to_string());
+            }
+        }
     }
 }
