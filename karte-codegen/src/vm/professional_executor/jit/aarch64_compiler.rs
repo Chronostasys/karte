@@ -2083,12 +2083,18 @@ impl AArch64Compiler {
         let vm_fp_reg = self.vm_calling_convention.frame_pointer;
         // MOV SP, X19（恢复系统 SP）
         self.emit_mov_reg_reg(code_builder, AArch64Register::SP as u8, 19);
-        // STP vm_sp, vm_fp, [SP, #-16]!（在系统栈上保存 vm_sp 和 vm_fp）
-        let stp_pre = 0xA9BF0000u32
-            | ((vm_fp_reg as u32) << 10)
-            | ((AArch64Register::SP as u32) << 5)
-            | (vm_sp_reg as u32);
-        code_builder.emit_u32(stp_pre);
+        // ⚠️ 不能用 STP vm_sp, vm_fp, [SP, #offset]!
+        // 因为 vm_sp=SP(31) 同时是基址寄存器和目标寄存器，ARM 架构禁止
+        // 解决：用 STR 分别保存
+        // SUB SP, SP, #16
+        self.emit_sub_reg_reg_imm(code_builder, AArch64Register::SP as u8, AArch64Register::SP as u8, 16);
+        // STR vm_fp, [SP, #8]
+        self.emit_str_reg_mem(code_builder, vm_fp_reg, AArch64Register::SP as u8, 8);
+        // STR vm_sp(当前值=虚拟栈指针), [SP, #0]
+        // ⚠️ 同样不能 STR SP, [SP, #0]! 用临时寄存器
+        // 先把 vm_sp 的值复制到 X16（此时 X16 可用，还没加载函数地址）
+        self.emit_mov_reg_reg(code_builder, 16, vm_sp_reg);
+        self.emit_str_reg_mem(code_builder, 16, AArch64Register::SP as u8, 0);
 
         (regs_to_virtual_stack, virtual_stack_space)
     }
@@ -2100,16 +2106,19 @@ impl AArch64Compiler {
     ) {
         // 步骤1：从系统栈恢复 vm_sp 和 vm_fp
         // 此时 SP 仍然指向系统栈（C 调用前恢复的）
+        // ⚠️ 不能用 LDP vm_sp, vm_fp, [SP], #16! 因为 vm_sp=SP(31) 同为基址和目标
         let vm_sp_reg = self.vm_calling_convention.stack_pointer;
         let vm_fp_reg = self.vm_calling_convention.frame_pointer;
-        // LDP vm_sp, vm_fp, [SP], #16 (post-index)
-        let ldp_post = 0xA8C10000u32
-            | ((vm_fp_reg as u32) << 10)
-            | ((AArch64Register::SP as u32) << 5)
-            | (vm_sp_reg as u32);
-        code_builder.emit_u32(ldp_post);
-        // MOV SP, vm_sp_reg（切换回虚拟栈）
-        self.emit_mov_reg_reg(code_builder, AArch64Register::SP as u8, vm_sp_reg);
+        // LDR X16, [SP, #0]（先加载 vm_sp 的值到临时寄存器）
+        self.emit_ldr_reg_mem(code_builder, 16, AArch64Register::SP as u8, 0);
+        // LDR vm_fp, [SP, #8]
+        self.emit_ldr_reg_mem(code_builder, vm_fp_reg, AArch64Register::SP as u8, 8);
+        // ADD SP, SP, #16
+        self.emit_add_reg_reg_imm(code_builder, AArch64Register::SP as u8, AArch64Register::SP as u8, 16);
+        // MOV vm_sp_reg(SP), X16（恢复虚拟栈指针）
+        // ⚠️ ADD SP, SP, #0 是 no-op！需要用 MOVZ + ORR 来设置 SP
+        // 方法：先保存到 X16 然后用 ADD SP, X16, #0
+        self.emit_add_reg_reg_imm(code_builder, AArch64Register::SP as u8, 16, 0);
 
         // 步骤2：从虚拟栈恢复寄存器
         if !regs.is_empty() {
