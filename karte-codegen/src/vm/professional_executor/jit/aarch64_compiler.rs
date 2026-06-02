@@ -2053,6 +2053,8 @@ impl AArch64Compiler {
             regs
         };
         regs_to_virtual_stack.retain(|reg| !exclude.contains(reg));
+        // X19 保存系统 SP，不能被保存到虚拟栈（否则 MOV SP, X19 会拿到错误的值）
+        regs_to_virtual_stack.retain(|&reg| reg != 19);
 
         // 🔧 修复：确保虚拟栈空间是 16 字节对齐的
         let raw_stack_space = regs_to_virtual_stack.len() * 8;
@@ -2074,12 +2076,14 @@ impl AArch64Compiler {
             }
         }
 
-        // 步骤2：在系统栈保存 vm_sp 和 vm_fp
-        // C 函数（通过 BLR 调用的 allocator 等）会破坏 X9-X15（caller-saved），
-        // 包括 vm_sp(X10)。必须在系统栈保存 vm_sp，restore 时先恢复它。
+        // 步骤2：恢复系统 SP，然后在系统栈保存 vm_sp 和 vm_fp
+        // C 函数（通过 BLR 调用的 allocator 等）需要有效的系统 SP
+        // X19 在序言中保存了系统 SP（callee-saved，不会被修改）
         let vm_sp_reg = self.vm_calling_convention.stack_pointer;
         let vm_fp_reg = self.vm_calling_convention.frame_pointer;
-        // STP vm_sp, vm_fp, [SP, #-16]!
+        // MOV SP, X19（恢复系统 SP）
+        self.emit_mov_reg_reg(code_builder, AArch64Register::SP as u8, 19);
+        // STP vm_sp, vm_fp, [SP, #-16]!（在系统栈上保存 vm_sp 和 vm_fp）
         let stp_pre = 0xA9BF0000u32
             | ((vm_fp_reg as u32) << 10)
             | ((AArch64Register::SP as u32) << 5)
@@ -2094,8 +2098,8 @@ impl AArch64Compiler {
         regs: &[u8],
         stack_space: usize,
     ) {
-        // 步骤1：先从系统栈恢复 vm_sp 和 vm_fp
-        // 这必须在用 vm_sp 读取虚拟栈之前完成，因为 C 函数可能破坏了 X10
+        // 步骤1：从系统栈恢复 vm_sp 和 vm_fp
+        // 此时 SP 仍然指向系统栈（C 调用前恢复的）
         let vm_sp_reg = self.vm_calling_convention.stack_pointer;
         let vm_fp_reg = self.vm_calling_convention.frame_pointer;
         // LDP vm_sp, vm_fp, [SP], #16 (post-index)
@@ -2104,6 +2108,8 @@ impl AArch64Compiler {
             | ((AArch64Register::SP as u32) << 5)
             | (vm_sp_reg as u32);
         code_builder.emit_u32(ldp_post);
+        // MOV SP, vm_sp_reg（切换回虚拟栈）
+        self.emit_mov_reg_reg(code_builder, AArch64Register::SP as u8, vm_sp_reg);
 
         // 步骤2：从虚拟栈恢复寄存器
         if !regs.is_empty() {
@@ -2568,9 +2574,10 @@ impl AArch64Compiler {
         // 4. 保存其他 callee-saved 寄存器（如果有的话）
         self.save_callee_saved_registers(code_builder)?;
 
-        // 5. 保存系统SP到X16
-        // MOV X16, SP
-        self.emit_mov_reg_reg(code_builder, 16, AArch64Register::SP as u8);
+        // 5. 保存系统SP到X19（callee-saved，整个函数期间不变）
+        // 后续 C FFI 调用前需要恢复系统 SP，用 X19 可以直接获取
+        // MOV X19, SP
+        self.emit_mov_reg_reg(code_builder, 19, AArch64Register::SP as u8);
 
         // 6. 切换到虚拟栈
         // MOV SP, X0 (x0 = 虚拟栈顶地址)
@@ -2579,12 +2586,12 @@ impl AArch64Compiler {
         self.emit_mov_reg_reg(code_builder, vm_fp, x1);
 
         // 7. 在虚拟栈上保存系统SP和返回地址
-        // 注意：必须使用 vm_sp (X10)，不能使用系统 SP
+        // 注意：必须使用 vm_sp (SP/31)，不能使用系统 SP
         // SUB vm_sp, vm_sp, #16
-        // STR X16, [vm_sp, #0]  (系统SP，已在步骤5保存到X16)
+        // STR X19, [vm_sp, #0]  (系统SP，已在步骤5保存到X19)
         // STR X30, [vm_sp, #8]  (返回地址)
         self.emit_sub_reg_reg_imm(code_builder, vm_sp, vm_sp, 16);
-        self.emit_str_reg_mem(code_builder, 16, vm_sp, 0);
+        self.emit_str_reg_mem(code_builder, 19, vm_sp, 0);
         self.emit_str_reg_mem(
             code_builder,
             AArch64Register::X30 as u8,
