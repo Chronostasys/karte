@@ -1335,19 +1335,16 @@ impl AArch64Compiler {
         let return_addr_reg = self.vm_calling_convention.return_address;
         if is_main_function {
             // Main函数逻辑：
-            // 虚拟栈布局（从低地址到高地址）：
-            // [SP+0]: 返回值槽指针（X0参数，由序言保存）
-            // [SP+16]: 系统SP（由序言保存）
+            // vm_sp 现在是独立寄存器(X10)，SP 始终指向系统栈
             //
             // 2. 弹出返回值槽（16字节）
             self.emit_add_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, 16);
 
-            // 3. 调用epilogue恢复系统栈并返回
+            // 3. 调用epilogue恢复callee-saved寄存器并返回
             // epilogue会：
-            //   - 从虚拟栈读取系统SP并切换回系统栈
-            //   - 恢复callee-saved寄存器
-            //   - 恢复X29/X30
-            //   - RET（使用系统栈上的X30）
+            //   - 恢复callee-saved寄存器（包括 X10/X11）
+            //   - 释放系统栈帧
+            //   - RET（使用系统栈上的LR）
             self.emit_function_epilogue(code_builder)?;
             self.emit_ret(code_builder);
         } else {
@@ -2074,9 +2071,9 @@ impl AArch64Compiler {
             }
         }
 
-        // 步骤2：在系统栈保存 vm_sp 和 vm_fp
-        // C 函数（通过 BLR 调用的 allocator 等）会破坏 X9-X15（caller-saved），
-        // 包括 vm_sp(X10)。必须在系统栈保存 vm_sp，restore 时先恢复它。
+        // vm_sp(X10) 和 vm_fp(X11) 在 AAPCS64 中是 caller-saved
+        // C 函数调用会破坏它们，但恢复时需要 vm_sp 来寻址虚拟栈
+        // 因此必须在系统栈保存 vm_sp/vm_fp，恢复时先从系统栈取回
         let vm_sp_reg = self.vm_calling_convention.stack_pointer;
         let vm_fp_reg = self.vm_calling_convention.frame_pointer;
         // STP vm_sp, vm_fp, [SP, #-16]!
@@ -2094,8 +2091,7 @@ impl AArch64Compiler {
         regs: &[u8],
         stack_space: usize,
     ) {
-        // 步骤1：先从系统栈恢复 vm_sp 和 vm_fp
-        // 这必须在用 vm_sp 读取虚拟栈之前完成，因为 C 函数可能破坏了 X10
+        // 先从系统栈恢复 vm_sp 和 vm_fp（在访问虚拟栈之前）
         let vm_sp_reg = self.vm_calling_convention.stack_pointer;
         let vm_fp_reg = self.vm_calling_convention.frame_pointer;
         // LDP vm_sp, vm_fp, [SP], #16 (post-index)
@@ -2105,7 +2101,7 @@ impl AArch64Compiler {
             | (vm_sp_reg as u32);
         code_builder.emit_u32(ldp_post);
 
-        // 步骤2：从虚拟栈恢复寄存器
+        // 从虚拟栈恢复寄存器
         if !regs.is_empty() {
             // 先用偏移加载所有寄存器（保持虚拟SP不变）
             for (idx, reg) in regs.iter().enumerate() {
@@ -2528,78 +2524,48 @@ impl AArch64Compiler {
     /// 生成函数序言
     fn emit_function_prologue(&self, code_builder: &mut CodeBuilder) -> crate::Result<()> {
         // AArch64 AAPCS64调用约定：X0和X1为前两个参数
-        // 参考x86实现，将参数移动到虚拟机寄存器
-        let x0 = AArch64Register::X0 as u8; // 第一个参数：虚拟栈顶地址
-        let x1 = AArch64Register::X1 as u8; // 第二个参数：虚拟栈底地址
-        let vm_sp = self.vm_calling_convention.stack_pointer;
-        let vm_fp = self.vm_calling_convention.frame_pointer;
+        // X0 = 虚拟栈顶地址, X1 = 虚拟栈底地址
+        let x0 = AArch64Register::X0 as u8;
+        let x1 = AArch64Register::X1 as u8;
+        let vm_sp = self.vm_calling_convention.stack_pointer;   // X10
+        let vm_fp = self.vm_calling_convention.frame_pointer;   // X11
 
         if self.debug_mode {
-            log::debug!("序言开始：生成符合 AAPCS64 的函数序言");
+            log::debug!("序言开始：vm_sp=X10({}), vm_fp=X11({})", vm_sp, vm_fp);
         }
 
         // AAPCS64 标准序言：
-        // 1. 为系统栈分配帧空间（32字节）
-        // SUB SP, SP, #32
+        // 1. STP X29, X30, [SP, #-16]! — 保存帧指针和链接寄存器
+        let stp_x29_x30 = 0xA9BF7BFDu32; // STP X29, X30, [SP, #-16]!
+        code_builder.emit_u32(stp_x29_x30);
+
+        // 2. MOV X29, SP — 设置新帧指针
+        self.emit_mov_reg_reg(code_builder, AArch64Register::X29 as u8, AArch64Register::SP as u8);
+
+        // 3. SUB SP, SP, #16 — 为 callee-saved 寄存器预留空间
         self.emit_add_reg_reg_imm(
             code_builder,
             AArch64Register::SP as u8,
             AArch64Register::SP as u8,
-            -32,
+            -16,
         );
 
-        // 2. 保存 x29 到系统栈（X30稍后保存到虚拟栈）
-        // STR X29, [SP, #0]
-        self.emit_str_reg_mem(
-            code_builder,
-            AArch64Register::X29 as u8,
-            AArch64Register::SP as u8,
-            0,
-        );
-
-        // 3. 设置新帧指针
-        // MOV X29, SP
-        self.emit_mov_reg_reg(
-            code_builder,
-            AArch64Register::X29 as u8,
-            AArch64Register::SP as u8,
-        );
-
-        // 4. 保存其他 callee-saved 寄存器（如果有的话）
+        // 4. 保存 callee-saved 寄存器（到系统栈）
         self.save_callee_saved_registers(code_builder)?;
 
-        // 5. 保存系统SP到X16
-        // MOV X16, SP
-        self.emit_mov_reg_reg(code_builder, 16, AArch64Register::SP as u8);
-
-        // 6. 切换到虚拟栈
-        // MOV SP, X0 (x0 = 虚拟栈顶地址)
-        // MOV X29, X1 (x1 = 虚拟栈底地址)
+        // 3. 设置虚拟栈指针
+        // MOV X10, X0（虚拟栈顶地址）
+        // MOV X11, X1（虚拟栈底地址）
+        // vm_sp 和 vm_fp 是独立寄存器，不需要切换 SP
         self.emit_mov_reg_reg(code_builder, vm_sp, x0);
         self.emit_mov_reg_reg(code_builder, vm_fp, x1);
 
-        // 7. 在虚拟栈上保存系统SP和返回地址
-        // 注意：必须使用 vm_sp (X10)，不能使用系统 SP
-        // SUB vm_sp, vm_sp, #16
-        // STR X16, [vm_sp, #0]  (系统SP，已在步骤5保存到X16)
-        // STR X30, [vm_sp, #8]  (返回地址)
-        self.emit_sub_reg_reg_imm(code_builder, vm_sp, vm_sp, 16);
-        self.emit_str_reg_mem(code_builder, 16, vm_sp, 0);
-        self.emit_str_reg_mem(
-            code_builder,
-            AArch64Register::X30 as u8,
-            vm_sp,
-            8,
-        );
-
-        // 8. 为返回值槽分配空间（16字节对齐）
+        // 4. 为返回值槽分配空间（16字节对齐）
         self.save_return_slot_pointer(code_builder);
 
-        // 9. 设置帧指针：vm_fp = vm_sp + frame_size
+        // 5. 设置帧指针：vm_fp = vm_sp + frame_size
         // StackFrameLayoutPass 使用 FP + 负偏移量访问栈槽
-        // 分配栈帧空间后设置 FP，使得 FP - 8, FP - 16 等位于已分配区域
         // 与 x86 编译器 emit_main_function_prologue 完全一致
-        // 注意：AArch64 ADD 不支持负立即数，必须用 SUB
         if self.current_stack_frame_size > 0 {
             let frame_size = self.current_stack_frame_size as u32;
             // SUB vm_sp, vm_sp, frame_size
@@ -2623,13 +2589,7 @@ impl AArch64Compiler {
             self.emit_mov_reg_reg(code_builder, vm_fp, vm_sp);
         }
 
-        // AAPCS64 要求：栈必须在函数入口处16字节对齐
-        // 检查当前栈使用情况：
-        // - 每个 STP 指令分配 16 字节
-        // - callee-saved 寄存器数量决定栈使用量
-        let stack_usage = 16 * (2 + (self.get_c_ffi_callee_saved_registers().len() + 1) / 2); // X29/X30 + X6/X7 + callee-saved
         if self.debug_mode {
-            log::debug!("序言：栈使用量 = {} 字节", stack_usage);
             log::debug!(
                 "序言：{} 个 callee-saved 寄存器",
                 self.get_c_ffi_callee_saved_registers().len()
@@ -2764,170 +2724,10 @@ impl AArch64Compiler {
 
     /// 生成主函数尾声（用于与宿主环境交互的main函数）
     fn emit_function_epilogue(&self, code_builder: &mut CodeBuilder) -> crate::Result<()> {
-        // AAPCS64 标准尾声：按照序言的逆序恢复寄存器
-        // 注意：进入尾声时，SP指向虚拟栈，X29可能也指向虚拟栈
+        // vm_sp(X10) 是独立寄存器，SP 始终指向系统栈
+        // 不需要"切换回系统栈"——只需要恢复 callee-saved 寄存器和释放系统栈帧
 
-        // 1. 不处理返回值槽（由 compile_return 负责）
-
-        // 2. 从系统栈帧恢复系统SP（需要知道系统栈帧的X29值）
-        // 问题：X29现在指向虚拟栈，无法直接访问系统栈帧
-        // 解决方案：系统栈帧的X29保存在系统栈 [系统SP, #0] 位置
-        // 但我们需要先知道系统SP...这是个循环依赖
-
-        // 新方案：利用虚拟栈底（X1参数）来定位保存的系统栈指针
-        // 实际上，我们应该在序言中将系统栈信息保存到一个固定可访问的位置
-
-        // 临时方案：使用X19作为系统栈帧指针寄存器
-        // 在序言中保存系统X29到X19，这里从X19恢复
-
-        // 但这不可行，因为X19可能被使用...
-
-        // 正确方案：恢复系统栈的流程应该是：
-        // 1. 从某个已知位置读取保存的系统SP
-        // 2. MOV SP, 系统SP
-        // 3. 从系统栈恢复 callee-saved 寄存器
-        // 4. 从系统栈恢复 X29, X30
-        // 5. 释放系统栈帧
-
-        // 关键问题：如何从虚拟栈状态访问系统栈保存的值？
-        // 答案：在序言中，我们将系统SP保存到了 [X29(系统帧), #16]
-        // 但现在X29指向虚拟栈，我们无法访问系统帧的X29
-
-        // 解决方案：在序言中，除了将系统SP保存到系统栈，也保存到虚拟栈的固定位置
-        // 或者：使用一个callee-saved寄存器（如X19）来保存系统帧指针
-
-        // 让我重新设计：使用X19保存系统栈帧指针
-        // 序言：MOV X19, X29（系统帧）
-        // 尾声：LDR X16, [X19, #16]（从系统帧读取保存的系统SP）
-
-        // 但这要求X19不被使用，或者需要额外保存X19...
-
-        // 最简单的方案：将系统SP保存到虚拟栈底（通过X1参数）的固定偏移位置
-        // 但这会污染虚拟栈
-
-        // 实际上，让我重新思考整个设计：
-        // 目标：支持从虚拟栈恢复到系统栈
-        // 约束：切换到虚拟栈后，无法直接访问系统栈帧
-        // 解决方案选项：
-        // 1. 使用 callee-saved 寄存器保存系统栈信息（但需要额外保存该寄存器）
-        // 2. 将系统栈信息保存到虚拟栈（简单但占用虚拟栈空间）
-        // 3. 使用全局变量保存系统栈信息（线程不安全）
-
-        // 选择方案2：将系统SP保存到虚拟栈顶部固定位置
-
-        // 修改后的设计：
-        // 序言：
-        // 1. 在系统栈分配帧并保存X29/X30
-        // 2. 保存callee-saved寄存器到系统栈
-        // 3. 切换到虚拟栈
-        // 4. 在虚拟栈分配空间并保存系统SP
-        // 尾声：
-        // 1. 从虚拟栈读取系统SP
-        // 2. 切换回系统栈
-        // 3. 恢复callee-saved寄存器
-        // 4. 恢复X29/X30并释放帧
-
-        // 实现：假设序言在虚拟栈 [SP, #8] 保存了系统SP
-
-        // 虚拟栈不需要恢复，直接切换到系统栈即可
-
-        // 关键修复：序言中保存系统SP到系统栈帧 [X29, #16]
-        // 这里需要先找到系统栈帧的X29
-
-        // 重新审视问题：序言保存系统SP到 [系统X29, #16]
-        // 但切换到虚拟栈后，X29被覆盖为虚拟X29
-        // 所以我们需要在切换前，将系统X29保存到某处
-
-        // 新方案：在序言中，将系统X29保存到虚拟栈的固定位置
-        // 尾声中，从虚拟栈读取系统X29，然后从系统栈读取系统SP
-
-        // 等等，我想复杂了。让我重新看看序言代码...
-
-        // 看序言代码：
-        // 5. MOV X16, SP（此时SP是系统SP）
-        // 6. STR X16, [X29, #16]（X29是系统帧指针）
-        // 7. 切换到虚拟栈
-
-        // 所以系统SP确实保存在系统栈帧的 [系统X29, #16]
-        // 但我们切换到虚拟栈后，X29变成了虚拟X29
-
-        // 关键insight：系统X29保存在系统栈 [系统SP, #0]
-        // 而系统SP保存在系统栈 [系统X29, #16]
-        // 这是循环依赖！
-
-        // 解决方案：在切换到虚拟栈前，计算好系统栈帧的基址，并保存到虚拟栈
-        // 或者：序言中，在切换到虚拟栈后，将系统栈信息保存到虚拟栈
-
-        // 最简洁的方案：
-        // 序言：SUB SP(系统), #32 → 保存X29/X30 → MOV X29(系统), SP →
-        //      保存callee-saved → MOV X16, SP(系统当前值包含callee-saved) →
-        //      切换到虚拟栈 → SUB SP(虚拟), #16 → STR X16, [SP(虚拟), #8] → ...
-        // 尾声：... → LDR X16, [SP(虚拟)+偏移, #8] → 切换回系统栈 → ...
-
-        // 让我直接实现，假设序言将系统SP保存到了 [系统X29, #16]，
-        // 同时也保存到虚拟栈的某个位置
-
-        // 实际上，查看序言最后的save_return_slot_pointer，它会：
-        // SUB SP, #16
-        // STR X0, [SP, #0]
-        // 所以虚拟栈布局是：
-        // [SP+0]: 返回值槽指针(X0)
-        // [SP+8]: 未使用
-        // [SP+16]: 虚拟栈上可能还有其他数据
-
-        // 我的修改后序言会是：
-        // 系统栈：分配32字节，保存X29/X30/callee-saved/系统SP到系统栈
-        // 虚拟栈：只保存返回值槽指针
-
-        // 问题：我修改后的序言不再将系统SP保存到虚拟栈！
-        // 所以尾声无法从虚拟栈读取系统SP
-
-        // 我需要修改序言，在虚拟栈也保存系统SP，或者在尾声中想办法访问系统栈
-
-        // 实际上，可以利用这个事实：callee-saved寄存器中可能有某个寄存器没被使用
-        // 或者，使用一个临时寄存器（如X17）来传递系统帧信息
-
-        // 更简单的方案：既然系统X29保存在系统栈 [系统SP, #0]，
-        // 而系统SP保存在 [系统X29, #16]，
-        // 我们可以在序言中，除了保存到系统栈，也保存一份到虚拟栈
-
-        // 或者，最最简单的方案：使用一个全局变量/寄存器来保存系统栈帧指针
-        // 但这需要额外的机制
-
-        // 让我采用最直接的方案：在虚拟栈固定位置保存系统SP
-
-        // 修改序言为：
-        // 1-5. 在系统栈setup帧并保存系统SP到[X29, #16]
-        // 6. 切换到虚拟栈
-        // 7. SUB SP(虚拟), #16
-        // 8. STR X16(系统SP), [SP(虚拟), #8]
-        // 9. 调用save_return_slot_pointer（会再分配16字节）
-
-        // 这样虚拟栈布局是：
-        // [SP+0]: 返回值槽指针
-        // [SP+16]: 系统SP保存位置 [SP+16+8]
-
-        // 尾声：
-        // 1. 跳过返回值槽：ADD SP, #16
-        // 2. 读取系统SP：LDR X16, [SP, #8]
-        // 3. 回收保存系统SP的空间：ADD SP, #16
-        // 4. 切换回系统栈：MOV SP, X16
-        // 5. 恢复callee-saved
-        // 6. 恢复X29/X30
-
-        // 这个方案可行！让我实现它
-
-        // 但我刚才的序言修改没有在虚拟栈保存系统SP！我需要补上
-
-        // 对了，我可以直接在这里写尾声，然后回头修改序言
-
-        // 尾声实现：
-        // compile_return已经弹出了返回值槽（+16字节）
-        // 虚拟栈布局（compile_return后 + 帧空间恢复后）：
-        // [SP+0]: 系统SP
-        // [SP+8]: X30
-
-        // 先恢复 vm_sp 跳过帧空间
+        // 1. 恢复 vm_sp 跳过帧空间（与 prologue 中分配的帧空间对应）
         let vm_sp_reg = self.vm_calling_convention.stack_pointer;
         if self.stack_frame_size_for_epilogue > 0 {
             self.emit_add_reg_reg_imm(
@@ -2938,40 +2738,24 @@ impl AArch64Compiler {
             );
         }
 
-        // 1. 从虚拟栈读取X30和系统SP
-        self.emit_ldr_reg_mem(
-            code_builder,
-            AArch64Register::X30 as u8,
-            vm_sp_reg,
-            8,
-        );
-        self.emit_ldr_reg_mem(code_builder, 16, vm_sp_reg, 0);
-
-        // 2. 切换回系统栈
-        self.emit_mov_reg_reg(code_builder, AArch64Register::SP as u8, 16);
-
-        // 3. 恢复 callee-saved 寄存器（从系统栈）
+        // 2. 恢复 callee-saved 寄存器（从系统栈，逆序）
         self.restore_callee_saved_registers(code_builder)?;
 
-        // 4. 恢复 X29
-        // LDR X29, [SP, #0]
-        self.emit_ldr_reg_mem(
-            code_builder,
-            AArch64Register::X29 as u8,
-            AArch64Register::SP as u8,
-            0,
-        );
-
-        // 5. 释放系统栈帧（32字节）
+        // 3. 释放 callee-saved 空间（16字节）
         self.emit_add_reg_reg_imm(
             code_builder,
             AArch64Register::SP as u8,
             AArch64Register::SP as u8,
-            32,
+            16,
         );
+
+        // 4. LDP X29, X30, [SP], #16 — 恢复帧指针和链接寄存器
+        let ldp_x29_x30 = 0xA8C17BFDu32; // LDP X29, X30, [SP], #16
+        code_builder.emit_u32(ldp_x29_x30);
 
         Ok(())
     }
+
 
     /// 保存返回槽指针（caller通过X0传入）
     fn save_return_slot_pointer(&self, code_builder: &mut CodeBuilder) {
