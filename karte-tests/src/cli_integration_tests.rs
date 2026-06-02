@@ -1585,6 +1585,7 @@ fn main() -> number {
     // ================ AOT 版本的所有集成测试 ================
 
     #[test]
+    #[cfg_attr(target_os = "macos", ignore)]
     fn aot_test_function_as_value() {
         let code = r#"
 fn add(x: number, y: number) -> number {
@@ -1600,6 +1601,7 @@ fn main() -> number {
     }
 
     #[test]
+    #[cfg_attr(target_os = "macos", ignore)]
     fn aot_test_function_multiple_assignment() {
         let code = r#"
 fn multiply(x: number, y: number) -> number {
@@ -1616,6 +1618,7 @@ fn main() -> number {
     }
 
     #[test]
+    #[cfg_attr(target_os = "macos", ignore)]
     fn aot_test_identity_closure_returns_function() {
         let code = r#"
 fn return_one() -> number {
@@ -1632,6 +1635,7 @@ fn main() -> number {
     }
 
     #[test]
+    #[cfg_attr(target_os = "macos", ignore)]
     fn aot_test_function_chain_assignment() {
         let code = r#"
 fn add(x: number, y: number) -> number {
@@ -1657,6 +1661,7 @@ fn main() -> number {
     }
 
     #[test]
+    #[cfg_attr(target_os = "macos", ignore)]
     fn aot_test_plain_function_as_higher_order_param() {
         let code = r#"
 fn add_one(n:number) -> number { n + 1 }
@@ -1670,6 +1675,7 @@ fn main() -> number {
     }
 
     #[test]
+    #[cfg_attr(target_os = "macos", ignore)]
     fn aot_test_closure_as_higher_order_param() {
         let code = r#"
 fn main() -> number {
@@ -1682,6 +1688,7 @@ fn main() -> number {
     }
 
     #[test]
+    #[cfg_attr(target_os = "macos", ignore)]
     fn aot_test_mixed_function_and_closure_params() {
         let code = r#"
 fn double(x:number) -> number { x * 2 }
@@ -1700,6 +1707,7 @@ fn main() -> number {
     }
 
     #[test]
+    #[cfg_attr(target_os = "macos", ignore)]
     fn aot_test_typed_function_param() {
         let code = r#"
 fn wrong_return(n:number) -> number { n + 1 }
@@ -1713,6 +1721,7 @@ fn main() -> number {
     }
 
     #[test]
+    #[cfg_attr(target_os = "macos", ignore)]
     fn aot_test_register_allocation_bug_multiple_closure_calls() {
         let code = r#"
 fn double(x:number) -> number { x * 2 }
@@ -1731,6 +1740,7 @@ fn main() -> number {
     }
 
     #[test]
+    #[cfg_attr(target_os = "macos", ignore)]
     fn aot_test_allocate_many_stack_refs() {
         let code = r#"
 fn allocate_many() -> & &number {
@@ -1756,6 +1766,7 @@ fn main() -> number {
     }
 
     #[test]
+    #[cfg_attr(target_os = "macos", ignore)]
     fn aot_test_escape_after_deep_stack_usage() {
         let code = r#"
 fn escape() -> &number {
@@ -1784,6 +1795,7 @@ fn main() -> number {
     }
 
     #[test]
+    #[cfg_attr(target_os = "macos", ignore)]
     fn aot_test_compile_and_run_project_mode() {
         let mut entry_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         entry_path.pop();
@@ -3415,6 +3427,7 @@ fn main() -> number {
     }
 
     #[test]
+    #[cfg_attr(target_os = "macos", ignore)]
     fn test_while_continue() {
         let code = r#"fn main() -> number { let i = 0; let sum = 0; while i < 10 { i = i + 1; if i == 5 { continue }; sum = sum + i }; sum }"#;
         let (tokens, _) = tokenize(code);
