@@ -79,25 +79,23 @@ mod macos_sigsegv_diagnostic {
             .optimize(&mut lir)
             .unwrap_or_else(|e| panic!("{} Optimization error: {:?}", test_name, e));
 
-        eprintln!(
-            "[DIAG] {} LIR functions: {}",
-            test_name,
-            lir.functions.len()
-        );
+        // 打印 main 函数的 LIR 指令
         for (name, func) in &lir.functions {
-            eprintln!(
-                "[DIAG] {}   {} = {} instructions, stack_frame={}",
-                test_name,
-                name,
-                func.instructions.len(),
-                func.stack_frame_size
-            );
+            if name.contains("main") {
+                eprintln!("[DIAG] {} === {} ({} instrs, frame={}) ===", test_name, name, func.instructions.len(), func.stack_frame_size);
+                for (i, instr) in func.instructions.iter().enumerate() {
+                    eprintln!("[DIAG] {}   [{}] {:?}", test_name, i, instr);
+                }
+            }
         }
+
+        eprintln!("[DIAG] {} executing...", test_name);
 
         let mut executor = ProfessionalExecutor::new_with_jit(false)
             .unwrap_or_else(|e| panic!("{} JIT executor error: {:?}", test_name, e));
-
-        eprintln!("[DIAG] {} executing...", test_name);
+        
+        // 启用 asm dump
+        executor.enable_asm_dump();
 
         let result = executor.execute_with_jit(&lir);
         match result {
