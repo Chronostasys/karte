@@ -1824,23 +1824,19 @@ impl AArch64Compiler {
     ) -> crate::Result<()> {
         let return_reg = AArch64Register::X0 as u8;
 
-        // 🔧 关键修复：排除当前指令定义的目标寄存器
-        // 因为在调用之前，目标寄存器还不存在，不应该被保存
+        // 🔧 修复：正确处理 return_register(X0) 的保存
         let mut exclude: Vec<u8> = vec![];
 
-        // 排除返回值寄存器（x0）
-        if result.is_some() && call.expects_result() {
-            exclude.push(return_reg);
-        }
-
-        // 🔧 排除目标寄存器本身（当前指令正在定义的寄存器）
-        // 例如：Alloc { dst = #p1 } 在调用 GC 分配之前，#p1 还不存在
         if let Some(dst) = result {
             if let Ok(dst_reg) = self.get_physical_register(dst) {
-                if !exclude.contains(&dst_reg) {
+                if dst_reg == return_reg {
+                    exclude.push(return_reg);
+                } else {
                     exclude.push(dst_reg);
                 }
             }
+        } else {
+            exclude.push(return_reg);
         }
 
         // 🔧 从 metadata 中获取调用位置活跃寄存器信息
@@ -1897,14 +1893,16 @@ impl AArch64Compiler {
         }
 
         self.emit_runtime_dispatch(code_builder, call.intrinsic.symbol_ptr() as u64);
-        self.restore_call_clobbered_registers(code_builder, &saved_regs, stack_space);
 
+        // 🔧 修复：在 restore 之前把返回值从 X0 移到 dst_reg
         if let (Some(dst), true) = (result, call.expects_result()) {
             let dst_reg = self.get_physical_register(dst)?;
             if dst_reg != return_reg {
                 self.emit_mov_reg_reg(code_builder, dst_reg, return_reg);
             }
         }
+
+        self.restore_call_clobbered_registers(code_builder, &saved_regs, stack_space);
 
         Ok(())
     }

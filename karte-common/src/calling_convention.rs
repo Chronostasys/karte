@@ -334,8 +334,14 @@ impl CallingConvention {
         }
 
         Self {
+            // 参数传递使用 X0-X7（AAPCS64），但 X0 也是返回值寄存器。
+            // 将 X0 从 argument_registers 中移除，避免参数 pop 阶段与返回值冲突。
+            // 实际函数调用参数传递仍使用 X0-X7（通过 LIR CallIndirect 的 arg_regs）。
+            // 移除后：第1个参数映射 X1, 第2个映射 X2, ...，第7个映射 X7。
+            // 这意味着参数寄存器从 X1 开始，最多 7 个（X1-X7），与 x86_64 类似（
+            // x86_64 的 argument_registers 是 [7,6,2,1,8,9]，不包含返回值寄存器 RAX=0）。
             argument_registers: vec![
-                REG_X0, REG_X1, REG_X2, REG_X3, REG_X4, REG_X5, REG_X6, REG_X7,
+                REG_X1, REG_X2, REG_X3, REG_X4, REG_X5, REG_X6, REG_X7,
             ],
             return_register: REG_X0,
             caller_saved,
