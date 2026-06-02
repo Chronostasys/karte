@@ -2028,79 +2028,29 @@ impl AArch64Compiler {
 
         let karte_virtual_sp_reg = self.vm_calling_convention.stack_pointer;
 
-        // 从 metadata 读取活跃寄存器列表
-        let mut regs_to_virtual_stack: Vec<u8> = if let Some(live_info) = live_register_info {
-            // 从 metadata 中获取活跃寄存器
-            let mut live_regs = Vec::new();
-
-            for reg in &live_info.live_registers {
-                if let Register::Physical(phys_reg) = reg {
-                    if is_gc_safepoint {
-                        // GC safepoint：保存所有活跃寄存器
-                        if !exclude.contains(phys_reg) {
-                            live_regs.push(*phys_reg);
-                        }
-                    } else {
-                        // 普通runtime call：只保存活跃的caller-saved寄存器
-                        if self.ffi_calling_convention.is_caller_saved(*phys_reg) {
-                            if !exclude.contains(phys_reg) {
-                                live_regs.push(*phys_reg);
-                            }
-                        }
-                    }
+        // 保守策略：和 x86 一样保存所有 caller-saved + 所有使用的 callee-saved
+        // 不依赖 metadata（metadata 可能有遗漏导致 GC 无法追踪寄存器中的堆指针）
+        let mut regs_to_virtual_stack: Vec<u8> = {
+            let mut regs = Vec::new();
+            
+            // 1. 保存所有 caller-saved 寄存器（FFI 约定：被调用函数可破坏这些寄存器）
+            for reg in &self.ffi_calling_convention.caller_saved {
+                if !exclude.contains(reg) {
+                    regs.push(*reg);
                 }
             }
-
-            // 如果是 GC safepoint，添加未使用的 VM callee-saved 寄存器
-            if is_gc_safepoint {
-                for i in self
-                    .vm_calling_convention
-                    .callee_saved
-                    .iter()
-                    .filter(|e| !self.current_function_use_regs.contains(*e))
-                {
-                    if !live_regs.contains(i) && !exclude.contains(i) {
-                        live_regs.push(*i);
-                    }
+            
+            // 2. 保存所有在当前函数中使用的 callee-saved 寄存器
+            //    GC 需要扫描这些寄存器中的堆指针
+            for reg in &self.vm_calling_convention.callee_saved {
+                if self.current_function_use_regs.contains(reg) && !exclude.contains(reg) && !regs.contains(reg) {
+                    regs.push(*reg);
                 }
             }
-
-            // 去重并排序
-            live_regs.sort();
-            live_regs.dedup();
-
-            if self.debug_mode {
-                if is_gc_safepoint {
-                    log::debug!(
-                        "✅ GC Safepoint：需保存 {} 个活跃寄存器: {:?}",
-                        live_regs.len(),
-                        live_regs
-                    );
-                } else {
-                    log::debug!(
-                        "✅ 普通调用：只需保存 {} 个caller-saved寄存器: {:?}",
-                        live_regs.len(),
-                        live_regs
-                    );
-                }
-            }
-
-            live_regs
-        } else {
-            // 保守回退：如果没有活跃寄存器信息，保守地保存所有caller-saved寄存器
-            let all_caller_saved: Vec<u8> = if is_gc_safepoint {
-                (0..=31).collect::<Vec<u8>>()
-            } else {
-                self.ffi_calling_convention.caller_saved.clone()
-            };
-
-            if self.debug_mode {
-                log::warn!(
-                    "未找到活跃寄存器信息，保守保存所有caller-saved寄存器: {:?}",
-                    all_caller_saved
-                );
-            }
-            all_caller_saved
+            
+            regs.sort();
+            regs.dedup();
+            regs
         };
         regs_to_virtual_stack.retain(|reg| !exclude.contains(reg));
 
