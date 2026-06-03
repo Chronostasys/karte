@@ -662,6 +662,8 @@ Store { target = %10000, value = %2 }
 - karte目前不支持注释，任何测试代码不要加测试
 - 禁止任何时间对项目进行release编译，除非我要求
 - **x86_64 GOTCHA**: `effect_tag_register`、`return_address` 等专用寄存器绝不能与 `vm_sp(R10)` 或 `vm_fp(R11)` 冲突，否则 EffectPerform 会直接破坏虚拟栈指针
+- **AArch64 X16 GOTCHA**: `emit_str_reg_mem`/`emit_ldr_reg_mem` 在大偏移（|offset|>256）时使用 X16 作为临时寄存器加载偏移值。当 src/dst 或 base 寄存器恰好是 X16 时，`MOV X16, #offset` 会覆盖 X16 原始值。**修复**: src/base 与 X16 冲突时自动切换到 X17。`compile_store64` 的立即数路径（MOV X16, #imm; emit_str_reg_mem）也受此影响——立即数被偏移值覆盖。
+- **AArch64 GC GOTCHA**: GC 虚拟栈扫描器（`karte_virtual_stack_scanner`）和 `root_scanner.rs` 使用硬编码的 `0x0000_7fff_ffff_ffff`（x86_64 用户空间上限 128TB）过滤堆指针。AArch64 用户空间上限为 `0x0000_ffffffffffff`（256TB），堆地址超过 x86_64 上限，导致 GC 拒绝所有 AArch64 堆指针→对象被错误回收→指针悬空。**修复**: 使用 `(value as isize) > 0` 检测内核地址（最高位为1），替代硬编码上限。
 - **SSA GOTCHA**: SSA rename_block_recursive 必须使用支配树子节点遍历（而不是 CFG 后继 + idom 检查），否则合并块会被遗漏导致寄存器使用未重命名
 - **PHI GOTCHA**: MIR while/if-else 的 Phi 节点通过 `phi_store_map` 在 LIR 中用 Store64/Load64 传递值（span={MAX,MAX} 标记）。Memory2Reg 的 `transform_with_phi_support` fallback 在回溯 CFG 前驱链时必须在每个块检查已插入的 phi 节点，而非仅仅查找 Store——否则循环头中的 phi target 栈槽不会被正确替换，导致寄存器分配器将地址寄存器映射到值寄存器而 SIGSEGV。while 循环 Phi 的 incoming predecessor 必须是实际持有 Goto 终结符的块（if-else 的 merge_block），而非原始的 loop_body。
 - **IF-ELSE PHI GOTCHA**: if-else 变量变异需要在 merge_block 插入 Phi 节点。预分析（while 循环第一步）期间必须跳过 Phi 生成（analysis_mode=true），且分析完成后必须清理孤立的分析块。变量绑定必须遍历所有作用域（ctx.scopes），因为 if-else 的 phi 更新可能在嵌套作用域中。
