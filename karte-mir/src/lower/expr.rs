@@ -3983,12 +3983,7 @@ fn lower_function_call(
         }
         _ => {
             // 视为标准 Closure 结构体：必须含有 function_ptr / env_ptr 字段。
-            // 🔧 关键修复：如果是闭包参数，使用func_temp（临时变量）而不是func_val（类型标记）
-            let object_for_field_access = if is_closure_parameter {
-                func_temp.clone()
-            } else {
-                func_val.clone()
-            };
+            let object_for_field_access = func_temp.clone();
 
             let function_ptr_temp = ctx.new_temp();
             ctx.add_statement(Statement::FieldAccess {
@@ -4005,15 +4000,11 @@ fn lower_function_call(
                 span,
             });
 
-            // 在消费arg_vals之前，先标注返回值类型
-            // 这对于identity闭包等返回函数的情况很重要
             annotate_closure_return_value(ctx, destination, &arg_vals);
 
-            // 统一：env 作为第一个参数传入
             let mut final_args = vec![env_ptr_temp];
             final_args.extend(arg_vals);
 
-            // 解析function_ptr_temp获取实际函数名
             let resolved_func_ptr = ctx.resolve_value(&function_ptr_temp);
             if let Value::Function {
                 name: func_name, ..
@@ -4028,7 +4019,6 @@ fn lower_function_call(
                     args: final_args,
                     span,
                 });
-                // 标注返回类型（如果返回函数/闭包）
                 annotate_function_return_type(ctx, func_name, destination);
             } else {
                 ctx.add_statement(Statement::Call {

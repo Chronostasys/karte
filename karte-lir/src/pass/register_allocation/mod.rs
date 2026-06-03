@@ -401,6 +401,66 @@ impl SimpleStackRegisterAllocation {
             }
         }
 
+        // 🔧 收集 Call/CallIndirect 中使用的所有虚拟寄存器及其 Move/Load64 源操作数
+        // 这些寄存器在 instruction_lowering_pass 中被直接使用。
+        // apply_allocation_with_spilling 可能插入临时 load/store，覆盖这些物理寄存器。
+        // 禁止其他虚拟寄存器复用这些寄存器的物理寄存器。
+        let mut call_arg_operand_registers: HashSet<Register> = HashSet::new();
+        
+        // 首先收集 args 和 arg_operands 中的虚拟寄存器
+        for inst in &function.instructions {
+            match inst {
+                Instruction::Call { args, arg_operands, .. } |
+                Instruction::CallIndirect { args, arg_operands, .. } => {
+                    for op in arg_operands {
+                        if let Operand::Register { id } = op {
+                            if id.is_virtual() {
+                                call_arg_operand_registers.insert(*id);
+                            }
+                        }
+                    }
+                    for reg in args {
+                        if reg.is_virtual() {
+                            call_arg_operand_registers.insert(*reg);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        // 传递性收集：Move 和 Load64 的源操作数
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for inst in &function.instructions {
+                if let Instruction::Move { dst, src, .. } = inst {
+                    if let Register::Virtual(_) = dst {
+                        if call_arg_operand_registers.contains(dst) {
+                            if let Operand::Register { id } = src {
+                                if id.is_virtual() && !call_arg_operand_registers.contains(id) {
+                                    call_arg_operand_registers.insert(*id);
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Instruction::Load64 { dst, addr, .. } = inst {
+                    if let Register::Virtual(_) = dst {
+                        if call_arg_operand_registers.contains(dst) {
+                            if let Register::Virtual(_) = addr {
+                                if !call_arg_operand_registers.contains(addr) {
+                                    call_arg_operand_registers.insert(*addr);
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // 第四步：基于生命周期分析为其他虚拟寄存器分配物理寄存器
         info!("🔧 第四步：分配其他虚拟寄存器");
 
@@ -480,6 +540,7 @@ impl SimpleStackRegisterAllocation {
                         physical_reg,
                         &allocation_map,
                         &lifetime_map,
+                        &call_arg_operand_registers,
                     );
 
                     if can_reuse {
@@ -546,6 +607,7 @@ impl SimpleStackRegisterAllocation {
         physical_reg: u8,
         allocation_map: &HashMap<Register, AllocationTarget>,
         lifetime_map: &HashMap<Register, (usize, usize)>,
+        call_arg_operand_registers: &HashSet<Register>,
     ) -> bool {
         let (current_start, current_end) =
             lifetime_map.get(&virtual_reg).copied().unwrap_or((0, 0));
@@ -563,6 +625,19 @@ impl SimpleStackRegisterAllocation {
         for (allocated_virtual_reg, target) in &sorted_entries {
             if let AllocationTarget::Register(allocated_physical_reg) = target {
                 if *allocated_physical_reg == physical_reg {
+                    // 🔧 保护 Call/CallIndirect 相关的虚拟寄存器不被复用
+                    let is_current_protected = call_arg_operand_registers.contains(&virtual_reg);
+                    let is_allocated_protected = call_arg_operand_registers.contains(allocated_virtual_reg);
+                        
+                    if is_allocated_protected || is_current_protected {
+                        debug!(
+                            "  ❌ 物理寄存器 r{} 受保护（allocated={:?} protected={}, current={:?} protected={}）",
+                            physical_reg, allocated_virtual_reg, is_allocated_protected,
+                            virtual_reg, is_current_protected
+                        );
+                        return false;
+                    }
+
                     let (allocated_start, allocated_end) = lifetime_map
                         .get(allocated_virtual_reg)
                         .copied()

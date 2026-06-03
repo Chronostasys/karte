@@ -1419,6 +1419,11 @@ fn main() -> number {
             eprintln!("跳过 {} - AOT (ELF) 不支持 macOS", test_name);
             return;
         }
+        // AOT 编译当前仅支持 x86_64，其他架构跳过
+        if !cfg!(target_arch = "x86_64") {
+            eprintln!("跳过 {} - AOT 编译当前仅支持 x86_64", test_name);
+            return;
+        }
         let (tokens, _) = tokenize(code);
         let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
         assert!(
