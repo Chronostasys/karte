@@ -192,9 +192,12 @@ impl RootScanner {
 
         #[cfg(target_pointer_width = "64")]
         {
-            // 64位系统：用户空间通常在低地址
-            // 避免内核空间地址 (通常 > 0x0000_7fff_ffff_ffff)
-            if addr > 0x0000_7fff_ffff_ffff {
+            // 64位系统：用户空间地址范围检查
+            // 🔧 修复：使用 (addr as isize) > 0 代替硬编码的 0x7FFFFFFFFFFF
+            // x86_64 用户空间上限：0x00007FFFFFFFFFFF (128TB)
+            // AArch64 用户空间上限：0x0000FFFFFFFFFFFF (256TB)
+            // 内核地址特征：最高位为1（即作为 isize 时为负数）
+            if (addr as isize) <= 0 {
                 return false;
             }
         }

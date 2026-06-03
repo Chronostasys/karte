@@ -256,8 +256,11 @@ unsafe fn karte_virtual_stack_scanner(
         // 启发式检查：可能是指针吗？
         if value != 0 && value % 8 == 0 {
             // 检查是否在用户空间地址范围内
-            // 避免内核地址 (> 0x0000_7fff_ffff_ffff) 和明显无效地址 (< 0x1000)
-            if value > 0x1000 && value < 0x0000_7fff_ffff_ffff {
+            // 🔧 修复：使用 (value as isize) > 0 代替硬编码的 0x7FFFFFFFFFFF
+            // x86_64 用户空间上限：0x00007FFFFFFFFFFF (128TB)
+            // AArch64 用户空间上限：0x0000FFFFFFFFFFFF (256TB)
+            // 内核地址特征：最高位为1（即作为 isize 时为负数）
+            if value > 0x1000 && (value as isize) > 0 {
                 // 🔧 修复：返回栈位置的地址（指向对象指针的指针），而不是对象指针本身
                 // mark_ptr 期望接收指向对象指针的指针，它会解引用获取实际的对象指针
                 log::debug!("  [ROOT] stack_loc={:p} -> heap_ptr=0x{:X}", current, value);

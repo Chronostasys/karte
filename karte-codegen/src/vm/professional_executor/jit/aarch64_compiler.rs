@@ -1394,9 +1394,10 @@ impl AArch64Compiler {
             }
             Operand::Immediate { value } => {
                 // AArch64没有直接的立即数存储，需要先加载到临时寄存器
-                let temp_reg = AArch64Register::X16 as u8;
-                self.emit_mov_reg_imm64(code_builder, temp_reg, *value);
-                self.emit_str_reg_mem(code_builder, temp_reg, addr_reg, offset as i32);
+                // 🔧 修复：对于大偏移情况，使用 X16 存值、X17 存偏移，避免 X16 冲突
+                let val_reg = AArch64Register::X16 as u8;
+                self.emit_mov_reg_imm64(code_builder, val_reg, *value);
+                self.emit_str_reg_mem(code_builder, val_reg, addr_reg, offset as i32);
             }
             Operand::Label { id } => {
                 // store64 [addr + offset], label - 存储标签绝对地址
@@ -2098,19 +2099,64 @@ impl AArch64Compiler {
         code_builder.emit_u32(ldp_post);
 
         // 步骤2：从虚拟栈恢复寄存器
+        // 🔧 关键修复：vm_sp(X10) 和 vm_fp(X11) 必须最后恢复。
+        // 因为 ldr x10, [x10, #offset] 会覆盖基址寄存器 x10，
+        // 导致后续 ldr 使用错误的基地址读取。
+        // 方案：先恢复所有非 vm_sp/vm_fp 的寄存器，然后把当前 vm_sp（save后的值）
+        // 保存到 X9，再恢复 vm_sp/vm_fp，最后用 X9 计算恢复后的 vm_sp。
         if !regs.is_empty() {
-            // 先用偏移加载所有寄存器（保持虚拟SP不变）
+            let total_offset = stack_space as i32 + 32;
+            let has_vm_sp = regs.contains(&vm_sp_reg);
+            let has_vm_fp = regs.contains(&vm_fp_reg);
+
+            // 2a: 恢复所有非 vm_sp/vm_fp 的寄存器（安全，不会破坏基址）
             for (idx, reg) in regs.iter().enumerate() {
-                self.emit_ldr_reg_mem(code_builder, *reg, vm_sp_reg, (idx * 8) as i32);
+                if *reg != vm_sp_reg && *reg != vm_fp_reg {
+                    self.emit_ldr_reg_mem(code_builder, *reg, vm_sp_reg, (idx * 8) as i32);
+                }
             }
 
-            // 然后一次性恢复虚拟栈指针
-            self.emit_add_reg_reg_imm(
-                code_builder,
-                vm_sp_reg,
-                vm_sp_reg,
-                stack_space as i32 + 32,
-            );
+            if has_vm_sp || has_vm_fp {
+                // 2b: 恢复 vm_fp（不是基址，安全）
+                // 🔧 修复：不再使用 X9 作为临时寄存器。
+                // X9 是 caller-saved 寄存器，在步骤 2a 中被恢复到保存前的值。
+                // 如果使用 X9 作为临时寄存器，X9 的保存值就会丢失，
+                // 导致后续代码使用错误的值（X9 = vm_sp 而非原始值）。
+                // 正确做法：直接用 x10 作为基地址恢复 vm_fp 和 vm_sp，
+                // 然后 add x10, x10, #total_offset 恢复到 save 前的值。
+                if has_vm_fp {
+                    for (idx, reg) in regs.iter().enumerate() {
+                        if *reg == vm_fp_reg {
+                            self.emit_ldr_reg_mem(code_builder, *reg, vm_sp_reg, (idx * 8) as i32);
+                        }
+                    }
+                }
+
+                // 2c: 恢复 vm_sp
+                // ldr x10, [x10, #vm_sp_offset] 加载的是 save 时存储的 x10 值
+                // （即已经减去了 total_offset 的 vm_sp），所以 x10 的值不变。
+                // 然后直接 add x10, x10, #total_offset 恢复到原始 vm_sp。
+                if has_vm_sp {
+                    for (idx, reg) in regs.iter().enumerate() {
+                        if *reg == vm_sp_reg {
+                            self.emit_ldr_reg_mem(code_builder, *reg, vm_sp_reg, (idx * 8) as i32);
+                        }
+                    }
+                }
+
+                // 2d: 直接在 vm_sp 上加 total_offset 恢复到 save 前的值
+                // ldr 加载的值等于当前 x10（因为 save 时存的就是减去了 offset 的 x10），
+                // 所以 add x10, x10, #total_offset = 原始 vm_sp
+                self.emit_add_reg_reg_imm(code_builder, vm_sp_reg, vm_sp_reg, total_offset);
+            } else {
+                // 没有 vm_sp/vm_fp，直接恢复虚拟栈指针
+                self.emit_add_reg_reg_imm(
+                    code_builder,
+                    vm_sp_reg,
+                    vm_sp_reg,
+                    total_offset,
+                );
+            }
         }
     }
 
@@ -2331,9 +2377,14 @@ impl AArch64Compiler {
             code_builder.emit_bytes(&instruction.to_le_bytes());
         } else {
             // 大偏移：使用临时寄存器 + 寄存器偏移模式
-            // 1. MOV X16, #offset
-            // 2. LDR Xt, [Xn, X16]
-            let temp_reg = AArch64Register::X16 as u8;
+            // 🔧 修复：当 dst 或 base 与 X16 冲突时，使用 X17 作为偏移寄存器
+            let default_temp = AArch64Register::X16 as u8;
+            let alt_temp = AArch64Register::X17 as u8;
+            let temp_reg = if dst == default_temp || base == default_temp {
+                alt_temp
+            } else {
+                default_temp
+            };
             self.emit_mov_reg_imm64(code_builder, temp_reg, offset as i64);
 
             // LDR Xt, [Xn, Xm] - 寄存器偏移模式
@@ -2367,9 +2418,15 @@ impl AArch64Compiler {
             code_builder.emit_bytes(&instruction.to_le_bytes());
         } else {
             // 大偏移：使用临时寄存器 + 寄存器偏移模式
-            // 1. MOV X16, #offset
-            // 2. STR Xt, [Xn, X16]
-            let temp_reg = AArch64Register::X16 as u8;
+            // 🔧 修复：当 src 或 base 与 X16 冲突时，使用 X17 作为偏移寄存器
+            // 避免偏移加载覆盖 src/base 寄存器的值
+            let default_temp = AArch64Register::X16 as u8;
+            let alt_temp = AArch64Register::X17 as u8;
+            let temp_reg = if src == default_temp || base == default_temp {
+                alt_temp
+            } else {
+                default_temp
+            };
             self.emit_mov_reg_imm64(code_builder, temp_reg, offset as i64);
 
             // STR Xt, [Xn, Xm] - 寄存器偏移模式
