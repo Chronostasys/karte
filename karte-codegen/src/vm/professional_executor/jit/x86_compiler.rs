@@ -10,6 +10,8 @@
 use super::code_buffer::{CodeBuilder, JumpType};
 use super::compiler_trait::*;
 use super::ffi::{RuntimeArg, RuntimeCall};
+use super::jit_utils;
+include!("dispatch_macro.rs");
 use karte_common::calling_convention::{CallingConvention, CC};
 use karte_lir::{ComparisonCondition, Instruction, LirFunction, LirProgram, Operand, Register};
 use std::collections::HashMap;
@@ -101,190 +103,20 @@ impl X86Compiler {
             log::debug!("x86 编译指令: {:?}", instruction);
         }
 
+        // x86 特有的 Nop 和 IntCast 处理
         match instruction {
-            Instruction::Move { dst, src, .. } => self.compile_move(dst, src, code_builder),
-            Instruction::Add { dst, src1, src2, .. } => {
-                self.compile_add(dst, src1, src2, code_builder)
-            }
-            Instruction::Sub { dst, src1, src2, .. } => {
-                self.compile_sub(dst, src1, src2, code_builder)
-            }
-            Instruction::Mul { dst, src1, src2, .. } => {
-                self.compile_mul(dst, src1, src2, code_builder)
-            }
-            Instruction::Div { dst, src1, src2, .. } => {
-                self.compile_div(dst, src1, src2, code_builder)
-            }
-            Instruction::Mod { dst, src1, src2, .. } => {
-                self.compile_mod(dst, src1, src2, code_builder)
-            }
-            Instruction::BitAnd { dst, src1, src2, .. } => {
-                self.compile_bitand(dst, src1, src2, code_builder)
-            }
-            Instruction::BitOr { dst, src1, src2, .. } => {
-                self.compile_bitor(dst, src1, src2, code_builder)
-            }
-            Instruction::BitXor { dst, src1, src2, .. } => {
-                self.compile_bitxor(dst, src1, src2, code_builder)
-            }
-            Instruction::ShiftLeft { dst, src1, src2, .. } => {
-                self.compile_shift_left(dst, src1, src2, code_builder)
-            }
-            Instruction::ShiftRight { dst, src1, src2, .. } => {
-                self.compile_shift_right(dst, src1, src2, code_builder)
-            }
-            Instruction::BitNot { dst, src, .. } => {
-                self.compile_bitnot(dst, src, code_builder)
-            }
-            Instruction::IntCast { dst, src, src_bits, dst_bits, signed, span: _ } => {
-                self.compile_intcast(dst, src, *src_bits, *dst_bits, *signed, code_builder)
-            }
-            Instruction::Compare { src1, src2, .. } => {
-                self.compile_compare(src1, src2, code_builder)
-            }
-            Instruction::CompareSet { dst, condition, src1, src2, .. } => {
-                self.compile_compare_set(dst, condition, src1, src2, code_builder)
-            }
-            Instruction::Jump { target, .. } => self.compile_jump(target, code_builder),
-            Instruction::JumpEqual { target, .. } => {
-                self.compile_conditional_jump(JumpType::ConditionalEqual, target, code_builder)
-            }
-            Instruction::JumpNotEqual { target, .. } => self.compile_conditional_jump(
-                JumpType::ConditionalNotEqual,
-                target,
-                code_builder,
-            ),
-            Instruction::JumpLess { target, .. } => {
-                self.compile_conditional_jump(JumpType::ConditionalLess, target, code_builder)
-            }
-            Instruction::JumpLessEqual { target, .. } => self.compile_conditional_jump(
-                JumpType::ConditionalLessEqual,
-                target,
-                code_builder,
-            ),
-            Instruction::JumpGreater { target, .. } => self.compile_conditional_jump(
-                JumpType::ConditionalGreater,
-                target,
-                code_builder,
-            ),
-            Instruction::JumpGreaterEqual { target, .. } => self.compile_conditional_jump(
-                JumpType::ConditionalGreaterEqual,
-                target,
-                code_builder,
-            ),
-            Instruction::Call { target, .. } => self.compile_call(target, code_builder),
-            Instruction::JumpIndirect { function_register, .. } => {
-                self.compile_jump_indirect(function_register, code_builder)
-            }
-            Instruction::JumpRegister { target_register, .. } => {
-                self.compile_jump_register(target_register, code_builder)
-            }
-            Instruction::Return { value, .. } => {
-                self.compile_return(value.as_ref(), code_builder, is_main_function)
-            }
-            Instruction::Label { id, .. } => {
-                let label_name = format!("label_{}", id.0);
-                code_builder.define_label(&label_name)?;
-                Ok(())
-            }
-            Instruction::Load64 { dst, addr, offset, .. } => {
-                self.compile_load64(dst, addr, *offset, code_builder)
-            }
-            Instruction::Store64 { addr, offset, src, .. } => {
-                self.compile_store64(addr, *offset, src, code_builder)
-            }
-            Instruction::Load32 { dst, addr, offset, .. } => {
-                self.compile_load32(dst, addr, *offset, code_builder)
-            }
-            Instruction::Store32 { addr, offset, src, .. } => {
-                self.compile_store32(addr, *offset, src, code_builder)
-            }
-            Instruction::Load8 { dst, addr, offset, .. } => {
-                self.compile_load8(dst, addr, *offset, code_builder)
-            }
-            Instruction::Store8 { addr, offset, src, .. } => {
-                self.compile_store8(addr, *offset, src, code_builder)
-            }
-            // StorePair 拆分为两条 Store64
-            Instruction::StorePair { addr, offset, src1, src2, .. } => {
-                self.compile_store_pair(addr, *offset, src1, src2, code_builder)
-            }
-            // LoadPair 拆分为两条 Load64
-            Instruction::LoadPair { dst1, dst2, addr, offset, .. } => {
-                self.compile_load_pair(dst1, dst2, addr, *offset, code_builder)
-            }
-            Instruction::Alloc { dst, size, alignment, allocation_type, .. } => {
-                self.compile_alloc(dst, *size, *alignment, allocation_type, code_builder)
-            }
-            Instruction::Free { addr, .. } => self.compile_free(addr, code_builder),
-            Instruction::Retain { value, .. } => self.compile_retain(value, code_builder),
-            Instruction::Release { value, .. } => self.compile_release(value, code_builder),
-            Instruction::Safepoint { .. } => self.compile_safepoint(code_builder),
-            Instruction::StringConcat { dst, left, right, .. } => {
-                self.compile_string_concat(dst, left, right, code_builder)
-            }
-            Instruction::StringEqual { dst, left, right, .. } => {
-                self.compile_string_equal(dst, left, right, code_builder)
-            }
-            Instruction::StringCharAt { dst, str_ptr, index, .. } => {
-                self.compile_string_char_at(dst, str_ptr, index, code_builder)
-            }
-            Instruction::StringSubstring { dst, str_ptr, start, length, .. } => {
-                self.compile_string_substring(dst, str_ptr, start, length, code_builder)
-            }
-            Instruction::StringContains { dst, str_ptr, char_code, .. } => {
-                self.compile_string_contains(dst, str_ptr, char_code, code_builder)
-            }
-            Instruction::SplitCount { dst, str_ptr, separator, .. } => {
-                self.compile_split_count(dst, str_ptr, separator, code_builder)
-            }
-            Instruction::Trim { dst, str_ptr, .. } => {
-                self.compile_trim(dst, str_ptr, code_builder)
-            }
-            Instruction::ToString { dst, value, .. } => {
-                self.compile_to_string(dst, value, code_builder)
-            }
-            Instruction::PrintString { ptr, .. } => {
-                self.compile_print_string(ptr, code_builder)
-            }
-            Instruction::PrintNumber { value, .. } => {
-                self.compile_print_number(value, code_builder)
-            }
-            Instruction::PrintBool { value, .. } => {
-                self.compile_print_bool(value, code_builder)
-            }
             Instruction::Nop { .. } => {
-                // x86 NOP
                 code_builder.emit_byte(0x90);
-                Ok(())
+                return Ok(());
             }
-            Instruction::StructAlloc { .. } => {
-                // StructAlloc 在指令降级后应该是 Alloc
-                Err("StructAlloc 应该已经被降级为 Alloc".into())
+            Instruction::IntCast { dst, src, src_bits, dst_bits, signed, .. } => {
+                return self.compile_intcast(dst, src, *src_bits, *dst_bits, *signed, code_builder);
             }
-            Instruction::StructFieldLoad { .. }
-            | Instruction::StructFieldStore { .. }
-            | Instruction::StructFieldAddr { .. } => {
-                // 这些应该已经被降级为 Load64/Store64
-                Err(format!("Struct 操作应该已经被降级: {:?}", instruction).into())
-            }
-            Instruction::MemCopy { .. } => {
-                // MemCopy 应该已经被降级为多条 Load64/Store64
-                Err("MemCopy 应该已经被降级".into())
-            }
-            Instruction::LoadGlobal { dst, name, .. } => {
-                self.compile_load_global(dst, name, code_builder)
-            }
-            Instruction::GcRegOp { is_push, .. } => {
-                self.compile_gc_reg_op(*is_push, code_builder)
-            }
-            Instruction::Phi { .. } => {
-                // Phi 应该已经被消除
-                log::warn!("Phi 指令出现在 JIT 编译阶段，这表明 SSA 降级不完整");
-                Ok(())
-            }
-            _ => Err(format!("不支持的指令类型: {:?}", instruction).into()),
+            _ => {}
         }
+
+        // 共享的指令 dispatch（通过宏生成，避免跨平台重复）
+        dispatch_compile_instruction!(self, instruction, code_builder, is_main_function, None, "x86_64")
     }
 }
 
@@ -1469,295 +1301,22 @@ impl X86Compiler {
         Ok(())
     }
 
-    /// StorePair 拆分为两条 Store64
-    fn compile_store_pair(
-        &self,
-        addr: &Register,
-        offset: i64,
-        src1: &Register,
-        src2: &Register,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        // store64 [addr + offset], src1
-        self.compile_store64(
-            addr,
-            offset,
-            &Operand::Register { id: *src1 },
-            code_builder,
-        )?;
-        // store64 [addr + offset + 8], src2
-        self.compile_store64(
-            addr,
-            offset + 8,
-            &Operand::Register { id: *src2 },
-            code_builder,
-        )
-    }
-
-    /// LoadPair 拆分为两条 Load64
-    fn compile_load_pair(
-        &self,
-        dst1: &Register,
-        dst2: &Register,
-        addr: &Register,
-        offset: i64,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        // load64 dst1, [addr + offset]
-        self.compile_load64(dst1, addr, offset, code_builder)?;
-        // load64 dst2, [addr + offset + 8]
-        self.compile_load64(dst2, addr, offset + 8, code_builder)
-    }
-
-    fn compile_alloc(
-        &self,
-        dst: &Register,
-        size: usize,
-        alignment: usize,
-        allocation_type: &karte_lir::AllocationType,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        match allocation_type {
-            karte_lir::AllocationType::Heap => {
-                let call = RuntimeCall::alloc(size, alignment);
-                self.emit_runtime_call(code_builder, call, Some(dst))
-            }
-            _ => Err(format!(
-                "Alloc instruction with unsupported allocation type: {:?}",
-                allocation_type
-            ).into()),
-        }
-    }
-
-    fn compile_free(
-        &self,
-        addr: &Register,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::free(*addr);
-        self.emit_runtime_call(code_builder, call, None)
-    }
-
-    fn compile_retain(
-        &self,
-        value: &Register,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::retain(*value);
-        self.emit_runtime_call(code_builder, call, None)
-    }
-
-    fn compile_release(
-        &self,
-        value: &Register,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::release(*value);
-        self.emit_runtime_call(code_builder, call, None)
-    }
-
-    fn compile_safepoint(&self, code_builder: &mut CodeBuilder) -> crate::Result<()> {
-        let call = RuntimeCall::gc_safepoint();
-        self.emit_runtime_call(code_builder, call, None)
-    }
-
-    fn compile_string_concat(
-        &self,
-        dst: &Register,
-        left: &Register,
-        right: &Register,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::string_concat(*left, *right);
-        self.emit_runtime_call(code_builder, call, Some(dst))
-    }
-
-    fn compile_string_equal(
-        &self,
-        dst: &Register,
-        left: &Register,
-        right: &Register,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::string_equal(*left, *right);
-        self.emit_runtime_call(code_builder, call, Some(dst))
-    }
-
-    fn compile_string_char_at(
-        &self,
-        dst: &Register,
-        str_ptr: &Register,
-        index: &Register,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::string_char_at(*str_ptr, *index);
-        self.emit_runtime_call(code_builder, call, Some(dst))
-    }
-
-    fn compile_string_substring(
-        &self,
-        dst: &Register,
-        str_ptr: &Register,
-        start: &Register,
-        length: &Register,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::string_substring(*str_ptr, *start, *length);
-        self.emit_runtime_call(code_builder, call, Some(dst))
-    }
-
-    fn compile_string_contains(
-        &self,
-        dst: &Register,
-        str_ptr: &Register,
-        char_code: &Register,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::string_contains(*str_ptr, *char_code);
-        self.emit_runtime_call(code_builder, call, Some(dst))
-    }
-
-    fn compile_split_count(
-        &self,
-        dst: &Register,
-        str_ptr: &Register,
-        separator: &Register,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::split_count(*str_ptr, *separator);
-        self.emit_runtime_call(code_builder, call, Some(dst))
-    }
-
-    fn compile_trim(
-        &self,
-        dst: &Register,
-        str_ptr: &Register,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::trim(*str_ptr);
-        self.emit_runtime_call(code_builder, call, Some(dst))
-    }
-
-    fn compile_to_string(
-        &self,
-        dst: &Register,
-        value: &Register,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::to_string(*value);
-        self.emit_runtime_call(code_builder, call, Some(dst))
-    }
-
-    fn compile_print_string(
-        &self,
-        ptr: &Register,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::print_string(*ptr);
-        self.emit_runtime_call(code_builder, call, None)
-    }
-
-    fn compile_print_number(
-        &self,
-        value: &Register,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::print_number(*value);
-        self.emit_runtime_call(code_builder, call, None)
-    }
-
-    fn compile_print_bool(
-        &self,
-        value: &Register,
-        code_builder: &mut CodeBuilder,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::print_bool(*value);
-        self.emit_runtime_call(code_builder, call, None)
-    }
-
-    fn emit_runtime_call(
-        &self,
-        code_builder: &mut CodeBuilder,
-        call: RuntimeCall,
-        result: Option<&Register>,
-    ) -> crate::Result<()> {
-        let return_reg: u8 = 0; // RAX
-        let exclude: Vec<u8> = if result.is_some() && call.expects_result() {
-            vec![return_reg]
-        } else {
-            Vec::new()
-        };
-        let (saved_regs, stack_space) =
-            self.save_call_clobbered_registers(code_builder, &exclude);
-
-        // System V ABI 参数寄存器: RDI, RSI, RDX, RCX, R8, R9
-        let arg_regs = [7u8, 6, 2, 1, 8, 9]; // RDI=7, RSI=6, RDX=2, RCX=1, R8=8, R9=9
-
-        // 参数传递：使用系统栈中转，避免寄存器交换冲突
-        // 例如 left→RSI, right→RDI 时，顺序 MOV 会导致两个参数变成同一个值
-        // Phase 1: 将所有源寄存器值压入系统栈
-        let mut reg_arg_count = 0usize;
-        for arg in call.args.iter() {
-            if let RuntimeArg::Register(reg) = arg {
-                let src_reg = self.get_physical_register(reg)?;
-                self.emit_push(code_builder, src_reg);
-                reg_arg_count += 1;
-            }
-        }
-
-        // Phase 2: 从系统栈弹出到目标寄存器（逆序弹出，因为栈是 LIFO）
-        // 压入顺序: [arg0_src, arg1_src, ...]，栈顶是最后一个
-        // 弹出逆序: 先弹 argN_src → targetN, 再弹 argN-1_src → targetN-1, ...
-        let mut pop_remaining = reg_arg_count;
-        for (idx, arg) in call.args.iter().enumerate().rev() {
-            if idx >= arg_regs.len() {
-                return Err(format!(
-                    "runtime call {} 超过支持的参数数量(最多 {})",
-                    call.intrinsic.name(),
-                    arg_regs.len()
-                ).into());
-            }
-            let target_reg = arg_regs[idx];
-            match arg {
-                RuntimeArg::Register(_) => {
-                    self.emit_pop(code_builder, target_reg);
-                    pop_remaining -= 1;
-                }
-                RuntimeArg::Immediate(_) => {
-                    // 立即数参数不参与 push/pop，稍后设置
-                }
-            }
-        }
-
-        // Phase 3: 设置立即数参数（寄存器参数已就位，不会被立即数覆盖）
-        for (idx, arg) in call.args.iter().enumerate() {
-            if let RuntimeArg::Immediate(value) = arg {
-                let target_reg = arg_regs[idx];
-                self.emit_mov_reg_imm64(code_builder, target_reg, *value);
-            }
-        }
-
-        self.emit_call_absolute(code_builder, call.intrinsic.symbol_ptr() as u64);
-        self.restore_call_clobbered_registers(code_builder, &saved_regs, stack_space);
-
-        if let (Some(dst), true) = (result, call.expects_result()) {
-            let dst_reg = self.get_physical_register(dst)?;
-            if dst_reg != return_reg {
-                self.emit_mov_reg_reg(code_builder, dst_reg, return_reg);
-            }
-        }
-
-        Ok(())
-    }
+    // ========================================================================
+    // Runtime 委托函数：全部使用 JitCompiler trait 的 default method 实现
+    // （alloc/free/retain/release/safepoint/string_*/print_*/to_string）
+    // 这些函数的逻辑在所有平台完全相同：构造 RuntimeCall → emit_runtime_call
+    //
+    // emit_runtime_call 的实现在 impl JitCompiler for X86Compiler 块中
+    // ========================================================================
 }
 
 // ============================================================================
 // 函数序言和尾声
 // ============================================================================
 impl X86Compiler {
-    /// 判断是否为入口函数
+    /// 判断是否为入口函数（使用统一的 jit_utils 版本）
     fn is_entry_function(&self, name: &str, program: &LirProgram) -> bool {
-        program.main_function.as_deref() == Some(name)
+        jit_utils::is_entry_function(name, program)
     }
 
     /// 获取当前函数使用的 callee-saved 寄存器（使用映射后的编号）
@@ -2309,7 +1868,7 @@ impl X86Compiler {
             return (regs, 0);
         }
 
-        let stack_space = align_to(regs.len() * 8, 16);
+        let stack_space = jit_utils::align_to(regs.len() * 8, 16);
         let vm_sp: u8 = 10;
 
         // 1. 在系统栈上保存 vm_sp（用于恢复 R10，因为 C 函数会破坏它）
@@ -2362,28 +1921,12 @@ impl X86Compiler {
     }
 }
 
-fn align_to(value: usize, alignment: usize) -> usize {
-    ((value + alignment - 1) / alignment) * alignment
-}
+// ============================================================================
+// JitCompiler trait 实现
 
 /// 计算函数需要的栈帧空间（从 StackFrameLayoutPass 生成的 Add FP, offset 指令推断）
 fn compute_stack_frame_size(function: &LirFunction, frame_pointer_reg: u8) -> usize {
-    let mut max_offset = 0i64;
-    for inst in &function.instructions {
-        if let Instruction::Add { src1, src2, .. } = inst {
-            if let Operand::Register { id: Register::Physical(fp) } = src1 {
-                if *fp == frame_pointer_reg {
-                    if let Operand::Immediate { value } = src2 {
-                        if *value < 0 {
-                            max_offset = max_offset.max(-*value);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    // 对齐到 16 字节
-    align_to(max_offset as usize, 16)
+    jit_utils::compute_stack_frame_size(function, frame_pointer_reg)
 }
 
 // ============================================================================
@@ -2447,31 +1990,8 @@ impl JitCompiler for X86Compiler {
             self.compile_instruction(instruction, &mut code_builder, program, is_main_function)?;
         }
 
-        // 获取label和修补信息
-        let labels = code_builder.exported_labels().clone();
-        let pending_jumps = code_builder.exported_pending_jumps().clone();
-        let pending_label_addresses = code_builder.exported_pending_label_addresses().clone();
-        let pending_adrs = code_builder.exported_pending_adrs().clone();
-
-        let machine_code = code_builder.finalize()?;
-
-        let mut compiled_function = CompiledFunction::new(
-            function.name.clone(),
-            machine_code,
-            0,
-        );
-
-        compiled_function.labels = labels;
-        compiled_function.pending_jumps = pending_jumps;
-        compiled_function.pending_label_addresses = pending_label_addresses;
-        compiled_function.pending_adrs = pending_adrs;
-
-        log::info!(
-            "x86_64: 函数 '{}' 编译完成，机器码大小: {} 字节",
-            function.name,
-            compiled_function.code_size()
-        );
-
+        // 构建 CompiledFunction（通过共享宏统一 finalize 逻辑）
+        let compiled_function = finalize_compiled_function!(code_builder, function.name, "x86_64");
         Ok(compiled_function)
     }
 
@@ -2498,6 +2018,78 @@ impl JitCompiler for X86Compiler {
             caller_saved: vec![0, 1, 2, 6, 7, 8, 9, 10, 11],
             callee_saved: vec![3, 5, 12, 13, 14, 15],
         }
+    }
+
+    /// x86_64 平台的 runtime call 实现
+    ///
+    /// x86_64 使用系统栈中转（push/pop）来避免参数寄存器冲突，
+    /// 返回值在 restore 之后移动（因为 RAX 在 exclude 列表中）。
+    fn emit_runtime_call(
+        &mut self,
+        code_builder: &mut CodeBuilder,
+        call: RuntimeCall,
+        result: Option<&Register>,
+        _ctx: Option<super::compiler_trait::RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let return_reg: u8 = 0; // RAX
+        let exclude: Vec<u8> = self.compute_exclude_for_runtime_call(&call, result, return_reg);
+        let (saved_regs, stack_space) =
+            self.save_call_clobbered_registers(code_builder, &exclude);
+
+        // System V ABI 参数寄存器: RDI, RSI, RDX, RCX, R8, R9
+        let arg_regs = [7u8, 6, 2, 1, 8, 9]; // RDI=7, RSI=6, RDX=2, RCX=1, R8=8, R9=9
+
+        // 参数传递：使用系统栈中转，避免寄存器交换冲突
+        // Phase 1: 将所有源寄存器值压入系统栈
+        let mut reg_arg_count = 0usize;
+        for arg in call.args.iter() {
+            if let RuntimeArg::Register(reg) = arg {
+                let src_reg = self.get_physical_register(reg)?;
+                self.emit_push(code_builder, src_reg);
+                reg_arg_count += 1;
+            }
+        }
+
+        // Phase 2: 从系统栈弹出到目标寄存器（逆序弹出，因为栈是 LIFO）
+        let _pop_remaining = reg_arg_count;
+        for (idx, arg) in call.args.iter().enumerate().rev() {
+            if idx >= arg_regs.len() {
+                return Err(format!(
+                    "runtime call {} 超过支持的参数数量(最多 {})",
+                    call.intrinsic.name(),
+                    arg_regs.len()
+                ).into());
+            }
+            let target_reg = arg_regs[idx];
+            match arg {
+                RuntimeArg::Register(_) => {
+                    self.emit_pop(code_builder, target_reg);
+                }
+                RuntimeArg::Immediate(_) => {
+                    // 立即数参数不参与 push/pop，稍后设置
+                }
+            }
+        }
+
+        // Phase 3: 设置立即数参数（寄存器参数已就位，不会被立即数覆盖）
+        for (idx, arg) in call.args.iter().enumerate() {
+            if let RuntimeArg::Immediate(value) = arg {
+                let target_reg = arg_regs[idx];
+                self.emit_mov_reg_imm64(code_builder, target_reg, *value);
+            }
+        }
+
+        self.emit_call_absolute(code_builder, call.intrinsic.symbol_ptr() as u64);
+        self.restore_call_clobbered_registers(code_builder, &saved_regs, stack_space);
+
+        if let (Some(dst), true) = (result, call.expects_result()) {
+            let dst_reg = self.get_physical_register(dst)?;
+            if dst_reg != return_reg {
+                self.emit_mov_reg_reg(code_builder, dst_reg, return_reg);
+            }
+        }
+
+        Ok(())
     }
 }
 

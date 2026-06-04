@@ -5,6 +5,8 @@
 use super::code_buffer::{CodeBuilder, JumpType};
 use super::compiler_trait::*;
 use super::ffi::{RuntimeArg, RuntimeCall, RuntimeIntrinsic};
+use super::jit_utils;
+include!("dispatch_macro.rs");
 use karte_common::calling_convention::{CallingConvention, PhysicalRegister, CC};
 use karte_lir::{ComparisonCondition, Instruction, LirFunction, LirProgram, Operand, Register};
 use std::collections::HashMap;
@@ -226,214 +228,36 @@ impl AArch64Compiler {
             log::debug!("编译AArch64指令: {}", instruction);
         }
 
+        // AArch64 特有的 Nop、CallIndirect、IntCast、StorePair、LoadPair 处理
         match instruction {
-            Instruction::Move { dst, src, .. } => self.compile_move(dst, src, code_builder),
-            Instruction::Add {
-                dst, src1, src2, ..
-            } => self.compile_add(dst, src1, src2, code_builder),
-            Instruction::Sub {
-                dst, src1, src2, ..
-            } => self.compile_sub(dst, src1, src2, code_builder),
-            Instruction::Mul {
-                dst, src1, src2, ..
-            } => self.compile_mul(dst, src1, src2, code_builder),
-            Instruction::Div {
-                dst, src1, src2, ..
-            } => self.compile_div(dst, src1, src2, code_builder),
-            Instruction::Mod {
-                dst, src1, src2, ..
-            } => self.compile_mod(dst, src1, src2, code_builder),
-            Instruction::Compare { src1, src2, .. } => {
-                self.compile_compare(src1, src2, code_builder)
-            }
-            Instruction::CompareSet { dst, condition, src1, src2, .. } => {
-                self.compile_compare_set(dst, condition, src1, src2, code_builder)
-            }
-            Instruction::Jump { target, .. } => self.compile_jump(target, code_builder),
-            Instruction::JumpEqual { target, .. } => {
-                self.compile_conditional_jump(JumpType::ConditionalEqual, target, code_builder)
-            }
-            Instruction::JumpNotEqual { target, .. } => {
-                self.compile_conditional_jump(JumpType::ConditionalNotEqual, target, code_builder)
-            }
-            Instruction::JumpLess { target, .. } => {
-                self.compile_conditional_jump(JumpType::ConditionalLess, target, code_builder)
-            }
-            Instruction::JumpLessEqual { target, .. } => {
-                self.compile_conditional_jump(JumpType::ConditionalLessEqual, target, code_builder)
-            }
-            Instruction::JumpGreater { target, .. } => {
-                self.compile_conditional_jump(JumpType::ConditionalGreater, target, code_builder)
-            }
-            Instruction::JumpGreaterEqual { target, .. } => self.compile_conditional_jump(
-                JumpType::ConditionalGreaterEqual,
-                target,
-                code_builder,
-            ),
-            Instruction::Call { target, .. } => self.compile_call(target, code_builder),
-            Instruction::JumpIndirect {
-                function_register, ..
-            } => self.compile_jump_indirect(function_register, code_builder),
-            Instruction::JumpRegister {
-                target_register, ..
-            } => self.compile_jump_register(target_register, code_builder),
-            Instruction::Return { value, .. } => {
-                self.compile_return(value.as_ref(), code_builder, is_main_function)
-            }
-            Instruction::Label { id, .. } => {
-                let label_name = format!("label_{}", id.0);
-                code_builder.define_label(&label_name)?;
-                Ok(())
-            }
-            Instruction::Load64 {
-                dst, addr, offset, ..
-            } => self.compile_load64(dst, addr, *offset, code_builder),
-            Instruction::Store64 {
-                addr, offset, src, ..
-            } => self.compile_store64(addr, *offset, src, code_builder),
-            Instruction::Load32 { dst, addr, offset, .. } => {
-                self.compile_load32(dst, addr, *offset, code_builder)
-            }
-            Instruction::Store32 { addr, offset, src, .. } => {
-                self.compile_store32(addr, *offset, src, code_builder)
-            }
-            Instruction::Load8 { dst, addr, offset, .. } => {
-                self.compile_load8(dst, addr, *offset, code_builder)
-            }
-            Instruction::Store8 { addr, offset, src, .. } => {
-                self.compile_store8(addr, *offset, src, code_builder)
-            }
-            Instruction::StorePair {
-                addr,
-                offset,
-                src1,
-                src2,
-                ..
-            } => self.compile_store_pair(addr, *offset, src1, src2, code_builder),
-            Instruction::LoadPair {
-                dst1,
-                dst2,
-                addr,
-                offset,
-                ..
-            } => self.compile_load_pair(dst1, dst2, addr, *offset, code_builder),
-            Instruction::Alloc {
-                dst,
-                size,
-                alignment,
-                allocation_type,
-                ..
-            } => self.compile_alloc(
-                dst,
-                *size,
-                *alignment,
-                allocation_type,
-                code_builder,
-                instruction_index,
-                function,
-            ),
-            Instruction::Free { addr, .. } => {
-                self.compile_free(addr, code_builder, instruction_index, function)
-            }
-            Instruction::Retain { value, .. } => {
-                self.compile_retain(value, code_builder, instruction_index, function)
-            }
-            Instruction::Release { value, .. } => {
-                self.compile_release(value, code_builder, instruction_index, function)
-            }
-            Instruction::Safepoint { .. } => {
-                self.compile_safepoint(code_builder, instruction_index, function)
-            }
-            Instruction::StringConcat { dst, left, right, .. } => {
-                self.compile_string_concat(dst, left, right, code_builder, instruction_index, function)
-            }
-            Instruction::StringEqual { dst, left, right, .. } => {
-                self.compile_string_equal(dst, left, right, code_builder, instruction_index, function)
-            }
-            Instruction::StringCharAt { dst, str_ptr, index, .. } => {
-                self.compile_string_char_at(dst, str_ptr, index, code_builder, instruction_index, function)
-            }
-            Instruction::StringSubstring { dst, str_ptr, start, length, .. } => {
-                self.compile_string_substring(dst, str_ptr, start, length, code_builder, instruction_index, function)
-            }
-            Instruction::StringContains { dst, str_ptr, char_code, .. } => {
-                self.compile_string_contains(dst, str_ptr, char_code, code_builder, instruction_index, function)
-            }
-            Instruction::SplitCount { dst, str_ptr, separator, .. } => {
-                self.compile_split_count(dst, str_ptr, separator, code_builder, instruction_index, function)
-            }
-            Instruction::Trim { dst, str_ptr, .. } => {
-                self.compile_trim(dst, str_ptr, code_builder, instruction_index, function)
-            }
-            Instruction::ToString { dst, value, .. } => {
-                self.compile_to_string(dst, value, code_builder, instruction_index, function)
-            }
-            Instruction::PrintString { ptr, .. } => {
-                self.compile_print_string(ptr, code_builder, instruction_index, function)
-            }
-            Instruction::PrintNumber { value, .. } => {
-                self.compile_print_number(value, code_builder, instruction_index, function)
-            }
-            Instruction::PrintBool { value, .. } => {
-                self.compile_print_bool(value, code_builder, instruction_index, function)
-            }
             Instruction::Nop { .. } => {
-                // AArch64 NOP指令 (0xD503201F)
                 self.emit_nop(code_builder);
-                Ok(())
+                return Ok(());
             }
-            Instruction::BitAnd {
-                dst, src1, src2, ..
-            } => self.compile_bitand(dst, src1, src2, code_builder),
-            Instruction::BitOr {
-                dst, src1, src2, ..
-            } => self.compile_bitor(dst, src1, src2, code_builder),
-            Instruction::BitXor {
-                dst, src1, src2, ..
-            } => self.compile_bitxor(dst, src1, src2, code_builder),
-            Instruction::BitNot { dst, src, .. } => {
-                self.compile_bitnot(dst, src, code_builder)
+            Instruction::CallIndirect { function_register, .. } => {
+                return self.compile_call_indirect(function_register, code_builder);
             }
-            Instruction::ShiftLeft {
-                dst, src1, src2, ..
-            } => self.compile_shift_left(dst, src1, src2, code_builder),
-            Instruction::ShiftRight {
-                dst, src1, src2, ..
-            } => self.compile_shift_right(dst, src1, src2, code_builder),
-            Instruction::IntCast { dst, src, src_bits, dst_bits, signed, span: _ } => {
-                self.compile_intcast(dst, src, *src_bits, *dst_bits, *signed, code_builder)
+            Instruction::IntCast { dst, src, src_bits, dst_bits, signed, .. } => {
+                return self.compile_intcast(dst, src, *src_bits, *dst_bits, *signed, code_builder);
             }
-            Instruction::CallIndirect {
-                function_register,
-                ..
-            } => self.compile_call_indirect(function_register, code_builder),
-            Instruction::StructAlloc { .. } => {
-                // StructAlloc 在指令降级后应该是 Alloc
-                Err("StructAlloc 应该已经被降级为 Alloc".into())
+            // AArch64 原生 STP/LDP 指令（比宏中的 store64+store64 fallback 更高效）
+            Instruction::StorePair { addr, offset, src1, src2, .. } => {
+                return self.compile_store_pair(addr, *offset, src1, src2, code_builder);
             }
-            Instruction::StructFieldLoad { .. }
-            | Instruction::StructFieldStore { .. }
-            | Instruction::StructFieldAddr { .. } => {
-                // 这些应该已经被降级为 Load64/Store64
-                Err(format!("Struct 操作应该已经被降级: {:?}", instruction).into())
+            Instruction::LoadPair { dst1, dst2, addr, offset, .. } => {
+                return self.compile_load_pair(dst1, dst2, addr, *offset, code_builder);
             }
-            Instruction::LoadGlobal { dst, name, .. } => {
-                self.compile_load_global(dst, name, code_builder)
-            }
-            Instruction::GcRegOp { is_push, .. } => {
-                self.compile_gc_reg_op(*is_push, code_builder)
-            }
-            Instruction::Phi { .. } => {
-                // Phi 应该已经被消除
-                log::warn!("Phi 指令出现在 JIT 编译阶段，这表明 SSA 降级不完整");
-                Ok(())
-            }
-            Instruction::MemCopy { .. } => {
-                // MemCopy 应该已经被降级为多条 Load64/Store64
-                Err("MemCopy 应该已经被降级".into())
-            }
-            _ => Err(format!("不支持的AArch64指令类型: {:?}", instruction).into()),
+            _ => {}
         }
+
+        // 构造 AArch64 的 runtime context（包含 instruction_metadata）
+        let ctx = RuntimeCallContext {
+            instruction_index,
+            function,
+        };
+
+        // 共享的指令 dispatch（通过宏生成，避免跨平台重复）
+        dispatch_compile_instruction!(self, instruction, code_builder, is_main_function, Some(ctx), "AArch64")
     }
 
     /// 编译移动指令
@@ -1612,302 +1436,11 @@ impl AArch64Compiler {
         Ok(())
     }
 
-    fn compile_alloc(
-        &mut self,
-        dst: &Register,
-        size: usize,
-        alignment: usize,
-        allocation_type: &karte_lir::AllocationType,
-        code_builder: &mut CodeBuilder,
-        instruction_index: usize,
-        function: &LirFunction,
-    ) -> crate::Result<()> {
-        match allocation_type {
-            karte_lir::AllocationType::Heap => {
-                let call = RuntimeCall::alloc(size, alignment);
-                self.emit_runtime_call(code_builder, call, Some(dst), instruction_index, function)
-            }
-            _ => Err(format!(
-                "Alloc instruction with unsupported allocation type: {:?}",
-                allocation_type
-            ).into()),
-        }
-    }
-
-    fn compile_free(
-        &mut self,
-        addr: &Register,
-        code_builder: &mut CodeBuilder,
-        instruction_index: usize,
-        function: &LirFunction,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::free(*addr);
-        self.emit_runtime_call(code_builder, call, None, instruction_index, function)
-    }
-
-    fn compile_retain(
-        &mut self,
-        value: &Register,
-        code_builder: &mut CodeBuilder,
-        instruction_index: usize,
-        function: &LirFunction,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::retain(*value);
-        self.emit_runtime_call(code_builder, call, None, instruction_index, function)
-    }
-
-    fn compile_release(
-        &mut self,
-        value: &Register,
-        code_builder: &mut CodeBuilder,
-        instruction_index: usize,
-        function: &LirFunction,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::release(*value);
-        self.emit_runtime_call(code_builder, call, None, instruction_index, function)
-    }
-
-    fn compile_safepoint(
-        &mut self,
-        code_builder: &mut CodeBuilder,
-        instruction_index: usize,
-        function: &LirFunction,
-    ) -> crate::Result<()> {
-        // GC 安全点：调用运行时函数
-        let call = RuntimeCall::gc_safepoint();
-        self.emit_runtime_call(code_builder, call, None, instruction_index, function)
-    }
-
-    fn compile_string_concat(
-        &mut self,
-        dst: &Register,
-        left: &Register,
-        right: &Register,
-        code_builder: &mut CodeBuilder,
-        instruction_index: usize,
-        function: &LirFunction,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::string_concat(*left, *right);
-        self.emit_runtime_call(code_builder, call, Some(dst), instruction_index, function)
-    }
-
-    fn compile_string_equal(
-        &mut self,
-        dst: &Register,
-        left: &Register,
-        right: &Register,
-        code_builder: &mut CodeBuilder,
-        instruction_index: usize,
-        function: &LirFunction,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::string_equal(*left, *right);
-        self.emit_runtime_call(code_builder, call, Some(dst), instruction_index, function)
-    }
-
-    fn compile_string_char_at(
-        &mut self,
-        dst: &Register,
-        str_ptr: &Register,
-        index: &Register,
-        code_builder: &mut CodeBuilder,
-        instruction_index: usize,
-        function: &LirFunction,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::string_char_at(*str_ptr, *index);
-        self.emit_runtime_call(code_builder, call, Some(dst), instruction_index, function)
-    }
-
-    fn compile_string_substring(
-        &mut self,
-        dst: &Register,
-        str_ptr: &Register,
-        start: &Register,
-        length: &Register,
-        code_builder: &mut CodeBuilder,
-        instruction_index: usize,
-        function: &LirFunction,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::string_substring(*str_ptr, *start, *length);
-        self.emit_runtime_call(code_builder, call, Some(dst), instruction_index, function)
-    }
-
-    fn compile_string_contains(
-        &mut self,
-        dst: &Register,
-        str_ptr: &Register,
-        char_code: &Register,
-        code_builder: &mut CodeBuilder,
-        instruction_index: usize,
-        function: &LirFunction,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::string_contains(*str_ptr, *char_code);
-        self.emit_runtime_call(code_builder, call, Some(dst), instruction_index, function)
-    }
-
-    fn compile_split_count(
-        &mut self,
-        dst: &Register,
-        str_ptr: &Register,
-        separator: &Register,
-        code_builder: &mut CodeBuilder,
-        instruction_index: usize,
-        function: &LirFunction,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::split_count(*str_ptr, *separator);
-        self.emit_runtime_call(code_builder, call, Some(dst), instruction_index, function)
-    }
-
-    fn compile_trim(
-        &mut self,
-        dst: &Register,
-        str_ptr: &Register,
-        code_builder: &mut CodeBuilder,
-        instruction_index: usize,
-        function: &LirFunction,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::trim(*str_ptr);
-        self.emit_runtime_call(code_builder, call, Some(dst), instruction_index, function)
-    }
-
-    fn compile_to_string(
-        &mut self,
-        dst: &Register,
-        value: &Register,
-        code_builder: &mut CodeBuilder,
-        instruction_index: usize,
-        function: &LirFunction,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::to_string(*value);
-        self.emit_runtime_call(code_builder, call, Some(dst), instruction_index, function)
-    }
-
-    fn compile_print_string(
-        &mut self,
-        ptr: &Register,
-        code_builder: &mut CodeBuilder,
-        instruction_index: usize,
-        function: &LirFunction,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::print_string(*ptr);
-        self.emit_runtime_call(code_builder, call, None, instruction_index, function)
-    }
-
-    fn compile_print_number(
-        &mut self,
-        value: &Register,
-        code_builder: &mut CodeBuilder,
-        instruction_index: usize,
-        function: &LirFunction,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::print_number(*value);
-        self.emit_runtime_call(code_builder, call, None, instruction_index, function)
-    }
-
-    fn compile_print_bool(
-        &mut self,
-        value: &Register,
-        code_builder: &mut CodeBuilder,
-        instruction_index: usize,
-        function: &LirFunction,
-    ) -> crate::Result<()> {
-        let call = RuntimeCall::print_bool(*value);
-        self.emit_runtime_call(code_builder, call, None, instruction_index, function)
-    }
-
-    fn emit_runtime_call(
-        &mut self,
-        code_builder: &mut CodeBuilder,
-        call: RuntimeCall,
-        result: Option<&Register>,
-        instruction_index: usize,
-        function: &LirFunction,
-    ) -> crate::Result<()> {
-        let return_reg = AArch64Register::X0 as u8;
-
-        // 🔧 修复：与 x86_64 保持一致的 exclude 逻辑
-        // 只在有返回值且调用确实返回结果时，exclude 返回值寄存器
-        // 对于 safepoint/alloc/free 等无返回值的调用，不 exclude 任何寄存器
-        let exclude: Vec<u8> = if result.is_some() && call.expects_result() {
-            if let Some(dst) = result {
-                if let Ok(dst_reg) = self.get_physical_register(dst) {
-                    vec![dst_reg]
-                } else {
-                    vec![]
-                }
-            } else {
-                vec![]
-            }
-        } else {
-            vec![]
-        };
-
-        // 🔧 从 metadata 中获取调用位置活跃寄存器信息
-        // metadata 包含预先计算的活跃寄存器列表
-        let live_register_info = function
-            .instruction_metadata
-            .get(&instruction_index)
-            .and_then(|meta| meta.live_register_info.as_ref());
-
-        // 🔧 判断是否是 GC safepoint：AllocAligned, Free, GcSafepoint 会触发 GC
-        let is_gc_safepoint = matches!(
-            call.intrinsic,
-            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::Free | RuntimeIntrinsic::GcSafepoint
-        );
-
-        let (saved_regs, stack_space) = self.save_call_clobbered_registers(
-            code_builder,
-            &exclude,
-            live_register_info,
-            is_gc_safepoint,
-        );
-
-        let arg_regs = [
-            AArch64Register::X0 as u8,
-            AArch64Register::X1 as u8,
-            AArch64Register::X2 as u8,
-            AArch64Register::X3 as u8,
-            AArch64Register::X4 as u8,
-            AArch64Register::X5 as u8,
-            AArch64Register::X6 as u8,
-            AArch64Register::X7 as u8,
-        ];
-
-        for (idx, arg) in call.args.iter().enumerate() {
-            if idx >= arg_regs.len() {
-                return Err(format!(
-                    "runtime call {} 超出支持的参数数量(最多 {})",
-                    call.intrinsic.name(),
-                    arg_regs.len()
-                ).into());
-            }
-            let target_reg = arg_regs[idx];
-            match arg {
-                RuntimeArg::Immediate(value) => {
-                    self.emit_mov_reg_imm64(code_builder, target_reg, *value);
-                }
-                RuntimeArg::Register(reg) => {
-                    let src_reg = self.get_physical_register(reg)?;
-                    if src_reg != target_reg {
-                        self.emit_mov_reg_reg(code_builder, target_reg, src_reg);
-                    }
-                }
-            }
-        }
-
-        self.emit_runtime_dispatch(code_builder, call.intrinsic.symbol_ptr() as u64);
-
-        // 🔧 修复：在 restore 之前把返回值从 X0 移到 dst_reg
-        if let (Some(dst), true) = (result, call.expects_result()) {
-            let dst_reg = self.get_physical_register(dst)?;
-            if dst_reg != return_reg {
-                self.emit_mov_reg_reg(code_builder, dst_reg, return_reg);
-            }
-        }
-
-        self.restore_call_clobbered_registers(code_builder, &saved_regs, stack_space);
-
-        Ok(())
-    }
+    // ========================================================================
+    // Runtime 委托函数：全部使用 JitCompiler trait 的 default method 实现
+    // （alloc/free/retain/release/safepoint/string_*/print_*/to_string）
+    // emit_runtime_call 的实现在 impl JitCompiler for AArch64Compiler 块中
+    // ========================================================================
 
     // ============= AArch64机器码生成方法 =============
 
@@ -2707,13 +2240,7 @@ impl AArch64Compiler {
 
     /// 判断当前函数是否是程序入口（main）
     fn is_entry_function(&self, function_name: &str, program: &LirProgram) -> bool {
-        if let Some(main) = &program.main_function {
-            if main == function_name {
-                return true;
-            }
-        }
-
-        function_name == "main" || function_name == karte_mir::lower::SCRIPT_ENTRY_POINT
+        jit_utils::is_entry_function(function_name, program)
     }
 
     /// 保存 callee-saved 寄存器
@@ -2949,46 +2476,17 @@ impl JitCompiler for AArch64Compiler {
             )?;
         }
 
-        // 获取label信息（在finalize之前）
-        let labels = code_builder.exported_labels().clone();
-        let pending_jumps = code_builder.exported_pending_jumps().clone();
-        let pending_label_addresses = code_builder.exported_pending_label_addresses().clone();
-        let pending_adrs = code_builder.exported_pending_adrs().clone();
-
+        // debug 模式下输出 label 信息
         if self.debug_mode {
-            log::debug!(
-                "🔧 编译函数 '{}' 时收集到 {} 个label",
-                function.name,
-                labels.len()
-            );
-            for (label, offset) in &labels {
+            let labels = code_builder.exported_labels();
+            log::debug!("🔧 编译函数 '{}' 时收集到 {} 个label", function.name, labels.len());
+            for (label, offset) in labels {
                 log::debug!("🔧   label: {} -> 偏移: {}", label, offset);
             }
         }
 
-        // 第一轮编译：不修补跨函数标签引用，直接返回未修补的机器码
-        let machine_code = code_builder.finalize()?;
-
-        // 创建编译后的函数
-        let mut compiled_function = CompiledFunction::new(
-            function.name.clone(),
-            machine_code,
-            0, // 入口点就是函数开始
-        );
-
-        // 保存label信息和待修补信息
-        compiled_function.labels = labels;
-        compiled_function.pending_jumps = pending_jumps;
-        compiled_function.pending_label_addresses = pending_label_addresses;
-        compiled_function.pending_adrs = pending_adrs;
-
-        log::info!(
-            "AArch64: 函数 '{}' 编译完成，机器码大小: {} 字节\n{}",
-            function.name,
-            compiled_function.code_size(),
-            compiled_function
-        );
-
+        // 构建 CompiledFunction（通过共享宏统一 finalize 逻辑）
+        let compiled_function = finalize_compiled_function!(code_builder, function.name, "AArch64");
         Ok(compiled_function)
     }
 
@@ -3014,10 +2512,100 @@ impl JitCompiler for AArch64Compiler {
     fn get_calling_convention(&self) -> CallingConventionInfo {
         self.ffi_calling_convention.clone()
     }
-}
 
-fn align_to(value: usize, alignment: usize) -> usize {
-    ((value + alignment - 1) / alignment) * alignment
+    /// AArch64 平台的 runtime call 实现
+    ///
+    /// AArch64 特点：
+    /// - 使用 `RuntimeCallContext` 获取 instruction_metadata 中的活跃寄存器信息
+    /// - GC safepoint 会保存所有活跃寄存器 + 被使用的 callee-saved 寄存器
+    /// - vm_sp(X10)/vm_fp(X11) 需要额外保存到系统栈（AAPCS64 caller-saved）
+    /// - 返回值在 restore 之前移动（避免 restore 覆盖 X0）
+    fn emit_runtime_call(
+        &mut self,
+        code_builder: &mut CodeBuilder,
+        call: RuntimeCall,
+        result: Option<&Register>,
+        ctx: Option<super::compiler_trait::RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let return_reg = AArch64Register::X0 as u8;
+
+        // 从 ctx 中提取平台特定的上下文信息
+        let (instruction_index, function) = ctx.as_ref()
+            .map(|c| (c.instruction_index, c.function))
+            .unzip();
+        let instruction_index = instruction_index.unwrap_or(0);
+
+        // 使用统一的 exclude 计算
+        let exclude: Vec<u8> = self.compute_exclude_for_runtime_call(&call, result, return_reg);
+
+        // 从 metadata 中获取调用位置活跃寄存器信息
+        let live_register_info = function
+            .and_then(|f| {
+                f.instruction_metadata
+                    .get(&instruction_index)
+                    .and_then(|meta| meta.live_register_info.as_ref())
+            });
+
+        // 判断是否是 GC safepoint：AllocAligned, Free, GcSafepoint 会触发 GC
+        let is_gc_safepoint = matches!(
+            call.intrinsic,
+            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::Free | RuntimeIntrinsic::GcSafepoint
+        );
+
+        let (saved_regs, stack_space) = self.save_call_clobbered_registers(
+            code_builder,
+            &exclude,
+            live_register_info,
+            is_gc_safepoint,
+        );
+
+        let arg_regs = [
+            AArch64Register::X0 as u8,
+            AArch64Register::X1 as u8,
+            AArch64Register::X2 as u8,
+            AArch64Register::X3 as u8,
+            AArch64Register::X4 as u8,
+            AArch64Register::X5 as u8,
+            AArch64Register::X6 as u8,
+            AArch64Register::X7 as u8,
+        ];
+
+        for (idx, arg) in call.args.iter().enumerate() {
+            if idx >= arg_regs.len() {
+                return Err(format!(
+                    "runtime call {} 超出支持的参数数量(最多 {})",
+                    call.intrinsic.name(),
+                    arg_regs.len()
+                ).into());
+            }
+            let target_reg = arg_regs[idx];
+            match arg {
+                RuntimeArg::Immediate(value) => {
+                    self.emit_mov_reg_imm64(code_builder, target_reg, *value);
+                }
+                RuntimeArg::Register(reg) => {
+                    let src_reg = self.get_physical_register(reg)?;
+                    if src_reg != target_reg {
+                        self.emit_mov_reg_reg(code_builder, target_reg, src_reg);
+                    }
+                }
+            }
+        }
+
+        self.emit_runtime_dispatch(code_builder, call.intrinsic.symbol_ptr() as u64);
+
+        // 在 restore 之前把返回值从 X0 移到 dst_reg
+        if let (Some(dst), true) = (result, call.expects_result()) {
+            let dst_reg = self.get_physical_register(dst)?;
+            if dst_reg != return_reg {
+                self.emit_mov_reg_reg(code_builder, dst_reg, return_reg);
+            }
+        }
+
+        self.restore_call_clobbered_registers(code_builder, &saved_regs, stack_space);
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

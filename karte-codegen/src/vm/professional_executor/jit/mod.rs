@@ -13,6 +13,7 @@ pub mod code_cache;
 pub mod compiler_trait;
 pub mod execution_mode;
 pub mod ffi;
+pub mod jit_utils;
 pub mod memory_manager;
 pub mod riscv_compiler;
 pub mod runtime;
