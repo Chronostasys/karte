@@ -64,9 +64,12 @@ impl LirLoweringContext {
 
         // 根据值类型确定需要的空间大小
         let size = match value {
-            Value::Boolean { .. }
-            | Value::Constructor { .. }
-            | Value::QualifiedConstructor { .. } => 16, // Tagged Union需要16字节（tag + data）
+            Value::Boolean { .. } => 16, // Tagged Union需要16字节（tag + data）
+            Value::Constructor { args, .. }
+            | Value::QualifiedConstructor { args, .. } => {
+                // tag(8字节) + 每个参数8字节
+                8 + args.len() * 8
+            }
             _ => 8, // 其他值8字节
         };
 
@@ -75,7 +78,7 @@ impl LirLoweringContext {
             // 在栈上分配空间来存储这个值
             self.add_instruction(Instruction::Alloc {
                 dst: address_register,
-                size,
+                size: size as usize,
                 alignment: 8,
                 allocation_type: AllocationType::Stack,
                 span: karte_diagnostics::Span::dummy(),
@@ -91,6 +94,16 @@ impl LirLoweringContext {
     /// 将值存储到已分配的栈位置
     pub fn store_value_to_stack(&mut self, value: &Value, src_operand: Operand) {
         let value_key = value_to_key(value);
+
+        // 🔧 常量追踪：记录存储到栈的立即数，或清除非常量记录
+        match &src_operand {
+            Operand::Immediate { value: const_val } => {
+                self.known_constants.insert(value_key.clone(), *const_val);
+            }
+            _ => {
+                self.known_constants.remove(&value_key);
+            }
+        }
 
         // 确保值已经有栈空间分配
         let stack_addr = if let Some(&existing_addr) = self.stack_allocations.get(&value_key) {
@@ -254,6 +267,16 @@ impl LirLoweringContext {
                 value_key,
                 stack_addr
             );
+            // 对于构造器值（Constructor/QualifiedConstructor），即使栈槽已存在，
+            // 也需要重新生成初始化代码。因为同一个构造器可能出现在多个互斥的基本块中
+            //（例如 match 的不同 arm），它们不能共享同一次初始化。
+            // 每个引用点都必须独立初始化该栈槽，否则运行时可能读到未初始化的数据。
+            match value {
+                Value::Constructor { .. } | Value::QualifiedConstructor { .. } => {
+                    self.initialize_stack_value(value, stack_addr);
+                }
+                _ => {}
+            }
             return Operand::Register { id: stack_addr };
         }
 
@@ -286,6 +309,28 @@ impl LirLoweringContext {
         }
 
         Operand::Register { id: stack_addr }
+    }
+
+    /// 🔧 带常量传播的 R-Value 降级
+    /// 与 lower_to_rvalue 类似，但对于被追踪为常量的 Temp/Variable 值，
+    /// 直接返回 Operand::Immediate 而不是从栈加载。
+    /// 仅在算术运算（Add/Sub/Mul/Div/位运算）中使用，
+    /// 避免在 Compare 等不支持双 Immediate 操作数的指令中使用。
+    pub(super) fn lower_to_rvalue_with_const_prop(&mut self, value: &Value) -> Operand {
+        // 检查该值是否被追踪为已知常量
+        if matches!(value, Value::Temp { .. } | Value::Variable { .. }) {
+            let key = value_to_key(value);
+            if let Some(&const_val) = self.known_constants.get(&key) {
+                log::debug!(
+                    "🔧 常量传播: {} -> 立即数 {} (跳过栈加载)",
+                    key,
+                    const_val
+                );
+                return Operand::Immediate { value: const_val };
+            }
+        }
+        // 非常量值，使用标准路径
+        self.lower_to_rvalue(value)
     }
 
     /// 🔧 新增：R-Value降级 - 返回值的内容
@@ -413,11 +458,10 @@ impl LirLoweringContext {
                 });
             }
 
-            Value::Constructor { name, arg, .. } => {
+            Value::Constructor { name, args, .. } => {
                 // 创建Tagged Union for constructor
-                let struct_addr = self.create_tagged_union_for_constructor(name, arg.as_deref());
+                let struct_addr = self.create_tagged_union_for_constructor(name, &args);
 
-                // 将Tagged Union的内容复制到栈位置（16字节）
                 // 复制tag字段（8字节）
                 let temp_tag = self.current_function_mut().new_register();
                 self.add_instruction(Instruction::Load64 {
@@ -447,19 +491,29 @@ impl LirLoweringContext {
                     src: Operand::Register { id: temp_data },
                     span: karte_diagnostics::Span::dummy(),
                 });
+
+                // 多参数：存储额外参数到 offset 16, 24, ...
+                for (i, arg_val) in args.iter().skip(1).enumerate() {
+                    let arg_rvalue = self.lower_to_rvalue(arg_val);
+                    self.add_instruction(Instruction::Store64 {
+                        addr: stack_addr,
+                        offset: (16 + i * 8) as i64,
+                        src: arg_rvalue,
+                        span: karte_diagnostics::Span::dummy(),
+                    });
+                }
             }
 
             Value::QualifiedConstructor {
                 type_name,
                 constructor_name,
-                arg,
+                args,
                 ..
             } => {
-                // 创建Tagged Union for qualified constructor
                 let struct_addr = self.create_tagged_union_for_qualified_constructor(
                     type_name,
                     constructor_name,
-                    arg.as_deref(),
+                    args,
                 );
 
                 // 将Tagged Union的内容复制到栈位置（16字节）
@@ -492,6 +546,17 @@ impl LirLoweringContext {
                     src: Operand::Register { id: temp_data },
                     span: karte_diagnostics::Span::dummy(),
                 });
+
+                // 多参数：存储额外参数到 offset 16, 24, ...
+                for (i, arg_val) in args.iter().skip(1).enumerate() {
+                    let arg_rvalue = self.lower_to_rvalue(arg_val);
+                    self.add_instruction(Instruction::Store64 {
+                        addr: stack_addr,
+                        offset: (16 + i * 8) as i64,
+                        src: arg_rvalue,
+                        span: karte_diagnostics::Span::dummy(),
+                    });
+                }
             }
 
             Value::Variable { .. } | Value::Temp { .. } => {
@@ -602,19 +667,49 @@ impl LirLoweringContext {
                         alignment: 8,
                     }
                 }
+                n if n.starts_with("__tuple_") => {
+                    // 匿名元组结构体：所有字段都是 8 字节对齐
+                    let field_count = fields.len();
+                    let struct_fields: Vec<StructField> = (0..field_count)
+                        .map(|i| StructField {
+                            name: format!("_{}", i),
+                            offset: i * 8,
+                            size: 8,
+                            alignment: 8,
+                        })
+                        .collect();
+                    StructLayout {
+                        name: name.to_string(),
+                        fields: struct_fields,
+                        total_size: field_count * 8,
+                        alignment: 8,
+                    }
+                }
                 _ => {
                     return Err(format!("未知的结构体类型: {}", name));
                 }
             }
         };
 
-        // 2. 分配内存：发出一条Alloc指令，在栈上为整个结构体分配一块连续的内存
+        // 2. 分配内存
+        // 闭包结构体（Closure）会在创建函数返回后被调用方使用，
+        // 栈分配的内存在函数返回后会被后续调用覆盖，因此必须使用堆分配。
+        // 同理，任何通过 return 逃逸的 struct 也必须使用堆分配：
+        // 如果 struct 值被赋给一个将被 return 返回的 temp，则 force_struct_heap 标志
+        // 会在 stmt lowering 阶段被设置，确保此处使用堆分配。
+        let alloc_type = if name == "Closure" || self.force_struct_heap {
+            AllocationType::Heap
+        } else {
+            AllocationType::Stack
+        };
+        // 消费 force_struct_heap 标志
+        self.force_struct_heap = false;
         let struct_ptr = self.current_function_mut().new_register();
         self.add_instruction(Instruction::Alloc {
             dst: struct_ptr,
             size: layout.total_size,
             alignment: layout.alignment,
-            allocation_type: AllocationType::Stack,
+            allocation_type: alloc_type,
             span: karte_diagnostics::Span::dummy(),
         });
 
@@ -662,6 +757,12 @@ impl LirLoweringContext {
                 match field_name {
                     "function_ptr" | "env_ptr" => "Closure".to_string(), // 闭包结构体字段
                     _ => {
+                        // 元组字段: _0, _1, _2...
+                        if let Some(index_str) = field_name.strip_prefix('_') {
+                            if let Ok(index) = index_str.parse::<usize>() {
+                                return Ok(index * 8);
+                            }
+                        }
                         // 如果无法推断，尝试从所有已知类型中查找包含该字段的类型
                         for layout in self.global_struct_types.values() {
                             if layout.fields.iter().any(|f| f.name == field_name) {
@@ -702,6 +803,15 @@ impl LirLoweringContext {
                     "env_ptr" => Ok(8),
                     _ => Err(format!("Unknown field '{}' in Closure", field_name)),
                 },
+                n if n.starts_with("__tuple_") => {
+                    // 元组字段偏移: _0 → 0, _1 → 8, _2 → 16
+                    if let Some(index_str) = field_name.strip_prefix('_') {
+                        if let Ok(index) = index_str.parse::<usize>() {
+                            return Ok(index * 8);
+                        }
+                    }
+                    Err(format!("Invalid tuple field '{}' in {}", field_name, struct_name))
+                }
                 _ => Err(format!("Unknown struct type: {}", struct_name)),
             }
         }
@@ -712,12 +822,12 @@ impl LirLoweringContext {
     pub(super) fn create_tagged_union_for_constructor(
         &mut self,
         name: &str,
-        arg: Option<&Value>,
+        args: &[Value],
     ) -> Register {
         let tag_id = self.tagged_union_manager.get_constructor_id(name);
         let struct_addr = self.current_function_mut().new_register();
 
-        let data_operand = arg.map(|arg_value| self.lower_to_rvalue(arg_value));
+        let data_operand = args.first().map(|arg_value| self.lower_to_rvalue(arg_value));
 
         let instructions = self.tagged_union_manager.generate_allocation_instructions(
             struct_addr,
@@ -739,14 +849,14 @@ impl LirLoweringContext {
         &mut self,
         type_name: &str,
         constructor_name: &str,
-        arg: Option<&Value>,
+        args: &[Value],
     ) -> Register {
         let tag_id = self
             .tagged_union_manager
             .get_qualified_constructor_id(type_name, constructor_name);
         let struct_addr = self.current_function_mut().new_register();
 
-        let data_operand = arg.map(|arg_value| self.lower_to_rvalue(arg_value));
+        let data_operand = args.first().map(|arg_value| self.lower_to_rvalue(arg_value));
 
         let instructions = self.tagged_union_manager.generate_allocation_instructions(
             struct_addr,
@@ -761,6 +871,7 @@ impl LirLoweringContext {
 
         struct_addr
     }
+
 
     /// 简化的值解析（移除复杂的value_mapping逻辑）
 
@@ -818,6 +929,16 @@ impl LirLoweringContext {
                             temp_values.insert(key);
                         }
                         self.collect_temp_values_from_value(operand, &mut temp_values);
+                    }
+                    Statement::TypeCast {
+                        target, source, ..
+                    } => {
+                        if let Value::Temp { .. } = target {
+                            let key = value_to_key(target);
+                            log::debug!("🔧 发现临时变量(cast target): {}", key);
+                            temp_values.insert(key);
+                        }
+                        self.collect_temp_values_from_value(source, &mut temp_values);
                     }
                     _ => {}
                 }

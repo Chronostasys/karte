@@ -35,3 +35,6 @@ pub use optimization_pipeline::*;
 pub use pass::*;
 pub use struct_layout::*;
 pub use tagged_union::*;
+
+// 统一错误处理
+pub use karte_common::error::{KarteError, Result};

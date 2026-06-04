@@ -7,6 +7,7 @@ use super::analysis::ControlFlowGraph;
 use super::instruction_transformer::IndexInstructionTransformer;
 use super::{AnalysisManager, FunctionPass, PassResult};
 use crate::{Instruction, LirFunction};
+use karte_diagnostics::Span;
 use log::{debug, error, info};
 
 /// φ指令消除Pass
@@ -29,7 +30,7 @@ impl PhiEliminationPass {
         &self,
         function: &mut LirFunction,
         cfg: &ControlFlowGraph,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let mut transformer = IndexInstructionTransformer::new();
 
         // 扫描所有φ指令
@@ -42,25 +43,39 @@ impl PhiEliminationPass {
             {
                 debug!("🔧 处理φ指令 {}: dst={:?}, incoming={:?}", i, dst, incoming);
 
+                // 跳过栈地址 Phi（来自 Memory2Reg 或 lower.rs）
+                // 栈地址 Phi 的 dst 是 Alloc 分配的栈地址。
+                // 值通过 lower.rs 的 phi_store_map Store64 传递，
+                // 不需要 PhiElimination 再生成 Move 或 Store64。
+                let is_stack_addr_phi = function.instructions.iter().any(|instr| {
+                    if let Instruction::Alloc { dst: alloc_dst, .. } = instr {
+                        alloc_dst == dst
+                    } else {
+                        false
+                    }
+                });
+                if is_stack_addr_phi {
+                    debug!("🔧 跳过栈地址 Phi: dst={:?}", dst);
+                    transformer.remove(i);
+                    continue;
+                }
+
                 // 标记φ指令为需要移除
                 transformer.remove(i);
 
                 // 为每个incoming值在对应的前驱块末尾插入mov指令
                 for (source_label, operand) in incoming {
-                    // 使用CFG分析结果找到对应的基本块
                     if let Some(&source_block_id) = cfg.label_to_block.get(source_label) {
-                        // 注意：使用 get_node_by_id 而不是 nodes.get()，因为 block_id 可能不等于数组索引
                         if let Some(source_block) = cfg.get_node_by_id(source_block_id) {
-                            // 在源基本块的末尾插入mov指令
                             let insert_position = self.find_insertion_point(function, source_block);
                             let move_instruction = Instruction::Move {
                                 dst: *dst,
                                 src: operand.clone(),
-                                span: *span,
+                                span: Span { start: usize::MAX, end: usize::MAX },
                             };
                             transformer.insert(insert_position, move_instruction);
                             debug!(
-                                "🔧 在位置 {} 插入 mov {:?}, {:?}",
+                                "🔧 在位置 {} 插入 phi mov {:?}, {:?}",
                                 insert_position, dst, operand
                             );
                         }
@@ -82,8 +97,6 @@ impl PhiEliminationPass {
         let (start, end) = block.instruction_range;
         let mut last_non_control = end;
         let mut control_flow_pos = end;
-
-        // 从后向前扫描，找到最后一个非控制流指令的位置
         for i in (start..end).rev() {
             if i >= function.instructions.len() {
                 continue;
@@ -106,7 +119,6 @@ impl PhiEliminationPass {
             }
         }
 
-        // 在最后一个非控制流指令之后、控制流指令之前插入
         if last_non_control <= control_flow_pos {
             last_non_control
         } else {
@@ -138,6 +150,7 @@ impl FunctionPass for PhiEliminationPass {
                 return PassResult::Failed("Missing CFG analysis".to_string());
             }
         };
+
         match self.eliminate_phi_instructions(function, cfg) {
             Ok(()) => {
                 info!("✅ φ指令消除完成");
@@ -145,7 +158,7 @@ impl FunctionPass for PhiEliminationPass {
             }
             Err(e) => {
                 error!("❌ φ指令消除失败: {}", e);
-                PassResult::Failed(e)
+                PassResult::Failed(e.to_string())
             }
         }
     }

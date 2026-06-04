@@ -148,7 +148,12 @@ impl LifetimeAnalyzer {
                     live_ranges: vec![],
                 });
 
-                lifetime.end = i;
+                // 🔧 修复：函数参数的 end 保留为函数末尾，不缩短
+                // 函数参数可能在函数任意位置被引用（通过不同的 Virtual 寄存器），
+                // 缩短 end 会导致寄存器被错误复用
+                if !lifetime.is_function_parameter {
+                    lifetime.end = i;
+                }
                 lifetime.uses.push(i);
             }
         }
@@ -172,6 +177,136 @@ impl LifetimeAnalyzer {
                             live_ranges: vec![],
                         },
                     );
+                }
+            }
+        }
+
+        // 🔧 关键修复：处理循环回边（back-edge）对生命周期的影响
+        //
+        // 线性扫描不考虑控制流回边，例如 while 循环末尾的 Jump 指令跳回循环头。
+        // 这导致循环体内的寄存器生命周期被低估：
+        //   - 定义在循环体后半段（如指令 73）的寄存器，
+        //     通过回边跳回循环头后，在前半段（如指令 46）被使用
+        //   - 线性扫描算出的生命周期 [46, 73] 看似不与外部寄存器 [4, 12] 重叠
+        //   - 但实际上该寄存器需要跨越整个循环存活
+        //
+        // 修复策略：识别所有回边（Jump/Branch 到更早的 Label），将循环体内
+        // 所有出现过的寄存器的生命周期扩展到覆盖整个循环范围 [loop_start, loop_end]。
+        {
+            // 第一步：建立 LabelId → 指令位置 的映射
+            let mut label_positions: HashMap<usize, usize> = HashMap::new();
+            for (i, instruction) in function.instructions.iter().enumerate() {
+                if let Instruction::Label { id, .. } = instruction {
+                    label_positions.insert(id.0, i);
+                }
+            }
+
+            // 第二步：收集所有回边（跳转目标位置 < 当前位置）
+            // back_edges: Vec<(jump_position, target_position)>
+            let mut back_edges: Vec<(usize, usize)> = Vec::new();
+            for (i, instruction) in function.instructions.iter().enumerate() {
+                let target_id = match instruction {
+                    Instruction::Jump { target, .. } => target.0,
+                    Instruction::JumpNotEqual { target, .. } => target.0,
+                    Instruction::JumpEqual { target, .. } => target.0,
+                    Instruction::JumpGreater { target, .. } => target.0,
+                    Instruction::JumpGreaterEqual { target, .. } => target.0,
+                    Instruction::JumpLess { target, .. } => target.0,
+                    Instruction::JumpLessEqual { target, .. } => target.0,
+                    _ => continue,
+                };
+                if let Some(&target_pos) = label_positions.get(&target_id) {
+                    if target_pos < i {
+                        back_edges.push((i, target_pos));
+                        log::info!(
+                            "🔄 发现循环回边: 指令 {} → 指令 {} (Label {})",
+                            i, target_pos, target_id
+                        );
+                    }
+                }
+            }
+
+            // 第三步：对每个回边，扩展所有与循环范围有交集的寄存器生命周期
+            //
+            // 关键修复：之前的实现只扩展循环指令中"出现"的寄存器，
+            // 但一个在循环前部定义和使用的寄存器（如 tagged union 缓冲地址）
+            // 可能不出现于循环后部（如 bb9），导致其生命周期未被扩展到
+            // 覆盖后部代码，寄存器分配器将其与后部的中间值分配到同一物理寄存器，
+            // 循环第二次迭代时物理寄存器已被覆写，导致 SIGSEGV。
+            //
+            // 正确做法：遍历所有寄存器，只要生命周期与循环范围有交集就扩展。
+            for &(jump_pos, target_pos) in &back_edges {
+                let loop_start = target_pos; // 循环头（Label 位置）
+                let loop_end = jump_pos;     // 回边跳转指令位置
+
+                // 扩展所有与循环范围有交集的寄存器（不仅仅是循环体中出现的）
+                for (reg, lifetime) in lifetimes.iter_mut() {
+                    if lifetime.is_function_parameter {
+                        continue; // 函数参数已经覆盖全范围
+                    }
+                    // 如果寄存器的生命周期与循环范围有交集，扩展到覆盖整个循环
+                    if lifetime.start <= loop_end && lifetime.end >= loop_start {
+                        let old_start = lifetime.start;
+                        let old_end = lifetime.end;
+                        lifetime.start = lifetime.start.min(loop_start);
+                        lifetime.end = lifetime.end.max(loop_end);
+                        if lifetime.start != old_start || lifetime.end != old_end {
+                            log::debug!(
+                                "🔄 扩展循环寄存器 {:?} 生命周期: [{}, {}] → [{}, {}]",
+                                reg, old_start, old_end, lifetime.start, lifetime.end
+                            );
+                        }
+                    }
+                }
+            }
+
+            // 第四步：检测循环携带寄存器（use 在 def 之前），
+            // 将其生命周期 start 扩展到函数开头（position 0）。
+            //
+            // 背景：循环携带寄存器的值在首次迭代时来源于循环前的物理寄存器残留值。
+            // 如果寄存器分配器将该物理寄存器同时分配给了循环前的其他虚拟寄存器，
+            // 首次迭代时物理寄存器中的值是错误的。
+            //
+            // 示例 bug：v_count_init 在 [16] 写 Physical(1)=0，
+            //           v_increment 在 [73] 写 Physical(1)=32，在 [46] 读。
+            //           线性生命周期 [46,73] 不与 [16,16] 重叠，分配器复用 Physical(1)。
+            //           首次迭代时 [46] 读到 0 而非 32。
+            //
+            // 修复：对 use-before-def 的寄存器，将 start 扩展到 0，
+            //       确保它与所有其他寄存器的生命周期冲突，从而获得独立的物理寄存器。
+            if !back_edges.is_empty() {
+                // 收集每个寄存器的首次定义位置
+                let mut first_def_positions: HashMap<Register, usize> = HashMap::new();
+                for (i, instruction) in function.instructions.iter().enumerate() {
+                    if let Some(def_reg) = instruction.get_def_register() {
+                        first_def_positions.entry(def_reg).or_insert(i);
+                    }
+                }
+
+                // 对每个非函数参数寄存器，检查是否 use-before-def
+                for (reg, lifetime) in lifetimes.iter_mut() {
+                    if lifetime.is_function_parameter {
+                        continue;
+                    }
+
+                    let first_def = first_def_positions.get(&lifetime.register).copied();
+                    // lifetime.uses 包含所有出现位置（def + use）
+                    // 如果第一个出现位置的指令不是 def，说明 use 在 def 之前
+                    if let (Some(def_pos), Some(&first_occurrence)) =
+                        (first_def, lifetime.uses.first())
+                    {
+                        if first_occurrence < def_pos {
+                            // 循环携带寄存器：start 扩展到 0
+                            let old_start = lifetime.start;
+                            lifetime.start = 0;
+                            if old_start != 0 {
+                                log::debug!(
+                                    "🔄 循环携带寄存器 {:?} (首次出现={}, 首次定义={}), 生命周期 start 扩展: {} → 0",
+                                    reg, first_occurrence, def_pos, old_start
+                                );
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -6,6 +6,14 @@ use crate::vm::{VariableInfo, VariableLocation};
 
 use super::compiler_trait::MachineCodeBuffer;
 
+/// 目标架构（用于交叉编译时选择正确的指令编码）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TargetArch {
+    #[default]
+    Host,
+    Riscv64,
+}
+
 /// 高级代码缓冲区
 ///
 /// 在基础MachineCodeBuffer之上提供更多便利功能
@@ -13,6 +21,9 @@ use super::compiler_trait::MachineCodeBuffer;
 pub struct CodeBuilder {
     /// 底层代码缓冲区
     buffer: MachineCodeBuffer,
+
+    /// 目标架构（交叉编译用）
+    target_arch: TargetArch,
 
     /// 标签表 (标签名 -> 代码位置)
     labels: std::collections::HashMap<String, usize>,
@@ -38,6 +49,21 @@ impl CodeBuilder {
     pub fn new() -> Self {
         Self {
             buffer: MachineCodeBuffer::new(),
+            target_arch: TargetArch::Host,
+            labels: std::collections::HashMap::new(),
+            global_labels: None,
+            pending_jumps: Vec::new(),
+            pending_label_addresses: Vec::new(),
+            pending_adrs: Vec::new(),
+            debug_info: None,
+        }
+    }
+
+    /// 创建指定目标架构的代码构建器
+    pub fn with_target_arch(arch: TargetArch) -> Self {
+        Self {
+            buffer: MachineCodeBuffer::new(),
+            target_arch: arch,
             labels: std::collections::HashMap::new(),
             global_labels: None,
             pending_jumps: Vec::new(),
@@ -51,6 +77,7 @@ impl CodeBuilder {
     pub fn with_debug_info() -> Self {
         Self {
             buffer: MachineCodeBuffer::new(),
+            target_arch: TargetArch::Host,
             labels: std::collections::HashMap::new(),
             global_labels: None,
             pending_jumps: Vec::new(),
@@ -106,9 +133,9 @@ impl CodeBuilder {
     }
 
     /// 定义标签
-    pub fn define_label(&mut self, label: &str) -> Result<(), String> {
+    pub fn define_label(&mut self, label: &str) -> crate::Result<()> {
         if self.labels.contains_key(label) {
-            return Err(format!("标签 '{}' 已经定义", label));
+            return Err(format!("标签 '{}' 已经定义", label).into());
         }
 
         let position = self.buffer.position();
@@ -125,101 +152,108 @@ impl CodeBuilder {
     pub fn emit_jump(&mut self, jump_type: JumpType, target_label: &str) {
         let patch_position = self.buffer.position();
 
-        // 🔧 修复：根据目标架构生成正确的跳转指令
-        // 在macOS AArch64上，需要生成AArch64指令而不是x86指令
-        #[cfg(target_arch = "aarch64")]
-        {
+        if self.target_arch == TargetArch::Riscv64 {
+            // RISC-V 跳转指令（交叉编译用）
             match jump_type {
                 JumpType::Unconditional => {
-                    // B <label> - 无条件分支
-                    // 31|30|29 28|27 26|25                     0
-                    // 0 |0 |0  1 |0  1 |imm26 (26位相对偏移)
-                    self.emit_u32(0x14000000); // B指令，偏移=0（稍后修补）
+                    // JAL x0, offset — 无条件跳转 (21-bit signed)
+                    self.emit_u32(0x0000006F); // JAL x0, 0
                 }
                 JumpType::ConditionalEqual => {
-                    // B.EQ <label> - 条件分支（相等）
-                    // 31|30 29|28 25|24|23   5|4   0
-                    // 0 |1  0 |1  0  0 |1|imm19|cond
-                    // cond=0000 (EQ)
-                    self.emit_u32(0x54000000); // B.EQ指令，偏移=0（稍后修补）
+                    // BEQ rs1, rs2, offset — 需要知道寄存器...
+                    // 问题：我们不知道要比较哪些寄存器！
+                    // RISC-V 条件分支需要两个寄存器操作数
+                    // 方案：用 "比较并分支" 模式，在 compile_conditional_jump 中处理
+                    // 这里生成占位 BEQ x0, x0, 0（总是跳转）
+                    self.emit_u32(0x00000063); // BEQ x0, x0, 0
                 }
                 JumpType::ConditionalNotEqual => {
-                    // B.NE <label> - 条件分支（不相等）
-                    // cond=0001 (NE)
-                    self.emit_u32(0x54000001); // B.NE指令
+                    self.emit_u32(0x00001063); // BNE x0, x0, 0
                 }
                 JumpType::ConditionalLess => {
-                    // B.LT <label> - 条件分支（小于）
-                    // cond=1011 (LT)
-                    self.emit_u32(0x5400000B); // B.LT指令
+                    self.emit_u32(0x00004063); // BLT x0, x0, 0
                 }
                 JumpType::ConditionalGreater => {
-                    // B.GT <label> - 条件分支（大于）
-                    // cond=1100 (GT)
-                    self.emit_u32(0x5400000C); // B.GT指令
+                    self.emit_u32(0x00005063); // BGE x0, x0, 0
                 }
                 JumpType::ConditionalLessEqual => {
-                    // B.LE <label> - 条件分支（小于等于）
-                    // cond=1101 (LE)
-                    self.emit_u32(0x5400000D); // B.LE指令
+                    self.emit_u32(0x00006063); // BLTU x0, x0, 0
                 }
                 JumpType::ConditionalGreaterEqual => {
-                    // B.GE <label> - 条件分支（大于等于）
-                    // cond=1010 (GE)
-                    self.emit_u32(0x5400000A); // B.GE指令
+                    self.emit_u32(0x00007063); // BGEU x0, x0, 0
                 }
                 JumpType::Call => {
-                    // BL <label> - 分支并链接（函数调用）
-                    // 31|30|29 28|27 26|25                     0
-                    // 1 |0 |0  1 |0  1 |imm26
-                    self.emit_u32(0x94000000); // BL指令
+                    // AUIPC ra, %hi(offset); JALR ra, ra, %lo(offset)
+                    // 简化：用 AUIPC+LD+JALR 模式（通过 pending_label_address 加载目标地址）
+                    // 发射 AUIPC ra, 0 (占位)
+                    self.emit_u32(0x00000097); // AUIPC ra, 0
+                    // LD ra, 0(ra) (占位) — 从代码段加载 64 位地址
+                    self.emit_u32(0x0000B083); // LD ra, 0(ra)
+                    // JALR x0, ra, 0 — 跳转
+                    self.emit_u32(0x00008067); // JALR x0, ra, 0
+                    // 占位 64 位地址数据
+                    self.emit_u64(0);
+                    // 标记需要通过 pending_label_address 修补
+                    let addr_patch_pos = patch_position + 12; // 3 条指令后
+                    self.pending_label_addresses.push(PendingLabelAddress {
+                        patch_position: addr_patch_pos,
+                        target_label: target_label.to_string(),
+                    });
+                    // 不需要 pending_jump，因为地址通过 pending_label_address 修补
+                    return;
                 }
             }
-        }
+        } else {
+            // 原有实现：x86 或 AArch64（主机架构）
+            #[cfg(target_arch = "aarch64")]
+            {
+                match jump_type {
+                    JumpType::Unconditional => { self.emit_u32(0x14000000); }
+                    JumpType::ConditionalEqual => { self.emit_u32(0x54000000); }
+                    JumpType::ConditionalNotEqual => { self.emit_u32(0x54000001); }
+                    JumpType::ConditionalLess => { self.emit_u32(0x5400000B); }
+                    JumpType::ConditionalGreater => { self.emit_u32(0x5400000C); }
+                    JumpType::ConditionalLessEqual => { self.emit_u32(0x5400000D); }
+                    JumpType::ConditionalGreaterEqual => { self.emit_u32(0x5400000A); }
+                    JumpType::Call => { self.emit_u32(0x94000000); }
+                }
+            }
 
-        #[cfg(not(target_arch = "aarch64"))]
-        {
-            // x86/x64跳转指令（原有实现）
-            match jump_type {
-                JumpType::Unconditional => {
-                    // jmp rel32 - E9 <rel32>
-                    self.emit_byte(0xE9);
-                    self.emit_i32(0); // 占位符，稍后修补
-                }
-                JumpType::ConditionalEqual => {
-                    // je rel32 - 0F 84 <rel32>
-                    self.emit_bytes(&[0x0F, 0x84]);
-                    self.emit_i32(0); // 占位符，稍后修补
-                }
-                JumpType::ConditionalNotEqual => {
-                    // jne rel32 - 0F 85 <rel32>
-                    self.emit_bytes(&[0x0F, 0x85]);
-                    self.emit_i32(0); // 占位符，稍后修补
-                }
-                JumpType::ConditionalLess => {
-                    // jl rel32 - 0F 8C <rel32>
-                    self.emit_bytes(&[0x0F, 0x8C]);
-                    self.emit_i32(0); // 占位符，稍后修补
-                }
-                JumpType::ConditionalGreater => {
-                    // jg rel32 - 0F 8F <rel32>
-                    self.emit_bytes(&[0x0F, 0x8F]);
-                    self.emit_i32(0); // 占位符，稍后修补
-                }
-                JumpType::ConditionalLessEqual => {
-                    // jle rel32 - 0F 8E <rel32>
-                    self.emit_bytes(&[0x0F, 0x8E]);
-                    self.emit_i32(0); // 占位符，稍后修补
-                }
-                JumpType::ConditionalGreaterEqual => {
-                    // jge rel32 - 0F 8D <rel32>
-                    self.emit_bytes(&[0x0F, 0x8D]);
-                    self.emit_i32(0); // 占位符，稍后修补
-                }
-                JumpType::Call => {
-                    // call rel32 - E8 <rel32>
-                    self.emit_byte(0xE8);
-                    self.emit_i32(0); // 占位符，稍后修补
+            #[cfg(not(target_arch = "aarch64"))]
+            {
+                match jump_type {
+                    JumpType::Unconditional => {
+                        self.emit_byte(0xE9);
+                        self.emit_i32(0);
+                    }
+                    JumpType::ConditionalEqual => {
+                        self.emit_bytes(&[0x0F, 0x84]);
+                        self.emit_i32(0);
+                    }
+                    JumpType::ConditionalNotEqual => {
+                        self.emit_bytes(&[0x0F, 0x85]);
+                        self.emit_i32(0);
+                    }
+                    JumpType::ConditionalLess => {
+                        self.emit_bytes(&[0x0F, 0x8C]);
+                        self.emit_i32(0);
+                    }
+                    JumpType::ConditionalGreater => {
+                        self.emit_bytes(&[0x0F, 0x8F]);
+                        self.emit_i32(0);
+                    }
+                    JumpType::ConditionalLessEqual => {
+                        self.emit_bytes(&[0x0F, 0x8E]);
+                        self.emit_i32(0);
+                    }
+                    JumpType::ConditionalGreaterEqual => {
+                        self.emit_bytes(&[0x0F, 0x8D]);
+                        self.emit_i32(0);
+                    }
+                    JumpType::Call => {
+                        self.emit_byte(0xE9);
+                        self.emit_i32(0);
+                    }
                 }
             }
         }
@@ -329,6 +363,20 @@ impl CodeBuilder {
         // AArch64下不做任何事，具体展开在aarch64_compiler.rs
     }
 
+    /// 生成 movabs rax, <label_address> 指令，用于将标签地址加载到 RAX
+    /// 占位符在 finalize 时被修补为实际的标签地址
+    pub fn emit_movabs_to_rax_with_label(&mut self, target_label: &str) {
+        // movabs rax, imm64 = 48 B8 <8 bytes>
+        self.emit_byte(0x48);
+        self.emit_byte(0xB8);
+        let patch_position = self.buffer.position();
+        self.emit_u64(0); // 占位符，稍后修补为标签地址
+        self.pending_label_addresses.push(PendingLabelAddress {
+            patch_position,
+            target_label: target_label.to_string(),
+        });
+    }
+
     /// 对齐代码到指定边界
     pub fn align(&mut self, alignment: usize) {
         let current_pos = self.buffer.position();
@@ -342,7 +390,7 @@ impl CodeBuilder {
     }
 
     /// 完成代码生成（不修补标签，仅返回机器码）
-    pub fn finalize(self) -> Result<MachineCodeBuffer, String> {
+    pub fn finalize(self) -> crate::Result<MachineCodeBuffer> {
         // 直接返回机器码，不修补任何标签引用
         Ok(self.buffer)
     }
@@ -352,7 +400,7 @@ impl CodeBuilder {
         mut self,
         global_addresses: Option<&std::collections::HashMap<String, *const u8>>,
         exec_base: usize,
-    ) -> Result<MachineCodeBuffer, String> {
+    ) -> crate::Result<MachineCodeBuffer> {
         log::debug!("🔧 开始修补跳转，exec_base: 0x{:016X}", exec_base);
 
         // 修补所有待处理的跳转
@@ -407,7 +455,7 @@ impl CodeBuilder {
                     JumpType::Unconditional | JumpType::Call => {
                         // B/BL指令：26位偏移（指令为4字节对齐）
                         if !(-(1 << 25)..(1 << 25)).contains(&relative_offset) {
-                            return Err(format!("跳转距离太远: {} 字节", relative_offset << 2));
+                            return Err(format!("跳转距离太远: {} 字节", relative_offset << 2).into());
                         }
 
                         // 获取原始指令并修补偏移
@@ -431,7 +479,7 @@ impl CodeBuilder {
                     _ => {
                         // 条件跳转指令：19位偏移
                         if !(-(1 << 18)..(1 << 18)).contains(&relative_offset) {
-                            return Err(format!("条件跳转距离太远: {} 字节", relative_offset << 2));
+                            return Err(format!("条件跳转距离太远: {} 字节", relative_offset << 2).into());
                         }
 
                         let mut instruction = original_instruction;
@@ -478,7 +526,7 @@ impl CodeBuilder {
 
                 // 检查偏移是否在32位范围内
                 if relative_offset < i32::MIN as i64 || relative_offset > i32::MAX as i64 {
-                    return Err(format!("跳转距离太远: {}", relative_offset));
+                    return Err(format!("跳转距离太远: {}", relative_offset).into());
                 }
 
                 // 将偏移写入代码
@@ -533,7 +581,7 @@ impl CodeBuilder {
                         return Err(format!(
                             "ADRP页偏移超出范围: {} (应在 ±1M 范围内)",
                             page_offset
-                        ));
+                        ).into());
                     }
 
                     let bytes = self.buffer.as_bytes();
@@ -677,7 +725,7 @@ impl CodeBuilder {
                     }
                 }
                 _ => {
-                    return Err(format!("不支持的地址修补类型: {:?}", pending.patch_type));
+                    return Err(format!("不支持的地址修补类型: {:?}", pending.patch_type).into());
                 }
             }
         }
@@ -689,7 +737,7 @@ impl CodeBuilder {
     pub fn finalize_with_global_addresses(
         self,
         global_addresses: Option<&std::collections::HashMap<String, *const u8>>,
-    ) -> Result<MachineCodeBuffer, String> {
+    ) -> crate::Result<MachineCodeBuffer> {
         // 调用新方法，使用0作为可执行内存基址（兼容旧代码）
         self.finalize_with_global_addresses_and_exec_base(global_addresses, 0)
     }
@@ -699,7 +747,7 @@ impl CodeBuilder {
         &self,
         label_name: &str,
         global_addresses: Option<&std::collections::HashMap<String, *const u8>>,
-    ) -> Result<usize, String> {
+    ) -> crate::Result<usize> {
         if let Some(global) = global_addresses {
             if let Some(&addr) = global.get(label_name) {
                 return Ok(addr as usize);
@@ -710,7 +758,7 @@ impl CodeBuilder {
     }
 
     /// 查找标签位置（先查找本地标签，再查找全局标签）
-    fn find_label_position(&self, label_name: &str) -> Result<usize, String> {
+    fn find_label_position(&self, label_name: &str) -> crate::Result<usize> {
         // 首先查找本地标签
         if let Some(&position) = self.labels.get(label_name) {
             return Ok(position);
@@ -723,7 +771,7 @@ impl CodeBuilder {
             }
         }
 
-        Err(format!("未定义的标签: {}", label_name))
+        Err(format!("未定义的标签: {}", label_name).into())
     }
 
     /// 添加源代码行号信息
@@ -757,6 +805,14 @@ impl CodeBuilder {
     /// 导出所有待修补的跳转
     pub fn exported_pending_jumps(&self) -> &Vec<PendingJump> {
         &self.pending_jumps
+    }
+    /// 手动添加一个 pending jump（用于 RISC-V 等架构直接生成分支指令后记录）
+    pub fn add_pending_jump_raw(&mut self, patch_position: usize, target_label: String, jump_type: JumpType) {
+        self.pending_jumps.push(PendingJump {
+            patch_position,
+            target_label,
+            jump_type,
+        });
     }
     /// 导出所有待修补的标签地址
     pub fn exported_pending_label_addresses(&self) -> &Vec<PendingLabelAddress> {
@@ -883,7 +939,7 @@ impl JumpType {
     pub fn instruction_size(&self) -> usize {
         match self {
             JumpType::Unconditional => 5, // E9 + 4字节地址
-            JumpType::Call => 5,          // E8 + 4字节地址
+            JumpType::Call => 5,          // E9 (jmp) + 4字节地址 (使用 jmp 代替 call)
             _ => 6,                       // 0F XX + 4字节地址
         }
     }
@@ -955,11 +1011,11 @@ pub fn patch_executable_memory(
     pending_jumps: &[PendingJump],
     pending_adrs: &[PendingAdr],
     pending_label_addresses: &[PendingLabelAddress],
-) -> Result<(), String> {
+) -> crate::Result<()> {
     log::debug!("🔧 开始原地修补，exec_base: 0x{:016X}", exec_base);
 
     // 辅助函数：查找 label 地址
-    let find_label_address = |label_name: &str| -> Result<usize, String> {
+    let find_label_address = |label_name: &str| -> crate::Result<usize> {
         // 优先查找全局标签表（绝对地址）
         if let Some(&addr) = global_labels.get(label_name) {
             return Ok(addr);
@@ -968,7 +1024,7 @@ pub fn patch_executable_memory(
         if let Some(&offset) = labels.get(label_name) {
             return Ok(exec_base + offset);
         }
-        Err(format!("未定义的标签: {}", label_name))
+        Err(format!("未定义的标签: {}", label_name).into())
     };
 
     // 1. 修补所有待处理的跳转
@@ -1005,7 +1061,7 @@ pub fn patch_executable_memory(
                 JumpType::Unconditional | JumpType::Call => {
                     // B/BL指令：26位偏移
                     if !(-(1 << 25)..(1 << 25)).contains(&relative_offset) {
-                        return Err(format!("跳转距离太远: {} 字节", relative_offset << 2));
+                        return Err(format!("跳转距离太远: {} 字节", relative_offset << 2).into());
                     }
 
                     let mut instruction = original_instruction;
@@ -1023,7 +1079,7 @@ pub fn patch_executable_memory(
                 _ => {
                     // 条件跳转指令：19位偏移
                     if !(-(1 << 18)..(1 << 18)).contains(&relative_offset) {
-                        return Err(format!("条件跳转距离太远: {} 字节", relative_offset << 2));
+                        return Err(format!("条件跳转距离太远: {} 字节", relative_offset << 2).into());
                     }
 
                     let mut instruction = original_instruction;
@@ -1049,7 +1105,7 @@ pub fn patch_executable_memory(
             let relative_offset = (target_addr as i64) - (current_pos as i64);
 
             if relative_offset < i32::MIN as i64 || relative_offset > i32::MAX as i64 {
-                return Err(format!("跳转距离太远: {}", relative_offset));
+                return Err(format!("跳转距离太远: {}", relative_offset).into());
             }
 
             let offset_bytes = (relative_offset as i32).to_le_bytes();
@@ -1103,11 +1159,13 @@ pub fn patch_executable_memory(
                     let target_page = target_addr & !0xFFF;
                     let page_offset = ((target_page as i64) - (current_page as i64)) >> 12;
 
+
+
                     if !(-(1 << 20)..(1 << 20)).contains(&page_offset) {
                         return Err(format!(
                             "ADRP页偏移超出范围: {} (应在 ±1M 范围内)",
                             page_offset
-                        ));
+                        ).into());
                     }
 
                     let mut instruction =
@@ -1124,11 +1182,6 @@ pub fn patch_executable_memory(
                     let immlo = imm & 0x3;
                     instruction |= (immhi << 5) | (immlo << 29);
 
-                    log::debug!(
-                        "🔧 ADRP修补: 页偏移={}, 修补后指令: 0x{:08X}",
-                        page_offset,
-                        instruction
-                    );
 
                     unsafe { write_u32_at(memory_ptr, pending.patch_position, instruction) };
                 }
@@ -1143,11 +1196,6 @@ pub fn patch_executable_memory(
                     instruction &= 0xFFC003FF;
                     instruction |= ((page_offset as u32) & 0xFFF) << 10;
 
-                    log::debug!(
-                        "🔧 ADD修补: 页内偏移=0x{:X}, 修补后指令: 0x{:08X}",
-                        page_offset,
-                        instruction
-                    );
 
                     unsafe { write_u32_at(memory_ptr, pending.patch_position, instruction) };
                 }

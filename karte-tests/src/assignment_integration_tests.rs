@@ -117,4 +117,36 @@ mod assignment_integration_tests {
             info!("赋值优先级解析失败: {:?}", parse_diagnostics.diagnostics);
         }
     }
+
+    /// 回归测试：大写字母开头的变量名可以赋值
+    /// Parser 的 is_constructor() 会将首字母大写的标识符解析为 Constructor，
+    /// 但在赋值目标位置应视为普通变量
+    #[test]
+    fn test_uppercase_variable_assignment() {
+        use crate::execute_from_string;
+
+        let program = "let M = 1; M = M * 2; M";
+        let result = execute_from_string(program);
+        assert_eq!(result.unwrap(), 2, "大写变量 M 赋值后应返回 2");
+    }
+
+    /// 回归测试：多个大写字母开头的变量名赋值
+    #[test]
+    fn test_multiple_uppercase_variable_assignment() {
+        use crate::execute_from_string;
+
+        let program = "let M = 10; let N = 20; M = M + N; M";
+        let result = execute_from_string(program);
+        assert_eq!(result.unwrap(), 30, "大写变量 M + N 赋值后应返回 30");
+    }
+
+    /// 回归测试：大写字母开头的多字符变量名赋值
+    #[test]
+    fn test_uppercase_multichar_variable_assignment() {
+        use crate::execute_from_string;
+
+        let program = "let State = 5; State = State + 1; State";
+        let result = execute_from_string(program);
+        assert_eq!(result.unwrap(), 6, "大写变量 State 赋值后应返回 6");
+    }
 }

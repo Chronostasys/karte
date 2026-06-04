@@ -16,11 +16,11 @@ pub enum ExecutionMode {
 
 impl ExecutionMode {
     /// 从字符串解析执行模式
-    pub fn from_str(s: &str) -> Result<Self, String> {
+    pub fn from_str(s: &str) -> crate::Result<Self> {
         match s.to_lowercase().as_str() {
             "jit" | "jit-only" => Ok(ExecutionMode::JitOnly),
             "hybrid" | "混合" => Ok(ExecutionMode::Hybrid),
-            _ => Err(format!("未知的执行模式: {}", s)),
+            _ => Err(format!("未知的执行模式: {}", s).into()),
         }
     }
 

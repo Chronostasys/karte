@@ -120,7 +120,7 @@ impl ControlFlowAnalysis {
     }
 
     /// 构建控制流图
-    fn build_cfg(&self, function: &LirFunction) -> Result<ControlFlowGraph, String> {
+    fn build_cfg(&self, function: &LirFunction) -> crate::Result<ControlFlowGraph> {
         let mut nodes = Vec::new();
         let mut label_to_block = HashMap::new();
 
@@ -232,7 +232,7 @@ impl ControlFlowAnalysis {
         nodes: &mut [ControlFlowNode],
         function: &LirFunction,
         label_to_block: &HashMap<LabelId, usize>,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let nodes_len = nodes.len();
 
         for (block_id, node) in nodes.iter_mut().enumerate() {
@@ -338,7 +338,7 @@ impl AnalysisPass for ControlFlowAnalysis {
         &mut self,
         function: &LirFunction,
         _analyses: &AnalysisManager,
-    ) -> Result<Box<dyn AnalysisResult>, String> {
+    ) -> crate::Result<Box<dyn AnalysisResult>> {
         let cfg = self.build_cfg(function)?;
         Ok(Box::new(cfg))
     }
@@ -360,7 +360,7 @@ impl DefUseAnalysis {
     }
 
     /// 构建定义-使用链
-    fn build_def_use_chains(&self, function: &LirFunction) -> Result<DefUseChains, String> {
+    fn build_def_use_chains(&self, function: &LirFunction) -> crate::Result<DefUseChains> {
         let mut definitions = HashMap::new();
         let mut uses = HashMap::new();
         let mut instruction_defs = HashMap::new();
@@ -418,12 +418,20 @@ impl DefUseAnalysis {
             }
             | Instruction::Div {
                 dst, src1, src2, ..
+            }
+            | Instruction::Mod {
+                dst, src1, src2, ..
             } => {
                 defs.push(*dst);
                 self.analyze_operand_uses(src1, &mut uses);
                 self.analyze_operand_uses(src2, &mut uses);
             }
             Instruction::Compare { src1, src2, .. } => {
+                self.analyze_operand_uses(src1, &mut uses);
+                self.analyze_operand_uses(src2, &mut uses);
+            }
+            Instruction::CompareSet { dst, src1, src2, .. } => {
+                defs.push(*dst);
                 self.analyze_operand_uses(src1, &mut uses);
                 self.analyze_operand_uses(src2, &mut uses);
             }
@@ -472,6 +480,54 @@ impl DefUseAnalysis {
                 // 在降级后的 LIR 中，Alloc 明确定义了目标寄存器
                 defs.push(*dst);
             }
+            Instruction::StringConcat { dst, left, right, .. } => {
+                defs.push(*dst);
+                uses.push(*left);
+                uses.push(*right);
+            }
+            Instruction::StringEqual { dst, left, right, .. } => {
+                defs.push(*dst);
+                uses.push(*left);
+                uses.push(*right);
+            }
+            Instruction::StringCharAt { dst, str_ptr, index, .. } => {
+                defs.push(*dst);
+                uses.push(*str_ptr);
+                uses.push(*index);
+            }
+            Instruction::StringSubstring { dst, str_ptr, start, length, .. } => {
+                defs.push(*dst);
+                uses.push(*str_ptr);
+                uses.push(*start);
+                uses.push(*length);
+            }
+            Instruction::StringContains { dst, str_ptr, char_code, .. } => {
+                defs.push(*dst);
+                uses.push(*str_ptr);
+                uses.push(*char_code);
+            }
+            Instruction::SplitCount { dst, str_ptr, separator, .. } => {
+                defs.push(*dst);
+                uses.push(*str_ptr);
+                uses.push(*separator);
+            }
+            Instruction::Trim { dst, str_ptr, .. } => {
+                defs.push(*dst);
+                uses.push(*str_ptr);
+            }
+            Instruction::ToString { dst, value, .. } => {
+                defs.push(*dst);
+                uses.push(*value);
+            }
+            Instruction::PrintString { ptr, .. } => {
+                uses.push(*ptr);
+            }
+            Instruction::PrintNumber { value, .. } => {
+                uses.push(*value);
+            }
+            Instruction::PrintBool { value, .. } => {
+                uses.push(*value);
+            }
             Instruction::StructAlloc { dst, .. } => {
                 defs.push(*dst);
             }
@@ -506,10 +562,41 @@ impl DefUseAnalysis {
             | Instruction::Nop { .. } => {
                 // 这些指令不涉及寄存器
             }
-            // 未知指令类型的默认处理
+            // 间接跳转：使用函数指针寄存器（不定义任何寄存器）
+            Instruction::JumpIndirect { function_register, .. } => {
+                uses.push(*function_register);
+            }
+            // 寄存器跳转：使用目标寄存器
+            Instruction::JumpRegister { target_register, .. } => {
+                uses.push(*target_register);
+            }
+            // 函数调用：不直接涉及寄存器（参数传递已通过独立指令完成）
+            Instruction::Call { .. } => {
+                // Call 使用标签目标，不涉及寄存器操作数
+            }
+            // 间接调用：使用函数指针寄存器
+            Instruction::CallIndirect { function_register, args, arg_operands, result, .. } => {
+                uses.push(*function_register);
+                for arg in args {
+                    uses.push(*arg);
+                }
+                for op in arg_operands {
+                    self.analyze_operand_uses(op, &mut uses);
+                }
+                if let Some(dst) = result {
+                    defs.push(*dst);
+                }
+            }
+            // 返回指令：使用返回值寄存器
+            Instruction::Return { value, .. } => {
+                if let Some(reg) = value {
+                    uses.push(*reg);
+                }
+            }
+            // 其他指令类型：不需要 def/use 分析
             _ => {
-                warn!("警告: DefUseAnalysis遇到未知指令类型: {:?}", instruction);
-                // 不返回任何定义或使用
+                // 包括：算术指令（已上方处理）、Alloc/Free（已上方处理）、
+                // 位运算、比较、类型转换等（它们有自己的 match 分支）
             }
         }
 
@@ -552,7 +639,7 @@ impl AnalysisPass for DefUseAnalysis {
         &mut self,
         function: &LirFunction,
         _analyses: &AnalysisManager,
-    ) -> Result<Box<dyn AnalysisResult>, String> {
+    ) -> crate::Result<Box<dyn AnalysisResult>> {
         let def_use = self.build_def_use_chains(function)?;
         Ok(Box::new(def_use))
     }
@@ -592,7 +679,7 @@ impl LivenessAnalysisPass {
         function: &LirFunction,
         cfg: &ControlFlowGraph,
         def_use: &DefUseChains,
-    ) -> Result<LivenessAnalysis, String> {
+    ) -> crate::Result<LivenessAnalysis> {
         debug!("🔍 开始活跃度分析");
 
         // 第一阶段：计算块级的 use 和 def 集合
@@ -620,12 +707,11 @@ impl LivenessAnalysisPass {
         function: &LirFunction,
         cfg: &ControlFlowGraph,
         def_use: &DefUseChains,
-    ) -> Result<
+    ) -> crate::Result<
         (
             HashMap<usize, HashSet<Register>>,
             HashMap<usize, HashSet<Register>>,
         ),
-        String,
     > {
         let mut block_use = HashMap::new();
         let mut block_def = HashMap::new();
@@ -681,12 +767,11 @@ impl LivenessAnalysisPass {
         cfg: &ControlFlowGraph,
         block_use: &HashMap<usize, HashSet<Register>>,
         block_def: &HashMap<usize, HashSet<Register>>,
-    ) -> Result<
+    ) -> crate::Result<
         (
             HashMap<usize, HashSet<Register>>,
             HashMap<usize, HashSet<Register>>,
         ),
-        String,
     > {
         let mut live_in: HashMap<usize, HashSet<Register>> = HashMap::new();
         let mut live_out: HashMap<usize, HashSet<Register>> = HashMap::new();
@@ -800,7 +885,7 @@ impl LivenessAnalysisPass {
         cfg: &ControlFlowGraph,
         def_use: &DefUseChains,
         live_out: &HashMap<usize, HashSet<Register>>,
-    ) -> Result<HashMap<usize, HashSet<Register>>, String> {
+    ) -> crate::Result<HashMap<usize, HashSet<Register>>> {
         let mut live_at_instruction = HashMap::new();
 
         for node in &cfg.nodes {
@@ -859,7 +944,7 @@ impl AnalysisPass for LivenessAnalysisPass {
         &mut self,
         function: &LirFunction,
         analyses: &AnalysisManager,
-    ) -> Result<Box<dyn AnalysisResult>, String> {
+    ) -> crate::Result<Box<dyn AnalysisResult>> {
         // 获取 CFG 分析结果
         let cfg = analyses
             .get_result::<ControlFlowGraph>("cfg")

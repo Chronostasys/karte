@@ -385,6 +385,134 @@ mod integration_struct_tests {
         let result = test_evaluate(program).unwrap();
         assert_eq!(result, 75);
     }
+
+    #[test]
+    fn test_field_assign_simple() {
+        // 简单字段赋值：不取引用，直接修改字段
+        let program = r#"
+            struct Point {
+                x: number,
+                y: number
+            }
+
+            let p = Point { x: 10, y: 20 };
+            p.x = 99;
+            p.x
+        "#;
+        let result = test_evaluate(program).unwrap();
+        assert_eq!(result, 99);
+    }
+
+    #[test]
+    fn test_field_assign_modify_y() {
+        // 修改 y 字段
+        let program = r#"
+            struct Point {
+                x: number,
+                y: number
+            }
+
+            let p = Point { x: 10, y: 20 };
+            p.y = 88;
+            p.y
+        "#;
+        let result = test_evaluate(program).unwrap();
+        assert_eq!(result, 88);
+    }
+
+    #[test]
+    fn test_field_assign_multiple() {
+        // 多次修改字段
+        let program = r#"
+            struct Point {
+                x: number,
+                y: number
+            }
+
+            let p = Point { x: 10, y: 20 };
+            p.x = 99;
+            p.y = 88;
+            p.x + p.y
+        "#;
+        let result = test_evaluate(program).unwrap();
+        assert_eq!(result, 187);
+    }
+
+    #[test]
+    fn test_field_assign_with_reference_then_read() {
+        // 取引用后修改字段，再解引用读取
+        let program = r#"
+            struct Point {
+                x: number,
+                y: number
+            }
+
+            let p = Point { x: 10, y: 20 };
+            let r = &p;
+            p.x = 99;
+            let q = *r;
+            q.x
+        "#;
+        let result = test_evaluate(program).unwrap();
+        assert_eq!(result, 99);
+    }
+
+    #[test]
+    fn test_field_assign_with_reference_read_y() {
+        // 取引用后修改 y 字段，再解引用读取
+        let program = r#"
+            struct Point {
+                x: number,
+                y: number
+            }
+
+            let p = Point { x: 10, y: 20 };
+            let r = &p;
+            p.y = 88;
+            let q = *r;
+            q.y
+        "#;
+        let result = test_evaluate(program).unwrap();
+        assert_eq!(result, 88);
+    }
+
+    #[test]
+    fn test_field_assign_with_reference_both_fields() {
+        // 取引用后修改两个字段
+        let program = r#"
+            struct Point {
+                x: number,
+                y: number
+            }
+
+            let p = Point { x: 10, y: 20 };
+            let r = &p;
+            p.x = 99;
+            p.y = 88;
+            let q = *r;
+            q.x + q.y
+        "#;
+        let result = test_evaluate(program).unwrap();
+        assert_eq!(result, 187);
+    }
+
+    #[test]
+    fn test_field_assign_no_reference_modify_read() {
+        // 不取引用，修改后复制给另一个变量再读取
+        let program = r#"
+            struct Point {
+                x: number,
+                y: number
+            }
+
+            let p = Point { x: 10, y: 20 };
+            p.x = 99;
+            let q = p;
+            q.x
+        "#;
+        let result = test_evaluate(program).unwrap();
+        assert_eq!(result, 99);
+    }
 }
 
 #[cfg(test)]
@@ -422,7 +550,7 @@ mod recursive_struct_tests {
                 assert_eq!(variants[0].name, "Some");
                 assert_eq!(variants[1].name, "None");
 
-                if let Some(Type::Reference { inner: inner_ref }) = &variants[0].data_type {
+                if let Some(Type::Reference { inner: inner_ref }) = variants[0].data_types.first() {
                     if let Type::Struct {
                         name: struct_name, ..
                     } = &**inner_ref
@@ -437,7 +565,7 @@ mod recursive_struct_tests {
                 } else {
                     panic!("Expected Some variant to have a reference type");
                 }
-                assert!(variants[1].data_type.is_none());
+                assert!(variants[1].data_types.is_empty());
             } else {
                 panic!(
                     "Expected 'next' field to be Option type, but got {:?}",

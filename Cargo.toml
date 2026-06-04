@@ -4,6 +4,7 @@ members = [
     "karte-lexer",
     "karte-cli", "karte-codegen", "karte-diagnostics", "karte-hir", "karte-lir", "karte-mir", "karte-lsp", "karte-parser", "karte-tests", "karte-common",
     "karte-ir-codec", "karte-ir-derive", "karte-rt", "karte-module-system", "karte-gc", "karte-escape-analysis",
+    "karte-syscall", "karte-aot",
 ]
 
 [workspace.package]

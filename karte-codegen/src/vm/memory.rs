@@ -30,76 +30,76 @@ impl MemoryManager {
     }
 
     /// 从内存读取值
-    pub fn read_memory(&self, address: usize) -> Result<i64, String> {
+    pub fn read_memory(&self, address: usize) -> crate::Result<i64> {
         if address < self.memory.len() {
             Ok(self.memory[address])
         } else {
-            Err(format!("Memory read out of bounds: address {}", address))
+            Err(format!("Memory read out of bounds: address {}", address).into())
         }
     }
 
     /// 向内存写入值
-    pub fn write_memory(&mut self, address: usize, value: i64) -> Result<(), String> {
+    pub fn write_memory(&mut self, address: usize, value: i64) -> crate::Result<()> {
         if address < self.memory.len() {
             self.memory[address] = value;
             Ok(())
         } else {
-            Err(format!("Memory write out of bounds: address {}", address))
+            Err(format!("Memory write out of bounds: address {}", address).into())
         }
     }
 
     /// 从栈中读取值
-    pub fn read_stack(&self, offset: usize) -> Result<i64, String> {
+    pub fn read_stack(&self, offset: usize) -> crate::Result<i64> {
         let address = self.stack_pointer.wrapping_add(offset);
         if address < self.stack.len() {
             Ok(self.stack[address])
         } else {
-            Err(format!("Stack read out of bounds: offset {}", offset))
+            Err(format!("Stack read out of bounds: offset {}", offset).into())
         }
     }
 
     /// 向栈中写入值
-    pub fn write_stack(&mut self, offset: usize, value: i64) -> Result<(), String> {
+    pub fn write_stack(&mut self, offset: usize, value: i64) -> crate::Result<()> {
         let address = self.stack_pointer.wrapping_add(offset);
         if address < self.stack.len() {
             self.stack[address] = value;
             Ok(())
         } else {
-            Err(format!("Stack write out of bounds: offset {}", offset))
+            Err(format!("Stack write out of bounds: offset {}", offset).into())
         }
     }
 
     /// 推入栈
-    pub fn push_stack(&mut self, value: i64) -> Result<(), String> {
+    pub fn push_stack(&mut self, value: i64) -> crate::Result<()> {
         if self.stack_pointer > 0 {
             self.stack_pointer -= 1;
             self.stack[self.stack_pointer] = value;
             Ok(())
         } else {
-            Err("Stack overflow".to_string())
+            Err("Stack overflow".into())
         }
     }
 
     /// 弹出栈
-    pub fn pop_stack(&mut self) -> Result<i64, String> {
+    pub fn pop_stack(&mut self) -> crate::Result<i64> {
         if self.stack_pointer < STACK_SIZE {
             let value = self.stack[self.stack_pointer];
             self.stack[self.stack_pointer] = 0; // 清零
             self.stack_pointer += 1;
             Ok(value)
         } else {
-            Err("Stack underflow".to_string())
+            Err("Stack underflow".into())
         }
     }
 
     /// 分配堆内存
-    pub fn allocate_heap(&mut self, size: usize) -> Result<usize, String> {
+    pub fn allocate_heap(&mut self, size: usize) -> crate::Result<usize> {
         if self.heap_pointer + size <= self.memory.len() {
             let address = self.heap_pointer;
             self.heap_pointer += size;
             Ok(address)
         } else {
-            Err("Heap allocation failed: not enough memory".to_string())
+            Err("Heap allocation failed: not enough memory".into())
         }
     }
 

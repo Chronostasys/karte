@@ -51,7 +51,7 @@ impl StructLayoutManager {
         &mut self,
         name: &str,
         fields: &[HirStructField],
-    ) -> Result<StructLayout, String> {
+    ) -> crate::Result<StructLayout> {
         // 检查缓存
         if let Some(cached) = self.layout_cache.get(name) {
             return Ok(cached.clone());
@@ -71,7 +71,7 @@ impl StructLayoutManager {
         &mut self,
         name: &str,
         fields: &[HirStructField],
-    ) -> Result<StructLayout, String> {
+    ) -> crate::Result<StructLayout> {
         let mut struct_fields = Vec::new();
         let mut current_offset = 0;
         let mut max_alignment = 1;
@@ -108,7 +108,7 @@ impl StructLayoutManager {
     }
 
     /// 获取类型的大小和对齐信息
-    fn get_type_info(&mut self, ty: &Type) -> Result<(usize, usize), String> {
+    fn get_type_info(&mut self, ty: &Type) -> crate::Result<(usize, usize)> {
         match ty {
             Type::Number => Ok((8, 8)),
             Type::Unit => Ok((0, 1)),
@@ -129,8 +129,12 @@ impl StructLayoutManager {
                 }
             }
             Type::Array { .. } => Ok((8, 8)), // 数组值在运行时以指针表示
+            Type::Tuple(types) => Ok((types.len() * 8, 8)), // 元组：每个元素8字节
             Type::Var(_) => Ok((8, 8)),       // 类型变量默认8字节
             Type::Unknown => Ok((8, 8)),      // 未知类型默认8字节
+            Type::Int(_) => Ok((8, 8)),       // 整数类型默认8字节
+            Type::Bool => Ok((1, 1)),          // 布尔类型用1字节
+            Type::String => Ok((8, 8)),        // 字符串类型用指针（8字节）
         }
     }
 
@@ -149,7 +153,7 @@ impl StructLayoutManager {
     }
 
     /// 验证结构体布局的一致性
-    pub fn validate_layout(&self, layout: &StructLayout) -> Result<(), String> {
+    pub fn validate_layout(&self, layout: &StructLayout) -> crate::Result<()> {
         let mut expected_offset = 0;
 
         for field in &layout.fields {
@@ -158,7 +162,7 @@ impl StructLayoutManager {
                 return Err(format!(
                     "字段 '{}' 偏移 {} 未按 {} 字节对齐",
                     field.name, field.offset, field.alignment
-                ));
+                ).into());
             }
 
             // 检查偏移顺序
@@ -166,7 +170,7 @@ impl StructLayoutManager {
                 return Err(format!(
                     "字段 '{}' 偏移 {} 与预期偏移 {} 冲突",
                     field.name, field.offset, expected_offset
-                ));
+                ).into());
             }
 
             expected_offset = field.offset + field.size;
@@ -177,7 +181,7 @@ impl StructLayoutManager {
             return Err(format!(
                 "结构体 '{}' 总大小 {} 未按 {} 字节对齐",
                 layout.name, layout.total_size, layout.alignment
-            ));
+            ).into());
         }
 
         Ok(())

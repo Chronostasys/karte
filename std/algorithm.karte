@@ -1,0 +1,178 @@
+module std.algorithm
+
+fn sum_linear(n: number) -> number {
+    n * (n + 1) / 2
+}
+
+fn sum_squares_formula(n: number) -> number {
+    n * (n + 1) * (2 * n + 1) / 6
+}
+
+fn sum_cubes(n: number) -> number {
+    let s = sum_linear(n);
+    s * s
+}
+
+fn leonardo(n: number) -> number {
+    if n == 0 {
+        1
+    } else {
+        if n == 1 {
+            1
+        } else {
+            leonardo(n - 1) + leonardo(n - 2) + 1
+        }
+    }
+}
+
+fn tribonacci(n: number) -> number {
+    if n == 0 {
+        0
+    } else {
+        if n == 1 {
+            0
+        } else {
+            if n == 2 {
+                1
+            } else {
+                tribonacci(n - 1) + tribonacci(n - 2) + tribonacci(n - 3)
+            }
+        }
+    }
+}
+
+fn pell(n: number) -> number {
+    if n == 0 {
+        0
+    } else {
+        if n == 1 {
+            1
+        } else {
+            2 * pell(n - 1) + pell(n - 2)
+        }
+    }
+}
+
+fn lucas(n: number) -> number {
+    if n == 0 {
+        2
+    } else {
+        if n == 1 {
+            1
+        } else {
+            lucas(n - 1) + lucas(n - 2)
+        }
+    }
+}
+
+fn catalan(n: number) -> number {
+    if n <= 1 {
+        1
+    } else {
+        let c = 0;
+        let i = 0;
+        while i < n {
+            c = c + catalan(i) * catalan(n - 1 - i);
+            i = i + 1
+        };
+        c
+    }
+}
+
+fn mersenne(p: number) -> number {
+    let base = 1;
+    let i = 0;
+    while i < p {
+        base = base * 2;
+        i = i + 1
+    };
+    base - 1
+}
+
+fn perfect_number(p: number) -> number {
+    let m = mersenne(p);
+    m * (m + 1) / 2
+}
+
+fn euler_totient(n: number) -> number {
+    let result = n;
+    let x = n;
+    let p = 2;
+    while p * p <= x {
+        if x % p == 0 {
+            while x % p == 0 {
+                x = x / p
+            };
+            result = result - result / p
+        };
+        p = p + 1
+    };
+    if x > 1 {
+        result = result - result / x
+    };
+    result
+}
+
+fn coprime(a: number, b: number) -> number {
+    let g = a;
+    let h = b;
+    while h != 0 {
+        let t = h;
+        h = g % h;
+        g = t
+    };
+    if g == 1 { 1 } else { 0 }
+}
+
+fn totient_sum(n: number) -> number {
+    let sum = 0;
+    let i = 1;
+    while i <= n {
+        sum = sum + euler_totient(i);
+        i = i + 1
+    };
+    sum
+}
+
+fn divisor_sigma(n: number) -> number {
+    let sum = 0;
+    let i = 1;
+    while i * i <= n {
+        if n % i == 0 {
+            sum = sum + i;
+            if i != n / i {
+                sum = sum + n / i
+            }
+        };
+        i = i + 1
+    };
+    sum
+}
+
+fn amicable_pair(a: number) -> number {
+    let b = divisor_sigma(a) - a;
+    if b != a {
+        if divisor_sigma(b) - b == a {
+            b
+        } else {
+            0
+        }
+    } else {
+        0
+    }
+}
+
+fn sum_amicable(n: number) -> number {
+    let sum = 0;
+    let i = 2;
+    while i < n {
+        let partner = amicable_pair(i);
+        if partner > i {
+            if partner < n {
+                sum = sum + i + partner
+            }
+        };
+        i = i + 1
+    };
+    sum
+}

@@ -49,26 +49,26 @@ impl VirtualMachine {
     }
 
     /// 获取物理寄存器的值
-    pub fn get_physical_register(&self, reg_id: u8) -> Result<i64, String> {
+    pub fn get_physical_register(&self, reg_id: u8) -> crate::Result<i64> {
         if (reg_id as usize) < NUM_REGISTERS {
             Ok(self.registers[reg_id as usize])
         } else {
-            Err(format!("Invalid physical register: r{}", reg_id))
+            Err(format!("Invalid physical register: r{}", reg_id).into())
         }
     }
 
     /// 设置物理寄存器的值
-    pub fn set_physical_register(&mut self, reg_id: u8, value: i64) -> Result<(), String> {
+    pub fn set_physical_register(&mut self, reg_id: u8, value: i64) -> crate::Result<()> {
         if (reg_id as usize) < NUM_REGISTERS {
             self.registers[reg_id as usize] = value;
             Ok(())
         } else {
-            Err(format!("Invalid physical register: r{}", reg_id))
+            Err(format!("Invalid physical register: r{}", reg_id).into())
         }
     }
 
     /// 获取虚拟寄存器的值（支持物理寄存器映射和溢出处理）
-    pub fn get_virtual_register(&self, reg_id: &Register) -> Result<i64, String> {
+    pub fn get_virtual_register(&self, reg_id: &Register) -> crate::Result<i64> {
         if let Some(&physical_reg) = self.register_mapping.get(reg_id) {
             self.get_physical_register(physical_reg)
         } else {
@@ -76,12 +76,12 @@ impl VirtualMachine {
             Err(format!(
                 "Unmapped virtual register: {:?} - register allocation should handle spilling",
                 reg_id
-            ))
+            ).into())
         }
     }
 
     /// 设置虚拟寄存器的值（支持物理寄存器映射和溢出处理）
-    pub fn set_virtual_register(&mut self, reg_id: &Register, value: i64) -> Result<(), String> {
+    pub fn set_virtual_register(&mut self, reg_id: &Register, value: i64) -> crate::Result<()> {
         if let Some(&physical_reg) = self.register_mapping.get(reg_id) {
             self.set_physical_register(physical_reg, value)
         } else {
@@ -89,7 +89,7 @@ impl VirtualMachine {
             Err(format!(
                 "Unmapped virtual register: {:?} - register allocation should handle spilling",
                 reg_id
-            ))
+            ).into())
         }
     }
 

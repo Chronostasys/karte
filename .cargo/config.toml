@@ -1,0 +1,4 @@
+[env]
+# 增加测试线程栈大小，避免编译器递归导致 stack overflow
+# 默认 2MB 在 debug 模式下不够用（编译器有深层递归如 SSA、优化 pass 等）
+RUST_MIN_STACK = "8388608"

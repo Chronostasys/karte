@@ -13,7 +13,9 @@ pub mod code_cache;
 pub mod compiler_trait;
 pub mod execution_mode;
 pub mod ffi;
+pub mod jit_utils;
 pub mod memory_manager;
+pub mod riscv_compiler;
 pub mod runtime;
 pub mod x86_compiler;
 
@@ -24,6 +26,7 @@ pub use compiler_trait::*;
 pub use execution_mode::*;
 pub use ffi::*;
 pub use memory_manager::*;
+pub use riscv_compiler::*;
 pub use runtime::*;
 pub use x86_compiler::*;
 
@@ -49,7 +52,7 @@ pub struct JitManager {
 
 impl JitManager {
     /// 创建新的JIT管理器
-    pub fn new(target_arch: TargetArchitecture, debug_mode: bool) -> Result<Self, String> {
+    pub fn new(target_arch: TargetArchitecture, debug_mode: bool) -> crate::Result<Self> {
         let compiler: Box<dyn JitCompiler> = match target_arch {
             TargetArchitecture::X86_64 => Box::new(X86Compiler::new(debug_mode)?),
             TargetArchitecture::AArch64 => Box::new(AArch64Compiler::new(debug_mode)?),
@@ -79,7 +82,7 @@ impl JitManager {
         &mut self,
         function: &LirFunction,
         program: &LirProgram,
-    ) -> Result<CompiledFunction, String> {
+    ) -> crate::Result<CompiledFunction> {
         // 检查缓存
         if let Some(cached) = self.code_cache.get(&function.name) {
             if self.debug_mode {
@@ -183,21 +186,21 @@ mod tests {
     fn create_test_function() -> LirFunction {
         let mut function = LirFunction::new("test_add".to_string());
 
-        // add r0, r1, r2
+        // add r0, r1, r2（使用物理寄存器，避免 Virtual 寄存器触发 panic）
         function.instructions.push(Instruction::Add {
-            dst: Register::Virtual(0),
+            dst: Register::Physical(0),
             src1: Operand::Register {
-                id: Register::Virtual(1),
+                id: Register::Physical(1),
             },
             src2: Operand::Register {
-                id: Register::Virtual(2),
+                id: Register::Physical(2),
             },
             span: Span::dummy(),
         });
 
         // return r0
         function.instructions.push(Instruction::Return {
-            value: Some(Register::Virtual(0)),
+            value: Some(Register::Physical(0)),
             span: Span::dummy(),
         });
 

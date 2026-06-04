@@ -6,13 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Karte is a functional programming language compiler implemented in Rust. It's a multi-stage compiler with a rich type system, supporting features like algebraic data types, pattern matching, references, and a module system.
 
-The project uses a Rust workspace with 16 crates, implementing a complete compiler pipeline from lexing through type checking to code generation (JIT compilation).
+The project uses a Rust workspace with 18 crates, implementing a complete compiler pipeline from lexing through type checking to code generation (JIT and AOT compilation).
 
 **Main Crates**:
 - `karte-lexer`, `karte-parser`, `karte-hir`, `karte-mir`, `karte-lir`, `karte-codegen` - Compilation pipeline
 - `karte-module-system` - Multi-module compilation and caching
 - `karte-escape-analysis` - Compile-time memory optimization
 - `karte-rt` - Runtime and JIT memory management
+- `karte-aot` - AOT compilation (generates standalone ELF executables, no glibc dependency)
+- `karte-syscall` - Raw syscall wrappers (x86_64 + AArch64, no libc)
 - `karte-cli` - Command-line interface
 - `karte-tests` - Integration test suite
 - `karte-ir-codec`, `karte-ir-derive` - IR serialization infrastructure
@@ -42,6 +44,11 @@ cargo run -- export "let x = 2; x * 3" --stage mir
 # Execute from IR files
 cargo run -- execute --stage mir demo.mir
 cargo run -- execute demo.lir
+
+# AOT compile to standalone executable (no glibc dependency)
+cargo run -- aot "42" -o test_binary
+cargo run -- aot input.karte -o output_binary
+./test_binary  # Run directly, returns exit code as result
 ```
 
 ### Testing
@@ -127,6 +134,7 @@ The module system (`karte-module-system`) implements a sophisticated multi-modul
 ### Key Type System Features
 
 - Static type checking with inference
+- **Generic functions (let-polymorphism)**: Functions with unannotated parameters are generalized into type schemes, instantiated per call site (see below)
 - Sum types (algebraic data types): `enum Color { Red, Green, Blue }`
 - Product types (structs): `struct Point { x: number, y: number }`
 - Reference types: `&T` with explicit dereferencing (`*ref`)
@@ -150,6 +158,43 @@ This unified representation enables:
 - ParseResult includes `expr_types` field
 - LoweringOptions must receive `expr_types` from ParseResult for correct function/closure handling
 - If integration tests fail with function parameter issues, check that `expr_types` is being passed correctly
+
+#### Generic Functions (Let-Polymorphism)
+
+Karte 支持基于 **let-polymorphism** 的泛型函数。当函数参数省略类型标注时，类型检查器自动将其泛化为类型方案（`TypeScheme`），在每次调用时实例化为具体类型。
+
+**核心数据结构** (`karte-hir/src/types.rs`):
+- `TypeScheme { bound_vars: Vec<TypeVar>, body: Type }` — 将函数类型中的自由类型变量量化
+- `bound_vars` 为被量化的类型变量列表，`body` 为原始函数类型
+
+**工作机制**:
+1. **Parser 层** (`karte-parser/src/statement.rs:659`): 函数参数类型标注从强制改为可选，允许 `fn id(x) { x }` 形式
+2. **TypeChecker generalize** (`karte-hir/src/type_checker.rs:1985-1997`): 函数定义完成后，调用 `free_vars()` 收集函数类型中的自由类型变量，若非空则创建 `TypeScheme` 存入 `function_schemes`
+3. **TypeChecker instantiate** (`karte-hir/src/type_checker.rs:150-158`): 引用泛型函数时（`Identifier` 节点），从 `function_schemes` 取出对应 `TypeScheme`，为每个 `bound_var` 生成 fresh `TypeVar` 并替换，得到该次调用的具体类型
+4. **单态限制**: 当前支持单态使用（同一函数以一种类型调用）；多态调用（同一函数以不同类型调用）需要后续实现 MIR monomorphization pass
+
+**示例**:
+```karte
+fn id(x) { x }
+fn main() -> number {
+    let a = id(42);
+    let b = id(true);
+    if b { a } else { 0 }
+}
+```
+- `id` 的类型被 generalize 为 `∀a. a → a`
+- `id(42)` 实例化为 `number → number`
+- `id(true)` 实例化为 `bool → bool`（注：多态调用需要 monomorphization 支持）
+
+**相关文件**:
+| 文件 | 关键行 | 作用 |
+|------|--------|------|
+| `karte-hir/src/types.rs:602-611` | `TypeScheme` 定义 | 类型方案结构体 |
+| `karte-hir/src/type_checker.rs:99` | `function_schemes` 字段 | 存储所有泛型函数的 TypeScheme |
+| `karte-hir/src/type_checker.rs:150-158` | `instantiate()` | 实例化类型方案 |
+| `karte-hir/src/type_checker.rs:902-905` | Identifier 推断 | 引用泛型函数时自动实例化 |
+| `karte-hir/src/type_checker.rs:1985-1997` | generalize 逻辑 | 函数定义后生成 TypeScheme |
+| `karte-parser/src/statement.rs:659` | 类型标注可选 | Parser 允许省略参数类型 |
 
 ### IR Serialization
 
@@ -325,6 +370,7 @@ let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering
 ## Notable Recent Changes
 
 Recent work includes:
+- **Generic functions / let-polymorphism (2025-05-30)**: Added `TypeScheme` for generic function support. Parser allows optional parameter type annotations; TypeChecker generalizes functions with free type variables into type schemes and instantiates them per call site. Added 3 integration tests (identity, first, apply). Current limitation: monomorphic use only; polymorphic calls require future MIR monomorphization pass.
 - **Function-as-parameter fix (2025-12-02)**: Implemented unified representation for functions and closures with wrapper functions to handle calling convention differences
 - Refactored module system to support project mode
 - Moved cache implementation from CLI to `karte-module-system`
@@ -615,3 +661,162 @@ Store { target = %10000, value = %2 }
 - 不允许cargo命令使用 --release flag除非我要求
 - karte目前不支持注释，任何测试代码不要加测试
 - 禁止任何时间对项目进行release编译，除非我要求
+- **x86_64 GOTCHA**: `effect_tag_register`、`return_address` 等专用寄存器绝不能与 `vm_sp(R10)` 或 `vm_fp(R11)` 冲突，否则 EffectPerform 会直接破坏虚拟栈指针
+- **AArch64 X16 GOTCHA**: `emit_str_reg_mem`/`emit_ldr_reg_mem` 在大偏移（|offset|>256）时使用 X16 作为临时寄存器加载偏移值。当 src/dst 或 base 寄存器恰好是 X16 时，`MOV X16, #offset` 会覆盖 X16 原始值。**修复**: src/base 与 X16 冲突时自动切换到 X17。`compile_store64` 的立即数路径（MOV X16, #imm; emit_str_reg_mem）也受此影响——立即数被偏移值覆盖。
+- **AArch64 GC GOTCHA**: GC 虚拟栈扫描器（`karte_virtual_stack_scanner`）和 `root_scanner.rs` 使用硬编码的 `0x0000_7fff_ffff_ffff`（x86_64 用户空间上限 128TB）过滤堆指针。AArch64 用户空间上限为 `0x0000_ffffffffffff`（256TB），堆地址超过 x86_64 上限，导致 GC 拒绝所有 AArch64 堆指针→对象被错误回收→指针悬空。**修复**: 使用 `(value as isize) > 0` 检测内核地址（最高位为1），替代硬编码上限。
+- **SSA GOTCHA**: SSA rename_block_recursive 必须使用支配树子节点遍历（而不是 CFG 后继 + idom 检查），否则合并块会被遗漏导致寄存器使用未重命名
+- **PHI GOTCHA**: MIR while/if-else 的 Phi 节点通过 `phi_store_map` 在 LIR 中用 Store64/Load64 传递值（span={MAX,MAX} 标记）。Memory2Reg 的 `transform_with_phi_support` fallback 在回溯 CFG 前驱链时必须在每个块检查已插入的 phi 节点，而非仅仅查找 Store——否则循环头中的 phi target 栈槽不会被正确替换，导致寄存器分配器将地址寄存器映射到值寄存器而 SIGSEGV。while 循环 Phi 的 incoming predecessor 必须是实际持有 Goto 终结符的块（if-else 的 merge_block），而非原始的 loop_body。
+- **IF-ELSE PHI GOTCHA**: if-else 变量变异需要在 merge_block 插入 Phi 节点。预分析（while 循环第一步）期间必须跳过 Phi 生成（analysis_mode=true），且分析完成后必须清理孤立的分析块。变量绑定必须遍历所有作用域（ctx.scopes），因为 if-else 的 phi 更新可能在嵌套作用域中。
+- **ENUM REGISTRATION ORDER GOTCHA**: `collect_function_definitions` 在解析函数签名中的类型标注（如 `fn f(e: Expr)`）时调用 `resolve_struct_field_from_parsed`。如果枚举 TypeDef 尚未通过 `collect_enum_definitions` 注册到 `custom_types`，会被解析为空的 Struct 骨架 `Type::Struct { name, fields: [] }`，导致后续所有类型检查看到空枚举。**解决方案**: `check_program_with_context` 中必须在 `collect_function_definitions` 之前调用 `collect_enum_definitions`。
+- **DUPLICATE FUNCTION GOTCHA**: `collect_function_definitions` 在同一次类型检查中可能被多次调用（多层作用域），需要用 `primary_function_spans` 区分"同一函数定义的二次遍历"与"真正的重复定义"，否则会在 `infer_stmt` 阶段误报 E006 错误。
+- **🔴 绝对禁止 HACKS：永远禁止任何 hack、workaround、取巧绕过、治标不治本的修复。必须找到并修复问题的根因。翻转 bool / unwrap_or 改默认值 / 加条件跳过分析 等绕过手段 = 不可接受。** 🔴
+- **🔴 绝对禁止 HACKS：永远禁止任何 hack、workaround、取巧绕过、治标不治本的修复。必须找到并修复问题的根因。翻转 bool / unwrap_or 改默认值 / 加条件跳过分析 等绕过手段 = 不可接受。** 🔴
+- **🔴 绝对禁止 HACKS：永远禁止任何 hack、workaround、取巧绕过、治标不治本的修复。必须找到并修复问题的根因。翻转 bool / unwrap_or 改默认值 / 加条件跳过分析 等绕过手段 = 不可接受。** 🔴
+- **⚠️ 测试铁律**：
+  - **禁止使用 `cargo test`**，必须且只能使用 `cargo nextest run` 运行测试
+  - nextest 会为每个测试创建独立进程，SIGSEGV 不会中断整个测试套件，能真实反映所有失败
+  - `cargo test` 在 SIGSEGV 时直接崩溃，grep 过滤 SEGV 后说"测试通过"是完全错误的
+  - **任何代码修改后必须 `cargo nextest run` 全部通过后才能 commit**
+  - 如果 nextest 有任何 FAIL 或 SIGSEGV，必须修复后才能提交，绝不许跳过
+
+## Knowledge Files
+
+- `docs/agent/x86-jit-codegen.md` — x86_64 JIT register conventions, save/restore, effect handler compilation
+- `docs/agent/ssa-construction.md` — SSA construction pass, dominator tree traversal
+- `docs/agent/aot-compilation.md` — AOT compilation architecture, ELF generation, runtime, syscall wrappers
+
+## AOT Compilation Architecture
+
+### Overview
+
+The `karte-aot` crate generates standalone ELF64 executables from compiled Karte programs. The generated binaries have **no glibc dependency** — they use raw Linux syscalls for all OS operations.
+
+### Architecture
+
+```
+Source → Lexer → Parser → HIR → MIR → LIR → [JIT: Execute] / [AOT: ELF Binary]
+                                                      ↑                 ↑
+                                              karte-codegen       karte-aot
+                                              (compiles LIR        (packages into
+                                               to machine code)    ELF executable)
+```
+
+**Key Design Decisions**:
+1. **Reuses existing JIT backends** — `X86Compiler`/`AArch64Compiler` compile LIR to machine code, same as JIT
+2. **Minimal runtime** — `_start` entry point, bump allocator, no-GC (for now), all using raw syscalls
+3. **Direct ELF generation** — No external linker needed, writes ELF64 directly
+4. **Cross-platform foundation** — `karte-syscall` provides raw syscall wrappers for both x86_64 and AArch64
+
+### karte-syscall
+
+Raw syscall wrappers with **no libc dependency**:
+- `sys_write(fd, buf, count)` — write to file descriptor
+- `sys_read(fd, buf, count)` — read from file descriptor
+- `sys_exit(code)` — exit process
+- `sys_mmap(...)` — memory mapping (used for virtual stack and heap)
+- `sys_munmap(addr, len)` — unmap memory
+- `sys_brk(addr)` — set program break
+- x86_64: Uses `syscall` instruction
+- AArch64: Uses `svc #0` instruction
+
+### karte-aot
+
+**Files**:
+- `elf.rs` — ELF64 executable writer (headers, program headers, code/data segments)
+- `runtime_x86.rs` — x86_64 runtime code generator (_start, bump allocator, runtime stubs)
+- `runtime_aarch64.rs` — AArch64 runtime (placeholder)
+- `compiler.rs` — AOT compiler orchestration (compile LIR → machine code → patch → ELF)
+
+**Runtime Functions** (generated as raw machine code bytes):
+- `_start` — Entry point: mmaps virtual stack (64KB) + heap (4MB), sets R10=vm_sp/R11=vm_fp, calls main, exits
+- `__karte_alloc_aligned(size, align)` — Bump allocator using pre-mapped heap
+- `__karte_free` — No-op (GC manages memory lifecycle)
+- `__karte_retain/release/gc_safepoint/update_stack_top` — No-ops
+
+**Compilation Flow**:
+1. Generate runtime machine code (hand-coded x86_64 bytes)
+2. Compile each Karte function using `X86Compiler` (same backend as JIT)
+3. Patch runtime calls (replace JIT function pointers with AOT runtime addresses)
+4. Patch cross-function jumps (resolve pending_jumps with absolute addresses)
+5. Patch label addresses (resolve pending_label_addresses)
+6. Patch _start's CALL main (set rel32 to main function offset)
+7. Generate ELF with code segment (R+W+X) containing runtime + Karte functions
+
+**ELF Layout**:
+```
+ELF Header (64 bytes)
+Program Headers (1-2 PT_LOAD entries)
+Padding to page boundary (0x1000)
+Code Segment:
+  Runtime code (_start, alloc, free, ...)
+  Runtime global data (bump_ptr, heap_limit)
+  Karte function code (main, add, ...)
+```
+
+### AOT Gotchas
+
+- **AOT 跳转修补**: `emit_jump(Call)` 使用 JMP (E9) 而不是 CALL (E8) — Karte 的调用约定通过虚拟栈管理返回地址
+- **运行时调用修补**: JIT 生成的运行时调用使用 `MOV RAX, imm64; CALL RAX` 模式 — 扫描并替换为 AOT 运行时地址
+- **R10/R11 保存**: 第二个 mmap (堆) 会覆盖 R10/R11 (vm_sp/vm_fp) — 必须在 mmap 之间 push/pop
+- **代码段必须可写**: 运行时全局变量 (bump_ptr) 使用 RIP-relative 寻址存储在代码段中
+- **Extended registers**: R8-R15 需要 REX.B 前缀 — 运行时代码生成必须正确处理扩展寄存器编码
+
+## Debugging Best Practices
+
+### ⚠️ 遇到 AOT/JIT 执行结果不正确时，用 GDB 或反汇编工具看机器码，不要凭空推理
+
+**原则**：当程序返回错误值时，不要猜测"可能是某个 pass 做了错误优化"或"可能是 x86 编码有问题"。直接反汇编 AOT binary 看实际生成的机器码。
+
+**工具**：
+```bash
+# AOT binary 反汇编（ELF 无标准 section header，需要 capstone/ndisasm）
+python3 -c "
+from capstone import Cs, CS_ARCH_X86, CS_MODE_64
+data = open('/tmp/test_bin','rb').read()
+# 代码在 offset 0x1000, vaddr 0x401000
+code = data[0x1000:0x1000+0x430]
+md = Cs(CS_ARCH_X86, CS_MODE_64)
+for i in md.disasm(code, 0x401000):
+    print(f'0x{i.address:x}:  {i.mnemonic}  {i.op_str}')
+"
+
+# 找到 main 函数：在 _start 中搜索 call 指令
+python3 -c "
+from capstone import Cs, CS_ARCH_X86, CS_MODE_64
+data = open('/tmp/test_bin','rb').read()
+code = data[0x1000:0x1000+0x430]
+md = Cs(CS_ARCH_X86, CS_MODE_64)
+instrs = list(md.disasm(code, 0x401000))
+for i in instrs:
+    if i.mnemonic == 'call':
+        target = int(i.op_str, 16)
+        target_off = target - 0x401000
+        print(f'main at 0x{target:x}')
+        for j in md.disasm(code[target_off:target_off+128], target):
+            print(f'0x{j.address:x}:  {j.mnemonic}  {j.op_str}')
+        break
+"
+```
+
+### Case Study: Bitwise AND 返回错误值 (2025-05-26)
+
+**问题**: `12 bitand 10` 返回 10 而不是 8。
+
+**错误方法（耗时 2 小时）**：
+1. ❌ 猜测 ConstantFolding 没有正确工作，加了多个 debug print
+2. ❌ 猜测 x86 AND 指令编码错误，反复检查 opcode
+3. ❌ 在多个文件中加 eprintln! 追踪 ConstantFolding 的输入
+4. ❌ 在 LIR optimization pipeline 中查找问题
+
+**正确方法（耗时 5 分钟）**：
+1. ✅ `aot` 编译生成 binary
+2. ✅ 用 capstone 反汇编 main 函数
+3. ✅ 直接看到问题：四条 `movabs rcx, imm` 全部写到 RCX（同一寄存器），然后 `and rcx, rcx`
+4. ✅ 对比 `5 + 3` 的正确代码：`movabs rcx, 5` / `movabs rdx, 3` — src1/src2 在不同寄存器
+5. ✅ 结论：SimpleStack fallback allocator 把 BitAnd 的两个操作数分配到了同一物理寄存器
+
+**教训**：
+- **反汇编是 debugging 机器码问题的第一工具**，不是最后手段
+- 不要猜测编译器 pass 的行为——直接看最终生成的机器码
+- 对比正确和错误的 case（Add 正确 vs BitAnd 错误）可以快速定位差异
+- AOT binary 没有 section header，`objdump` 无法工作——用 capstone 或 ndisasm 的 raw 模式

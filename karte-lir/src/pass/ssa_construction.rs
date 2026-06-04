@@ -105,7 +105,7 @@ impl SsaConstructionPass {
     }
 
     /// 计算支配关系
-    fn compute_dominance(&mut self, cfg: &ControlFlowGraph) -> Result<(), String> {
+    fn compute_dominance(&mut self, cfg: &ControlFlowGraph) -> crate::Result<()> {
         self.dominance_info = DominanceInfo::default();
 
         if cfg.nodes.is_empty() {
@@ -184,7 +184,7 @@ impl SsaConstructionPass {
     }
 
     /// 计算直接支配者
-    fn compute_immediate_dominators(&mut self, cfg: &ControlFlowGraph) -> Result<(), String> {
+    fn compute_immediate_dominators(&mut self, cfg: &ControlFlowGraph) -> crate::Result<()> {
         let entry_block_id = cfg.entry_block;
 
         for node in &cfg.nodes {
@@ -225,7 +225,7 @@ impl SsaConstructionPass {
     /// 使用标准算法：对于每个块 d，块 n 在 DF(d) 中当且仅当：
     /// 1. d 支配 n 的某个前驱，AND
     /// 2. d 不严格支配 n（即 d 不是 n 的严格支配者）
-    fn compute_dominance_frontiers(&mut self, cfg: &ControlFlowGraph) -> Result<(), String> {
+    fn compute_dominance_frontiers(&mut self, cfg: &ControlFlowGraph) -> crate::Result<()> {
         // 初始化所有块的支配边界为空
         for node in &cfg.nodes {
             self.dominance_info
@@ -291,7 +291,7 @@ impl SsaConstructionPass {
         &self,
         function: &mut LirFunction,
         cfg: &ControlFlowGraph,
-    ) -> Result<HashMap<Register, Vec<PhiNode>>, String> {
+    ) -> crate::Result<HashMap<Register, Vec<PhiNode>>> {
         // 返回类型改为 Vec<PhiNode>，因为同一个寄存器可能在多个块需要 phi
         let mut phi_nodes: HashMap<Register, Vec<PhiNode>> = HashMap::new();
 
@@ -365,7 +365,7 @@ impl SsaConstructionPass {
         &self,
         function: &LirFunction,
         cfg: &ControlFlowGraph,
-    ) -> Result<HashMap<Register, HashSet<usize>>, String> {
+    ) -> crate::Result<HashMap<Register, HashSet<usize>>> {
         let mut defs = HashMap::new();
 
         for node in &cfg.nodes {
@@ -401,6 +401,7 @@ impl SsaConstructionPass {
             | Instruction::Sub { dst, .. }
             | Instruction::Mul { dst, .. }
             | Instruction::Div { dst, .. }
+            | Instruction::Mod { dst, .. }
             | Instruction::Load64 { dst, .. } => Some(*dst),
             Instruction::Call {
                 result: Some(dst), ..
@@ -424,6 +425,32 @@ impl SsaConstructionPass {
             .is_some_and(|node| node.predecessors.len() > 1)
     }
 
+    /// 静态版本的 get_defined_register
+    fn get_defined_register_static(instruction: &Instruction) -> Option<Register> {
+        match instruction {
+            Instruction::Move { dst, .. }
+            | Instruction::Add { dst, .. }
+            | Instruction::Sub { dst, .. }
+            | Instruction::Mul { dst, .. }
+            | Instruction::Div { dst, .. }
+            | Instruction::Mod { dst, .. }
+            | Instruction::Load64 { dst, .. } => Some(*dst),
+            Instruction::Call {
+                result: Some(dst), ..
+            } => Some(*dst),
+            Instruction::Alloc { dst, .. }
+            | Instruction::StructAlloc { dst, .. }
+            | Instruction::StructFieldLoad { dst, .. }
+            | Instruction::StructFieldAddr { dst, .. } => Some(*dst),
+            Instruction::CallIndirect {
+                result: Some(dst), ..
+            } => Some(*dst),
+            Instruction::Phi { dst, .. } => Some(*dst),
+            Instruction::CompareSet { dst, .. } => Some(*dst),
+            _ => None,
+        }
+    }
+
     /// 执行变量重命名并插入 phi 指令
     ///
     /// 🔧 重构：完整实现 SSA 重命名算法
@@ -436,7 +463,7 @@ impl SsaConstructionPass {
         function: &mut LirFunction,
         cfg: &ControlFlowGraph,
         phi_nodes: &mut HashMap<Register, Vec<PhiNode>>,
-    ) -> Result<HashMap<String, usize>, String> {
+    ) -> crate::Result<HashMap<String, usize>> {
         let mut value_versions = HashMap::new();
 
         // 初始化重命名状态
@@ -515,7 +542,7 @@ impl SsaConstructionPass {
         state: &mut RenamingState,
         value_versions: &mut HashMap<String, usize>,
         visited: &mut HashSet<usize>,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         if visited.contains(&block_id) {
             return Ok(());
         }
@@ -630,24 +657,35 @@ impl SsaConstructionPass {
         }
 
         // 步骤4: 递归处理支配树中的子块
-        // 使用支配关系确定处理顺序
-        for &succ_id in &successors {
-            // 检查是否是被当前块直接支配的块
-            if let Some(&idom) = self.dominance_info.immediate_dominators.get(&succ_id) {
-                if idom == block_id {
-                    self.rename_block_recursive(
-                        succ_id,
-                        function,
-                        cfg,
-                        registers_to_rename,
-                        phi_nodes,
-                        block_to_phis,
-                        state,
-                        value_versions,
-                        visited,
-                    )?;
+        // 🔧 修复：使用支配树子节点遍历，而不是 CFG 后继 + idom 检查
+        // 原来的方法只遍历 CFG 后继中 idom == current_block 的块，
+        // 但支配树的子节点不一定是 CFG 直接后继（例如合并块可能是更早块的支配子节点）
+        // 这导致某些块在重命名阶段被遗漏
+        let dom_tree_children: Vec<usize> = self
+            .dominance_info
+            .immediate_dominators
+            .iter()
+            .filter_map(|(&child, &parent)| {
+                if parent == block_id && !visited.contains(&child) {
+                    Some(child)
+                } else {
+                    None
                 }
-            }
+            })
+            .collect();
+
+        for child_id in dom_tree_children {
+            self.rename_block_recursive(
+                child_id,
+                function,
+                cfg,
+                registers_to_rename,
+                phi_nodes,
+                block_to_phis,
+                state,
+                value_versions,
+                visited,
+            )?;
         }
 
         // 步骤5: 退出块时恢复栈状态
@@ -700,7 +738,7 @@ impl SsaConstructionPass {
         function: &mut LirFunction,
         cfg: &ControlFlowGraph,
         phi_nodes: &HashMap<Register, Vec<PhiNode>>,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         // 收集所有需要插入的 phi 指令，按块分组
         let mut insertions: HashMap<usize, Vec<Instruction>> = HashMap::new();
 
@@ -813,7 +851,7 @@ impl FunctionPass for SsaConstructionPass {
         if let Err(e) = self.compute_dominance(&cfg) {
             error!("=== SSA构造失败：支配关系计算错误 ===");
             error!("{}", e);
-            return PassResult::Failed(e);
+            return PassResult::Failed(e.to_string());
         }
 
         // 计算需要 Phi 节点的位置
@@ -822,7 +860,7 @@ impl FunctionPass for SsaConstructionPass {
             Err(e) => {
                 error!("=== SSA构造失败：Phi节点计算错误 ===");
                 error!("{}", e);
-                return PassResult::Failed(e);
+                return PassResult::Failed(e.to_string());
             }
         };
 
@@ -832,7 +870,7 @@ impl FunctionPass for SsaConstructionPass {
             Err(e) => {
                 error!("=== SSA构造失败：变量重命名错误 ===");
                 error!("{}", e);
-                return PassResult::Failed(e);
+                return PassResult::Failed(e.to_string());
             }
         };
 

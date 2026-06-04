@@ -20,17 +20,66 @@ pub(crate) fn lower_statement(
     stmt: &karte_hir::Statement,
 ) -> Result<(), Vec<String>> {
     match stmt {
-        karte_hir::Statement::Let { name, value, .. } => {
-            // 求值表达式
-            let temp_value = lower_expression_to_temp(ctx, value)?;
-            // 解析临时变量的实际值（如果是函数/闭包）
-            let var_value = ctx.resolve_value(&temp_value);
+        karte_hir::Statement::Let { name, value, span, .. } => {
+            // 检查是否为递归闭包（let f = |...| { ... f ... }）
+            // 如果 value 是 Lambda，先预绑定一个占位值，使 lambda 体中可以引用自身名称
+            let is_recursive_lambda = matches!(value, karte_hir::Expr::Lambda { .. });
 
-            let ownership = infer_expr_ownership(ctx, value);
-            if matches!(ownership, Some(OwnershipKind::RefCounted)) {
-                maybe_retain_for_expr(ctx, value, &var_value);
+            if is_recursive_lambda {
+                // 1. 预绑定占位值，使 lambda lowering 时能通过 lookup_variable 找到 name
+                ctx.bind_variable(name.clone(), Value::Number { value: 0, ty: None }, None);
+
+                // 2. 正常 lowering lambda — name 会被当作捕获变量处理
+                let temp_value = lower_expression_to_temp(ctx, value)?;
+
+                // 3. Lambda lowering 完成后，name 的绑定已被更新为 Reference(shared_location)
+                //    需要把闭包结构体写入 shared_location
+                if let Some(binding) = ctx.lookup_variable(name) {
+                    let resolved = ctx.resolve_value(&binding.value);
+                    if let Value::Reference { value: shared_location, .. } = &resolved {
+                        ctx.add_statement(Statement::Store {
+                            target: shared_location.as_ref().clone(),
+                            value: temp_value.clone(),
+                            span: *span,
+                        });
+                    }
+                }
+
+                // 4. 同时需要将外层作用域的 name 绑定更新为闭包值
+                //    （而不是 Reference），因为外层直接引用 f 就是闭包结构体
+                let var_value = ctx.resolve_value(&temp_value);
+                let struct_name = match &var_value {
+                    Value::Struct { name, .. } => Some(name.clone()),
+                    _ => None,
+                };
+                let ownership = infer_expr_ownership(ctx, value);
+                ctx.update_variable(name, var_value, ownership);
+                // 如果有 struct_name 信息需要保留，用 update_variable 可能丢失，检查一下
+                if struct_name.is_some() {
+                    // update_variable 不更新 struct_name，需要直接修改
+                    // 但通常闭包结构体的 struct_name 不需要特殊处理
+                }
+            } else {
+                // 求值表达式
+                let temp_value = lower_expression_to_temp(ctx, value)?;
+                // 解析临时变量的实际值（如果是函数/闭包）
+                let var_value = ctx.resolve_value(&temp_value);
+
+                // 检查值是否是结构体类型，记录结构体名称用于闭包捕获分析
+                let struct_name = match &var_value {
+                    Value::Struct { name, .. } => Some(name.clone()),
+                    _ => match value {
+                        karte_hir::Expr::StructLiteral { name, .. } => Some(name.clone()),
+                        _ => None,
+                    },
+                };
+
+                let ownership = infer_expr_ownership(ctx, value);
+                if matches!(ownership, Some(OwnershipKind::RefCounted)) {
+                    maybe_retain_for_expr(ctx, value, &var_value);
+                }
+                ctx.bind_variable_with_struct_name(name.clone(), var_value, ownership, struct_name);
             }
-            ctx.bind_variable(name.clone(), var_value, ownership);
         }
         karte_hir::Statement::Expression { expr, .. } => {
             // 结果被丢弃
@@ -46,7 +95,7 @@ pub(crate) fn lower_statement(
                 .iter()
                 .map(|field| MirStructField {
                     name: field.name.clone(),
-                    field_type: field.field_type.clone(),
+                    field_type: field.field_type.to_string(),
                 })
                 .collect();
 
@@ -69,13 +118,12 @@ pub(crate) fn lower_statement(
             params,
             body,
             return_type,
+            is_pub: _,
             span,
         } => {
-            // 如果有返回类型注解，解析并注册
-            if let Some(return_type_str) = return_type {
-                if let Some(parsed_type) = ctx.parse_type_annotation(return_type_str) {
-                    ctx.register_function_return_type(name.clone(), parsed_type);
-                }
+            // 如果有返回类型注解，直接使用结构化类型
+            if let Some(return_type) = return_type {
+                ctx.register_function_return_type(name.clone(), return_type.clone());
             }
 
             // 保存当前上下文状态
@@ -129,6 +177,7 @@ pub(crate) fn lower_statement(
 /// 支持以下赋值目标：
 /// - 普通变量（Identifier）
 /// - 字段访问（FieldAccess）
+/// - 数组下标访问（Index）
 pub(crate) fn handle_assignment(
     ctx: &mut LoweringContext,
     target: &Expr,
@@ -164,15 +213,49 @@ pub(crate) fn handle_assignment(
                 ctx.bind_variable(name.clone(), value_temp, ownership);
             }
         }
-        Expr::FieldAccess { object, field, .. } => {
-            if let Expr::Identifier { name, .. } = object.as_ref() {
-                if let Some(binding) = ctx.lookup_variable(name).cloned() {
-                    ctx.add_statement(Statement::FieldAssign {
-                        object: binding.value,
-                        field: field.clone(),
+        Expr::Constructor { name, args, .. } if args.is_empty() => {
+            // 大写字母开头的变量被 parser 误解析为零参数 Constructor
+            // 在赋值目标位置应视为普通变量
+            if let Some(binding) = ctx.lookup_variable(name).cloned() {
+                if let Value::Reference {
+                    value: ref_target, ..
+                } = binding.value
+                {
+                    ctx.add_statement(Statement::Store {
+                        target: *ref_target,
                         value: value_temp,
                         span,
                     });
+                } else {
+                    if let Some(old_binding) =
+                        ctx.update_variable(name, value_temp.clone(), ownership)
+                    {
+                        ctx.release_binding(&old_binding, span);
+                    }
+                }
+            } else {
+                ctx.bind_variable(name.clone(), value_temp, ownership);
+            }
+        }
+        Expr::FieldAccess { object, field, .. } => {
+            // 对 object 表达式求值，得到结构体（或嵌套结构体）的基地址
+            // 支持单级赋值 (o.val = 42) 和嵌套赋值 (o.inner.val = 42)
+            let object_value = if let Expr::Identifier { name, .. } = object.as_ref() {
+                // 简单变量引用：需要处理闭包捕获导致的 Reference 包装
+                if let Some(binding) = ctx.lookup_variable(name).cloned() {
+                    match &binding.value {
+                        Value::Reference { value: ref_target, .. } => {
+                            // 变量被闭包捕获：先解引用得到结构体地址
+                            let derefed = ctx.new_temp();
+                            ctx.add_statement(Statement::Dereference {
+                                target: derefed.clone(),
+                                reference: *ref_target.clone(),
+                                span,
+                            });
+                            derefed
+                        }
+                        _ => binding.value.clone(),
+                    }
                 } else {
                     return Err(vec![format!(
                         "Undefined variable in field assignment: {}",
@@ -180,10 +263,59 @@ pub(crate) fn handle_assignment(
                     )]);
                 }
             } else {
-                return Err(vec![
-                    "Complex field assignment not yet supported in MIR".to_string()
-                ]);
-            }
+                // 嵌套字段赋值：递归对 object 表达式求值得到中间结构体地址
+                // 例如 o.inner.val = 42 中，先求值 o.inner 得到 inner 的地址
+                lower_expression_to_temp(ctx, object)?
+            };
+
+            ctx.add_statement(Statement::FieldAssign {
+                object: object_value,
+                field: field.clone(),
+                value: value_temp,
+                span,
+            });
+        }
+        Expr::Index { array, index, .. } => {
+            // 数组下标赋值：计算 element_ptr = array_base + 8 + index * 8，然后 Store
+            let array_value = lower_expression_to_temp(ctx, array)?;
+            let index_value = lower_expression_to_temp(ctx, index)?;
+
+            // scaled_index = index * 8
+            let scaled_index = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                target: scaled_index.clone(),
+                left: index_value,
+                op: crate::BinaryOperator::Multiply,
+                right: Value::Number { value: 8, ty: None },
+                span,
+            });
+
+            // data_base = array + 8（跳过长度头）
+            let data_base = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                target: data_base.clone(),
+                left: array_value,
+                op: crate::BinaryOperator::Add,
+                right: Value::Number { value: 8, ty: None },
+                span,
+            });
+
+            // element_ptr = data_base + scaled_index
+            let element_ptr = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                target: element_ptr.clone(),
+                left: data_base,
+                op: crate::BinaryOperator::Add,
+                right: scaled_index,
+                span,
+            });
+
+            // Store value to element_ptr
+            ctx.add_statement(Statement::Store {
+                target: element_ptr,
+                value: value_temp,
+                span,
+            });
         }
         _ => {
             return Err(vec!["Invalid assignment target in MIR lowering".to_string()]);

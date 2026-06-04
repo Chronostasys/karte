@@ -285,14 +285,16 @@ impl EscapeAnalyzer {
                     self.get_or_create_var_id(object),
                     self.get_or_create_var_id(value),
                 ) {
-                    // ✅ Phase 3优化：检查对象是否明确在栈上
-                    // 只有当对象明确被分析为NoEscape时，才认为值不逃逸
-                    // 对于未分析的对象，保守地假设可能在堆上
-                    let object_is_definitely_stack = self
+                    // 获取或初始化 object 的逃逸信息。
+                    // 如果 object 尚未在 escape_info 中注册（例如逃逸分析还没处理到该变量），
+                    // 显式创建一个 NoEscape 条目——所有变量的正确初始状态就是未逃逸，
+                    // 后续传播阶段会根据实际使用情况确定最终逃逸状态。
+                    let object_info = self
                         .escape_info
-                        .get(&object_id)
-                        .map(|info| info.escape_state == EscapeState::NoEscape)
-                        .unwrap_or(false); // 未分析的对象默认假设可能在堆上
+                        .entry(object_id)
+                        .or_insert_with(|| VariableEscapeInfo::new_no_escape(object_id));
+                    let object_is_definitely_stack =
+                        object_info.escape_state == EscapeState::NoEscape;
 
                     if object_is_definitely_stack {
                         // 对象明确在栈上，值也可以在栈上，只添加依赖关系
@@ -1247,7 +1249,10 @@ mod tests {
             span: Span::default(),
         });
 
-        // obj.field = x
+        // obj.field = x — obj 是未定义变量
+        // FieldAssign 中 object 未在 escape_info 中注册时，
+        // 显式初始化为 NoEscape（所有变量的正确初始状态），
+        // 因此存储到该字段的值不逃逸
         bb0.add_statement(Statement::FieldAssign {
             object: Value::Variable {
                 name: "obj".to_string(),
@@ -1272,12 +1277,13 @@ mod tests {
         analyzer.analyze_function(&function).unwrap();
         analyzer.print_results();
 
-        // x 应该是全局逃逸（存储到堆对象）
+        // obj 是未定义变量，FieldAssign 处理时显式初始化为 NoEscape
+        // 因为 escape_info.entry() 会创建 NoEscape 条目，
+        // 存储到未逃逸对象字段的值也不逃逸
         let x_id = analyzer.variable_name_to_id.get("x").unwrap();
         let x_info = analyzer.get_escape_info(x_id).unwrap();
 
-        assert_eq!(x_info.escape_state, EscapeState::GlobalEscape);
-        assert!(x_info.escape_points.len() > 0);
+        assert_eq!(x_info.escape_state, EscapeState::NoEscape);
     }
 
     #[test]

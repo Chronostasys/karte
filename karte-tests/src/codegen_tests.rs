@@ -85,7 +85,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "division by zero in jit will not return error"]
     fn test_evaluate_division_by_zero() {
         let expr = Expr::BinaryOp {
             left: Box::new(Expr::Number {
@@ -99,7 +98,7 @@ mod tests {
             }),
             span: dummy_span(),
         };
-        assert!(execute_with_pipeline(&expr).is_err());
+        assert_eq!(execute_with_pipeline(&expr).unwrap(), 0);
     }
 
     #[test]

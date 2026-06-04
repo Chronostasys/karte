@@ -267,7 +267,7 @@ fn main() -> i32 {
 
     #[test]
     fn test_parse_array_len() {
-        let (tokens, _) = tokenize("let arr = [1]; len arr");
+        let (tokens, _) = tokenize("let arr = [1]; len(arr)");
         let (expr, diagnostics) = parse(&tokens);
 
         assert!(diagnostics.is_empty());

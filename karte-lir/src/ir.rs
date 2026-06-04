@@ -35,6 +35,30 @@ pub struct StructLayout {
     pub alignment: usize,
 }
 
+/// 比较条件类型
+/// 用于 CompareSet 指令，指定比较的方式
+#[derive(Debug, Clone, PartialEq, Eq, Hash, IrCodec)]
+pub enum ComparisonCondition {
+    /// 等于 (x86: SETE, AArch64: EQ)
+    #[ir_codec(token = "eq")]
+    Equal,
+    /// 不等于 (x86: SETNE, AArch64: NE)
+    #[ir_codec(token = "ne")]
+    NotEqual,
+    /// 小于 (x86: SETL, AArch64: LT)
+    #[ir_codec(token = "lt")]
+    LessThan,
+    /// 小于等于 (x86: SETLE, AArch64: LE)
+    #[ir_codec(token = "le")]
+    LessEqual,
+    /// 大于 (x86: SETG, AArch64: GT)
+    #[ir_codec(token = "gt")]
+    GreaterThan,
+    /// 大于等于 (x86: SETGE, AArch64: GE)
+    #[ir_codec(token = "ge")]
+    GreaterEqual,
+}
+
 /// 内存分配类型
 #[derive(Debug, Clone, PartialEq, IrCodec)]
 pub enum AllocationType {
@@ -184,9 +208,133 @@ pub enum Instruction {
         span: Span,
     },
 
-    /// 比较指令：cmp src1, src2
+    /// 取余指令：mod dst, src1, src2
+    #[ir_codec(token = "mod")]
+    Mod {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        src1: Operand,
+        #[ir_codec(args)]
+        src2: Operand,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 位与指令：& dst, src1, src2
+    #[ir_codec(token = "&")]
+    BitAnd {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        src1: Operand,
+        #[ir_codec(args)]
+        src2: Operand,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 位或指令：| dst, src1, src2
+    #[ir_codec(token = "|")]
+    BitOr {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        src1: Operand,
+        #[ir_codec(args)]
+        src2: Operand,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 位异或指令：^ dst, src1, src2
+    #[ir_codec(token = "^")]
+    BitXor {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        src1: Operand,
+        #[ir_codec(args)]
+        src2: Operand,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 左移指令：<< dst, src1, src2
+    #[ir_codec(token = "<<")]
+    ShiftLeft {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        src1: Operand,
+        #[ir_codec(args)]
+        src2: Operand,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 右移指令：>> dst, src1, src2
+    #[ir_codec(token = ">>")]
+    ShiftRight {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        src1: Operand,
+        #[ir_codec(args)]
+        src2: Operand,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 位非指令：~ dst, src
+    #[ir_codec(token = "~")]
+    BitNot {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        src: Operand,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 整数类型转换：截断/零扩展/符号扩展
+    #[ir_codec(token = "intcast")]
+    IntCast {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        src: Operand,
+        #[ir_codec(args)]
+        src_bits: u8,
+        #[ir_codec(args)]
+        dst_bits: u8,
+        #[ir_codec(args)]
+        signed: bool,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 比较指令：cmp src1, src2（只设置 flags，不写结果）
     #[ir_codec(token = "cmp")]
     Compare {
+        #[ir_codec(args)]
+        src1: Operand,
+        #[ir_codec(args)]
+        src2: Operand,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 比较并设置布尔结果：setcc dst, condition, src1, src2
+    /// 直接从比较条件产生 0/1 值到 dst 寄存器，不产生分支。
+    /// x86: cmp src1, src2; setcc dst_byte; movzbq dst, dst_byte
+    /// AArch64: cmp src1, src2; cset dst, condition
+    #[ir_codec(token = "setcc")]
+    CompareSet {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        condition: ComparisonCondition,
         #[ir_codec(args)]
         src1: Operand,
         #[ir_codec(args)]
@@ -353,19 +501,221 @@ pub enum Instruction {
         span: Span,
     },
 
-    /// 加载内存值（8字节）
-    Load64 {
+    /// 字符串连接：dst = concat(left, right)
+    /// 调用运行时 karte_jit_runtime_string_concat(left_ptr, right_ptr) -> new_ptr
+    #[ir_codec(token = "string_concat")]
+    StringConcat {
+        #[ir_codec(args)]
         dst: Register,
+        #[ir_codec(args)]
+        left: Register,
+        #[ir_codec(args)]
+        right: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 字符串内容比较：dst = (left_content == right_content) ? 1 : 0
+    /// 调用运行时 karte_jit_runtime_string_equal(left_ptr, right_ptr) -> u64
+    #[ir_codec(token = "string_equal")]
+    StringEqual {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        left: Register,
+        #[ir_codec(args)]
+        right: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 字符取值：dst = char_at(str_ptr, index) — 返回第 index 字节位置的单字节字符串
+    /// 调用运行时 karte_jit_runtime_string_char_at(str_ptr, index) -> new_ptr
+    #[ir_codec(token = "string_char_at")]
+    StringCharAt {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        str_ptr: Register,
+        #[ir_codec(args)]
+        index: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 子字符串截取：dst = substring(str_ptr, start, length)
+    /// 调用运行时 karte_jit_runtime_string_substring(str_ptr, start, length) -> new_ptr
+    #[ir_codec(token = "string_substring")]
+    StringSubstring {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        str_ptr: Register,
+        #[ir_codec(args)]
+        start: Register,
+        #[ir_codec(args)]
+        length: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 字符串包含检测：dst = str_contains(str_ptr, char_code) — 返回 0 或 1
+    /// 调用运行时 karte_jit_runtime_string_contains(str_ptr, char_code) -> 0|1
+    #[ir_codec(token = "string_contains")]
+    StringContains {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        str_ptr: Register,
+        #[ir_codec(args)]
+        char_code: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 字符串分割计数：dst = split_count(str_ptr, sep_code) — 返回字段数量
+    /// 调用运行时 karte_jit_runtime_split_count(str_ptr, sep_code) -> count
+    #[ir_codec(token = "split_count")]
+    SplitCount {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        str_ptr: Register,
+        #[ir_codec(args)]
+        separator: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 去除字符串首尾空格：dst = trim(str_ptr)
+    /// 调用运行时 karte_jit_runtime_trim(str_ptr) -> new_str_ptr
+    #[ir_codec(token = "trim")]
+    Trim {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        str_ptr: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 数字转字符串：dst = to_string(value) — 将 number 转换为字符串
+    /// 调用运行时 karte_jit_runtime_to_string(value) -> str_ptr
+    #[ir_codec(token = "to_string")]
+    ToString {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        value: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 打印字符串：print(ptr)
+    /// 调用运行时 karte_jit_runtime_print_string(str_ptr) -> 0
+    #[ir_codec(token = "print_string")]
+    PrintString {
+        #[ir_codec(args)]
+        ptr: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 打印数字：print_number(value)
+    /// 调用运行时 karte_jit_runtime_print_number(value: i64) -> 0
+    #[ir_codec(token = "print_number")]
+    PrintNumber {
+        #[ir_codec(args)]
+        value: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 打印布尔值：print_bool(value)
+    /// 调用运行时 karte_jit_runtime_print_bool(value: i64) -> 0
+    #[ir_codec(token = "print_bool")]
+    PrintBool {
+        #[ir_codec(args)]
+        value: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 加载内存值（8字节）
+    #[ir_codec(token = "load64")]
+    Load64 {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
         addr: Register,
+        #[ir_codec(args)]
         offset: i64,
+        #[ir_codec(skip)]
         span: Span,
     },
 
     /// 存储内存值（8字节）
+    #[ir_codec(token = "store64")]
     Store64 {
+        #[ir_codec(args)]
         addr: Register,
+        #[ir_codec(args)]
         offset: i64,
+        #[ir_codec(args)]
         src: Operand,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 加载内存值（4字节）
+    #[ir_codec(token = "load32")]
+    Load32 {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        addr: Register,
+        #[ir_codec(args)]
+        offset: i64,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 存储内存值（4字节）
+    #[ir_codec(token = "store32")]
+    Store32 {
+        #[ir_codec(args)]
+        addr: Register,
+        #[ir_codec(args)]
+        offset: i64,
+        #[ir_codec(args)]
+        src: Operand,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 加载内存值（1字节）
+    #[ir_codec(token = "load8")]
+    Load8 {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        addr: Register,
+        #[ir_codec(args)]
+        offset: i64,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 存储内存值（1字节）
+    #[ir_codec(token = "store8")]
+    Store8 {
+        #[ir_codec(args)]
+        addr: Register,
+        #[ir_codec(args)]
+        offset: i64,
+        #[ir_codec(args)]
+        src: Operand,
+        #[ir_codec(skip)]
         span: Span,
     },
 
@@ -395,6 +745,29 @@ pub enum Instruction {
         addr: Register,
         #[ir_codec(args)]
         offset: i64,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 加载 runtime 全局变量 (通过名称)
+    /// 在 AOT 中被编译为 RIP-relative load
+    #[ir_codec(token = "load_global")]
+    LoadGlobal {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        name: String,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// GC 寄存器保存/恢复 - 把所有 callee-saved 寄存器 dump 到虚拟栈
+    /// gc_push_regs: sub r10, N*8; mov [r10+0], rbx; mov [r10+8], rcx; ...
+    /// gc_pop_regs:  mov rbx, [r10+0]; mov rcx, [r10+8]; ...; add r10, N*8
+    #[ir_codec(token = "gc_reg_op")]
+    GcRegOp {
+        #[ir_codec(args)]
+        is_push: bool, // true = push, false = pop
         #[ir_codec(skip)]
         span: Span,
     },
@@ -436,15 +809,36 @@ impl Instruction {
             | Instruction::Sub { dst, .. }
             | Instruction::Mul { dst, .. }
             | Instruction::Div { dst, .. }
+            | Instruction::Mod { dst, .. }
+            | Instruction::BitAnd { dst, .. }
+            | Instruction::BitOr { dst, .. }
+            | Instruction::BitXor { dst, .. }
+            | Instruction::ShiftLeft { dst, .. }
+            | Instruction::ShiftRight { dst, .. }
+            | Instruction::BitNot { dst, .. }
+            | Instruction::IntCast { dst, .. }
             | Instruction::Load64 { dst, .. }
+            | Instruction::Load32 { dst, .. }
+            | Instruction::Load8 { dst, .. }
+            | Instruction::LoadGlobal { dst, .. }
             | Instruction::StructAlloc { dst, .. }
             | Instruction::StructFieldLoad { dst, .. }
             | Instruction::StructFieldAddr { dst, .. }
             | Instruction::Alloc { dst, .. }
-            | Instruction::MemCopy { dst, .. } => Some(*dst),
+            | Instruction::MemCopy { dst, .. }
+            | Instruction::CompareSet { dst, .. }
+            | Instruction::StringConcat { dst, .. }
+            | Instruction::StringEqual { dst, .. }
+            | Instruction::StringCharAt { dst, .. }
+            | Instruction::StringSubstring { dst, .. }
+            | Instruction::StringContains { dst, .. }
+            | Instruction::SplitCount { dst, .. }
+            | Instruction::Trim { dst, .. }
+            | Instruction::ToString { dst, .. } => Some(*dst),
             Instruction::LoadPair { dst1, .. } => Some(*dst1),
             Instruction::Call { result, .. } | Instruction::CallIndirect { result, .. } => *result,
             Instruction::Phi { dst, .. } => Some(*dst),
+            Instruction::LoadGlobal { dst, .. } => Some(*dst),
             // EffectPerform 的 result 是定义寄存器（如果存在）
             Instruction::EffectPerform { result, .. } => *result,
             _ => None,
@@ -459,12 +853,31 @@ impl Instruction {
             | Instruction::Sub { dst, .. }
             | Instruction::Mul { dst, .. }
             | Instruction::Div { dst, .. }
+            | Instruction::Mod { dst, .. }
+            | Instruction::BitAnd { dst, .. }
+            | Instruction::BitOr { dst, .. }
+            | Instruction::BitXor { dst, .. }
+            | Instruction::ShiftLeft { dst, .. }
+            | Instruction::ShiftRight { dst, .. }
+            | Instruction::BitNot { dst, .. }
+            | Instruction::IntCast { dst, .. }
             | Instruction::Load64 { dst, .. }
+            | Instruction::Load32 { dst, .. }
+            | Instruction::Load8 { dst, .. }
             | Instruction::StructAlloc { dst, .. }
             | Instruction::StructFieldLoad { dst, .. }
             | Instruction::StructFieldAddr { dst, .. }
             | Instruction::Alloc { dst, .. }
-            | Instruction::MemCopy { dst, .. } => {
+            | Instruction::MemCopy { dst, .. }
+            | Instruction::CompareSet { dst, .. }
+            | Instruction::StringConcat { dst, .. }
+            | Instruction::StringEqual { dst, .. }
+            | Instruction::StringCharAt { dst, .. }
+            | Instruction::StringSubstring { dst, .. }
+            | Instruction::StringContains { dst, .. }
+            | Instruction::SplitCount { dst, .. }
+            | Instruction::Trim { dst, .. }
+            | Instruction::ToString { dst, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
                 }
@@ -512,18 +925,38 @@ impl Instruction {
             Instruction::Add { src1, src2, .. }
             | Instruction::Sub { src1, src2, .. }
             | Instruction::Mul { src1, src2, .. }
-            | Instruction::Div { src1, src2, .. } => {
+            | Instruction::Div { src1, src2, .. }
+            | Instruction::Mod { src1, src2, .. }
+            | Instruction::BitAnd { src1, src2, .. }
+            | Instruction::BitOr { src1, src2, .. }
+            | Instruction::BitXor { src1, src2, .. }
+            | Instruction::ShiftLeft { src1, src2, .. }
+            | Instruction::ShiftRight { src1, src2, .. } => {
                 self.add_operand_registers(src1, &mut used);
                 self.add_operand_registers(src2, &mut used);
+            }
+            Instruction::BitNot { src, .. } => {
+                self.add_operand_registers(src, &mut used);
+            }
+            Instruction::IntCast { src, .. } => {
+                self.add_operand_registers(src, &mut used);
             }
             Instruction::Compare { src1, src2, .. } => {
                 self.add_operand_registers(src1, &mut used);
                 self.add_operand_registers(src2, &mut used);
             }
-            Instruction::Load64 { addr, .. } => {
+            Instruction::CompareSet { src1, src2, .. } => {
+                self.add_operand_registers(src1, &mut used);
+                self.add_operand_registers(src2, &mut used);
+            }
+            Instruction::Load64 { addr, .. }
+            | Instruction::Load32 { addr, .. }
+            | Instruction::Load8 { addr, .. } => {
                 used.push(*addr);
             }
-            Instruction::Store64 { addr, src, .. } => {
+            Instruction::Store64 { addr, src, .. }
+            | Instruction::Store32 { addr, src, .. }
+            | Instruction::Store8 { addr, src, .. } => {
                 used.push(*addr);
                 self.add_operand_registers(src, &mut used);
             }
@@ -553,7 +986,6 @@ impl Instruction {
                 args, arg_operands, ..
             } => {
                 used.extend_from_slice(args);
-                // 添加参数操作数中使用的寄存器
                 for operand in arg_operands {
                     self.add_operand_registers(operand, &mut used);
                 }
@@ -566,7 +998,6 @@ impl Instruction {
             } => {
                 used.push(*function_register);
                 used.extend_from_slice(args);
-                // 🔧 修复：添加参数操作数中使用的寄存器
                 for operand in arg_operands {
                     self.add_operand_registers(operand, &mut used);
                 }
@@ -598,6 +1029,46 @@ impl Instruction {
                 used.push(*addr);
             }
             Instruction::Retain { value, .. } | Instruction::Release { value, .. } => {
+                used.push(*value);
+            }
+            Instruction::StringConcat { left, right, .. } => {
+                used.push(*left);
+                used.push(*right);
+            }
+            Instruction::StringEqual { left, right, .. } => {
+                used.push(*left);
+                used.push(*right);
+            }
+            Instruction::StringCharAt { str_ptr, index, .. } => {
+                used.push(*str_ptr);
+                used.push(*index);
+            }
+            Instruction::StringSubstring { str_ptr, start, length, .. } => {
+                used.push(*str_ptr);
+                used.push(*start);
+                used.push(*length);
+            }
+            Instruction::StringContains { str_ptr, char_code, .. } => {
+                used.push(*str_ptr);
+                used.push(*char_code);
+            }
+            Instruction::SplitCount { str_ptr, separator, .. } => {
+                used.push(*str_ptr);
+                used.push(*separator);
+            }
+            Instruction::Trim { str_ptr, .. } => {
+                used.push(*str_ptr);
+            }
+            Instruction::ToString { value, .. } => {
+                used.push(*value);
+            }
+            Instruction::PrintString { ptr, .. } => {
+                used.push(*ptr);
+            }
+            Instruction::PrintNumber { value, .. } => {
+                used.push(*value);
+            }
+            Instruction::PrintBool { value, .. } => {
                 used.push(*value);
             }
             Instruction::Phi { incoming, .. } => {
@@ -648,20 +1119,57 @@ impl Instruction {
             }
             | Instruction::Div {
                 dst, src1, src2, ..
+            }
+            | Instruction::Mod {
+                dst, src1, src2, ..
+            }
+            | Instruction::BitAnd {
+                dst, src1, src2, ..
+            }
+            | Instruction::BitOr {
+                dst, src1, src2, ..
+            }
+            | Instruction::BitXor {
+                dst, src1, src2, ..
+            }
+            | Instruction::ShiftLeft {
+                dst, src1, src2, ..
+            }
+            | Instruction::ShiftRight {
+                dst, src1, src2, ..
             } => {
-                // 🔧 关键修复：替换目标寄存器
                 if *dst == old_reg {
                     *dst = new_reg;
                 }
                 Self::replace_operand_register(src1, old_reg, new_reg);
                 Self::replace_operand_register(src2, old_reg, new_reg);
             }
+            Instruction::BitNot { dst, src, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                Self::replace_operand_register(src, old_reg, new_reg);
+            }
+            Instruction::IntCast { dst, src, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                Self::replace_operand_register(src, old_reg, new_reg);
+            }
             Instruction::Compare { src1, src2, .. } => {
                 Self::replace_operand_register(src1, old_reg, new_reg);
                 Self::replace_operand_register(src2, old_reg, new_reg);
             }
-            Instruction::Load64 { dst, addr, .. } => {
-                // 🔧 关键修复：替换目标寄存器
+            Instruction::CompareSet { dst, src1, src2, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                Self::replace_operand_register(src1, old_reg, new_reg);
+                Self::replace_operand_register(src2, old_reg, new_reg);
+            }
+            Instruction::Load64 { dst, addr, .. }
+            | Instruction::Load32 { dst, addr, .. }
+            | Instruction::Load8 { dst, addr, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
                 }
@@ -669,7 +1177,14 @@ impl Instruction {
                     *addr = new_reg;
                 }
             }
-            Instruction::Store64 { addr, src, .. } => {
+            Instruction::LoadGlobal { dst, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+            }
+            Instruction::Store64 { addr, src, .. }
+            | Instruction::Store32 { addr, src, .. }
+            | Instruction::Store8 { addr, src, .. } => {
                 if *addr == old_reg {
                     *addr = new_reg;
                 }
@@ -834,6 +1349,106 @@ impl Instruction {
                     *dst = new_reg;
                 }
             }
+            Instruction::StringConcat { dst, left, right, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                if *left == old_reg {
+                    *left = new_reg;
+                }
+                if *right == old_reg {
+                    *right = new_reg;
+                }
+            }
+            Instruction::StringEqual { dst, left, right, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                if *left == old_reg {
+                    *left = new_reg;
+                }
+                if *right == old_reg {
+                    *right = new_reg;
+                }
+            }
+            Instruction::StringCharAt { dst, str_ptr, index, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                if *str_ptr == old_reg {
+                    *str_ptr = new_reg;
+                }
+                if *index == old_reg {
+                    *index = new_reg;
+                }
+            }
+            Instruction::StringSubstring { dst, str_ptr, start, length, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                if *str_ptr == old_reg {
+                    *str_ptr = new_reg;
+                }
+                if *start == old_reg {
+                    *start = new_reg;
+                }
+                if *length == old_reg {
+                    *length = new_reg;
+                }
+            }
+            Instruction::StringContains { dst, str_ptr, char_code, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                if *str_ptr == old_reg {
+                    *str_ptr = new_reg;
+                }
+                if *char_code == old_reg {
+                    *char_code = new_reg;
+                }
+            }
+            Instruction::SplitCount { dst, str_ptr, separator, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                if *str_ptr == old_reg {
+                    *str_ptr = new_reg;
+                }
+                if *separator == old_reg {
+                    *separator = new_reg;
+                }
+            }
+            Instruction::Trim { dst, str_ptr, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                if *str_ptr == old_reg {
+                    *str_ptr = new_reg;
+                }
+            }
+            Instruction::ToString { dst, value, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                if *value == old_reg {
+                    *value = new_reg;
+                }
+            }
+            Instruction::PrintString { ptr, .. } => {
+                if *ptr == old_reg {
+                    *ptr = new_reg;
+                }
+            }
+            Instruction::PrintNumber { value, .. } => {
+                if *value == old_reg {
+                    *value = new_reg;
+                }
+            }
+            Instruction::PrintBool { value, .. } => {
+                if *value == old_reg {
+                    *value = new_reg;
+                }
+            }
             Instruction::Phi { dst, incoming, .. } => {
                 // 🔧 关键修复：替换目标寄存器
                 if *dst == old_reg {
@@ -901,9 +1516,11 @@ impl Instruction {
             | Instruction::Sub { span, .. }
             | Instruction::Mul { span, .. }
             | Instruction::Div { span, .. }
+            | Instruction::Mod { span, .. }
             | Instruction::Store64 { span, .. }
             | Instruction::Load64 { span, .. }
             | Instruction::Compare { span, .. }
+            | Instruction::CompareSet { span, .. }
             | Instruction::CallIndirect { span, .. }
             | Instruction::Call { span, .. }
             | Instruction::StructFieldStore { span, .. }
@@ -935,18 +1552,51 @@ impl Instruction {
             }
             | Instruction::Div {
                 dst, src1, src2, ..
+            }
+            | Instruction::Mod {
+                dst, src1, src2, ..
+            }
+            | Instruction::BitAnd {
+                dst, src1, src2, ..
+            }
+            | Instruction::BitOr {
+                dst, src1, src2, ..
+            }
+            | Instruction::BitXor {
+                dst, src1, src2, ..
+            }
+            | Instruction::ShiftLeft {
+                dst, src1, src2, ..
+            }
+            | Instruction::ShiftRight {
+                dst, src1, src2, ..
             } => {
                 defined.push(*dst);
                 self.add_operand_registers(src1, &mut used);
                 self.add_operand_registers(src2, &mut used);
             }
-            Instruction::Store64 { addr, src, .. } => {
+            Instruction::BitNot { dst, src, .. } => {
+                defined.push(*dst);
+                self.add_operand_registers(src, &mut used);
+            }
+            Instruction::IntCast { dst, src, .. } => {
+                defined.push(*dst);
+                self.add_operand_registers(src, &mut used);
+            }
+            Instruction::Store64 { addr, src, .. }
+            | Instruction::Store32 { addr, src, .. }
+            | Instruction::Store8 { addr, src, .. } => {
                 used.push(*addr);
                 self.add_operand_registers(src, &mut used);
             }
-            Instruction::Load64 { dst, addr, .. } => {
+            Instruction::Load64 { dst, addr, .. }
+            | Instruction::Load32 { dst, addr, .. }
+            | Instruction::Load8 { dst, addr, .. } => {
                 defined.push(*dst);
                 used.push(*addr);
+            }
+            Instruction::LoadGlobal { dst, .. } => {
+                defined.push(*dst);
             }
             Instruction::Compare { src1, src2, .. } => {
                 if let Operand::Register { id } = src1 {
@@ -955,6 +1605,15 @@ impl Instruction {
                 if let Operand::Register { id } = src2 {
                     used.push(*id);
                 }
+            }
+            Instruction::CompareSet { src1, src2, dst, .. } => {
+                if let Operand::Register { id } = src1 {
+                    used.push(*id);
+                }
+                if let Operand::Register { id } = src2 {
+                    used.push(*id);
+                }
+                defined.push(*dst);
             }
             Instruction::Return { value, .. } => {
                 if let Some(reg) = value {
@@ -1011,6 +1670,54 @@ impl Instruction {
             }
             Instruction::Alloc { dst, .. } | Instruction::StructAlloc { dst, .. } => {
                 defined.push(*dst);
+            }
+            Instruction::StringConcat { dst, left, right, .. } => {
+                defined.push(*dst);
+                used.push(*left);
+                used.push(*right);
+            }
+            Instruction::StringEqual { dst, left, right, .. } => {
+                defined.push(*dst);
+                used.push(*left);
+                used.push(*right);
+            }
+            Instruction::StringCharAt { dst, str_ptr, index, .. } => {
+                defined.push(*dst);
+                used.push(*str_ptr);
+                used.push(*index);
+            }
+            Instruction::StringSubstring { dst, str_ptr, start, length, .. } => {
+                defined.push(*dst);
+                used.push(*str_ptr);
+                used.push(*start);
+                used.push(*length);
+            }
+            Instruction::StringContains { dst, str_ptr, char_code, .. } => {
+                defined.push(*dst);
+                used.push(*str_ptr);
+                used.push(*char_code);
+            }
+            Instruction::SplitCount { dst, str_ptr, separator, .. } => {
+                defined.push(*dst);
+                used.push(*str_ptr);
+                used.push(*separator);
+            }
+            Instruction::Trim { dst, str_ptr, .. } => {
+                defined.push(*dst);
+                used.push(*str_ptr);
+            }
+            Instruction::ToString { dst, value, .. } => {
+                defined.push(*dst);
+                used.push(*value);
+            }
+            Instruction::PrintString { ptr, .. } => {
+                used.push(*ptr);
+            }
+            Instruction::PrintNumber { value, .. } => {
+                used.push(*value);
+            }
+            Instruction::PrintBool { value, .. } => {
+                used.push(*value);
             }
             Instruction::StructFieldStore {
                 struct_addr, src, ..
@@ -1107,6 +1814,15 @@ pub struct LirFunction {
     /// 使用侧表而非修改 Instruction enum，保持最小化修改。
     #[ir_codec(skip)]
     pub instruction_metadata: HashMap<usize, InstructionMetadata>,
+    /// 目标架构（用于 cross-compile 时选择正确的调用约定）
+    /// None 表示使用编译主机默认架构
+    #[ir_codec(skip)]
+    pub target_arch: Option<String>,
+    /// 🔧 新增：spill slot 到 FP 偏移的映射
+    /// 由 StackFrameLayoutPass 在栈帧布局完成后填充
+    /// key: spill slot_id, value: 相对 FP 的偏移（负数）
+    #[ir_codec(skip)]
+    pub spill_slot_offsets: HashMap<usize, i64>,
 }
 
 impl LirFunction {
@@ -1123,23 +1839,31 @@ impl LirFunction {
             lowered_lifetimes: None,
             lowered_register_mapping: None,
             instruction_metadata: HashMap::new(),
+            target_arch: None,
+            spill_slot_offsets: HashMap::new(),
         }
     }
 
-    /// 🔧 新增：创建带参数信息的函数
+    /// 创建带参数信息的函数
     pub fn new_with_params(name: String, param_count: usize) -> Self {
         let mut function = Self::new(name);
         function.parameter_count = param_count;
 
-        // 根据调用约定设置参数寄存器
+        // 所有参数都加入 parameter_registers，实际映射到物理寄存器或溢出槽
+        // 由寄存器分配阶段根据 CallingConvention 确定
         for i in 0..param_count {
-            // 调用约定：r1-r4 是参数寄存器
-            if i < 4 {
-                function.parameter_registers.push(Register::Virtual(i + 1));
-            }
+            function.parameter_registers.push(Register::Virtual(i + 1));
         }
 
+        // 确保后续 new_register() 调用不会分配到参数寄存器编号
+        function.next_register = param_count + 1;
+
         function
+    }
+
+    /// 获取目标架构对应的调用约定
+    pub fn get_calling_convention(&self) -> CallingConvention {
+        CallingConvention::for_target(self.target_arch.as_deref().unwrap_or("x86_64"))
     }
 
     /// 获取实际使用的 callee-saved 寄存器列表
@@ -1152,10 +1876,9 @@ impl LirFunction {
         self.used_regs = regs;
     }
 
-    /// 分配一个新的寄存器，跳过栈指针寄存器(RegisterId(6))、帧指针寄存器(RegisterId(7))和函数参数寄存器
+    /// 分配一个新的寄存器，跳过栈指针寄存器、帧指针寄存器和函数参数寄存器
     pub fn new_register(&mut self) -> Register {
-        // 栈指针寄存器是RegisterId(6)，帧指针寄存器是RegisterId(7)
-        let cc = CallingConvention::standard();
+        let cc = self.get_calling_convention();
         let stack_pointer_reg: usize = cc.stack_pointer as usize;
         let frame_pointer_reg: usize = cc.frame_pointer as usize;
         // 🔧 修复：跳过已分配的函数参数寄存器
@@ -1180,22 +1903,22 @@ impl LirFunction {
 
     /// 专门用于栈操作的寄存器分配（只返回栈指针寄存器）
     pub fn get_stack_pointer_register(&self) -> Register {
-        Register::Physical(CallingConvention::standard().stack_pointer)
+        Register::Physical(self.get_calling_convention().stack_pointer)
     }
 
     /// 检查一个寄存器是否是栈指针寄存器
     pub fn is_stack_pointer_register(&self, reg: &Register) -> bool {
-        reg.id() == CallingConvention::standard().stack_pointer as usize
+        reg.id() == self.get_calling_convention().stack_pointer as usize
     }
 
     /// 检查一个寄存器是否是帧指针寄存器
     pub fn is_frame_pointer_register(&self, reg: &Register) -> bool {
-        reg.id() == CallingConvention::standard().frame_pointer as usize
+        reg.id() == self.get_calling_convention().frame_pointer as usize
     }
 
     /// 验证指令是否违反栈指针寄存器使用规则
     /// 栈指针寄存器(RegisterId(6))只能用于栈操作和栈帧管理
-    pub fn validate_stack_pointer_usage(&self) -> Result<(), String> {
+    pub fn validate_stack_pointer_usage(&self) -> crate::Result<()> {
         // 🔧 修复：支持基于帧指针的栈帧管理代码
         for (index, instruction) in self.instructions.iter().enumerate() {
             match instruction {
@@ -1216,7 +1939,7 @@ impl LirFunction {
                                 return Err(format!(
                                     "指令 {} 违反栈指针使用规则: 栈指针寄存器只能用于栈操作",
                                     index
-                                ));
+                                ).into());
                             }
                         }
                     }
@@ -1234,7 +1957,7 @@ impl LirFunction {
                                 return Err(format!(
                                     "指令 {} 违反栈指针使用规则: 栈指针寄存器只能用于栈操作",
                                     index
-                                ));
+                                ).into());
                             }
                         }
                     }
@@ -1253,7 +1976,7 @@ impl LirFunction {
                                 return Err(format!(
                                     "指令 {} 违反栈指针使用规则: 栈指针寄存器只能用于栈操作",
                                     index
-                                ));
+                                ).into());
                             }
                         }
                     }
@@ -1348,6 +2071,10 @@ pub struct LirProgram {
     pub global_struct_types: HashMap<String, StructLayout>,
     /// 全局变量定义
     pub global_variables: HashMap<String, MemoryId>,
+    /// 目标架构（用于 cross-compile 时选择正确的调用约定）
+    /// 空字符串表示使用编译主机的默认架构
+    #[ir_codec(skip)]
+    pub target: String,
 }
 
 impl Default for LirProgram {
@@ -1365,7 +2092,34 @@ impl LirProgram {
             main_function: None,
             global_struct_types: HashMap::new(),
             global_variables: HashMap::new(),
+            target: String::new(),
         }
+    }
+
+    /// 设置目标架构
+    pub fn set_target(&mut self, target: String) {
+        self.target = target;
+    }
+
+    /// 获取目标架构
+    pub fn target(&self) -> &str {
+        if self.target.is_empty() {
+            // 默认使用编译主机的架构
+            if cfg!(target_arch = "x86_64") {
+                "x86_64"
+            } else if cfg!(target_arch = "aarch64") {
+                "aarch64"
+            } else {
+                "x86_64"
+            }
+        } else {
+            &self.target
+        }
+    }
+
+    /// 获取当前目标架构的调用约定
+    pub fn calling_convention(&self) -> karte_common::calling_convention::CallingConvention {
+        karte_common::calling_convention::CallingConvention::for_target(self.target())
     }
 
     pub fn add_function(&mut self, function: LirFunction) {

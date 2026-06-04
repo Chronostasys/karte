@@ -7,7 +7,7 @@
 //! - 程序结构解析
 
 use karte_diagnostics::Span;
-use karte_hir::{Expr, Statement};
+use karte_hir::{Expr, IntKind, Statement, Type};
 use karte_lexer::Token;
 
 use crate::types::{ParseError, ParserMode};
@@ -19,6 +19,16 @@ impl<'a> Parser<'a> {
         if let Some(token) = self.peek() {
             if let Token::Identifier(name) = &token.token {
                 return matches!(name.as_str(), "let" | "enum" | "struct" | "fn");
+            }
+            if matches!(token.token, Token::KwPub) {
+                // pub fn / pub struct / pub enum
+                if self.position + 1 < self.tokens.len() {
+                    if let Some(next) = self.tokens.get(self.position + 1) {
+                        if let Token::Identifier(name) = &next.token {
+                            return matches!(name.as_str(), "fn" | "struct" | "enum");
+                        }
+                    }
+                }
             }
         }
         false
@@ -38,13 +48,34 @@ impl<'a> Parser<'a> {
                     continue;
                 }
 
-                // 检查是否为赋值语句 (identifier = ...)
+                // 检查是否为赋值语句 (identifier = ...) 或复合赋值语句 (identifier += ...)
                 if self.position + 1 < self.tokens.len() {
                     if let Some(next_token) = self.tokens.get(self.position + 1) {
-                        if matches!(next_token.token, Token::Equal) {
+                        if matches!(
+                            next_token.token,
+                            Token::Equal
+                                | Token::PlusEqual
+                                | Token::MinusEqual
+                                | Token::StarEqual
+                                | Token::SlashEqual
+                        ) {
                             // 这是一个赋值语句
                             statements.push(self.parse_statement()?);
                             continue;
+                        }
+                    }
+                }
+            }
+
+            // 检查是否为 pub 声明
+            if matches!(token.token, Token::KwPub) {
+                if self.position + 1 < self.tokens.len() {
+                    if let Some(next) = self.tokens.get(self.position + 1) {
+                        if let Token::Identifier(name) = &next.token {
+                            if matches!(name.as_str(), "fn" | "struct" | "enum") {
+                                statements.push(self.parse_statement()?);
+                                continue;
+                            }
                         }
                     }
                 }
@@ -123,12 +154,32 @@ impl<'a> Parser<'a> {
                 if name == "let" {
                     return self.parse_let_statement();
                 } else if name == "enum" {
-                    return self.parse_enum_statement();
+                    return self.parse_enum_statement(false);
                 } else if name == "struct" {
-                    return self.parse_struct_statement();
+                    return self.parse_struct_statement(false);
                 } else if name == "fn" {
-                    return self.parse_function_definition();
+                    return self.parse_function_definition(false);
                 }
+            }
+            // pub 声明
+            if matches!(token.token, Token::KwPub) {
+                self.advance(); // consume 'pub'
+                if let Some(next) = self.peek() {
+                    if let Token::Identifier(name) = &next.token {
+                        if name == "fn" {
+                            return self.parse_function_definition(true);
+                        } else if name == "struct" {
+                            return self.parse_struct_statement(true);
+                        } else if name == "enum" {
+                            return self.parse_enum_statement(true);
+                        }
+                    }
+                }
+                return Err(ParseError::UnexpectedToken {
+                    expected: "'fn', 'struct', or 'enum' after 'pub'".to_string(),
+                    found: self.peek().unwrap().token.clone(),
+                    span: self.peek().unwrap().span,
+                });
             }
         }
 
@@ -259,7 +310,7 @@ impl<'a> Parser<'a> {
     }
 
     /// 解析enum语句
-    pub(crate) fn parse_enum_statement(&mut self) -> Result<Statement, ParseError> {
+    pub(crate) fn parse_enum_statement(&mut self, is_pub: bool) -> Result<Statement, ParseError> {
         let start_span = self.peek().unwrap().span;
         self.advance(); // consume 'enum'
 
@@ -312,55 +363,47 @@ impl<'a> Parser<'a> {
                 let variant_span = token.span;
                 self.advance();
 
-                // 检查是否有数据类型 (暂时只支持单个类型名)
-                let data_type = if let Some(next_token) = self.peek() {
+                // 检查是否有数据类型（解析为结构化 Type，支持多参数）
+                let data_types = if let Some(next_token) = self.peek() {
                     if matches!(next_token.token, Token::LeftParen) {
                         self.advance(); // consume '('
 
-                        if let Some(type_token) = self.peek() {
-                            if let Token::Identifier(type_name) = &type_token.token {
-                                let type_name = type_name.clone();
-                                self.advance();
+                        let mut types = vec![];
+                        // 解析逗号分隔的类型列表
+                        loop {
+                            let ty = self.parse_type_expression()?;
+                            types.push(ty);
 
-                                // 期望 ')'
-                                if let Some(close_token) = self.peek() {
-                                    if matches!(close_token.token, Token::RightParen) {
-                                        self.advance();
-                                        Some(type_name)
-                                    } else {
-                                        return Err(ParseError::UnexpectedToken {
-                                            expected: "')'".to_string(),
-                                            found: close_token.token.clone(),
-                                            span: close_token.span,
-                                        });
-                                    }
+                            if let Some(next) = self.peek() {
+                                if matches!(next.token, Token::Comma) {
+                                    self.advance(); // consume ','
+                                } else if matches!(next.token, Token::RightParen) {
+                                    self.advance(); // consume ')'
+                                    break;
                                 } else {
-                                    return Err(ParseError::UnexpectedEof {
-                                        expected: "')'".to_string(),
+                                    return Err(ParseError::UnexpectedToken {
+                                        expected: "',' or ')'".to_string(),
+                                        found: next.token.clone(),
+                                        span: next.span,
                                     });
                                 }
                             } else {
-                                return Err(ParseError::UnexpectedToken {
-                                    expected: "type name".to_string(),
-                                    found: type_token.token.clone(),
-                                    span: type_token.span,
+                                return Err(ParseError::UnexpectedEof {
+                                    expected: "',' or ')'".to_string(),
                                 });
                             }
-                        } else {
-                            return Err(ParseError::UnexpectedEof {
-                                expected: "type name".to_string(),
-                            });
                         }
+                        types
                     } else {
-                        None
+                        vec![]
                     }
                 } else {
-                    None
+                    vec![]
                 };
 
                 karte_hir::ast::TypeVariant {
                     name,
-                    data_type,
+                    data_types,
                     span: variant_span,
                 }
             } else {
@@ -408,6 +451,7 @@ impl<'a> Parser<'a> {
                 Ok(Statement::TypeDef {
                     name: type_name,
                     variants,
+                    is_pub,
                     span,
                 })
             } else {
@@ -425,7 +469,7 @@ impl<'a> Parser<'a> {
     }
 
     /// 解析struct语句
-    pub(crate) fn parse_struct_statement(&mut self) -> Result<Statement, ParseError> {
+    pub(crate) fn parse_struct_statement(&mut self, is_pub: bool) -> Result<Statement, ParseError> {
         let start_span = self.peek().unwrap().span;
         self.advance(); // consume 'struct'
 
@@ -548,6 +592,7 @@ impl<'a> Parser<'a> {
                 Ok(Statement::StructDef {
                     name: struct_name,
                     fields,
+                    is_pub,
                     span,
                 })
             } else {
@@ -565,7 +610,7 @@ impl<'a> Parser<'a> {
     }
 
     /// 解析函数定义
-    pub(crate) fn parse_function_definition(&mut self) -> Result<Statement, ParseError> {
+    pub(crate) fn parse_function_definition(&mut self, is_pub: bool) -> Result<Statement, ParseError> {
         let start_span = self.peek().unwrap().span;
         self.advance(); // consume 'fn'
 
@@ -617,29 +662,21 @@ impl<'a> Parser<'a> {
                 let param_span = token.span;
                 self.advance();
 
-                // 期望 ":"
-                if let Some(colon_token) = self.peek() {
+                // 检查是否有类型注解（可选）
+                let type_annotation = if let Some(colon_token) = self.peek() {
                     if matches!(colon_token.token, Token::Colon) {
                         self.advance(); // consume ':'
+                        Some(self.parse_field_type_name()?)
                     } else {
-                        return Err(ParseError::UnexpectedToken {
-                            expected: "':'".to_string(),
-                            found: colon_token.token.clone(),
-                            span: colon_token.span,
-                        });
+                        None
                     }
                 } else {
-                    return Err(ParseError::UnexpectedEof {
-                        expected: "':'".to_string(),
-                    });
-                }
-
-                // 解析参数类型
-                let param_type = self.parse_field_type_name()?;
+                    None
+                };
 
                 karte_hir::Parameter {
                     name,
-                    type_annotation: Some(param_type),
+                    type_annotation,
                     span: param_span,
                 }
             } else {
@@ -707,6 +744,7 @@ impl<'a> Parser<'a> {
             params,
             return_type,
             body,
+            is_pub,
             span,
         })
     }
@@ -804,19 +842,67 @@ impl<'a> Parser<'a> {
     }
 
     /// 解析字段类型名，支持引用类型和泛型类型语法
-    pub(crate) fn parse_field_type_name(&mut self) -> Result<String, ParseError> {
+    pub(crate) fn parse_field_type_name(&mut self) -> Result<Type, ParseError> {
         self.parse_type_expression()
     }
 
-    /// 解析类型表达式，支持嵌套的泛型类型
-    pub(crate) fn parse_type_expression(&mut self) -> Result<String, ParseError> {
+    /// 解析类型表达式，支持函数类型语法 T -> R 和 (T1, T2) -> R
+    /// 右结合递归：number -> number -> number 解析为 number -> (number -> number)
+    pub(crate) fn parse_type_expression(&mut self) -> Result<Type, ParseError> {
+        let base_type = self.parse_base_type()?;
+
+        // 检查是否有 -> (函数类型)
+        if let Some(token) = self.peek() {
+            if matches!(token.token, Token::Arrow) {
+                self.advance(); // consume '->'
+                let return_type = self.parse_type_expression()?; // 右结合递归
+                return Ok(Type::function(vec![base_type], return_type));
+            }
+        }
+
+        Ok(base_type)
+    }
+
+    /// 解析基础类型：标识符类型、引用类型、泛型类型、括号类型
+    fn parse_base_type(&mut self) -> Result<Type, ParseError> {
         if let Some(token) = self.peek() {
             match &token.token {
                 Token::Ampersand => {
                     // 引用类型: &TypeName 或 &GenericType<T>
                     self.advance(); // consume '&'
-                    let inner_type = self.parse_type_expression()?;
-                    Ok(format!("&{}", inner_type))
+                    let inner_type = self.parse_base_type()?; // 注意用 parse_base_type 而非 parse_type_expression
+                    Ok(Type::reference(inner_type))
+                }
+                Token::LeftParen => {
+                    // 括号类型：(T1, T2) -> R（多参数函数类型）或 (T)（单类型加括号）
+                    self.advance(); // consume '('
+                    let mut types = Vec::new();
+                    if !matches!(self.peek().map(|t| &t.token), Some(Token::RightParen)) {
+                        types.push(self.parse_type_expression()?);
+                        while matches!(self.peek().map(|t| &t.token), Some(Token::Comma)) {
+                            self.advance(); // consume ','
+                            types.push(self.parse_type_expression()?);
+                        }
+                    }
+                    self.expect_token(Token::RightParen)?;
+
+                    // 检查后面是否跟着 ->，如果是则解析为多参数函数类型
+                    if let Some(next_token) = self.peek() {
+                        if matches!(next_token.token, Token::Arrow) {
+                            self.advance(); // consume '->'
+                            let return_type = self.parse_type_expression()?;
+                            return Ok(Type::function(types, return_type));
+                        }
+                    }
+
+                    // 否则是括号包裹的单类型或空括号
+                    if types.is_empty() {
+                        Ok(Type::Unit)
+                    } else if types.len() == 1 {
+                        Ok(types.into_iter().next().unwrap())
+                    } else {
+                        Ok(Type::Tuple(types))
+                    }
                 }
                 Token::Identifier(type_name) => {
                     let type_name = type_name.clone();
@@ -831,11 +917,9 @@ impl<'a> Parser<'a> {
                             let mut generic_args = Vec::new();
 
                             loop {
-                                // 解析一个泛型参数
                                 let arg_type = self.parse_type_expression()?;
                                 generic_args.push(arg_type);
 
-                                // 检查是否有更多参数
                                 if let Some(comma_token) = self.peek() {
                                     if matches!(comma_token.token, Token::Comma) {
                                         self.advance(); // consume ','
@@ -857,14 +941,26 @@ impl<'a> Parser<'a> {
                                 }
                             }
 
-                            // 构造泛型类型字符串
-                            Ok(format!("{}<{}>", type_name, generic_args.join(", ")))
+                            // 构造泛型类型
+                            match type_name.as_str() {
+                                "Option" => {
+                                    if generic_args.len() == 1 {
+                                        Ok(Type::option(generic_args[0].clone()))
+                                    } else {
+                                        Ok(Type::Unknown)
+                                    }
+                                }
+                                _ => {
+                                    // 其他泛型类型暂不支持
+                                    Ok(Type::Unknown)
+                                }
+                            }
                         } else {
                             // 普通类型名
-                            Ok(type_name)
+                            Ok(Self::type_name_to_type(&type_name))
                         }
                     } else {
-                        Ok(type_name)
+                        Ok(Self::type_name_to_type(&type_name))
                     }
                 }
                 _ => Err(ParseError::UnexpectedToken {
@@ -877,6 +973,32 @@ impl<'a> Parser<'a> {
             Err(ParseError::UnexpectedEof {
                 expected: "type name".to_string(),
             })
+        }
+    }
+
+    /// 将类型名称字符串转换为 Type enum
+    /// 在 Parser 阶段只做基本映射，自定义类型名创建 Struct 骨架占位
+    fn type_name_to_type(name: &str) -> Type {
+        match name {
+            "number" => Type::Number,
+            "string" => Type::string(),
+            "unit" => Type::Unit,
+            "bool" => Type::bool(),
+            "i8" => Type::Int(IntKind::I8),
+            "i16" => Type::Int(IntKind::I16),
+            "i32" => Type::Int(IntKind::I32),
+            "i64" => Type::Int(IntKind::I64),
+            "u8" => Type::Int(IntKind::U8),
+            "u16" => Type::Int(IntKind::U16),
+            "u32" => Type::Int(IntKind::U32),
+            "u64" => Type::Int(IntKind::U64),
+            "usize" => Type::Int(IntKind::USize),
+            _ => {
+                // 自定义类型名（struct/enum），创建 Struct 骨架作为占位符
+                // type_checker 会在 process_struct_definitions 中替换为实际类型
+                // 如果实际是 enum 类型，type_checker 也会正确处理
+                Type::struct_type(name.to_string(), vec![])
+            }
         }
     }
 

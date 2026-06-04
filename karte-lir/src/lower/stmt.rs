@@ -4,7 +4,7 @@
 
 use super::helpers::value_to_key;
 use super::types::LirLoweringContext;
-use crate::{AllocationType, Instruction, Operand};
+use crate::{AllocationType, ComparisonCondition, Instruction, Operand};
 use karte_mir::{BinaryOperator, Statement, UnaryOperator, Value};
 
 pub(super) fn lower_statement(
@@ -24,14 +24,29 @@ pub(super) fn lower_statement(
             // 这是为了避免env_ptr覆盖function_ptr的问题
             log::debug!("🔧 Assignment: target={:?}, source={:?}", target, source);
 
-            // 检查源值是否是env_ptr字段访问
+            // 🔧 关键修复：精确检查是否是 env_ptr 字段的赋值（值为0）
+            // 原逻辑过于宽泛：任何值为0的临时变量赋值都会被跳过
+            // 现在改为：只有当 source 关联的结构体布局为 Closure（即 source 是从 Closure
+            // 结构体字段提取的值，如 env_ptr）且值为 0 时才跳过
+            // 注意：保留 lower_to_rvalue 调用以维持其副作用
             let is_env_ptr_assignment = match source {
-                Value::Temp { .. } => {
-                    // 对于临时变量，我们需要检查其值是否为0
+                Value::Temp { .. } | Value::Variable { .. } => {
+                    // 先调用 lower_to_rvalue（保留副作用）
                     let src_rvalue = ctx.lower_to_rvalue(source);
                     if let Operand::Immediate { value: 0 } = src_rvalue {
-                        log::debug!("🔧 检测到值为0的临时变量赋值，可能是env_ptr，跳过以避免覆盖function_ptr");
-                        true
+                        // 进一步检查 source 是否关联到 Closure 结构体
+                        let is_closure_related = ctx
+                            .get_struct_layout_for_value(source)
+                            .map(|layout| layout.name == "Closure")
+                            .unwrap_or(false);
+                        if is_closure_related {
+                            log::debug!(
+                                "🔧 检测到 Closure 结构体关联的 0 值赋值（env_ptr），跳过以避免覆盖 function_ptr"
+                            );
+                            true
+                        } else {
+                            false
+                        }
                     } else {
                         false
                     }
@@ -44,14 +59,48 @@ pub(super) fn lower_statement(
                 return Ok(());
             }
 
+            // 🔧 修复 struct 返回值悬挂指针：
+            // 检测当前是否在给"将被 return 返回的 temp"赋值 struct 值
+            // 如果是，则强制 struct 使用堆分配，避免函数返回后栈帧释放导致悬挂指针
+            if let Value::Struct { name, .. } = source {
+                if name != "Closure" {
+                    if let Value::Temp { id, .. } = target {
+                        if ctx.returned_temp_ids.contains(&id.0) {
+                            log::debug!(
+                                "🔧 检测到 struct 返回逃逸: temp {:?} 将被返回，强制堆分配",
+                                id
+                            );
+                            ctx.force_struct_heap = true;
+                        }
+                    }
+                }
+            }
+
             // 1. 获取源值的R-Value（值本身）
             let src_rvalue = ctx.lower_to_rvalue(source);
+
+            // 清除堆分配标志（无论是否被使用）
+            ctx.force_struct_heap = false;
             log::debug!(
                 "📝 Assign: target={:?}, source={:?}, src_rvalue={:?}",
                 target,
                 source,
                 src_rvalue
             );
+
+            // 🔧 常量追踪：如果源值是立即数，记录到 known_constants 中
+            // 这样后续 lower_to_rvalue 可以直接使用立即数，避免通过栈加载
+            {
+                use super::helpers::value_to_key;
+                let target_key = value_to_key(target);
+                if let Operand::Immediate { value } = src_rvalue {
+                    log::debug!("📝 常量追踪: {} = {}", target_key, value);
+                    ctx.known_constants.insert(target_key, value);
+                } else {
+                    // 非常量赋值，清除该变量的常量记录
+                    ctx.known_constants.remove(&target_key);
+                }
+            }
 
             // 2. 获取目标的L-Value（存储位置）
             let target_lvalue = ctx.lower_to_lvalue(target);
@@ -86,9 +135,31 @@ pub(super) fn lower_statement(
             // Stack-First策略：创建临时寄存器来存储计算结果
             let temp_register = ctx.current_function_mut().new_register();
 
-            // 从栈load操作数到临时寄存器
-            let src1 = ctx.lower_to_rvalue(left);
-            let src2 = ctx.lower_to_rvalue(right);
+            // 🔧 常量传播：对于算术运算（Add/Sub/Mul/Div/位运算），
+            // 如果操作数是已知常量，直接使用立即数，避免通过栈加载。
+            // 这解决了循环中立即数被映射到物理寄存器后与其他值冲突的问题。
+            let use_const_prop = matches!(
+                op,
+                BinaryOperator::Add
+                    | BinaryOperator::Subtract
+                    | BinaryOperator::Multiply
+                    | BinaryOperator::BitAnd
+                    | BinaryOperator::BitOr
+                    | BinaryOperator::BitXor
+                    | BinaryOperator::ShiftLeft
+                    | BinaryOperator::ShiftRight
+            );
+
+            let src1 = if use_const_prop {
+                ctx.lower_to_rvalue_with_const_prop(left)
+            } else {
+                ctx.lower_to_rvalue(left)
+            };
+            let src2 = if use_const_prop {
+                ctx.lower_to_rvalue_with_const_prop(right)
+            } else {
+                ctx.lower_to_rvalue(right)
+            };
 
             // 克隆操作数以便在后续逻辑中使用
             let src1_clone = src1.clone();
@@ -113,14 +184,9 @@ pub(super) fn lower_statement(
                     src2,
                     span: *span,
                 },
-                BinaryOperator::Divide => Instruction::Div {
-                    dst: temp_register,
-                    src1,
-                    src2,
-                    span: *span,
-                },
 
-                // For logical operations, we handle them differently and return a move instruction
+                // 逻辑、比较、除法和取模操作：在下面的第二个 match 中处理
+                // 这里返回一个占位指令（会被丢弃）
                 BinaryOperator::And
                 | BinaryOperator::Or
                 | BinaryOperator::Equal
@@ -128,15 +194,49 @@ pub(super) fn lower_statement(
                 | BinaryOperator::LessThan
                 | BinaryOperator::LessEqual
                 | BinaryOperator::GreaterThan
-                | BinaryOperator::GreaterEqual => {
-                    // Handle these complex operations separately after the match
-                    // For now, return a simple move to avoid type mismatch
+                | BinaryOperator::GreaterEqual
+                | BinaryOperator::Divide
+                | BinaryOperator::Modulo => {
+                    // CompareSet 在下面的第二个 match 中通过 ctx.add_instruction 添加，
+                    // 这里返回一个无副作用的占位指令（会被覆盖）
                     Instruction::Move {
                         dst: temp_register,
                         src: Operand::Immediate { value: 0 },
                         span: *span,
                     }
                 }
+
+                // 位运算指令
+                BinaryOperator::BitAnd => Instruction::BitAnd {
+                    dst: temp_register,
+                    src1,
+                    src2,
+                    span: *span,
+                },
+                BinaryOperator::BitOr => Instruction::BitOr {
+                    dst: temp_register,
+                    src1,
+                    src2,
+                    span: *span,
+                },
+                BinaryOperator::BitXor => Instruction::BitXor {
+                    dst: temp_register,
+                    src1,
+                    src2,
+                    span: *span,
+                },
+                BinaryOperator::ShiftLeft => Instruction::ShiftLeft {
+                    dst: temp_register,
+                    src1,
+                    src2,
+                    span: *span,
+                },
+                BinaryOperator::ShiftRight => Instruction::ShiftRight {
+                    dst: temp_register,
+                    src1,
+                    src2,
+                    span: *span,
+                },
             };
 
             // 处理复杂的逻辑运算和比较运算
@@ -147,71 +247,23 @@ pub(super) fn lower_statement(
                 | BinaryOperator::LessEqual
                 | BinaryOperator::GreaterThan
                 | BinaryOperator::GreaterEqual => {
-                    // 🔧 修复：确保False case的结果被正确设置
-                    // 先添加比较指令
-                    ctx.add_instruction(Instruction::Compare {
-                        src1: src1_clone,
-                        src2: src2_clone,
-                        span: *span,
-                    });
-
-                    let true_label = ctx.next_internal_label("cmp_true");
-                    let end_label = ctx.next_internal_label("cmp_end");
-
-                    let jump_instr = match op {
-                        BinaryOperator::Equal => Instruction::JumpEqual {
-                            target: true_label,
-                            span: *span,
-                        },
-                        BinaryOperator::NotEqual => Instruction::JumpNotEqual {
-                            target: true_label,
-                            span: *span,
-                        },
-                        BinaryOperator::LessThan => Instruction::JumpLess {
-                            target: true_label,
-                            span: *span,
-                        },
-                        BinaryOperator::LessEqual => Instruction::JumpLessEqual {
-                            target: true_label,
-                            span: *span,
-                        },
-                        BinaryOperator::GreaterThan => Instruction::JumpGreater {
-                            target: true_label,
-                            span: *span,
-                        },
-                        BinaryOperator::GreaterEqual => Instruction::JumpGreaterEqual {
-                            target: true_label,
-                            span: *span,
-                        },
+                    // 使用 CompareSet 指令：直接从比较条件产生 0/1 值，不产生分支
+                    // x86: cmp src1, src2; setcc dst; movzbq dst, dst
+                    // AArch64: cmp src1, src2; cset dst, condition
+                    let condition = match op {
+                        BinaryOperator::Equal => ComparisonCondition::Equal,
+                        BinaryOperator::NotEqual => ComparisonCondition::NotEqual,
+                        BinaryOperator::LessThan => ComparisonCondition::LessThan,
+                        BinaryOperator::LessEqual => ComparisonCondition::LessEqual,
+                        BinaryOperator::GreaterThan => ComparisonCondition::GreaterThan,
+                        BinaryOperator::GreaterEqual => ComparisonCondition::GreaterEqual,
                         _ => unreachable!(),
                     };
-                    ctx.add_instruction(jump_instr);
-
-                    // 🔧 关键修复：False case - 显式设置结果为0
-                    ctx.add_instruction(Instruction::Move {
+                    ctx.add_instruction(Instruction::CompareSet {
                         dst: temp_register,
-                        src: Operand::Immediate { value: 0 },
-                        span: *span,
-                    });
-                    ctx.add_instruction(Instruction::Jump {
-                        target: end_label,
-                        span: *span,
-                    });
-
-                    // True case
-                    ctx.add_instruction(Instruction::Label {
-                        id: true_label,
-                        span: *span,
-                    });
-                    ctx.add_instruction(Instruction::Move {
-                        dst: temp_register,
-                        src: Operand::Immediate { value: 1 },
-                        span: *span,
-                    });
-
-                    // End - 🔧 关键修复：确保end_label在正确位置
-                    ctx.add_instruction(Instruction::Label {
-                        id: end_label,
+                        condition,
+                        src1: src1_clone,
+                        src2: src2_clone,
                         span: *span,
                     });
                 }
@@ -307,6 +359,104 @@ pub(super) fn lower_statement(
                         span: *span,
                     });
                 }
+                BinaryOperator::Divide => {
+                    // 除零检查：如果 src2 == 0，结果为 0；否则执行除法
+                    let zero_label = ctx.next_internal_label("div_zero");
+                    let end_label = ctx.next_internal_label("div_end");
+
+                    // 比较 src2 与 0
+                    ctx.add_instruction(Instruction::Compare {
+                        src1: src2_clone.clone(),
+                        src2: Operand::Immediate { value: 0 },
+                        span: *span,
+                    });
+
+                    // 如果 src2 == 0，跳转到 zero_label
+                    ctx.add_instruction(Instruction::JumpEqual {
+                        target: zero_label,
+                        span: *span,
+                    });
+
+                    // 非零路径：执行除法
+                    ctx.add_instruction(Instruction::Div {
+                        dst: temp_register,
+                        src1: src1_clone.clone(),
+                        src2: src2_clone.clone(),
+                        span: *span,
+                    });
+
+                    // 跳转到 end_label
+                    ctx.add_instruction(Instruction::Jump {
+                        target: end_label,
+                        span: *span,
+                    });
+
+                    // 零路径：结果为 0
+                    ctx.add_instruction(Instruction::Label {
+                        id: zero_label,
+                        span: *span,
+                    });
+                    ctx.add_instruction(Instruction::Move {
+                        dst: temp_register,
+                        src: Operand::Immediate { value: 0 },
+                        span: *span,
+                    });
+
+                    // End
+                    ctx.add_instruction(Instruction::Label {
+                        id: end_label,
+                        span: *span,
+                    });
+                }
+                BinaryOperator::Modulo => {
+                    // 除零检查：如果 src2 == 0，结果为 0；否则执行取模
+                    let zero_label = ctx.next_internal_label("mod_zero");
+                    let end_label = ctx.next_internal_label("mod_end");
+
+                    // 比较 src2 与 0
+                    ctx.add_instruction(Instruction::Compare {
+                        src1: src2_clone.clone(),
+                        src2: Operand::Immediate { value: 0 },
+                        span: *span,
+                    });
+
+                    // 如果 src2 == 0，跳转到 zero_label
+                    ctx.add_instruction(Instruction::JumpEqual {
+                        target: zero_label,
+                        span: *span,
+                    });
+
+                    // 非零路径：执行取模
+                    ctx.add_instruction(Instruction::Mod {
+                        dst: temp_register,
+                        src1: src1_clone.clone(),
+                        src2: src2_clone.clone(),
+                        span: *span,
+                    });
+
+                    // 跳转到 end_label
+                    ctx.add_instruction(Instruction::Jump {
+                        target: end_label,
+                        span: *span,
+                    });
+
+                    // 零路径：结果为 0
+                    ctx.add_instruction(Instruction::Label {
+                        id: zero_label,
+                        span: *span,
+                    });
+                    ctx.add_instruction(Instruction::Move {
+                        dst: temp_register,
+                        src: Operand::Immediate { value: 0 },
+                        span: *span,
+                    });
+
+                    // End
+                    ctx.add_instruction(Instruction::Label {
+                        id: end_label,
+                        span: *span,
+                    });
+                }
                 _ => {
                     // 对于简单运算（Add, Sub, Mul, Div），添加基本指令
                     ctx.add_instruction(instruction);
@@ -372,17 +522,33 @@ pub(super) fn lower_statement(
                 UnaryOperator::Not => {
                     // !x: logical not with 0/1 encoding
                     // For 0/1 boolean encoding: !x = 1 - x
-                    let temp_reg = ctx.current_function_mut().new_register();
+                    // 🔧 修复：复用 temp_register 而非分配新的 temp_reg，
+                    // 减少一个虚拟寄存器，避免 SSA/Memory2Reg 在长 && 链中值追踪错误
 
-                    // Move 1 to temp register
+                    // Move 1 to result register first
                     ctx.add_instruction(Instruction::Move {
-                        dst: temp_reg,
+                        dst: temp_register,
                         src: Operand::Immediate { value: 1 },
                         span: *span,
                     });
 
                     // Subtract src from 1: result = 1 - src
                     ctx.add_instruction(Instruction::Sub {
+                        dst: temp_register,
+                        src1: Operand::Register { id: temp_register },
+                        src2: src,
+                        span: *span,
+                    });
+                }
+                UnaryOperator::BitNot => {
+                    // ~x: bitwise NOT = XOR with -1 (all 1s)
+                    let temp_reg = ctx.current_function_mut().new_register();
+                    ctx.add_instruction(Instruction::Move {
+                        dst: temp_reg,
+                        src: Operand::Immediate { value: -1 },
+                        span: *span,
+                    });
+                    ctx.add_instruction(Instruction::BitXor {
                         dst: temp_register,
                         src1: Operand::Register { id: temp_reg },
                         src2: src,
@@ -397,6 +563,36 @@ pub(super) fn lower_statement(
             Ok(())
         }
 
+        Statement::TypeCast {
+            target,
+            source,
+            dst_bits,
+            signed,
+            span,
+        } => {
+            let src_rvalue = ctx.lower_to_rvalue(source);
+
+            if *dst_bits == 64 {
+                // 64→64：无需转换，直接存储到栈
+                ctx.store_value_to_stack(target, src_rvalue);
+            } else {
+                // 64→8/16/32：需要截断
+                let temp = ctx.current_function_mut().new_register();
+                ctx.add_instruction(Instruction::IntCast {
+                    dst: temp,
+                    src: src_rvalue,
+                    src_bits: 64,
+                    dst_bits: *dst_bits,
+                    signed: *signed,
+                    span: *span,
+                });
+                // Stack-First策略：将结果存储到栈
+                ctx.store_value_to_stack(target, Operand::Register { id: temp });
+            }
+
+            Ok(())
+        }
+
         Statement::Call {
             target,
             function,
@@ -405,6 +601,451 @@ pub(super) fn lower_statement(
         } => {
             // 首先解析函数值，看看是否是闭包
             let resolved_function = ctx.resolve_value(function);
+
+            // 检查是否为运行时内建函数（字符串连接、print 等）
+            if let Value::Function { name, .. } = &resolved_function {
+                match name.as_str() {
+                    "__runtime_string_concat" => {
+                        // 字符串连接：生成 StringConcat LIR 指令
+                        let left_op = ctx.lower_to_rvalue(&args[0]);
+                        let right_op = ctx.lower_to_rvalue(&args[1]);
+
+                        let left_reg = match left_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: left_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+                        let right_reg = match right_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: right_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+
+                        let result_reg = ctx.current_function_mut().new_register();
+                        ctx.add_instruction(Instruction::StringConcat {
+                            dst: result_reg,
+                            left: left_reg,
+                            right: right_reg,
+                            span: *span,
+                        });
+
+                        if let Some(target_value) = target {
+                            ctx.store_value_to_stack(
+                                target_value,
+                                Operand::Register { id: result_reg },
+                            );
+                        }
+                        return Ok(());
+                    }
+                    "__runtime_string_equal" => {
+                        // 字符串内容比较：生成 StringEqual LIR 指令
+                        let left_op = ctx.lower_to_rvalue(&args[0]);
+                        let right_op = ctx.lower_to_rvalue(&args[1]);
+
+                        let left_reg = match left_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: left_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+                        let right_reg = match right_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: right_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+
+                        let result_reg = ctx.current_function_mut().new_register();
+                        ctx.add_instruction(Instruction::StringEqual {
+                            dst: result_reg,
+                            left: left_reg,
+                            right: right_reg,
+                            span: *span,
+                        });
+
+                        if let Some(target_value) = target {
+                            ctx.store_value_to_stack(
+                                target_value,
+                                Operand::Register { id: result_reg },
+                            );
+                        }
+                        return Ok(());
+                    }
+                    "__runtime_string_char_at" => {
+                        let str_op = ctx.lower_to_rvalue(&args[0]);
+                        let idx_op = ctx.lower_to_rvalue(&args[1]);
+
+                        let str_reg = match str_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: str_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+                        let idx_reg = match idx_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: idx_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+
+                        let result_reg = ctx.current_function_mut().new_register();
+                        ctx.add_instruction(Instruction::StringCharAt {
+                            dst: result_reg,
+                            str_ptr: str_reg,
+                            index: idx_reg,
+                            span: *span,
+                        });
+
+                        if let Some(target_value) = target {
+                            ctx.store_value_to_stack(
+                                target_value,
+                                Operand::Register { id: result_reg },
+                            );
+                        }
+                        return Ok(());
+                    }
+                    "__runtime_string_substring" => {
+                        let str_op = ctx.lower_to_rvalue(&args[0]);
+                        let start_op = ctx.lower_to_rvalue(&args[1]);
+                        let len_op = ctx.lower_to_rvalue(&args[2]);
+
+                        let str_reg = match str_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: str_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+                        let start_reg = match start_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: start_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+                        let len_reg = match len_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: len_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+
+                        let result_reg = ctx.current_function_mut().new_register();
+                        ctx.add_instruction(Instruction::StringSubstring {
+                            dst: result_reg,
+                            str_ptr: str_reg,
+                            start: start_reg,
+                            length: len_reg,
+                            span: *span,
+                        });
+
+                        if let Some(target_value) = target {
+                            ctx.store_value_to_stack(
+                                target_value,
+                                Operand::Register { id: result_reg },
+                            );
+                        }
+                        return Ok(());
+                    }
+                    "__runtime_string_contains" => {
+                        let str_op = ctx.lower_to_rvalue(&args[0]);
+                        let ch_op = ctx.lower_to_rvalue(&args[1]);
+
+                        let str_reg = match str_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: str_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+                        let ch_reg = match ch_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: ch_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+
+                        let result_reg = ctx.current_function_mut().new_register();
+                        ctx.add_instruction(Instruction::StringContains {
+                            dst: result_reg,
+                            str_ptr: str_reg,
+                            char_code: ch_reg,
+                            span: *span,
+                        });
+
+                        if let Some(target_value) = target {
+                            ctx.store_value_to_stack(
+                                target_value,
+                                Operand::Register { id: result_reg },
+                            );
+                        }
+                        return Ok(());
+                    }
+                    "__runtime_split_count" => {
+                        let str_op = ctx.lower_to_rvalue(&args[0]);
+                        let sep_op = ctx.lower_to_rvalue(&args[1]);
+
+                        let str_reg = match str_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: str_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+                        let sep_reg = match sep_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: sep_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+
+                        let result_reg = ctx.current_function_mut().new_register();
+                        ctx.add_instruction(Instruction::SplitCount {
+                            dst: result_reg,
+                            str_ptr: str_reg,
+                            separator: sep_reg,
+                            span: *span,
+                        });
+
+                        if let Some(target_value) = target {
+                            ctx.store_value_to_stack(
+                                target_value,
+                                Operand::Register { id: result_reg },
+                            );
+                        }
+                        return Ok(());
+                    }
+                    "__runtime_to_string" => {
+                        let val_op = ctx.lower_to_rvalue(&args[0]);
+
+                        let val_reg = match val_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: val_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+
+                        let result_reg = ctx.current_function_mut().new_register();
+                        ctx.add_instruction(Instruction::ToString {
+                            dst: result_reg,
+                            value: val_reg,
+                            span: *span,
+                        });
+
+                        if let Some(target_value) = target {
+                            ctx.store_value_to_stack(
+                                target_value,
+                                Operand::Register { id: result_reg },
+                            );
+                        }
+                        return Ok(());
+                    }
+                    "__runtime_trim" => {
+                        let str_op = ctx.lower_to_rvalue(&args[0]);
+
+                        let str_reg = match str_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: str_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+
+                        let result_reg = ctx.current_function_mut().new_register();
+                        ctx.add_instruction(Instruction::Trim {
+                            dst: result_reg,
+                            str_ptr: str_reg,
+                            span: *span,
+                        });
+
+                        if let Some(target_value) = target {
+                            ctx.store_value_to_stack(
+                                target_value,
+                                Operand::Register { id: result_reg },
+                            );
+                        }
+                        return Ok(());
+                    }
+                    "__runtime_print_string" => {
+                        // 打印字符串：生成 PrintString LIR 指令
+                        let ptr_op = ctx.lower_to_rvalue(&args[0]);
+                        let ptr_reg = match ptr_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: ptr_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+
+                        ctx.add_instruction(Instruction::PrintString {
+                            ptr: ptr_reg,
+                            span: *span,
+                        });
+
+                        // print 返回 Unit (0)
+                        if let Some(target_value) = target {
+                            ctx.store_value_to_stack(
+                                target_value,
+                                Operand::Immediate { value: 0 },
+                            );
+                        }
+                        return Ok(());
+                    }
+                    "__runtime_print_number" => {
+                        // 打印数字：生成 PrintNumber LIR 指令
+                        let val_op = ctx.lower_to_rvalue(&args[0]);
+                        let val_reg = match val_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: val_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+
+                        ctx.add_instruction(Instruction::PrintNumber {
+                            value: val_reg,
+                            span: *span,
+                        });
+
+                        // print 返回 Unit (0)
+                        if let Some(target_value) = target {
+                            ctx.store_value_to_stack(
+                                target_value,
+                                Operand::Immediate { value: 0 },
+                            );
+                        }
+                        return Ok(());
+                    }
+                    "__runtime_print_bool" => {
+                        // 打印布尔值：生成 PrintBool LIR 指令
+                        let val_op = ctx.lower_to_rvalue(&args[0]);
+                        let val_reg = match val_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: val_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+
+                        ctx.add_instruction(Instruction::PrintBool {
+                            value: val_reg,
+                            span: *span,
+                        });
+
+                        // print 返回 Unit (0)
+                        if let Some(target_value) = target {
+                            ctx.store_value_to_stack(
+                                target_value,
+                                Operand::Immediate { value: 0 },
+                            );
+                        }
+                        return Ok(());
+                    }
+                    _ => {} // 继续常规处理
+                }
+            }
 
             let mut all_args = Vec::new();
             let actual_function_to_call;
@@ -813,6 +1454,58 @@ pub(super) fn lower_statement(
             Ok(())
         }
 
+        Statement::FieldAssign {
+            object,
+            field,
+            value,
+            span,
+        } => {
+            // 字段赋值：将 value 写入 object 的 field 字段
+            // 语义是 FieldAccess 的反向操作
+
+            // 1. 获取结构体的基地址（栈地址或堆指针）
+            let struct_base_operand = ctx.lower_to_rvalue(object);
+            let base_reg = match struct_base_operand {
+                Operand::Register { id } => id,
+                operand => {
+                    let temp = ctx.current_function_mut().new_register();
+                    ctx.add_instruction(Instruction::Move {
+                        dst: temp,
+                        src: operand,
+                        span: *span,
+                    });
+                    temp
+                }
+            };
+
+            // 2. 计算字段偏移量
+            let field_offset = ctx
+                .get_field_offset_from_struct_layout(object, field)
+                .map_err(|e| vec![e])?;
+
+            // 3. 计算字段地址 = 基地址 + 偏移
+            let field_addr_reg = ctx.current_function_mut().new_register();
+            ctx.add_instruction(Instruction::Add {
+                dst: field_addr_reg,
+                src1: Operand::Register { id: base_reg },
+                src2: Operand::Immediate {
+                    value: field_offset as i64,
+                },
+                span: *span,
+            });
+
+            // 4. 将值存储到字段地址
+            let value_operand = ctx.lower_to_rvalue(value);
+            ctx.add_instruction(Instruction::Store64 {
+                addr: field_addr_reg,
+                offset: 0,
+                src: value_operand,
+                span: *span,
+            });
+
+            Ok(())
+        }
+
         Statement::Dereference {
             target,
             reference,
@@ -870,13 +1563,6 @@ pub(super) fn lower_statement(
         } => {
             // Tagged Union构造器参数提取：从Tagged Union结构体中提取数据
 
-            if *arg_index != 0 {
-                return Err(vec![format!(
-                    "ConstructorArgExtract only supports arg_index = 0 for single-field unions (got {})",
-                    arg_index
-                )]);
-            }
-
             // 获取构造器寄存器
             let constructor_operand = ctx.lower_to_rvalue(constructor);
             let constructor_reg = match constructor_operand {
@@ -894,13 +1580,24 @@ pub(super) fn lower_statement(
             // 创建临时寄存器来接收提取的数据
             let temp_reg = ctx.current_function_mut().new_register();
 
-            // 使用Tagged Union管理器生成数据提取指令到临时寄存器
-            let extract_instructions = ctx
-                .tagged_union_manager
-                .generate_data_extraction_instructions(constructor_reg, temp_reg, *span);
+            if *arg_index == 0 {
+                // 第一个参数：使用 Tagged Union 管理器的数据提取（兼容旧逻辑）
+                let extract_instructions = ctx
+                    .tagged_union_manager
+                    .generate_data_extraction_instructions(constructor_reg, temp_reg, *span);
 
-            for instruction in extract_instructions {
-                ctx.add_instruction(instruction);
+                for instruction in extract_instructions {
+                    ctx.add_instruction(instruction);
+                }
+            } else {
+                // 多参数构造器的后续参数：直接从 offset 8 + arg_index * 8 读取
+                let data_offset = (8 + arg_index * 8) as i64;
+                ctx.add_instruction(Instruction::Load64 {
+                    dst: temp_reg,
+                    addr: constructor_reg,
+                    offset: data_offset,
+                    span: *span,
+                });
             }
 
             // 将提取的数据存储到栈槽
@@ -1018,23 +1715,32 @@ pub(super) fn lower_statement(
             object_type,
             span,
         } => {
-            // 🔧 新增：堆分配语句的处理
-            // HeapAlloc在LIR中对应Alloc指令，用于在堆上分配内存
+            // 检查是否启用了 karte GC 模式（gc_alloc 函数被注入）
+            if let Some(&gc_alloc_label) = ctx.function_labels.get("gc_alloc") {
+                // karte GC 模式: 调用 gc_alloc(size) 代替 runtime bump allocator
+                let result_reg = ctx.current_function_mut().new_register();
 
-            // 分配一个寄存器来存储堆地址
-            let heap_addr_reg = ctx.current_function_mut().new_register();
+                ctx.add_instruction(Instruction::Call {
+                    target: gc_alloc_label,
+                    args: vec![],
+                    arg_operands: vec![Operand::Immediate { value: *size as i64 }],
+                    result: Some(result_reg),
+                    span: *span,
+                });
 
-            // 生成堆分配指令
-            ctx.add_instruction(Instruction::Alloc {
-                dst: heap_addr_reg,
-                size: *size,
-                alignment: 8, // 默认8字节对齐
-                allocation_type: AllocationType::Heap,
-                span: *span,
-            });
-
-            // 将堆地址存储到目标值的栈位置（Stack-First策略）
-            ctx.store_value_to_stack(target, Operand::Register { id: heap_addr_reg });
+                ctx.store_value_to_stack(target, Operand::Register { id: result_reg });
+            } else {
+                // 默认模式: 使用 runtime bump allocator (Alloc 指令)
+                let heap_addr_reg = ctx.current_function_mut().new_register();
+                ctx.add_instruction(Instruction::Alloc {
+                    dst: heap_addr_reg,
+                    size: *size,
+                    alignment: 8,
+                    allocation_type: AllocationType::Heap,
+                    span: *span,
+                });
+                ctx.store_value_to_stack(target, Operand::Register { id: heap_addr_reg });
+            }
 
             log::debug!(
                 "🔧 HeapAlloc: 分配 {} 字节的 {} 对象到 {:?}",
@@ -1136,7 +1842,13 @@ pub(super) fn lower_statement(
                     });
                 }
 
-                ctx.set_struct_layout_for_value(target, layout);
+                // 注意：不再传播结构体布局到 target。
+                // Store 逐字段复制了结构体数据到 target 的内存区域，
+                // 但 target 本身可能只是一个指针大小的栈槽。
+                // 如果传播布局，后续对 target 的 Store 会错误地逐字段复制，
+                // 导致越界写入。FieldAccess 通过 global_struct_types 动态查找布局，
+                // 不依赖 struct_value_layouts。
+                // ctx.set_struct_layout_for_value(target, layout);
 
                 log::debug!("🔧 Store: 复制结构体值到 {:?}", target);
                 return Ok(());
@@ -1152,6 +1864,142 @@ pub(super) fn lower_statement(
             });
 
             log::debug!("🔧 Store: 将 {:?} 存储到地址 {:?}", value, target);
+            Ok(())
+        }
+
+        Statement::UnsafeLoad {
+            target,
+            addr,
+            byte_size,
+            span,
+        } => {
+            let addr_operand = ctx.lower_to_rvalue(addr);
+            let addr_reg = ctx.ensure_register_from_operand(addr_operand, *span);
+            // 获取 target 的栈地址，用于写回结果
+            let target_lvalue = ctx.lower_to_lvalue(target);
+            let target_addr_reg = match target_lvalue {
+                Operand::Register { id } => id,
+                _ => {
+                    return Err(vec![format!(
+                        "UnsafeLoad: target lvalue 不是寄存器: {:?}",
+                        target_lvalue
+                    )]);
+                }
+            };
+            let temp_reg = ctx.current_function_mut().new_register();
+            match byte_size {
+                8 => ctx.add_instruction(Instruction::Load64 {
+                    dst: temp_reg,
+                    addr: addr_reg,
+                    offset: 0,
+                    span: *span,
+                }),
+                4 => ctx.add_instruction(Instruction::Load32 {
+                    dst: temp_reg,
+                    addr: addr_reg,
+                    offset: 0,
+                    span: *span,
+                }),
+                1 => ctx.add_instruction(Instruction::Load8 {
+                    dst: temp_reg,
+                    addr: addr_reg,
+                    offset: 0,
+                    span: *span,
+                }),
+                _ => {
+                    return Err(vec![format!(
+                        "Unsupported byte_size for unsafe_load: {}",
+                        byte_size
+                    )]);
+                }
+            }
+            // 把结果写回 target 的栈 slot
+            ctx.add_instruction(Instruction::Store64 {
+                addr: target_addr_reg,
+                offset: 0,
+                src: Operand::Register { id: temp_reg },
+                span: *span,
+            });
+            Ok(())
+        }
+
+        Statement::UnsafeStore {
+            addr,
+            value,
+            byte_size,
+            span,
+        } => {
+            let addr_operand = ctx.lower_to_rvalue(addr);
+            let addr_reg = ctx.ensure_register_from_operand(addr_operand, *span);
+            let val_operand = ctx.lower_to_rvalue(value);
+            match byte_size {
+                8 => ctx.add_instruction(Instruction::Store64 {
+                    addr: addr_reg,
+                    offset: 0,
+                    src: val_operand,
+                    span: *span,
+                }),
+                4 => ctx.add_instruction(Instruction::Store32 {
+                    addr: addr_reg,
+                    offset: 0,
+                    src: val_operand,
+                    span: *span,
+                }),
+                1 => ctx.add_instruction(Instruction::Store8 {
+                    addr: addr_reg,
+                    offset: 0,
+                    src: val_operand,
+                    span: *span,
+                }),
+                _ => {
+                    return Err(vec![format!(
+                        "Unsupported byte_size for unsafe_store: {}",
+                        byte_size
+                    )]);
+                }
+            }
+            Ok(())
+        }
+
+        Statement::RuntimeGlobal { target, global_name, span } => {
+            // 获取 target 的栈地址
+            let target_lvalue = ctx.lower_to_lvalue(target);
+            let addr_reg = match target_lvalue {
+                Operand::Register { id } => id,
+                _ => {
+                    return Err(vec![format!(
+                        "RuntimeGlobal: target lvalue 不是寄存器: {:?}",
+                        target_lvalue
+                    )]);
+                }
+            };
+            // 分配临时寄存器，从全局数据区加载值
+            let temp_reg = ctx.current_function_mut().new_register();
+            ctx.add_instruction(Instruction::LoadGlobal {
+                dst: temp_reg,
+                name: global_name.clone(),
+                span: *span,
+            });
+            // 把结果存回 target 的栈 slot
+            ctx.add_instruction(Instruction::Store64 {
+                addr: addr_reg,
+                offset: 0,
+                src: Operand::Register { id: temp_reg },
+                span: *span,
+            });
+            Ok(())
+        }
+
+        Statement::Phi { .. } => {
+            // Phi 节点通过 lower.rs 的 phi_store_map 在前驱块处理
+            Ok(())
+        }
+
+        Statement::GcRegOp { is_push, span, .. } => {
+            ctx.add_instruction(Instruction::GcRegOp {
+                is_push: *is_push,
+                span: *span,
+            });
             Ok(())
         }
 

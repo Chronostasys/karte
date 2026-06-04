@@ -9,6 +9,17 @@ pub enum RuntimeIntrinsic {
     Retain,
     Release,
     GcSafepoint,
+    StringConcat,
+    StringEqual,
+    StringCharAt,
+    StringSubstring,
+    StringContains,
+    SplitCount,
+    Trim,
+    ToString,
+    PrintString,
+    PrintNumber,
+    PrintBool,
 }
 
 impl RuntimeIntrinsic {
@@ -19,6 +30,39 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::Retain => runtime::karte_jit_runtime_retain as *const (),
             RuntimeIntrinsic::Release => runtime::karte_jit_runtime_release as *const (),
             RuntimeIntrinsic::GcSafepoint => runtime::karte_jit_runtime_gc_safepoint as *const (),
+            RuntimeIntrinsic::StringConcat => {
+                runtime::karte_jit_runtime_string_concat as *const ()
+            }
+            RuntimeIntrinsic::StringEqual => {
+                runtime::karte_jit_runtime_string_equal as *const ()
+            }
+            RuntimeIntrinsic::StringCharAt => {
+                runtime::karte_jit_runtime_string_char_at as *const ()
+            }
+            RuntimeIntrinsic::StringSubstring => {
+                runtime::karte_jit_runtime_string_substring as *const ()
+            }
+            RuntimeIntrinsic::StringContains => {
+                runtime::karte_jit_runtime_string_contains as *const ()
+            }
+            RuntimeIntrinsic::SplitCount => {
+                runtime::karte_jit_runtime_split_count as *const ()
+            }
+            RuntimeIntrinsic::Trim => {
+                runtime::karte_jit_runtime_trim as *const ()
+            }
+            RuntimeIntrinsic::ToString => {
+                runtime::karte_jit_runtime_to_string as *const ()
+            }
+            RuntimeIntrinsic::PrintString => {
+                runtime::karte_jit_runtime_print_string as *const ()
+            }
+            RuntimeIntrinsic::PrintNumber => {
+                runtime::karte_jit_runtime_print_number as *const ()
+            }
+            RuntimeIntrinsic::PrintBool => {
+                runtime::karte_jit_runtime_print_bool as *const ()
+            }
         }
     }
 
@@ -29,11 +73,25 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::Retain => "karte_jit_runtime_retain",
             RuntimeIntrinsic::Release => "karte_jit_runtime_release",
             RuntimeIntrinsic::GcSafepoint => "karte_jit_runtime_gc_safepoint",
+            RuntimeIntrinsic::StringConcat => "karte_jit_runtime_string_concat",
+            RuntimeIntrinsic::StringEqual => "karte_jit_runtime_string_equal",
+            RuntimeIntrinsic::StringCharAt => "karte_jit_runtime_string_char_at",
+            RuntimeIntrinsic::StringSubstring => "karte_jit_runtime_string_substring",
+            RuntimeIntrinsic::StringContains => "karte_jit_runtime_string_contains",
+            RuntimeIntrinsic::SplitCount => "karte_jit_runtime_split_count",
+            RuntimeIntrinsic::Trim => "karte_jit_runtime_trim",
+            RuntimeIntrinsic::ToString => "karte_jit_runtime_to_string",
+            RuntimeIntrinsic::PrintString => "karte_jit_runtime_print_string",
+            RuntimeIntrinsic::PrintNumber => "karte_jit_runtime_print_number",
+            RuntimeIntrinsic::PrintBool => "karte_jit_runtime_print_bool",
         }
     }
 
     pub fn has_result(self) -> bool {
-        matches!(self, RuntimeIntrinsic::AllocAligned)
+        matches!(
+            self,
+            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual | RuntimeIntrinsic::StringCharAt | RuntimeIntrinsic::StringSubstring | RuntimeIntrinsic::StringContains | RuntimeIntrinsic::SplitCount | RuntimeIntrinsic::Trim | RuntimeIntrinsic::ToString
+        )
     }
 }
 
@@ -87,6 +145,83 @@ impl RuntimeCall {
         Self {
             intrinsic: RuntimeIntrinsic::GcSafepoint,
             args: vec![],
+        }
+    }
+
+    pub fn string_concat(left: Register, right: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::StringConcat,
+            args: vec![RuntimeArg::Register(left), RuntimeArg::Register(right)],
+        }
+    }
+
+    pub fn string_equal(left: Register, right: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::StringEqual,
+            args: vec![RuntimeArg::Register(left), RuntimeArg::Register(right)],
+        }
+    }
+
+    pub fn string_char_at(str_reg: Register, index_reg: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::StringCharAt,
+            args: vec![RuntimeArg::Register(str_reg), RuntimeArg::Register(index_reg)],
+        }
+    }
+
+    pub fn string_substring(str_reg: Register, start_reg: Register, length_reg: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::StringSubstring,
+            args: vec![RuntimeArg::Register(str_reg), RuntimeArg::Register(start_reg), RuntimeArg::Register(length_reg)],
+        }
+    }
+
+    pub fn string_contains(str_reg: Register, char_code_reg: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::StringContains,
+            args: vec![RuntimeArg::Register(str_reg), RuntimeArg::Register(char_code_reg)],
+        }
+    }
+
+    pub fn split_count(str_reg: Register, sep_reg: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::SplitCount,
+            args: vec![RuntimeArg::Register(str_reg), RuntimeArg::Register(sep_reg)],
+        }
+    }
+
+    pub fn trim(str_reg: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::Trim,
+            args: vec![RuntimeArg::Register(str_reg)],
+        }
+    }
+
+    pub fn to_string(value: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::ToString,
+            args: vec![RuntimeArg::Register(value)],
+        }
+    }
+
+    pub fn print_string(ptr: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::PrintString,
+            args: vec![RuntimeArg::Register(ptr)],
+        }
+    }
+
+    pub fn print_number(value: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::PrintNumber,
+            args: vec![RuntimeArg::Register(value)],
+        }
+    }
+
+    pub fn print_bool(value: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::PrintBool,
+            args: vec![RuntimeArg::Register(value)],
         }
     }
 

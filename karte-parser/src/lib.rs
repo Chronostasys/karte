@@ -96,7 +96,7 @@ impl<'a> Parser<'a> {
         Some(ParsedProgram {
             module: self.module_decl.clone(),
             imports: self.imports.clone(),
-            body: body_expr,
+            body: Box::new(body_expr),
         })
     }
 
@@ -152,6 +152,31 @@ impl<'a> Parser<'a> {
     pub(crate) fn advance(&mut self) {
         if self.position < self.tokens.len() {
             self.position += 1;
+        }
+    }
+
+    pub(crate) fn expect_token(&mut self, expected: Token) -> Result<(), ParseError> {
+        if let Some(token) = self.peek() {
+            if token.token == expected {
+                self.advance();
+                return Ok(());
+            }
+            return Err(ParseError::UnexpectedToken {
+                expected: format!("{:?}", expected),
+                found: token.token.clone(),
+                span: token.span,
+            });
+        }
+        Err(ParseError::UnexpectedEof {
+            expected: format!("{:?}", expected),
+        })
+    }
+
+    pub(crate) fn current_span(&self) -> Span {
+        if self.position > 0 && self.position <= self.tokens.len() {
+            self.tokens[self.position - 1].span
+        } else {
+            Span::new(0, 0)
         }
     }
 
@@ -238,7 +263,7 @@ impl ParseResult {
 pub fn parse(tokens: &[TokenWithSpan]) -> (Option<Expr>, DiagnosticBag) {
     let mut parser = Parser::new(tokens);
     let program = parser.parse();
-    (program.map(|p| p.body), parser.into_diagnostics())
+    (program.map(|p| *p.body), parser.into_diagnostics())
 }
 
 /// 返回包含 module/import 信息的解析结果

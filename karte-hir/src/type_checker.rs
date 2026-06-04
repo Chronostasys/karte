@@ -1,6 +1,6 @@
 use crate::ast::{BinaryOperator, Expr, FieldDef, Statement, UnaryOperator};
 use crate::errors::TypeCheckError;
-use crate::types::{Type, TypeValue, TypeVar};
+use crate::types::{IntKind, Type, TypeScheme, TypeValue, TypeVar};
 use ena::unify::InPlaceUnificationTable;
 use karte_diagnostics::DiagnosticBag;
 use std::collections::HashMap;
@@ -95,6 +95,12 @@ pub struct TypeChecker {
     lambda_types: HashMap<*const Expr, Type>,
     /// 存储所有表达式的推断类型（用于传递给MIR lowering）
     expr_types: HashMap<*const Expr, Type>,
+    /// 泛型函数的类型方案（TypeScheme），用于 let-polymorphism
+    function_schemes: HashMap<String, TypeScheme>,
+    /// 追踪重复函数定义的 span（与 primary 不同），用于 infer_stmt 阶段报告错误
+    duplicate_function_spans: HashSet<(usize, usize)>,
+    /// 追踪已在 hoisting pass 中处理过的函数 span，用于区分重复定义与二次遍历
+    primary_function_spans: HashSet<(usize, usize)>,
 }
 
 /// 函数签名，包含参数类型和返回类型
@@ -122,6 +128,9 @@ impl TypeChecker {
             function_signatures: HashMap::new(),
             lambda_types: HashMap::new(),
             expr_types: HashMap::new(),
+            function_schemes: HashMap::new(),
+            duplicate_function_spans: HashSet::new(),
+            primary_function_spans: HashSet::new(),
         }
     }
 
@@ -140,6 +149,18 @@ impl TypeChecker {
         self.next_type_var += 1;
         self.unification_table.new_key(TypeValue(None));
         var
+    }
+
+    /// 实例化类型方案：将 bound_vars 替换为新的类型变量
+    /// 每次调用泛型函数时，生成一组新的类型变量
+    fn instantiate(&mut self, scheme: &TypeScheme) -> Type {
+        if scheme.bound_vars.is_empty() {
+            return scheme.body.clone();
+        }
+        let subst: Vec<(TypeVar, Type)> = scheme.bound_vars.iter()
+            .map(|var| (*var, Type::Var(self.fresh_type_var())))
+            .collect();
+        scheme.body.substitute(&subst)
     }
 
     /// 添加约束条件
@@ -171,9 +192,45 @@ impl TypeChecker {
         orig_t2: &Type,
         visited: &mut HashSet<(String, String)>,
     ) -> Result<(), ()> {
+        // 解析骨架占位符：将 Struct{name, fields: []} 替换为 custom_types 中的实际类型
+        // 这对递归枚举至关重要（如 enum List { Nil, Cons(number, List) } 中 List 自引用）
+        // 利用 visited 集合防止递归类型的无限循环
+        let resolved_t1;
+        let t1 = match t1 {
+            Type::Struct { name, fields } if fields.is_empty() => {
+                if let Some(resolved) = self.custom_types.get(name) {
+                    resolved_t1 = resolved.clone();
+                    &resolved_t1
+                } else {
+                    t1
+                }
+            }
+            _ => t1,
+        };
+        let resolved_t2;
+        let t2 = match t2 {
+            Type::Struct { name, fields } if fields.is_empty() => {
+                if let Some(resolved) = self.custom_types.get(name) {
+                    resolved_t2 = resolved.clone();
+                    &resolved_t2
+                } else {
+                    t2
+                }
+            }
+            _ => t2,
+        };
+
         match (t1, t2) {
             (Type::Number, Type::Number) => Ok(()),
+            // Number 与具体整数类型兼容：number 字面量可以传递给 Int 类型参数
+            (Type::Number, Type::Int(_)) | (Type::Int(_), Type::Number) => Ok(()),
             (Type::Unit, Type::Unit) => Ok(()),
+            (Type::Bool, Type::Bool) => Ok(()),
+            (Type::String, Type::String) => Ok(()),
+            (Type::Int(k1), Type::Int(k2)) if k1 == k2 => Ok(()),
+            (Type::Array { element: e1 }, Type::Array { element: e2 }) => {
+                self.unify_recursive(e1, e2, span, orig_t1, orig_t2, visited)
+            }
 
             (Type::Var(v1), Type::Var(v2)) if v1 == v2 => Ok(()),
 
@@ -307,22 +364,24 @@ impl TypeChecker {
                             all_unified = false;
                             break;
                         }
-                        match (&variant1.data_type, &variant2.data_type) {
-                            (None, None) => {
+                        match (&variant1.data_types, &variant2.data_types) {
+                            (v1, v2) if v1.is_empty() && v2.is_empty() => {
                                 // 两个都没有数据类型，匹配
                             }
-                            (Some(t1), Some(t2)) => {
-                                // 尝试统一数据类型
-                                if self
-                                    .unify_recursive(t1, t2, span, orig_t1, orig_t2, visited)
-                                    .is_err()
-                                {
-                                    all_unified = false;
-                                    break;
+                            (v1, v2) if v1.len() == v2.len() => {
+                                // 尝试统一每个对应位置的类型
+                                for (t1, t2) in v1.iter().zip(v2.iter()) {
+                                    if self
+                                        .unify_recursive(t1, t2, span, orig_t1, orig_t2, visited)
+                                        .is_err()
+                                    {
+                                        all_unified = false;
+                                        break;
+                                    }
                                 }
                             }
                             _ => {
-                                // 一个有数据类型，一个没有，不匹配
+                                // 数据类型数量不匹配
                                 all_unified = false;
                                 break;
                             }
@@ -356,6 +415,23 @@ impl TypeChecker {
             (Type::Reference { inner: i1 }, Type::Reference { inner: i2 }) => {
                 // 统一引用的内部类型
                 self.unify_recursive(i1, i2, span, orig_t1, orig_t2, visited)
+            }
+
+            (Type::Tuple(ts1), Type::Tuple(ts2)) => {
+                if ts1.len() != ts2.len() {
+                    let expected = self.apply_substitution(orig_t1.clone());
+                    let found = self.apply_substitution(orig_t2.clone());
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected,
+                        found,
+                        span,
+                    });
+                    return Err(());
+                }
+                for (t1_elem, t2_elem) in ts1.iter().zip(ts2.iter()) {
+                    self.unify_recursive(t1_elem, t2_elem, span, orig_t1, orig_t2, visited)?;
+                }
+                Ok(())
             }
 
             (
@@ -470,6 +546,11 @@ impl TypeChecker {
         // 首先收集所有结构体定义
         self.collect_struct_definitions(expr);
 
+        // 🔧 修复：在收集函数定义之前，先收集所有枚举（TypeDef）定义
+        // 否则函数签名中的枚举类型引用会被 resolve_struct_field_from_parsed
+        // 解析为空的 Struct 骨架，导致类型检查器看到空枚举
+        self.collect_enum_definitions(expr);
+
         let mut env = TypeEnvironment::new();
 
         // 🔧 Hoisting Pass: 收集顶层函数定义
@@ -482,6 +563,15 @@ impl TypeChecker {
 
         // 解决所有约束
         self.solve_constraints();
+
+        // 对所有 expr_types 中的类型应用统一化结果
+        // 因为 infer_expr 存储时约束尚未求解，此时类型变量未解析
+        for key in self.expr_types.keys().copied().collect::<Vec<_>>() {
+            if let Some(old_ty) = self.expr_types.remove(&key) {
+                let resolved = self.apply_substitution(old_ty);
+                self.expr_types.insert(key, resolved);
+            }
+        }
 
         // 应用统一化结果
         let final_type = self.apply_substitution(result_type);
@@ -625,8 +715,14 @@ impl TypeChecker {
                     ..
                 } = stmt
                 {
-                    // 如果环境里已经有了，跳过
+                    // 如果环境里已经有了，检查是否是二次遍历（同一 span）还是真正的重复定义
                     if env.contains_key(name) {
+                        // 如果是已处理过的主定义（二次遍历中的同一 span），静默跳过
+                        if self.primary_function_spans.contains(&(span.start, span.end)) {
+                            continue;
+                        }
+                        // 真正的重复定义：记录 span，后续由 infer_stmt 统一报告错误
+                        self.duplicate_function_spans.insert((span.start, span.end));
                         continue;
                     }
 
@@ -635,16 +731,9 @@ impl TypeChecker {
 
                     // 解析参数类型（严格模式）
                     for param in params {
-                        let param_ty = if let Some(type_name) = &param.type_annotation {
-                            // 使用严格模式解析类型标注
-                            match self.parse_type_annotation(type_name, *span, true) {
-                                Ok(ty) => ty,
-                                Err(err) => {
-                                    self.diagnostics.add_error(err.to_string(), err.span());
-                                    parse_failed = true;
-                                    Type::Unknown
-                                }
-                            }
+                        let param_ty = if let Some(type_ann) = &param.type_annotation {
+                            // 使用结构化类型注解，但需要解析其中的骨架占位符
+                            self.resolve_struct_field_from_parsed(type_ann)
                         } else {
                             // 没有类型标注，创建类型变量
                             Type::Var(self.fresh_type_var())
@@ -653,15 +742,9 @@ impl TypeChecker {
                     }
 
                     // 解析返回类型（严格模式）
-                    let ret_ty = if let Some(type_name) = return_type {
-                        match self.parse_type_annotation(type_name, *span, true) {
-                            Ok(ty) => ty,
-                            Err(err) => {
-                                self.diagnostics.add_error(err.to_string(), err.span());
-                                parse_failed = true;
-                                Type::Unknown
-                            }
-                        }
+                    let ret_ty = if let Some(ret) = return_type {
+                        // 使用结构化返回类型，但需要解析其中的骨架占位符
+                        self.resolve_struct_field_from_parsed(ret)
                     } else {
                         // 没有返回类型标注，创建类型变量
                         Type::Var(self.fresh_type_var())
@@ -676,6 +759,9 @@ impl TypeChecker {
                             return_type: ret_ty.clone(),
                         },
                     );
+
+                    // 记录此 span 为已处理的主定义（用于后续检测二次遍历）
+                    self.primary_function_spans.insert((span.start, span.end));
 
                     let func_type = Type::Function {
                         params: param_types,
@@ -758,6 +844,85 @@ impl TypeChecker {
         }
     }
 
+    /// 🔧 预收集枚举定义（TypeDef），在函数签名解析之前注册到 custom_types
+    /// 否则 `fn eval(e: Expr)` 中的 `Expr` 类型在函数签名解析时尚未注册，
+    /// resolve_struct_field_from_parsed 会返回空 Struct 骨架导致类型检查失败
+    fn collect_enum_definitions(&mut self, expr: &Expr) {
+        let mut enum_defs: Vec<(String, Vec<(String, Vec<Type>)>)> = Vec::new();
+        self.gather_enum_defs(expr, &mut enum_defs);
+
+        // 第一轮：注册所有枚举 Sum 到 custom_types（建立类型引用基础）
+        for (name, variants) in &enum_defs {
+            let sum_variants: Vec<crate::types::SumVariant> = variants
+                .iter()
+                .map(|(variant_name, data_types)| crate::types::SumVariant {
+                    name: variant_name.clone(),
+                    data_types: data_types.clone(),
+                })
+                .collect();
+
+            let sum_type = Type::sum(name.clone(), sum_variants);
+            self.custom_types.insert(name.clone(), sum_type);
+        }
+
+        // 第二轮：将变体 data_types 中的骨架占位符替换为实际类型
+        // 处理递归枚举（如 enum List { Nil, Cons(number, List) }）和互引用枚举
+        for (name, variants) in &enum_defs {
+            let resolved_variants: Vec<crate::types::SumVariant> = variants
+                .iter()
+                .map(|(variant_name, data_types)| {
+                    let resolved_data_types: Vec<Type> = data_types
+                        .iter()
+                        .map(|dt| self.resolve_struct_field_from_parsed(dt))
+                        .collect();
+                    crate::types::SumVariant {
+                        name: variant_name.clone(),
+                        data_types: resolved_data_types,
+                    }
+                })
+                .collect();
+
+            let sum_type = Type::sum(name.clone(), resolved_variants);
+            self.custom_types.insert(name.clone(), sum_type);
+        }
+    }
+
+    fn gather_enum_defs(
+        &self,
+        expr: &Expr,
+        enum_defs: &mut Vec<(String, Vec<(String, Vec<Type>)>)>,
+    ) {
+        match expr {
+            Expr::Block {
+                statements,
+                final_expr,
+                ..
+            } => {
+                for stmt in statements {
+                    self.gather_enum_defs_from_statement(stmt, enum_defs);
+                }
+                if let Some(final_expr) = final_expr {
+                    self.gather_enum_defs(final_expr, enum_defs);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn gather_enum_defs_from_statement(
+        &self,
+        stmt: &Statement,
+        enum_defs: &mut Vec<(String, Vec<(String, Vec<Type>)>)>,
+    ) {
+        if let Statement::TypeDef { name, variants, .. } = stmt {
+            let variant_list: Vec<(String, Vec<Type>)> = variants
+                .iter()
+                .map(|v| (v.name.clone(), v.data_types.clone()))
+                .collect();
+            enum_defs.push((name.clone(), variant_list));
+        }
+    }
+
     /// 处理收集到的结构体定义，解析字段类型并检测循环引用
     fn process_struct_definitions(&mut self, struct_defs: HashMap<String, Vec<FieldDef>>) {
         // 先创建所有结构体的骨架（只有名字，没有字段）
@@ -772,8 +937,9 @@ impl TypeChecker {
             let struct_fields: Vec<crate::types::StructField> = fields
                 .iter()
                 .map(|field| {
-                    let field_type =
-                        self.resolve_struct_field_type(&field.field_type, &struct_defs_copy);
+                    // field.field_type 已经是 Type（parser 解析的结构化类型）
+                    // 但自定义类型名在 parser 阶段是 Type::Unknown，需要在这里解析为实际类型
+                    let field_type = self.resolve_parsed_type(&field.field_type, &struct_defs_copy);
                     crate::types::StructField {
                         name: field.name.clone(),
                         field_type,
@@ -825,6 +991,18 @@ impl TypeChecker {
                         return true;
                     }
                 }
+                Type::Array { element } => {
+                    // 检查数组元素类型是否构成非法递归
+                    match element.as_ref() {
+                        Type::Struct {
+                            name: elem_name,
+                            ..
+                        } if elem_name == struct_name => {
+                            return true; // 非法递归：struct S { arr: [S; N] }
+                        }
+                        _ => continue,
+                    }
+                }
                 _ => {
                     // 其他类型不会导致递归
                     continue;
@@ -841,9 +1019,20 @@ impl TypeChecker {
         let inferred_type = match expr {
             Expr::Number { .. } => Type::Number,
 
+            Expr::StringLiteral { .. } => Type::String,
+
             Expr::Unit { .. } => Type::Unit,
 
             Expr::Identifier { name, span } => {
+                // 内建函数
+                if name == "print" {
+                    let alpha = self.fresh_type_var();
+                    return Type::function(vec![Type::Var(alpha)], Type::Unit);
+                }
+                // 优先检查泛型函数，若匹配则实例化
+                if let Some(scheme) = self.function_schemes.get(name).cloned() {
+                    return self.instantiate(&scheme);
+                }
                 if let Some(ty) = env.get(name) {
                     ty.clone()
                 } else {
@@ -872,33 +1061,66 @@ impl TypeChecker {
 
                 // 根据操作符类型添加不同的类型约束
                 match op {
-                    BinaryOperator::Add
-                    | BinaryOperator::Subtract
+                    BinaryOperator::Add => {
+                        // Add 支持数字加法和字符串拼接：任一操作数为 String 时两边都约束为 String
+                        match (&left_type, &right_type) {
+                            (Type::String, _) | (_, Type::String) => {
+                                self.add_constraint(left_type.clone(), Type::String, left.span());
+                                self.add_constraint(right_type.clone(), Type::String, right.span());
+                            }
+                            _ => {
+                                self.add_constraint(left_type.clone(), Type::Number, left.span());
+                                self.add_constraint(right_type.clone(), Type::Number, right.span());
+                            }
+                        }
+                    }
+                    BinaryOperator::Equal | BinaryOperator::NotEqual => {
+                        // 相等比较：左右操作数必须是相同类型（支持 number、bool、string）
+                        self.add_constraint(left_type.clone(), right_type.clone(), left.span());
+                    }
+                    BinaryOperator::Subtract
                     | BinaryOperator::Multiply
                     | BinaryOperator::Divide
-                    | BinaryOperator::Equal
+                    | BinaryOperator::Modulo
                     | BinaryOperator::GreaterEqual
                     | BinaryOperator::LessEqual
                     | BinaryOperator::Greater
-                    | BinaryOperator::Less => {
-                        // 数字运算和比较运算：左右操作数都必须是数字类型
-                        self.add_constraint(left_type, Type::Number, left.span());
-                        self.add_constraint(right_type, Type::Number, right.span());
+                    | BinaryOperator::Less
+                    | BinaryOperator::BitAnd
+                    | BinaryOperator::BitOr
+                    | BinaryOperator::BitXor
+                    | BinaryOperator::ShiftLeft
+                    | BinaryOperator::ShiftRight => {
+                        // 数字运算、有序比较运算、位运算：左右操作数都必须是数字类型
+                        self.add_constraint(left_type.clone(), Type::Number, left.span());
+                        self.add_constraint(right_type.clone(), Type::Number, right.span());
                     }
                     BinaryOperator::LogicalAnd | BinaryOperator::LogicalOr => {
-                        // 逻辑运算：左右操作数都必须是布尔类型
-                        self.add_constraint(left_type, Type::bool(), left.span());
-                        self.add_constraint(right_type, Type::bool(), right.span());
+                        self.add_constraint(left_type.clone(), Type::bool(), left.span());
+                        self.add_constraint(right_type.clone(), Type::bool(), right.span());
                     }
                 }
 
                 // 根据操作符类型返回不同的结果类型
                 match op {
-                    BinaryOperator::Add
-                    | BinaryOperator::Subtract
+                    BinaryOperator::Add => {
+                        // Add 支持数字加法和字符串拼接
+                        match (&left_type, &right_type) {
+                            (Type::String, _) | (_, Type::String) => Type::String,
+                            _ => Type::Number,
+                        }
+                    }
+                    BinaryOperator::Subtract
                     | BinaryOperator::Multiply
-                    | BinaryOperator::Divide => Type::Number,
+                    | BinaryOperator::Divide
+                    | BinaryOperator::Modulo
+                    | BinaryOperator::BitAnd
+                    | BinaryOperator::BitOr
+                    | BinaryOperator::BitXor
+                    | BinaryOperator::ShiftLeft
+                    | BinaryOperator::ShiftRight => Type::Number,
                     BinaryOperator::Equal
+                    | BinaryOperator::NotEqual
                     | BinaryOperator::GreaterEqual
                     | BinaryOperator::LessEqual
                     | BinaryOperator::Greater
@@ -912,14 +1134,16 @@ impl TypeChecker {
 
                 match op {
                     UnaryOperator::Plus | UnaryOperator::Minus => {
-                        // 数字运算：操作数必须是数字类型
                         self.add_constraint(Type::Number, operand_type, operand.span());
                         Type::Number
                     }
                     UnaryOperator::LogicalNot => {
-                        // 逻辑非：操作数必须是布尔类型
                         self.add_constraint(Type::bool(), operand_type, operand.span());
                         Type::bool()
+                    }
+                    UnaryOperator::BitNot => {
+                        self.add_constraint(Type::Number, operand_type, operand.span());
+                        Type::Number
                     }
                 }
             }
@@ -935,8 +1159,8 @@ impl TypeChecker {
                     .iter()
                     .map(|param| {
                         let param_type = if let Some(ref type_ann) = param.type_annotation {
-                            // 如果有类型注解，解析类型注解
-                            self.parse_field_type(type_ann)
+                            // 使用结构化类型注解，但需要解析其中的骨架占位符
+                            self.resolve_struct_field_from_parsed(type_ann)
                         } else {
                             // 否则创建类型变量进行推断
                             Type::Var(self.fresh_type_var())
@@ -1052,6 +1276,22 @@ impl TypeChecker {
                 // 推断最终表达式
                 if let Some(expr) = final_expr {
                     self.infer_expr(expr, &current_env)
+                } else if let Some(last_stmt) = statements.last() {
+                    // 如果没有 final_expr，检查最后一个语句是否是 return/break/continue 表达式
+                    // 这些控制流表达式有实际的返回类型
+                    match last_stmt {
+                        Statement::Expression { expr, .. } => {
+                            let last_type = self.infer_expr(expr, &current_env);
+                            // 检查是否是控制流表达式（return/break/continue）
+                            // 这些表达式的类型就是函数的返回类型
+                            if matches!(expr, Expr::Return { .. } | Expr::Break { .. } | Expr::Continue { .. }) {
+                                last_type
+                            } else {
+                                Type::Unit
+                            }
+                        }
+                        _ => Type::Unit,
+                    }
                 } else {
                     Type::Unit
                 }
@@ -1059,13 +1299,13 @@ impl TypeChecker {
 
             Expr::Boolean { .. } => Type::bool(),
 
-            Expr::Constructor { name, arg, span } => {
+            Expr::Constructor { name, args, span } => {
                 // 首先检查是否是已知的内置构造器
                 match name.as_str() {
                     "True" | "False" => Type::bool(),
                     "Some" | "None" => {
                         // 根据参数推断Option的内部类型
-                        if let Some(arg_expr) = arg {
+                        if let Some(arg_expr) = args.get(0) {
                             let arg_type = self.infer_expr(arg_expr, env);
                             Type::option(arg_type)
                         } else {
@@ -1081,14 +1321,16 @@ impl TypeChecker {
                                     params,
                                     return_type,
                                 } => {
-                                    if let Some(arg_expr) = arg {
-                                        if params.len() == 1 {
-                                            let arg_type = self.infer_expr(arg_expr, env);
-                                            self.add_constraint(
-                                                arg_type,
-                                                params[0].clone(),
-                                                arg_expr.span(),
-                                            );
+                                    if !args.is_empty() {
+                                        if params.len() == args.len() {
+                                            for (i, arg_expr) in args.iter().enumerate() {
+                                                let arg_type = self.infer_expr(arg_expr, env);
+                                                self.add_constraint(
+                                                    arg_type,
+                                                    params[i].clone(),
+                                                    arg_expr.span(),
+                                                );
+                                            }
                                             (**return_type).clone()
                                         } else {
                                             self.add_error(TypeCheckError::InvalidConstructor {
@@ -1107,7 +1349,7 @@ impl TypeChecker {
                                 }
                                 _ => {
                                     // 无参数构造器
-                                    if arg.is_some() {
+                                    if !args.is_empty() {
                                         self.add_error(TypeCheckError::InvalidConstructor {
                                             name: name.clone(),
                                             span: *span,
@@ -1133,7 +1375,7 @@ impl TypeChecker {
             Expr::QualifiedConstructor {
                 type_name,
                 constructor_name,
-                arg,
+                args,
                 span,
             } => {
                 // 检查类型是否存在
@@ -1142,17 +1384,27 @@ impl TypeChecker {
                         // 查找对应的构造器
                         if let Some(variant) = variants.iter().find(|v| v.name == *constructor_name)
                         {
-                            if let Some(arg_expr) = arg {
+                            if !args.is_empty() {
                                 // 有参数的构造器
-                                if let Some(expected_type) = &variant.data_type {
-                                    let arg_type = self.infer_expr(arg_expr, env);
-                                    let expected_type_clone = expected_type.clone();
-                                    self.add_constraint(
-                                        arg_type,
-                                        expected_type_clone,
-                                        arg_expr.span(),
-                                    );
-                                    sum_type.clone()
+                                if !variant.data_types.is_empty() {
+                                    // 检查参数数量是否匹配
+                                    if args.len() == variant.data_types.len() {
+                                        for (i, arg_expr) in args.iter().enumerate() {
+                                            let arg_type = self.infer_expr(arg_expr, env);
+                                            self.add_constraint(
+                                                arg_type,
+                                                variant.data_types[i].clone(),
+                                                arg_expr.span(),
+                                            );
+                                        }
+                                        sum_type.clone()
+                                    } else {
+                                        self.add_error(TypeCheckError::InvalidConstructor {
+                                            name: format!("{}::{}", type_name, constructor_name),
+                                            span: *span,
+                                        });
+                                        Type::Unknown
+                                    }
                                 } else {
                                     self.add_error(TypeCheckError::InvalidConstructor {
                                         name: format!("{}::{}", type_name, constructor_name),
@@ -1162,7 +1414,7 @@ impl TypeChecker {
                                 }
                             } else {
                                 // 无参数的构造器
-                                if variant.data_type.is_none() {
+                                if variant.data_types.is_empty() {
                                     sum_type.clone()
                                 } else {
                                     self.add_error(TypeCheckError::InvalidConstructor {
@@ -1323,8 +1575,8 @@ impl TypeChecker {
             }
             Expr::ArrayLiteral { elements, span } => {
                 if elements.is_empty() {
-                    self.add_error(TypeCheckError::CannotInferType { span: *span });
-                    Type::array(Type::Unknown)
+                    let elem_type = Type::Var(self.fresh_type_var());
+                    Type::array(elem_type)
                 } else {
                     let element_type = self.infer_expr(&elements[0], env);
                     for element in &elements[1..] {
@@ -1346,6 +1598,19 @@ impl TypeChecker {
                     Type::Reference { inner } => inner.as_ref(),
                     _ => &object_type,
                 };
+
+                // 字符串 .len 属性
+                if matches!(actual_type, Type::String) {
+                    if field == "len" {
+                        return Type::Number;
+                    } else {
+                        self.add_error(TypeCheckError::NotAStruct {
+                            name: format!("字符串类型没有属性 '{}'", field),
+                            span: *span,
+                        });
+                        return Type::Unknown;
+                    }
+                }
 
                 match actual_type {
                     Type::Struct { fields, .. } => {
@@ -1379,8 +1644,10 @@ impl TypeChecker {
                 let array_type = self.infer_expr(array, env);
                 match array_type {
                     Type::Array { .. } => Type::Number,
+                    Type::String => Type::Number,
                     Type::Reference { inner } => match *inner {
                         Type::Array { .. } => Type::Number,
+                        Type::String => Type::Number,
                         other => {
                             self.add_error(TypeCheckError::TypeMismatch {
                                 expected: Type::array(Type::Unknown),
@@ -1399,15 +1666,258 @@ impl TypeChecker {
                         Type::Number
                     }
                     Type::Unknown => Type::Unknown,
+                    Type::Number => {
+                        self.add_error(TypeCheckError::BuiltinFunctionError {
+                            function: "len".to_string(),
+                            message: "expects an array or string, but got a number. len() measures the length of arrays and strings, not numbers.".to_string(),
+                            span: *span,
+                        });
+                        Type::Unknown
+                    }
+                    other => {
+                        self.add_error(TypeCheckError::BuiltinFunctionError {
+                            function: "len".to_string(),
+                            message: format!("expects an array or string, but got {}", other),
+                            span: *span,
+                        });
+                        Type::Unknown
+                    }
+                }
+            }
+            Expr::Abs { value, span } => {
+                let value_type = self.infer_expr(value, env);
+                match value_type {
+                    Type::Number => Type::Number,
+                    Type::Unknown => Type::Unknown,
                     other => {
                         self.add_error(TypeCheckError::TypeMismatch {
-                            expected: Type::array(Type::Unknown),
+                            expected: Type::Number,
                             found: other,
                             span: *span,
                         });
                         Type::Unknown
                     }
                 }
+            }
+            Expr::Min { left, right, span } => {
+                let left_type = self.infer_expr(left, env);
+                let right_type = self.infer_expr(right, env);
+                let mut ok = true;
+                if left_type != Type::Number && left_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: left_type,
+                        span: left.span(),
+                    });
+                    ok = false;
+                }
+                if right_type != Type::Number && right_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: right_type,
+                        span: right.span(),
+                    });
+                    ok = false;
+                }
+                if ok { Type::Number } else { Type::Unknown }
+            }
+            Expr::Max { left, right, span } => {
+                let left_type = self.infer_expr(left, env);
+                let right_type = self.infer_expr(right, env);
+                let mut ok = true;
+                if left_type != Type::Number && left_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: left_type,
+                        span: left.span(),
+                    });
+                    ok = false;
+                }
+                if right_type != Type::Number && right_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: right_type,
+                        span: right.span(),
+                    });
+                    ok = false;
+                }
+                if ok { Type::Number } else { Type::Unknown }
+            }
+            Expr::Clamp { value, min_val, max_val, span } => {
+                let value_type = self.infer_expr(value, env);
+                let min_type = self.infer_expr(min_val, env);
+                let max_type = self.infer_expr(max_val, env);
+                let mut ok = true;
+                if value_type != Type::Number && value_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: value_type,
+                        span: value.span(),
+                    });
+                    ok = false;
+                }
+                if min_type != Type::Number && min_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: min_type,
+                        span: min_val.span(),
+                    });
+                    ok = false;
+                }
+                if max_type != Type::Number && max_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: max_type,
+                        span: max_val.span(),
+                    });
+                    ok = false;
+                }
+                if ok { Type::Number } else { Type::Unknown }
+            }
+            Expr::StrIndex { string, index, span } => {
+                let string_type = self.infer_expr(string, env);
+                let index_type = self.infer_expr(index, env);
+                let mut ok = true;
+                if string_type != Type::String && string_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::String,
+                        found: string_type,
+                        span: string.span(),
+                    });
+                    ok = false;
+                }
+                if index_type != Type::Number && index_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: index_type,
+                        span: index.span(),
+                    });
+                    ok = false;
+                }
+                if ok { Type::Number } else { Type::Unknown }
+            }
+            Expr::CharAt { string, index, span } => {
+                let string_type = self.infer_expr(string, env);
+                let index_type = self.infer_expr(index, env);
+                let mut ok = true;
+                if string_type != Type::String && string_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::String,
+                        found: string_type,
+                        span: string.span(),
+                    });
+                    ok = false;
+                }
+                if index_type != Type::Number && index_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: index_type,
+                        span: index.span(),
+                    });
+                    ok = false;
+                }
+                if ok { Type::String } else { Type::Unknown }
+            }
+            Expr::Substring { string, start, length, span } => {
+                let string_type = self.infer_expr(string, env);
+                let start_type = self.infer_expr(start, env);
+                let length_type = self.infer_expr(length, env);
+                let mut ok = true;
+                if string_type != Type::String && string_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::String,
+                        found: string_type,
+                        span: string.span(),
+                    });
+                    ok = false;
+                }
+                if start_type != Type::Number && start_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: start_type,
+                        span: start.span(),
+                    });
+                    ok = false;
+                }
+                if length_type != Type::Number && length_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: length_type,
+                        span: length.span(),
+                    });
+                    ok = false;
+                }
+                if ok { Type::String } else { Type::Unknown }
+            }
+            Expr::StrContains { string, char_code, span } => {
+                let string_type = self.infer_expr(string, env);
+                let char_code_type = self.infer_expr(char_code, env);
+                let mut ok = true;
+                if string_type != Type::String && string_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::String,
+                        found: string_type,
+                        span: string.span(),
+                    });
+                    ok = false;
+                }
+                if char_code_type != Type::Number && char_code_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: char_code_type,
+                        span: char_code.span(),
+                    });
+                    ok = false;
+                }
+                if ok { Type::Number } else { Type::Unknown }
+            }
+            Expr::SplitCount { string, separator, span } => {
+                let string_type = self.infer_expr(string, env);
+                let sep_type = self.infer_expr(separator, env);
+                let mut ok = true;
+                if string_type != Type::String && string_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::String,
+                        found: string_type,
+                        span: string.span(),
+                    });
+                    ok = false;
+                }
+                if sep_type != Type::Number && sep_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: sep_type,
+                        span: separator.span(),
+                    });
+                    ok = false;
+                }
+                if ok { Type::Number } else { Type::Unknown }
+            }
+            Expr::Trim { string, span } => {
+                let string_type = self.infer_expr(string, env);
+                if string_type != Type::String && string_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::String,
+                        found: string_type,
+                        span: string.span(),
+                    });
+                    Type::Unknown
+                } else {
+                    Type::String
+                }
+            }
+            Expr::ToString { expr, span } => {
+                let expr_type = self.infer_expr(expr, env);
+                let mut ok = true;
+                if expr_type != Type::Number && expr_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: expr_type,
+                        span: expr.span(),
+                    });
+                    ok = false;
+                }
+                if ok { Type::String } else { Type::Unknown }
             }
             Expr::Index { array, index, span } => {
                 let array_type = self.infer_expr(array, env);
@@ -1447,6 +1957,48 @@ impl TypeChecker {
                 }
             }
 
+            Expr::TupleLiteral { elements, span } => {
+                let elem_types: Vec<Type> = elements
+                    .iter()
+                    .map(|e| self.infer_expr(e, env))
+                    .collect();
+                Type::tuple(elem_types)
+            }
+            Expr::TupleAccess { object, index, span } => {
+                let obj_type = self.infer_expr(object, env);
+                // 自动解引用
+                let actual_type = match &obj_type {
+                    Type::Reference { inner } => inner.as_ref(),
+                    _ => &obj_type,
+                };
+                match actual_type {
+                    Type::Tuple(types) => {
+                        if *index >= types.len() {
+                            self.add_error(TypeCheckError::IndexOutOfBounds {
+                                index: *index as i64,
+                                length: types.len() as i64,
+                                span: *span,
+                            });
+                            Type::Unknown
+                        } else {
+                            types[*index].clone()
+                        }
+                    }
+                    Type::Var(_) => {
+                        // 类型变量，无法立即确定，返回新的类型变量
+                        Type::Var(self.fresh_type_var())
+                    }
+                    Type::Unknown => Type::Unknown,
+                    _ => {
+                        self.add_error(TypeCheckError::NotAStruct {
+                            name: format!("不是元组类型，无法使用 .{} 索引访问", index),
+                            span: *span,
+                        });
+                        Type::Unknown
+                    }
+                }
+            }
+
             Expr::Reference { expr, .. } => {
                 // 引用表达式的类型是对内部表达式类型的引用
                 let inner_type = self.infer_expr(expr, env);
@@ -1458,6 +2010,13 @@ impl TypeChecker {
                 let expr_type = self.infer_expr(expr, env);
                 match expr_type {
                     Type::Reference { inner } => *inner,
+                    // 类型变量：添加约束，要求该类型变量必须为引用类型
+                    Type::Var(_) => {
+                        let inner_type = Type::Var(self.fresh_type_var());
+                        let expected_ref_type = Type::reference(inner_type.clone());
+                        self.add_constraint(expr_type, expected_ref_type, *span);
+                        inner_type
+                    }
                     _ => {
                         // 创建一个占位符引用类型用于错误报告
                         let expected_ref_type = Type::reference(Type::Unknown);
@@ -1508,6 +2067,46 @@ impl TypeChecker {
                 }
             }
 
+            Expr::UnsafeLoad { addr, byte_size, span } => {
+                let addr_type = self.infer_expr(addr, env);
+                if addr_type != Type::Number {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: addr_type,
+                        span: *span,
+                    });
+                }
+                Type::Number
+            }
+
+            Expr::UnsafeStore { addr, value, byte_size, span } => {
+                let addr_type = self.infer_expr(addr, env);
+                if addr_type != Type::Number {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: addr_type,
+                        span: *span,
+                    });
+                }
+                let val_type = self.infer_expr(value, env);
+                if val_type != Type::Number {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: val_type,
+                        span: *span,
+                    });
+                }
+                Type::Number
+            }
+
+            Expr::RuntimeGlobal { span: _, .. } => {
+                Type::Number
+            }
+
+            Expr::GcRegOp { span: _, .. } => {
+                Type::Number
+            }
+
             Expr::Assignment {
                 target,
                 value,
@@ -1523,8 +2122,17 @@ impl TypeChecker {
                         // 变量赋值：统一类型
                         self.add_constraint(target_type, value_type, *span);
                     }
+                    Expr::Constructor { args, .. } if args.is_empty() => {
+                        // 大写字母开头的变量被 parser 误解析为零参数 Constructor
+                        // 在赋值目标位置应视为普通变量
+                        self.add_constraint(target_type, value_type, *span);
+                    }
                     Expr::FieldAccess { .. } => {
                         // 字段赋值：统一类型
+                        self.add_constraint(target_type, value_type, *span);
+                    }
+                    Expr::Index { .. } => {
+                        // 数组下标赋值：统一类型
                         self.add_constraint(target_type, value_type, *span);
                     }
                     _ => {
@@ -1578,6 +2186,88 @@ impl TypeChecker {
                 // body 在原环境中检查，作为整体类型
                 self.infer_expr(body, env)
             }
+
+            Expr::TypeCast { expr, target_type, span } => {
+                let inner_type = self.infer_expr(expr, env);
+
+                match (&inner_type, target_type) {
+                    (Type::Number, Type::Int(_)) | (Type::Int(_), Type::Number) => {},
+                    (Type::Number, Type::Number) => {},
+                    (Type::Int(_), Type::Int(_)) => {},
+                    (Type::Int(_), Type::Bool) | (Type::Number, Type::Bool) => {},
+                    (Type::Bool, Type::Number) | (Type::Bool, Type::Int(_)) => {},
+                    _ => {
+                        self.add_error(
+                            TypeCheckError::TypeMismatch {
+                                expected: target_type.clone(),
+                                found: inner_type,
+                                span: *span,
+                            }
+                        );
+                    }
+                }
+
+                target_type.clone()
+            }
+
+            Expr::ForIn {
+                var, start, end, body, inclusive: _, ..
+            } => {
+                // start 和 end 必须是数字类型
+                let start_type = self.infer_expr(start, env);
+                self.add_constraint(start_type, Type::Number, start.span());
+                let end_type = self.infer_expr(end, env);
+                self.add_constraint(end_type, Type::Number, end.span());
+
+                // 循环变量是数字类型
+                let mut loop_env = env.clone();
+                loop_env.insert(var.clone(), Type::Number);
+
+                // for 循环的 body 可以是任何类型，但 for 表达式本身返回 Unit
+                self.infer_expr(body, &loop_env);
+                Type::Unit
+            }
+
+            Expr::ForArray { var, array, body, .. } => {
+                let array_type = self.infer_expr(array, env);
+
+                let element_type = match &array_type {
+                    Type::Array { element } => element.as_ref().clone(),
+                    _ => {
+                        self.add_error(TypeCheckError::TypeMismatch {
+                            expected: Type::array(Type::Unknown),
+                            found: array_type,
+                            span: array.span(),
+                        });
+                        Type::Number
+                    }
+                };
+
+                let mut loop_env = env.clone();
+                loop_env.insert(var.clone(), element_type);
+
+                self.infer_expr(body, &loop_env);
+                Type::Unit
+            }
+
+            Expr::Break { .. } => {
+                // break 返回 Unit（实际上会跳转，不会使用返回值）
+                Type::Unit
+            }
+
+            Expr::Continue { .. } => {
+                // continue 返回 Unit（实际上会跳转，不会使用返回值）
+                Type::Unit
+            }
+
+            Expr::Return { value, .. } => {
+                // return 的类型取决于返回值
+                if let Some(v) = value {
+                    self.infer_expr(v, env)
+                } else {
+                    Type::Unit
+                }
+            }
         };
 
         // 存储所有表达式的类型信息（用于传递给MIR lowering）
@@ -1590,33 +2280,49 @@ impl TypeChecker {
     /// 推断语句并更新环境
     fn infer_statement(&mut self, stmt: &Statement, env: &mut TypeEnvironment) {
         match stmt {
-            Statement::Let { name, value, .. } => {
-                let value_type = self.infer_expr(value, env);
-                env.insert(name.clone(), value_type);
+            Statement::Let { name, value, span, .. } => {
+                // 检查是否为递归闭包（let f = |...| { ... f ... }）
+                // 如果 value 是 Lambda，先绑定一个类型变量到 env 中，
+                // 这样 lambda 体内可以引用自身名称
+                if let Expr::Lambda { .. } = value {
+                    let rec_type_var = self.fresh_type_var();
+                    let mut rec_env = env.clone();
+                    rec_env.insert(name.clone(), Type::Var(rec_type_var));
+
+                    // 推断 lambda 体，此时 f 在环境中
+                    let value_type = self.infer_expr(value, &rec_env);
+
+                    // 统一递归类型变量和实际推断出的类型
+                    let _ = self.unify(
+                        &Type::Var(rec_type_var),
+                        &value_type,
+                        *span,
+                        &Type::Var(rec_type_var),
+                        &value_type,
+                    );
+
+                    env.insert(name.clone(), value_type);
+                } else {
+                    let value_type = self.infer_expr(value, env);
+                    env.insert(name.clone(), value_type);
+                }
             }
             Statement::Expression { expr, .. } => {
                 self.infer_expr(expr, env);
             }
             Statement::TypeDef { name, variants, .. } => {
-                // 构建加法类型的变体
+                // 解析变体 data_types 中的骨架占位符（递归枚举自引用等场景）
                 let sum_variants: Vec<crate::types::SumVariant> = variants
                     .iter()
                     .map(|variant| {
-                        let data_type = variant.data_type.as_ref().map(|type_name| {
-                            // 简单的类型名解析，这里可以扩展为更复杂的类型解析
-                            match type_name.as_str() {
-                                "number" => Type::Number,
-                                "unit" => Type::Unit,
-                                _ => {
-                                    // 暂时假设未知类型名为已定义类型
-                                    Type::Unknown
-                                }
-                            }
-                        });
-
+                        let resolved_data_types: Vec<Type> = variant
+                            .data_types
+                            .iter()
+                            .map(|dt| self.resolve_struct_field_from_parsed(dt))
+                            .collect();
                         crate::types::SumVariant {
                             name: variant.name.clone(),
-                            data_type,
+                            data_types: resolved_data_types,
                         }
                     })
                     .collect();
@@ -1628,10 +2334,10 @@ impl TypeChecker {
 
                 // 为每个构造器添加类型到环境中
                 for variant in &sum_variants {
-                    if let Some(data_type) = &variant.data_type {
+                    if !variant.data_types.is_empty() {
                         // 有数据的构造器是函数类型
                         let constructor_type =
-                            Type::function(vec![data_type.clone()], sum_type.clone());
+                            Type::function(variant.data_types.clone(), sum_type.clone());
                         env.insert(variant.name.clone(), constructor_type);
                     } else {
                         // 无数据的构造器直接是该类型
@@ -1641,15 +2347,15 @@ impl TypeChecker {
             }
             Statement::StructDef { name, fields, .. } => {
                 // 构建结构体类型的字段
+                // field.field_type 已经是 parser 生成的结构化 Type，但自定义类型名可能是骨架占位符
+                // 需要用 process_struct_definitions 中创建的完整类型替换
                 let struct_fields: Vec<crate::types::StructField> = fields
                     .iter()
                     .map(|field| {
-                        // 类型名解析，支持引用类型
-                        let field_type = self.parse_field_type(&field.field_type);
-
+                        let resolved_type = self.resolve_struct_field_from_parsed(&field.field_type);
                         crate::types::StructField {
                             name: field.name.clone(),
-                            field_type,
+                            field_type: resolved_type,
                         }
                     })
                     .collect();
@@ -1680,8 +2386,25 @@ impl TypeChecker {
                             });
                         }
                     }
+                    Expr::Constructor { name, args, .. } if args.is_empty() => {
+                        // 大写字母开头的变量被 parser 误解析为零参数 Constructor
+                        // 在赋值目标位置应视为普通变量
+                        if env.contains_key(name) {
+                            self.add_constraint(target_type, value_type.clone(), target.span());
+                            env.insert(name.clone(), value_type);
+                        } else {
+                            self.add_error(TypeCheckError::UndefinedVariable {
+                                name: name.clone(),
+                                span: target.span(),
+                            });
+                        }
+                    }
                     Expr::FieldAccess { .. } => {
                         // 字段赋值：统一类型
+                        self.add_constraint(target_type, value_type, target.span());
+                    }
+                    Expr::Index { .. } => {
+                        // 数组下标赋值：统一类型
                         self.add_constraint(target_type, value_type, target.span());
                     }
                     _ => {
@@ -1699,6 +2422,14 @@ impl TypeChecker {
                 span,
                 ..
             } => {
+                // 如果是重复定义（已在 collect_function_definitions 中标记），报告错误并跳过函数体检查
+                if self.duplicate_function_spans.contains(&(span.start, span.end)) {
+                    self.add_error(TypeCheckError::DuplicateFunctionDefinition {
+                        name: name.clone(),
+                        span: *span,
+                    });
+                    return;
+                }
                 // 从缓存中获取函数签名（已在 collect_function_definitions 中解析和验证）
                 let signature = self
                     .function_signatures
@@ -1729,6 +2460,20 @@ impl TypeChecker {
 
                 // 6. 将函数名加入当前环境
                 env.insert(name.clone(), func_type);
+
+                // 7. 检查是否需要 generalize（泛化）
+                // 只 generalize 含有自由类型变量的函数（即参数或返回类型未完全标注的函数）
+                // 有完整类型标注的函数不受影响
+                if let Some(sig) = self.function_signatures.get(name) {
+                    let func_type = Type::Function {
+                        params: sig.param_types.clone(),
+                        return_type: Box::new(sig.return_type.clone()),
+                    };
+                    let free_vars = func_type.free_vars();
+                    if !free_vars.is_empty() {
+                        self.function_schemes.insert(name.clone(), TypeScheme::new(free_vars, func_type));
+                    }
+                }
             }
         }
     }
@@ -1756,13 +2501,13 @@ impl TypeChecker {
                 // 布尔模式必须匹配布尔类型
                 self.add_constraint(expected_type.clone(), Type::bool(), *span);
             }
-            crate::ast::Pattern::Constructor { name, arg, span } => {
+            crate::ast::Pattern::Constructor { name, args, span } => {
                 match name.as_str() {
                     "True" | "False" => {
                         self.add_constraint(expected_type.clone(), Type::bool(), *span);
                     }
                     "Some" => {
-                        if let Some(arg_pattern) = arg {
+                        if let Some(arg_pattern) = args.get(0) {
                             // Some(x) 模式，从 expected_type 中提取内部类型
                             match expected_type {
                                 Type::Sum { name, variants } if name == "Option" => {
@@ -1770,7 +2515,7 @@ impl TypeChecker {
                                     if let Some(some_variant) =
                                         variants.iter().find(|v| v.name == "Some")
                                     {
-                                        if let Some(inner_type) = &some_variant.data_type {
+                                        if let Some(inner_type) = some_variant.data_types.first() {
                                             self.check_pattern(arg_pattern, inner_type, env);
                                         } else {
                                             self.add_error(TypeCheckError::InvalidPattern {
@@ -1817,10 +2562,35 @@ impl TypeChecker {
                         }
                     }
                     _ => {
-                        self.add_error(TypeCheckError::InvalidPattern {
-                            message: format!("Unknown constructor: {}", name),
-                            span: *span,
-                        });
+                        // 动态查找构造器所属的 enum 类型
+                        let mut found = false;
+                        let mut matched_type: Option<Type> = None;
+                        let mut arg_types: Vec<Type> = Vec::new();
+                        for (_, custom_type) in &self.custom_types {
+                            if let Type::Sum { name: _sum_name, variants } = custom_type {
+                                if let Some(variant) = variants.iter().find(|v| v.name == *name) {
+                                    found = true;
+                                    matched_type = Some(custom_type.clone());
+                                    arg_types = variant.data_types.clone();
+                                    break;
+                                }
+                            }
+                        }
+                        if found {
+                            if let Some(ct) = matched_type {
+                                self.add_constraint(expected_type.clone(), ct, *span);
+                            }
+                            for (i, arg_pattern) in args.iter().enumerate() {
+                                if let Some(param_type) = arg_types.get(i) {
+                                    self.check_pattern(arg_pattern, param_type, env);
+                                }
+                            }
+                        } else {
+                            self.add_error(TypeCheckError::InvalidPattern {
+                                message: format!("Unknown constructor: {}", name),
+                                span: *span,
+                            });
+                        }
                     }
                 }
             }
@@ -1828,7 +2598,7 @@ impl TypeChecker {
             crate::ast::Pattern::QualifiedConstructor {
                 type_name,
                 constructor_name,
-                arg,
+                args,
                 span,
             } => {
                 // 检查类型是否存在
@@ -1840,9 +2610,9 @@ impl TypeChecker {
                             // 约束expected_type必须是这个sum type
                             self.add_constraint(expected_type.clone(), sum_type.clone(), *span);
 
-                            if let Some(arg_pattern) = arg {
+                            if let Some(arg_pattern) = args.get(0) {
                                 // 有参数的构造器模式
-                                if let Some(expected_arg_type) = &variant.data_type {
+                                if let Some(expected_arg_type) = variant.data_types.first() {
                                     self.check_pattern(arg_pattern, expected_arg_type, env);
                                 } else {
                                     self.add_error(TypeCheckError::InvalidPattern {
@@ -1855,7 +2625,7 @@ impl TypeChecker {
                                 }
                             } else {
                                 // 无参数的构造器模式
-                                if variant.data_type.is_some() {
+                                if !variant.data_types.is_empty() {
                                     self.add_error(TypeCheckError::InvalidPattern {
                                         message: format!(
                                             "{}::{} requires an argument",
@@ -1904,15 +2674,30 @@ impl TypeChecker {
     }
 
     /// 应用统一化结果到类型上
-    fn apply_substitution(&mut self, ty: Type) -> Type {
-        match ty {
-            Type::Var(var) => {
-                let value = self.unification_table.probe_value(var);
-                match value.0 {
-                    Some(resolved_type) => self.apply_substitution(resolved_type),
-                    None => Type::Var(var), // 保持未解析的类型变量
+    /// 使用 visited 集合检测类型变量循环引用，防止无限递归
+    /// 应用统一化结果到类型上
+    /// 使用循环展开 Type::Var 链，并用 visited 集合检测循环引用
+    fn apply_substitution(&mut self, mut ty: Type) -> Type {
+        // 循环展开 Type::Var 链，检测循环引用
+        let mut visited = std::collections::HashSet::new();
+        loop {
+            match ty {
+                Type::Var(var) => {
+                    // 检测循环引用：如果已经访问过此类型变量，保持为 Var
+                    if !visited.insert(var) {
+                        return Type::Var(var);
+                    }
+                    let value = self.unification_table.probe_value(var);
+                    match value.0 {
+                        Some(resolved_type) => ty = resolved_type,
+                        None => return Type::Var(var),
+                    }
                 }
+                _ => break,
             }
+        }
+        // ty 不再是 Type::Var，处理复杂类型
+        match ty {
             Type::Function {
                 params,
                 return_type,
@@ -1939,9 +2724,12 @@ impl TypeChecker {
                     .into_iter()
                     .map(|v| crate::types::SumVariant {
                         name: v.name,
-                        data_type: v.data_type.map(|t| self.apply_substitution(t)),
+                        data_types: v.data_types.into_iter().map(|t| self.apply_substitution(t)).collect(),
                     })
                     .collect(),
+            },
+            Type::Array { element } => Type::Array {
+                element: Box::new(self.apply_substitution(*element)),
             },
             _ => ty,
         }
@@ -2012,7 +2800,17 @@ impl TypeChecker {
         } else {
             // 非泛型类型
             match type_str {
-                "number" | "i32" | "i64" => return Ok(Type::Number),
+                "number" => return Ok(Type::Number),
+                "i32" => return Ok(Type::Int(IntKind::I32)),
+                "i64" => return Ok(Type::Int(IntKind::I64)),
+                "bool" => return Ok(Type::Bool),
+                "i8" => return Ok(Type::Int(IntKind::I8)),
+                "i16" => return Ok(Type::Int(IntKind::I16)),
+                "u8" => return Ok(Type::Int(IntKind::U8)),
+                "u16" => return Ok(Type::Int(IntKind::U16)),
+                "u32" => return Ok(Type::Int(IntKind::U32)),
+                "u64" => return Ok(Type::Int(IntKind::U64)),
+                "usize" => return Ok(Type::Int(IntKind::USize)),
                 "unit" => return Ok(Type::Unit),
                 _ => {
                     // 检查是否是已定义的类型
@@ -2092,7 +2890,17 @@ impl TypeChecker {
         } else {
             // 非泛型类型
             match type_str {
-                "number" | "i32" | "i64" => Type::Number,
+                "number" => Type::Number,
+                "i32" => Type::Int(IntKind::I32),
+                "i64" => Type::Int(IntKind::I64),
+                "bool" => Type::Bool,
+                "i8" => Type::Int(IntKind::I8),
+                "i16" => Type::Int(IntKind::I16),
+                "u8" => Type::Int(IntKind::U8),
+                "u16" => Type::Int(IntKind::U16),
+                "u32" => Type::Int(IntKind::U32),
+                "u64" => Type::Int(IntKind::U64),
+                "usize" => Type::Int(IntKind::USize),
                 "unit" => Type::Unit,
                 _ => {
                     // 检查是否是已定义的类型
@@ -2121,6 +2929,90 @@ impl TypeChecker {
             result.push(self.parse_generic_type(arg));
         }
         result
+    }
+
+    /// 解析 parser 生成的结构化类型中的自定义类型引用
+    /// 在 infer_statement 阶段使用，此时 custom_types 已经完整建立
+    fn resolve_struct_field_from_parsed(&self, ty: &Type) -> Type {
+        match ty {
+            Type::Struct { name, fields } if fields.is_empty() => {
+                // Parser 创建的 Struct 骨架占位符，用 custom_types 中的完整类型替换
+                if let Some(struct_type) = self.custom_types.get(name) {
+                    struct_type.clone()
+                } else {
+                    ty.clone()
+                }
+            }
+            Type::Reference { inner } => {
+                let resolved_inner = self.resolve_struct_field_from_parsed(inner);
+                Type::reference(resolved_inner)
+            }
+            Type::Array { element } => {
+                let resolved_element = self.resolve_struct_field_from_parsed(element);
+                Type::array(resolved_element)
+            }
+            // Option 等泛型类型的内部参数也需要递归解析
+            Type::Sum { name: sum_name, variants } => {
+                let resolved_variants = variants
+                    .iter()
+                    .map(|v| crate::types::SumVariant {
+                        name: v.name.clone(),
+                        data_types: v
+                            .data_types
+                            .iter()
+                            .map(|dt| self.resolve_struct_field_from_parsed(dt))
+                            .collect(),
+                    })
+                    .collect();
+                Type::sum(sum_name.clone(), resolved_variants)
+            }
+            _ => ty.clone(),
+        }
+    }
+
+    /// 解析 parser 生成的结构化类型，将 Struct 骨架等占位替换为实际自定义类型
+    /// 在 process_struct_definitions 阶段使用，此时 custom_types 可能只有骨架
+    fn resolve_parsed_type(
+        &self,
+        ty: &Type,
+        struct_defs: &HashMap<String, Vec<FieldDef>>,
+    ) -> Type {
+        match ty {
+            Type::Unknown => Type::Unknown,
+            Type::Struct { name, fields } if fields.is_empty() => {
+                // Parser 创建的 Struct 骨架占位符，检查是否是已定义的结构体
+                if let Some(struct_type) = self.custom_types.get(name) {
+                    struct_type.clone()
+                } else {
+                    // 未知类型名，保留骨架
+                    ty.clone()
+                }
+            }
+            Type::Reference { inner } => {
+                let resolved_inner = self.resolve_parsed_type(inner, struct_defs);
+                Type::reference(resolved_inner)
+            }
+            Type::Array { element } => {
+                let resolved_element = self.resolve_parsed_type(element, struct_defs);
+                Type::array(resolved_element)
+            }
+            // Option 等泛型类型的内部参数也需要递归解析
+            Type::Sum { name: sum_name, variants } => {
+                let resolved_variants = variants
+                    .iter()
+                    .map(|v| crate::types::SumVariant {
+                        name: v.name.clone(),
+                        data_types: v
+                            .data_types
+                            .iter()
+                            .map(|dt| self.resolve_parsed_type(dt, struct_defs))
+                            .collect(),
+                    })
+                    .collect();
+                Type::sum(sum_name.clone(), resolved_variants)
+            }
+            _ => ty.clone(),
+        }
     }
 
     /// 解析结构体字段类型，支持延迟解析、循环检测和泛型类型
@@ -2173,6 +3065,14 @@ impl TypeChecker {
             // 非泛型类型
             match type_str {
                 "number" => Type::Number,
+                "bool" => Type::Bool,
+                "i8" => Type::Int(IntKind::I8),
+                "i16" => Type::Int(IntKind::I16),
+                "u8" => Type::Int(IntKind::U8),
+                "u16" => Type::Int(IntKind::U16),
+                "u32" => Type::Int(IntKind::U32),
+                "u64" => Type::Int(IntKind::U64),
+                "usize" => Type::Int(IntKind::USize),
                 "unit" => Type::Unit,
                 _ => {
                     // 检查是否是已定义的结构体类型

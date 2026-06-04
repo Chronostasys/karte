@@ -45,10 +45,79 @@ impl UnifyKey for TypeVar {
     }
 }
 
+/// 整数类型种类
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IntKind {
+    I8,
+    I16,
+    I32,
+    I64,
+    U8,
+    U16,
+    U32,
+    U64,
+    USize,
+}
+
+impl IntKind {
+    /// 获取整数类型的字节大小
+    pub fn size_in_bytes(&self) -> usize {
+        match self {
+            IntKind::I8 | IntKind::U8 => 1,
+            IntKind::I16 | IntKind::U16 => 2,
+            IntKind::I32 | IntKind::U32 => 4,
+            IntKind::I64 | IntKind::U64 | IntKind::USize => 8,
+        }
+    }
+
+    /// 是否为有符号整数
+    pub fn is_signed(&self) -> bool {
+        matches!(self, IntKind::I8 | IntKind::I16 | IntKind::I32 | IntKind::I64)
+    }
+
+    /// 检查是否可以从 other 隐式转换到 self（无损转换）
+    pub fn can_implicitly_convert_from(&self, other: &IntKind) -> bool {
+        if self == other {
+            return true;
+        }
+        // 同符号：从小到大可以隐式转换
+        if self.is_signed() == other.is_signed() {
+            return self.size_in_bytes() >= other.size_in_bytes();
+        }
+        // 无符号小类型到有符号大类型
+        if self.is_signed() && !other.is_signed() {
+            return self.size_in_bytes() > other.size_in_bytes();
+        }
+        false
+    }
+}
+
+impl fmt::Display for IntKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            IntKind::I8 => write!(f, "i8"),
+            IntKind::I16 => write!(f, "i16"),
+            IntKind::I32 => write!(f, "i32"),
+            IntKind::I64 => write!(f, "i64"),
+            IntKind::U8 => write!(f, "u8"),
+            IntKind::U16 => write!(f, "u16"),
+            IntKind::U32 => write!(f, "u32"),
+            IntKind::U64 => write!(f, "u64"),
+            IntKind::USize => write!(f, "usize"),
+        }
+    }
+}
+
 /// 类型系统
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Number,
+    /// 具体整数类型
+    Int(IntKind),
+    /// 布尔类型（原生类型）
+    Bool,
+    /// 字符串类型
+    String,
     Unit,
     Function {
         params: Vec<Type>,
@@ -69,6 +138,8 @@ pub enum Type {
         name: String,
         fields: Vec<StructField>,
     },
+    /// 元组类型
+    Tuple(Vec<Type>),
     /// 数组类型
     Array {
         element: Box<Type>,
@@ -87,7 +158,7 @@ pub enum Type {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SumVariant {
     pub name: String,
-    pub data_type: Option<Type>, // 支持完整的类型，包括嵌套的sum type
+    pub data_types: Vec<Type>,
 }
 
 impl SumVariant {
@@ -95,7 +166,7 @@ impl SumVariant {
     pub fn unit(name: String) -> Self {
         Self {
             name,
-            data_type: None,
+            data_types: vec![],
         }
     }
 
@@ -103,7 +174,7 @@ impl SumVariant {
     pub fn with_data(name: String, data_type: Type) -> Self {
         Self {
             name,
-            data_type: Some(data_type),
+            data_types: vec![data_type],
         }
     }
 }
@@ -126,6 +197,9 @@ impl Type {
     pub fn structural_eq(&self, other: &Type) -> bool {
         match (self, other) {
             (Type::Number, Type::Number) => true,
+            (Type::Int(k1), Type::Int(k2)) => k1 == k2,
+            (Type::Bool, Type::Bool) => true,
+            (Type::String, Type::String) => true,
             (Type::Unit, Type::Unit) => true,
             (
                 Type::Function {
@@ -175,9 +249,11 @@ impl Type {
                     && v1.len() == v2.len()
                     && v1.iter().zip(v2.iter()).all(|(variant1, variant2)| {
                         variant1.name == variant2.name
-                            && match (&variant1.data_type, &variant2.data_type) {
-                                (None, None) => true,
-                                (Some(t1), Some(t2)) => t1.structural_eq(t2),
+                            && match (&variant1.data_types, &variant2.data_types) {
+                                (v1, v2) if v1.is_empty() && v2.is_empty() => true,
+                                (v1, v2) if v1.len() == v2.len() => {
+                                    v1.iter().zip(v2.iter()).all(|(t1, t2)| t1.structural_eq(t2))
+                                }
                                 _ => false,
                             }
                     })
@@ -200,6 +276,10 @@ impl Type {
                     })
             }
             (Type::Array { element: e1 }, Type::Array { element: e2 }) => e1.structural_eq(e2),
+            (Type::Tuple(ts1), Type::Tuple(ts2)) => {
+                ts1.len() == ts2.len()
+                    && ts1.iter().zip(ts2.iter()).all(|(t1, t2)| t1.structural_eq(t2))
+            }
             (Type::Reference { inner: i1 }, Type::Reference { inner: i2 }) => i1.structural_eq(i2),
             (Type::Var(v1), Type::Var(v2)) => v1 == v2,
             (Type::Unknown, Type::Unknown) => true,
@@ -212,6 +292,9 @@ impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Type::Number => write!(f, "number"),
+            Type::Int(kind) => write!(f, "{}", kind),
+            Type::Bool => write!(f, "bool"),
+            Type::String => write!(f, "string"),
             Type::Unit => write!(f, "()"),
             Type::Function {
                 params,
@@ -248,8 +331,9 @@ impl fmt::Display for Type {
                 let variants_str = variants
                     .iter()
                     .map(|v| {
-                        if let Some(data_type) = &v.data_type {
-                            format!("{}({})", v.name, data_type)
+                        if !v.data_types.is_empty() {
+                            let types_str = v.data_types.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", ");
+                            format!("{}({})", v.name, types_str)
                         } else {
                             v.name.clone()
                         }
@@ -266,6 +350,14 @@ impl fmt::Display for Type {
                     .join(", ");
                 write!(f, "{} = {{ {} }}", name, fields_str)
             }
+            Type::Tuple(types) => {
+                let types_str = types
+                    .iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "({})", types_str)
+            }
             Type::Array { element } => {
                 write!(f, "[{}]", element)
             }
@@ -273,7 +365,7 @@ impl fmt::Display for Type {
                 write!(f, "&{}", inner)
             }
             Type::Var(var) => write!(f, "t{}", var.0),
-            Type::Unknown => write!(f, "?"),
+            Type::Unknown => write!(f, "unknown"),
         }
     }
 }
@@ -287,6 +379,44 @@ impl Type {
             (a, b) => a == b,
         }
     }
+
+    /// 检查是否为数值类型（Number 或具体整数类型）
+    pub fn is_numeric(&self) -> bool {
+        matches!(self, Type::Number | Type::Int(_))
+    }
+
+    /// 获取整数类型的字节大小，非整数类型返回 None
+    pub fn int_size_bytes(&self) -> Option<usize> {
+        match self {
+            Type::Number => Some(8), // Number 默认 8 字节（i64）
+            Type::Int(kind) => Some(kind.size_in_bytes()),
+            _ => None,
+        }
+    }
+
+    /// 获取类型的字节大小（用于数组元素步幅计算）
+    /// 对结构体递归计算所有字段大小之和
+    pub fn byte_size(&self) -> usize {
+        match self {
+            Type::Number => 8,
+            Type::Int(kind) => kind.size_in_bytes(),
+            Type::Bool => 1,
+            Type::String => 8, // 字符串是指针
+            Type::Unit => 0,
+            Type::Struct { fields, .. } => {
+                fields.iter().map(|f| f.field_type.byte_size()).sum()
+            }
+            Type::Tuple(types) => {
+                types.iter().map(|t| t.byte_size()).sum()
+            }
+            Type::Reference { .. } => 8, // 引用是指针
+            Type::Array { .. } => 8, // 数组是指针
+            Type::Function { .. } | Type::Closure { .. } => 8, // 函数值是指针
+            Type::Sum { .. } => 8, // Tagged union 是指针
+            Type::Var(_) | Type::Unknown => 8, // 保守估计
+        }
+    }
+
 
     /// 创建函数类型
     pub fn function(params: Vec<Type>, return_type: Type) -> Self {
@@ -314,6 +444,11 @@ impl Type {
         Type::Struct { name, fields }
     }
 
+    /// 创建元组类型
+    pub fn tuple(types: Vec<Type>) -> Self {
+        Type::Tuple(types)
+    }
+
     /// 创建数组类型
     pub fn array(inner: Type) -> Self {
         Type::Array {
@@ -328,21 +463,28 @@ impl Type {
         }
     }
 
-    /// 创建布尔类型
+    /// 创建布尔类型（原生 Bool）
     pub fn bool() -> Self {
-        Type::Sum {
-            name: "Bool".to_string(),
-            variants: vec![
-                SumVariant {
-                    name: "True".to_string(),
-                    data_type: None,
-                },
-                SumVariant {
-                    name: "False".to_string(),
-                    data_type: None,
-                },
-            ],
+        Type::Bool
+    }
+
+    /// 创建字符串类型
+    pub fn string() -> Self {
+        Type::String
+    }
+
+    /// 检查是否为布尔类型（兼容旧的 Type::Sum { name: "Bool" }）
+    pub fn is_bool(&self) -> bool {
+        match self {
+            Type::Bool => true,
+            Type::Sum { name, .. } => name == "Bool",
+            _ => false,
         }
+    }
+
+    /// 检查两个布尔类型是否兼容（Type::Bool 与 Type::Sum { name: "Bool" } 兼容）
+    pub fn is_bool_compatible(&self, other: &Type) -> bool {
+        self.is_bool() && other.is_bool()
     }
 
     /// 创建Option类型
@@ -352,11 +494,11 @@ impl Type {
             variants: vec![
                 SumVariant {
                     name: "Some".to_string(),
-                    data_type: Some(inner),
+                    data_types: vec![inner],
                 },
                 SumVariant {
                     name: "None".to_string(),
-                    data_type: None,
+                    data_types: vec![],
                 },
             ],
         }
@@ -366,6 +508,9 @@ impl Type {
     pub fn substitute(&self, subst: &[(TypeVar, Type)]) -> Type {
         match self {
             Type::Number => Type::Number,
+            Type::Int(kind) => Type::Int(*kind),
+            Type::Bool => Type::Bool,
+            Type::String => Type::String,
             Type::Unit => Type::Unit,
             Type::Function {
                 params,
@@ -387,7 +532,7 @@ impl Type {
                     .iter()
                     .map(|v| SumVariant {
                         name: v.name.clone(),
-                        data_type: v.data_type.as_ref().map(|t| t.substitute(subst)),
+                        data_types: v.data_types.iter().map(|t| t.substitute(subst)).collect(),
                     })
                     .collect(),
             },
@@ -401,6 +546,9 @@ impl Type {
                     })
                     .collect(),
             },
+            Type::Tuple(types) => Type::Tuple(
+                types.iter().map(|t| t.substitute(subst)).collect()
+            ),
             Type::Array { element } => Type::Array {
                 element: Box::new(element.substitute(subst)),
             },
@@ -422,7 +570,7 @@ impl Type {
     /// 获取类型中所有的自由类型变量
     pub fn free_vars(&self) -> Vec<TypeVar> {
         match self {
-            Type::Number | Type::Unit | Type::Unknown => vec![],
+            Type::Number | Type::Int(_) | Type::Bool | Type::String | Type::Unit | Type::Unknown => vec![],
             Type::Function {
                 params,
                 return_type,
@@ -448,7 +596,7 @@ impl Type {
             Type::Sum { variants, .. } => {
                 let mut vars = Vec::new();
                 for variant in variants {
-                    if let Some(data_type) = &variant.data_type {
+                    for data_type in &variant.data_types {
                         vars.extend(data_type.free_vars());
                     }
                 }
@@ -461,9 +609,30 @@ impl Type {
                 }
                 vars
             }
+            Type::Tuple(types) => {
+                let mut vars = Vec::new();
+                for t in types {
+                    vars.extend(t.free_vars());
+                }
+                vars
+            }
             Type::Array { element } => element.free_vars(),
             Type::Reference { inner } => inner.free_vars(),
             Type::Var(var) => vec![*var],
         }
+    }
+}
+
+/// 类型方案（Type Scheme）— 用于 let-polymorphism
+/// 将函数类型中的自由类型变量量化，使其可以在不同调用位点实例化为不同类型
+#[derive(Debug, Clone)]
+pub struct TypeScheme {
+    pub bound_vars: Vec<TypeVar>,
+    pub body: Type,
+}
+
+impl TypeScheme {
+    pub fn new(bound_vars: Vec<TypeVar>, body: Type) -> Self {
+        Self { bound_vars, body }
     }
 }

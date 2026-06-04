@@ -76,7 +76,7 @@ impl JitMemoryManager {
     }
 
     /// 初始化内存管理器（预分配大块连续内存）
-    pub fn initialize(&mut self) -> Result<(), String> {
+    pub fn initialize(&mut self) -> crate::Result<()> {
         if self.initialized {
             return Ok(());
         }
@@ -124,14 +124,14 @@ impl JitMemoryManager {
         &mut self,
         function_name: &str,
         code: &[u8],
-    ) -> Result<ExecutableMemory, String> {
+    ) -> crate::Result<ExecutableMemory> {
         if !self.initialized {
             self.initialize()?;
         }
 
         let size = code.len();
         if size == 0 {
-            return Err("无法分配零大小的函数内存".to_string());
+            return Err("无法分配零大小的函数内存".into());
         }
 
         // 计算对齐后的大小
@@ -143,7 +143,7 @@ impl JitMemoryManager {
                 "JIT代码段空间不足: 需要 {} 字节，剩余 {} 字节",
                 aligned_size,
                 self.code_section_size - self.current_offset
-            ));
+            ).into());
         }
 
         // 计算函数在代码段中的位置
@@ -267,7 +267,7 @@ impl JitMemoryManager {
     }
 
     /// 清理所有内存
-    pub fn cleanup(&mut self) -> Result<(), String> {
+    pub fn cleanup(&mut self) -> crate::Result<()> {
         if self.initialized && !self.code_section_base.is_null() {
             if self.debug_mode {
                 info!(
@@ -290,22 +290,22 @@ impl JitMemoryManager {
     }
 
     /// 临时修改内存权限为可写（用于代码修补）
-    pub fn temporarily_make_writable(&self, function_name: &str) -> Result<(), String> {
+    pub fn temporarily_make_writable(&self, function_name: &str) -> crate::Result<()> {
         if let Some(block) = self.allocated_functions.get(function_name) {
             let address = unsafe { self.code_section_base.add(block.offset) };
             self.set_memory_writable(address, block.size)
         } else {
-            Err(format!("未找到函数: {}", function_name))
+            Err(format!("未找到函数: {}", function_name).into())
         }
     }
 
     /// 恢复内存权限为可执行
-    pub fn make_executable_again(&self, function_name: &str) -> Result<(), String> {
+    pub fn make_executable_again(&self, function_name: &str) -> crate::Result<()> {
         if let Some(block) = self.allocated_functions.get(function_name) {
             let address = unsafe { self.code_section_base.add(block.offset) };
             self.make_memory_executable(address, block.size)
         } else {
-            Err(format!("未找到函数: {}", function_name))
+            Err(format!("未找到函数: {}", function_name).into())
         }
     }
 
@@ -325,7 +325,7 @@ impl JitMemoryManager {
     // ============= 平台相关的内存操作 =============
 
     /// 分配虚拟内存（不立即提交物理页面）
-    fn allocate_virtual_memory(&self, size: usize) -> Result<*mut u8, String> {
+    fn allocate_virtual_memory(&self, size: usize) -> crate::Result<*mut u8> {
         #[cfg(target_os = "windows")]
         {
             use windows_sys::Win32::System::Memory::{VirtualAlloc, MEM_RESERVE, PAGE_NOACCESS};
@@ -340,7 +340,7 @@ impl JitMemoryManager {
             };
 
             if addr.is_null() {
-                Err("VirtualAlloc(MEM_RESERVE)失败".to_string())
+                Err("VirtualAlloc(MEM_RESERVE)失败".into())
             } else {
                 Ok(addr as *mut u8)
             }
@@ -348,12 +348,18 @@ impl JitMemoryManager {
 
         #[cfg(not(target_os = "windows"))]
         {
+            // macOS Apple Silicon 需要 MAP_JIT 来支持 W+X 内存
+            // 没有 MAP_JIT，JIT 代码可能无法正确执行
+            let flags = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS;
+            #[cfg(target_os = "macos")]
+            let flags = flags | libc::MAP_JIT;
+            
             let addr = unsafe {
                 libc::mmap(
                     std::ptr::null_mut(),
                     size,
                     libc::PROT_NONE, // 无权限，只保留地址空间
-                    libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                    flags,
                     -1,
                     0,
                 )
@@ -363,7 +369,7 @@ impl JitMemoryManager {
                 Err(format!(
                     "mmap(PROT_NONE)失败: {}",
                     std::io::Error::last_os_error()
-                ))
+                ).into())
             } else {
                 if self.debug_mode {
                     debug!(
@@ -378,7 +384,7 @@ impl JitMemoryManager {
     }
 
     /// 提交内存页面（为指定区域分配物理内存）
-    fn commit_memory_pages(&self, address: *mut u8, size: usize) -> Result<(), String> {
+    fn commit_memory_pages(&self, address: *mut u8, size: usize) -> crate::Result<()> {
         #[cfg(target_os = "windows")]
         {
             use windows_sys::Win32::System::Memory::{VirtualAlloc, MEM_COMMIT, PAGE_READWRITE};
@@ -393,7 +399,7 @@ impl JitMemoryManager {
             };
 
             if result.is_null() {
-                Err("VirtualAlloc(MEM_COMMIT)失败".to_string())
+                Err("VirtualAlloc(MEM_COMMIT)失败".into())
             } else {
                 Ok(())
             }
@@ -402,9 +408,12 @@ impl JitMemoryManager {
         #[cfg(not(target_os = "windows"))]
         {
             // 🔧 修复：确保地址和大小按页面边界对齐
+            // 需要覆盖从 aligned_address 到 (address + size) 向上对齐的完整页面范围
             let page_size = self.get_page_size();
             let aligned_address = self.align_to_page_boundary(address as usize, page_size);
-            let aligned_size = self.align_size_to_page_boundary(size, page_size);
+            let end_address = address as usize + size;
+            let aligned_end = self.align_size_to_page_boundary(end_address, page_size);
+            let aligned_size = aligned_end.saturating_sub(aligned_address).max(page_size);
 
             if self.debug_mode {
                 debug!(
@@ -415,7 +424,7 @@ impl JitMemoryManager {
 
             // 验证地址范围是否有效
             if aligned_address == 0 || aligned_size == 0 {
-                return Err(format!("无效的内存地址或大小: {:p}, {}", address, size));
+                return Err(format!("无效的内存地址或大小: {:p}, {}", address, size).into());
             }
 
             // 在Unix系统中，使用mprotect来提交页面并设置权限
@@ -432,7 +441,7 @@ impl JitMemoryManager {
                 Err(format!(
                     "mprotect(RW)失败: {} (地址={:p}, 大小={}, 页面大小={})",
                     error, aligned_address as *mut u8, aligned_size, page_size
-                ))
+                ).into())
             } else {
                 if self.debug_mode {
                     debug!(
@@ -446,7 +455,7 @@ impl JitMemoryManager {
     }
 
     /// 设置内存权限为可执行
-    fn make_memory_executable(&self, address: *mut u8, size: usize) -> Result<(), String> {
+    fn make_memory_executable(&self, address: *mut u8, size: usize) -> crate::Result<()> {
         #[cfg(target_os = "windows")]
         {
             use windows_sys::Win32::System::Memory::{VirtualProtect, PAGE_EXECUTE_READ};
@@ -462,7 +471,7 @@ impl JitMemoryManager {
             };
 
             if result == 0 {
-                Err("VirtualProtect(EXECUTE_READ)失败".to_string())
+                Err("VirtualProtect(EXECUTE_READ)失败".into())
             } else {
                 Ok(())
             }
@@ -471,9 +480,12 @@ impl JitMemoryManager {
         #[cfg(not(target_os = "windows"))]
         {
             // 🔧 修复：确保地址和大小按页面边界对齐
+            // 需要覆盖从 aligned_address 到 (address + size) 向上对齐的完整页面范围
             let page_size = self.get_page_size();
             let aligned_address = self.align_to_page_boundary(address as usize, page_size);
-            let aligned_size = self.align_size_to_page_boundary(size, page_size);
+            let end_address = address as usize + size;
+            let aligned_end = self.align_size_to_page_boundary(end_address, page_size);
+            let aligned_size = aligned_end.saturating_sub(aligned_address).max(page_size);
 
             if self.debug_mode {
                 debug!(
@@ -495,8 +507,16 @@ impl JitMemoryManager {
                 Err(format!(
                     "mprotect(RX)失败: {} (地址={:p}, 大小={})",
                     error, aligned_address as *mut u8, aligned_size
-                ))
+                ).into())
             } else {
+                // AArch64 特有：刷新指令缓存
+                // I-Cache 和 D-Cache 在 AArch64 上不自动一致，
+                // 写入代码内存后必须手动刷新，否则 CPU 执行旧指令
+                #[cfg(target_arch = "aarch64")]
+                {
+                    self.flush_instruction_cache(aligned_address as *mut u8, aligned_size);
+                }
+
                 if self.debug_mode {
                     debug!(
                         "内存权限设置为可执行: {:p}, 大小: {}",
@@ -508,8 +528,60 @@ impl JitMemoryManager {
         }
     }
 
+    /// 刷新指令缓存（AArch64 特有）
+    /// 在写入 JIT 代码后，必须刷新 I-Cache 以确保 CPU 执行最新代码
+    #[cfg(target_arch = "aarch64")]
+    fn flush_instruction_cache(&self, addr: *mut u8, size: usize) {
+        // AArch64 cache line 大小通常是 64 字节
+        const CACHE_LINE_SIZE: usize = 64;
+        let start = addr as usize;
+        let end = start + size;
+        // 对齐到 cache line 边界
+        let aligned_start = start & !(CACHE_LINE_SIZE - 1);
+        let aligned_end = (end + CACHE_LINE_SIZE - 1) & !(CACHE_LINE_SIZE - 1);
+
+        unsafe {
+            // 遍历每个 cache line 执行 DC CVAU (Clean Data Cache by VA to PoU)
+            let mut ptr = aligned_start;
+            while ptr < aligned_end {
+                // DC CVAU, X0: 清除数据缓存到 Point of Unification
+                core::arch::asm!(
+                    "dc cvau, {ptr}",
+                    ptr = in(reg) ptr,
+                );
+                ptr += CACHE_LINE_SIZE;
+            }
+            // DSB ISH: 数据同步屏障（Inner Shareable）
+            core::arch::asm!("dsb ish");
+
+            // 遍历每个 cache line 执行 IC IVAU (Invalidate Instruction Cache by VA to PoU)
+            let mut ptr = aligned_start;
+            while ptr < aligned_end {
+                // IC IVAU, X0: 使指令缓存无效
+                core::arch::asm!(
+                    "ic ivau, {ptr}",
+                    ptr = in(reg) ptr,
+                );
+                ptr += CACHE_LINE_SIZE;
+            }
+            // DSB ISH: 数据同步屏障
+            core::arch::asm!("dsb ish");
+            // ISB: 指令同步屏障，刷新流水线
+            core::arch::asm!("isb");
+        }
+
+        if self.debug_mode {
+            debug!(
+                "已刷新指令缓存: 范围 {:p} - {:p}, 大小 {}",
+                aligned_start as *mut u8,
+                aligned_end as *mut u8,
+                aligned_end - aligned_start
+            );
+        }
+    }
+
     /// 设置内存权限为可写
-    fn set_memory_writable(&self, address: *mut u8, size: usize) -> Result<(), String> {
+    fn set_memory_writable(&self, address: *mut u8, size: usize) -> crate::Result<()> {
         #[cfg(target_os = "windows")]
         {
             use windows_sys::Win32::System::Memory::{VirtualProtect, PAGE_READWRITE};
@@ -525,7 +597,7 @@ impl JitMemoryManager {
             };
 
             if result == 0 {
-                Err("VirtualProtect(READWRITE)失败".to_string())
+                Err("VirtualProtect(READWRITE)失败".into())
             } else {
                 Ok(())
             }
@@ -534,9 +606,12 @@ impl JitMemoryManager {
         #[cfg(not(target_os = "windows"))]
         {
             // 🔧 修复：确保地址和大小按页面边界对齐
+            // 需要覆盖从 aligned_address 到 (address + size) 向上对齐的完整页面范围
             let page_size = self.get_page_size();
             let aligned_address = self.align_to_page_boundary(address as usize, page_size);
-            let aligned_size = self.align_size_to_page_boundary(size, page_size);
+            let end_address = address as usize + size;
+            let aligned_end = self.align_size_to_page_boundary(end_address, page_size);
+            let aligned_size = aligned_end.saturating_sub(aligned_address).max(page_size);
 
             if self.debug_mode {
                 debug!(
@@ -558,7 +633,7 @@ impl JitMemoryManager {
                 Err(format!(
                     "mprotect(RW)失败: {} (地址={:p}, 大小={})",
                     error, aligned_address as *mut u8, aligned_size
-                ))
+                ).into())
             } else {
                 if self.debug_mode {
                     debug!(
@@ -572,7 +647,7 @@ impl JitMemoryManager {
     }
 
     /// 释放虚拟内存
-    fn free_virtual_memory(&self, address: *mut u8, size: usize) -> Result<(), String> {
+    fn free_virtual_memory(&self, address: *mut u8, size: usize) -> crate::Result<()> {
         #[cfg(target_os = "windows")]
         {
             use windows_sys::Win32::System::Memory::{VirtualFree, MEM_RELEASE};
@@ -580,7 +655,7 @@ impl JitMemoryManager {
             let result = unsafe { VirtualFree(address as *mut std::ffi::c_void, 0, MEM_RELEASE) };
 
             if result == 0 {
-                Err("VirtualFree失败".to_string())
+                Err("VirtualFree失败".into())
             } else {
                 Ok(())
             }
@@ -591,7 +666,7 @@ impl JitMemoryManager {
             let result = unsafe { libc::munmap(address as *mut std::ffi::c_void, size) };
 
             if result != 0 {
-                Err("munmap失败".to_string())
+                Err("munmap失败".into())
             } else {
                 if self.debug_mode {
                     debug!(
@@ -659,7 +734,7 @@ impl ExecutableMemory {
     }
 
     /// 获取函数指针（用于调用）
-    pub unsafe fn as_function_ptr<F>(&self) -> Result<F, String> {
+    pub unsafe fn as_function_ptr<F>(&self) -> crate::Result<F> {
         let function_addr = self.address().add(self.entry_offset);
         Ok(std::mem::transmute_copy(&function_addr))
     }
@@ -683,14 +758,14 @@ unsafe impl Sync for JitMemoryManager {}
 impl JitMemoryManager {
     /// 向后兼容：分配可执行内存（旧接口）
     #[deprecated(note = "使用 allocate_function_memory 替代")]
-    pub fn allocate_executable_memory(&mut self, code: &[u8]) -> Result<ExecutableMemory, String> {
+    pub fn allocate_executable_memory(&mut self, code: &[u8]) -> crate::Result<ExecutableMemory> {
         let function_name = format!("anonymous_func_{}", self.allocated_functions.len());
         self.allocate_function_memory(&function_name, code)
     }
 
     /// 向后兼容：释放内存（旧接口）
     #[deprecated(note = "内存会在manager清理时自动释放")]
-    pub fn deallocate_memory(&mut self, _memory: ExecutableMemory) -> Result<(), String> {
+    pub fn deallocate_memory(&mut self, _memory: ExecutableMemory) -> crate::Result<()> {
         // 在新架构中，内存是从连续块中分配的，不需要单独释放
         // 只在整个管理器清理时一次性释放所有内存
         Ok(())

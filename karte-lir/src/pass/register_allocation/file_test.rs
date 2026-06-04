@@ -1,22 +1,22 @@
 use super::*;
 use crate::pass::stack_frame_layout::StackFrameLayoutPass;
 use crate::{Instruction, LirFunction, Operand, Register};
-use karte_common::calling_convention::{REG_X0, REG_X1, REG_X2, REG_X29};
+use karte_common::calling_convention::{CallingConvention, TOTAL_REGISTERS, REG_X0, REG_X1, REG_X2};
 use karte_diagnostics::Span;
 use std::collections::HashMap;
 
 /// 解析LIR文件内容为LirFunction
-fn parse_lir_file(content: &str) -> Result<LirFunction, String> {
+fn parse_lir_file(content: &str) -> crate::Result<LirFunction> {
     let lines: Vec<&str> = content.lines().collect();
 
     if lines.is_empty() {
-        return Err("Empty file".to_string());
+        return Err("Empty file".into());
     }
 
     // 解析函数头
     let first_line = lines[0].trim();
     if !first_line.starts_with("function ") {
-        return Err("Invalid function header".to_string());
+        return Err("Invalid function header".into());
     }
 
     let function_name = first_line
@@ -37,7 +37,11 @@ fn parse_lir_file(content: &str) -> Result<LirFunction, String> {
         lowered_lifetimes: None,
         lowered_register_mapping: None,
         instruction_metadata: HashMap::new(),
+        target_arch: None,
+        spill_slot_offsets: HashMap::new(),
     };
+
+    info!("🧪 测试前的函数参数: {:?}", function.parameter_registers);
 
     // 解析指令
     for (line_num, line) in lines.iter().enumerate().skip(1) {
@@ -54,11 +58,11 @@ fn parse_lir_file(content: &str) -> Result<LirFunction, String> {
 }
 
 /// 解析单条指令
-fn parse_instruction(line: &str, line_num: usize) -> Result<Instruction, String> {
+fn parse_instruction(line: &str, line_num: usize) -> crate::Result<Instruction> {
     let parts: Vec<&str> = line.split_whitespace().collect();
 
     if parts.is_empty() {
-        return Err(format!("Empty instruction at line {}", line_num));
+        return Err(format!("Empty instruction at line {}", line_num).into());
     }
 
     match parts[0] {
@@ -77,7 +81,7 @@ fn parse_instruction(line: &str, line_num: usize) -> Result<Instruction, String>
         // mov 指令
         "mov" => {
             if parts.len() != 3 {
-                return Err(format!("Invalid mov instruction at line {}", line_num));
+                return Err(format!("Invalid mov instruction at line {}", line_num).into());
             }
 
             let dst = parse_register(parts[1].trim_end_matches(','))?;
@@ -92,7 +96,7 @@ fn parse_instruction(line: &str, line_num: usize) -> Result<Instruction, String>
         // add 指令
         "add" => {
             if parts.len() != 4 {
-                return Err(format!("Invalid add instruction at line {}", line_num));
+                return Err(format!("Invalid add instruction at line {}", line_num).into());
             }
 
             let dst = parse_register(parts[1].trim_end_matches(','))?;
@@ -109,7 +113,7 @@ fn parse_instruction(line: &str, line_num: usize) -> Result<Instruction, String>
         // load64 指令 - load64 r10, [r5]
         "load64" => {
             if parts.len() != 3 {
-                return Err(format!("Invalid load64 instruction at line {}", line_num));
+                return Err(format!("Invalid load64 instruction at line {}", line_num).into());
             }
 
             let dst = parse_register(parts[1].trim_end_matches(','))?;
@@ -127,7 +131,7 @@ fn parse_instruction(line: &str, line_num: usize) -> Result<Instruction, String>
                     span: Span::dummy(),
                 })
             } else {
-                Err(format!("Invalid load64 address format: {}", addr_str))
+                Err(format!("Invalid load64 address format: {}", addr_str).into())
             }
         }
         // ret 指令
@@ -186,37 +190,37 @@ fn parse_instruction(line: &str, line_num: usize) -> Result<Instruction, String>
             Err(format!(
                 "Unknown instruction '{}' at line {}",
                 parts[0], line_num
-            ))
+            ).into())
         }
     }
 }
 
 /// 解析寄存器
-fn parse_register(s: &str) -> Result<Register, String> {
+fn parse_register(s: &str) -> crate::Result<Register> {
     if let Some(num_str) = s.strip_prefix('r') {
         let num: usize = num_str
             .parse()
-            .map_err(|_| format!("Invalid register number: {}", s))?;
+            .map_err(|_| crate::KarteError::from(format!("Invalid register number: {}", s)))?;
         Ok(Register::Virtual(num))
     } else {
-        Err(format!("Invalid register format: {}", s))
+        Err(format!("Invalid register format: {}", s).into())
     }
 }
 
 /// 解析操作数
-fn parse_operand(s: &str) -> Result<Operand, String> {
+fn parse_operand(s: &str) -> crate::Result<Operand> {
     if let Some(num_str) = s.strip_prefix('#') {
         // 立即数
         let value: i64 = num_str
             .parse()
-            .map_err(|_| format!("Invalid immediate value: {}", s))?;
+            .map_err(|_| crate::KarteError::from(format!("Invalid immediate value: {}", s)))?;
         Ok(Operand::Immediate { value })
     } else if s.starts_with('r') {
         // 寄存器
         let reg = parse_register(s)?;
         Ok(Operand::Register { id: reg })
     } else {
-        Err(format!("Invalid operand format: {}", s))
+        Err(format!("Invalid operand format: {}", s).into())
     }
 }
 
@@ -285,10 +289,11 @@ L1:
     });
 
     // 验证是否有基于 FP 的栈访问（布局已下沉为 FP+offset）
-    // ARM64 AAPCS64: FP = x29
+    let cc = CallingConvention::standard();
+    let fp_reg = cc.frame_pointer;
     let has_fp_memory_access = function.instructions.iter().any(|inst| match inst {
         Instruction::Load64 { addr, .. } | Instruction::Store64 { addr, .. } => {
-            addr.id() == REG_X29 as usize
+            addr.id() == fp_reg as usize
         }
         _ => false,
     });
@@ -361,9 +366,13 @@ L1:
             //     "函数地址寄存器应该在r0-r4范围内"
             // );
 
-            // 验证参数寄存器在合理范围内
+            // 验证参数寄存器都是物理寄存器且在合法范围内
             for arg in args {
-                assert!(arg.id() <= 4, "参数寄存器应该在r0-r4范围内");
+                assert!(arg.is_physical(), "参数寄存器应该是物理寄存器，实际: {:?}", arg);
+                assert!(
+                    arg.id() < TOTAL_REGISTERS,
+                    "参数寄存器应该在物理寄存器范围内，实际: r{}", arg.id()
+                );
             }
         }
     }
@@ -449,9 +458,9 @@ fn test_function_parameter_register_allocation() {
         lowered_lifetimes: None,
         lowered_register_mapping: None,
         instruction_metadata: HashMap::new(),
+        target_arch: None,
+        spill_slot_offsets: HashMap::new(),
     };
-
-    info!("🧪 测试前的函数参数: {:?}", function.parameter_registers);
 
     // 运行寄存器分配
     let mut pass = SimpleStackRegisterAllocation::new();

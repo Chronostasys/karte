@@ -1,24 +1,72 @@
 //! JIT编译器trait定义
 //!
 //! 定义了所有JIT编译器必须实现的接口，支持不同目标架构
+//!
+//! ## 统一抽象架构
+//!
+//! `JitCompiler` trait 同时包含：
+//! - **平台特定方法**（必须实现）：寄存器映射、指令编码等
+//! - **共享 default method**：runtime 调用委托、编译流程框架等
+//!
+//! 所有 runtime 委托函数（alloc/free/retain/release/safepoint/string_*）的
+//! 逻辑完全相同——构造 `RuntimeCall` 然后调用 `emit_runtime_call`——因此
+//! 作为 default method 实现，每个平台只需实现底层的 emit 方法。
 
 use karte_common::calling_convention::CC;
 use karte_lir::{LirFunction, LirProgram, Register};
 use std::collections::HashMap;
 
+use super::code_buffer::CodeBuilder;
+use super::ffi::{RuntimeCall, RuntimeArg};
+
+/// 运行时调用的上下文信息
+///
+/// 封装了平台在 runtime call 中可能需要的额外信息。
+/// 对于不需要这些信息的平台（如 x86_64），可以传入 None。
+#[derive(Clone)]
+pub struct RuntimeCallContext<'a> {
+    /// 当前指令在函数中的索引（用于查找 instruction_metadata）
+    pub instruction_index: usize,
+    /// 当前正在编译的函数引用
+    pub function: &'a LirFunction,
+}
+
 /// JIT编译器trait
 ///
 /// 所有目标架构的编译器都必须实现此trait
+///
+/// # 平台特定方法（必须实现）
+///
+/// - `target_architecture()`: 返回架构名称
+/// - `get_register_mapping()`: 返回虚拟→物理寄存器映射
+/// - `get_calling_convention()`: 返回调用约定信息
+/// - `return_register()`: 返回值寄存器编号
+/// - `ffi_arg_registers()`: FFI 参数寄存器列表
+/// - `emit_mov_reg_reg()`: 寄存器间移动
+/// - `emit_mov_reg_imm64()`: 加载立即数到寄存器
+/// - `emit_call_to_ptr()`: 调用绝对地址的函数
+/// - `save_call_clobbered_registers()`: 保存 caller-saved 寄存器
+/// - `restore_call_clobbered_registers()`: 恢复 caller-saved 寄存器
+/// - `emit_runtime_call()`: 完整的 runtime call（包含平台特定的 save/restore/调用逻辑）
+///
+/// # 共享 default method（无需重写）
+///
+/// - `compile_alloc()`: 通过 `emit_runtime_call` 调用 `alloc`
+/// - `compile_free()`: 通过 `emit_runtime_call` 调用 `free`
+/// - `compile_retain()` / `compile_release()`: RC 操作
+/// - `compile_safepoint()`: GC 安全点
+/// - `compile_string_*()`: 字符串操作
+/// - `compile_print_*()`: 打印操作
+/// - `compile_to_string()`: 类型转换
 pub trait JitCompiler: std::fmt::Debug {
+    // ==================== 必须实现的方法 ====================
+
     /// 编译单个函数
-    ///
-    /// 🔧 优化：现在只需调用此方法一次，然后使用 patch_executable_memory 进行原地修补
-    /// compile_function_with_global_labels 已被移除以消除二次编译开销
     fn compile_function(
         &mut self,
         function: &LirFunction,
         program: &LirProgram,
-    ) -> Result<CompiledFunction, String>;
+    ) -> crate::Result<CompiledFunction>;
 
     /// 获取目标架构名称
     fn target_architecture(&self) -> &'static str;
@@ -33,6 +81,273 @@ pub trait JitCompiler: std::fmt::Debug {
 
     /// 获取调用约定信息
     fn get_calling_convention(&self) -> CallingConventionInfo;
+
+    // ==================== 平台特定的 runtime call ====================
+
+    /// 平台特定的 runtime call 实现
+    ///
+    /// 每个平台必须实现此方法，包含：
+    /// 1. 计算 exclude 列表（返回值寄存器）
+    /// 2. save caller-saved 寄存器
+    /// 3. 传递参数到 FFI 参数寄存器
+    /// 4. 调用 runtime 函数
+    /// 5. 移动返回值到目标寄存器
+    /// 6. restore caller-saved 寄存器
+    ///
+    /// `ctx` 参数包含平台可能需要的额外信息（如 AArch64 的 instruction_metadata），
+    /// 不需要的平台可以忽略。
+    fn emit_runtime_call(
+        &mut self,
+        code_builder: &mut CodeBuilder,
+        call: RuntimeCall,
+        result: Option<&Register>,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()>;
+
+    // ==================== 共享的 runtime 委托函数（default 实现） ====================
+    //
+    // 以下方法的所有逻辑在所有平台完全相同：
+    // 构造 RuntimeCall → 调用 emit_runtime_call
+    // 每个平台只需实现 emit_runtime_call 即可
+
+    /// 编译内存分配指令
+    fn compile_alloc(
+        &mut self,
+        dst: &Register,
+        size: usize,
+        alignment: usize,
+        allocation_type: &karte_lir::AllocationType,
+        code_builder: &mut CodeBuilder,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        match allocation_type {
+            karte_lir::AllocationType::Heap => {
+                let call = RuntimeCall::alloc(size, alignment);
+                self.emit_runtime_call(code_builder, call, Some(dst), ctx)
+            }
+            _ => Err(format!(
+                "Alloc instruction with unsupported allocation type: {:?}",
+                allocation_type
+            ).into()),
+        }
+    }
+
+    /// 编译内存释放指令
+    fn compile_free(
+        &mut self,
+        addr: &Register,
+        code_builder: &mut CodeBuilder,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::free(*addr);
+        self.emit_runtime_call(code_builder, call, None, ctx)
+    }
+
+    /// 编译引用计数 retain 指令
+    fn compile_retain(
+        &mut self,
+        value: &Register,
+        code_builder: &mut CodeBuilder,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::retain(*value);
+        self.emit_runtime_call(code_builder, call, None, ctx)
+    }
+
+    /// 编译引用计数 release 指令
+    fn compile_release(
+        &mut self,
+        value: &Register,
+        code_builder: &mut CodeBuilder,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::release(*value);
+        self.emit_runtime_call(code_builder, call, None, ctx)
+    }
+
+    /// 编译 GC 安全点指令
+    fn compile_safepoint(
+        &mut self,
+        code_builder: &mut CodeBuilder,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::gc_safepoint();
+        self.emit_runtime_call(code_builder, call, None, ctx)
+    }
+
+    /// 编译字符串拼接指令
+    fn compile_string_concat(
+        &mut self,
+        dst: &Register,
+        left: &Register,
+        right: &Register,
+        code_builder: &mut CodeBuilder,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::string_concat(*left, *right);
+        self.emit_runtime_call(code_builder, call, Some(dst), ctx)
+    }
+
+    /// 编译字符串相等比较指令
+    fn compile_string_equal(
+        &mut self,
+        dst: &Register,
+        left: &Register,
+        right: &Register,
+        code_builder: &mut CodeBuilder,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::string_equal(*left, *right);
+        self.emit_runtime_call(code_builder, call, Some(dst), ctx)
+    }
+
+    /// 编译字符串字符访问指令
+    fn compile_string_char_at(
+        &mut self,
+        dst: &Register,
+        str_ptr: &Register,
+        index: &Register,
+        code_builder: &mut CodeBuilder,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::string_char_at(*str_ptr, *index);
+        self.emit_runtime_call(code_builder, call, Some(dst), ctx)
+    }
+
+    /// 编译字符串子串指令
+    fn compile_string_substring(
+        &mut self,
+        dst: &Register,
+        str_ptr: &Register,
+        start: &Register,
+        length: &Register,
+        code_builder: &mut CodeBuilder,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::string_substring(*str_ptr, *start, *length);
+        self.emit_runtime_call(code_builder, call, Some(dst), ctx)
+    }
+
+    /// 编译字符串包含指令
+    fn compile_string_contains(
+        &mut self,
+        dst: &Register,
+        str_ptr: &Register,
+        char_code: &Register,
+        code_builder: &mut CodeBuilder,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::string_contains(*str_ptr, *char_code);
+        self.emit_runtime_call(code_builder, call, Some(dst), ctx)
+    }
+
+    /// 编译字符串分割计数指令
+    fn compile_split_count(
+        &mut self,
+        dst: &Register,
+        str_ptr: &Register,
+        separator: &Register,
+        code_builder: &mut CodeBuilder,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::split_count(*str_ptr, *separator);
+        self.emit_runtime_call(code_builder, call, Some(dst), ctx)
+    }
+
+    /// 编译字符串 trim 指令
+    fn compile_trim(
+        &mut self,
+        dst: &Register,
+        str_ptr: &Register,
+        code_builder: &mut CodeBuilder,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::trim(*str_ptr);
+        self.emit_runtime_call(code_builder, call, Some(dst), ctx)
+    }
+
+    /// 编译值转字符串指令
+    fn compile_to_string(
+        &mut self,
+        dst: &Register,
+        value: &Register,
+        code_builder: &mut CodeBuilder,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::to_string(*value);
+        self.emit_runtime_call(code_builder, call, Some(dst), ctx)
+    }
+
+    /// 编译打印字符串指令
+    fn compile_print_string(
+        &mut self,
+        ptr: &Register,
+        code_builder: &mut CodeBuilder,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::print_string(*ptr);
+        self.emit_runtime_call(code_builder, call, None, ctx)
+    }
+
+    /// 编译打印数字指令
+    fn compile_print_number(
+        &mut self,
+        value: &Register,
+        code_builder: &mut CodeBuilder,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::print_number(*value);
+        self.emit_runtime_call(code_builder, call, None, ctx)
+    }
+
+    /// 编译打印布尔值指令
+    fn compile_print_bool(
+        &mut self,
+        value: &Register,
+        code_builder: &mut CodeBuilder,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::print_bool(*value);
+        self.emit_runtime_call(code_builder, call, None, ctx)
+    }
+
+    // ==================== 共享工具方法 ====================
+
+}
+
+/// 计算运行时调用的 exclude 列表（用于 x86/RISC-V 风格：restore 之后移动返回值）
+///
+/// 对于在 restore **之后**移动返回值的平台（x86_64、RISC-V），
+/// 需要排除返回值寄存器（RAX/a0），否则 restore 会覆盖返回值。
+///
+/// 对于在 restore **之前**移动返回值的平台（AArch64），
+/// 应排除结果目标寄存器，由平台自行计算。
+pub fn compute_exclude_return_reg(
+    call: &RuntimeCall,
+    result: Option<&Register>,
+    return_reg: u8,
+) -> Vec<u8> {
+    if result.is_some() && call.expects_result() {
+        vec![return_reg]
+    } else {
+        vec![]
+    }
+}
+
+/// 计算运行时调用的 exclude 列表（用于 AArch64 风格：restore 之前移动返回值）
+///
+/// 对于在 restore **之前**移动返回值的平台（AArch64），
+/// 需要排除结果目标物理寄存器，否则 restore 会覆盖已经移动好的返回值。
+pub fn compute_exclude_dst_reg(
+    call: &RuntimeCall,
+    result: Option<&Register>,
+    dst_phys_reg: Option<u8>,
+) -> Vec<u8> {
+    if result.is_some() && call.expects_result() {
+        dst_phys_reg.map(|r| vec![r]).unwrap_or_default()
+    } else {
+        vec![]
+    }
 }
 
 /// 编译后的函数
@@ -200,7 +515,7 @@ impl MachineCodeBuffer {
     }
 
     /// 设置为可执行
-    pub fn make_executable(&mut self) -> Result<(), String> {
+    pub fn make_executable(&mut self) -> crate::Result<()> {
         if self.executable {
             return Ok(());
         }
@@ -222,7 +537,7 @@ impl MachineCodeBuffer {
     }
 
     /// 在指定位置写入字节
-    pub fn write_at(&mut self, position: usize, byte: u8) -> Result<(), String> {
+    pub fn write_at(&mut self, position: usize, byte: u8) -> crate::Result<()> {
         if position < self.code.len() {
             self.code[position] = byte;
             Ok(())
@@ -231,12 +546,12 @@ impl MachineCodeBuffer {
                 "写入位置 {} 超出缓冲区范围 {}",
                 position,
                 self.code.len()
-            ))
+            ).into())
         }
     }
 
     /// 在指定位置写入多个字节
-    pub fn write_bytes_at(&mut self, position: usize, bytes: &[u8]) -> Result<(), String> {
+    pub fn write_bytes_at(&mut self, position: usize, bytes: &[u8]) -> crate::Result<()> {
         if position + bytes.len() <= self.code.len() {
             self.code[position..position + bytes.len()].copy_from_slice(bytes);
             Ok(())
@@ -246,7 +561,7 @@ impl MachineCodeBuffer {
                 position,
                 bytes.len(),
                 self.code.len()
-            ))
+            ).into())
         }
     }
 }

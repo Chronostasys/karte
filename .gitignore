@@ -4,3 +4,4 @@ target
 *.interface.json
 
 .vscode/settings.json
+.xbot/

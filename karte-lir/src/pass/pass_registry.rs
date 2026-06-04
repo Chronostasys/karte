@@ -74,7 +74,7 @@ impl PassRegistry {
 
         // Codegen
         registry
-            .register_function_pass(Box::new(|| Box::new(SimpleStackRegisterAllocation::new())));
+            .register_function_pass(Box::new(|| Box::new(LinearScanRegisterAllocation::new())));
         registry.register_function_pass(Box::new(|| {
             Box::new(crate::pass::stack_frame_layout::StackFrameLayoutPass::new())
         }));
@@ -174,7 +174,7 @@ impl PassRegistry {
     ///
     /// 注意: Analysis passes 从全局注册表自动加载并根据依赖按需执行，
     /// 不需要在字符串中显式指定。如果字符串中包含 analysis pass 名称，会被忽略。
-    pub fn build_pipeline_from_string(&self, pipeline: &str) -> Result<PassManager, String> {
+    pub fn build_pipeline_from_string(&self, pipeline: &str) -> crate::Result<PassManager> {
         // 特殊逻辑，如果 pipeline 为 O0 O1 O2 O3，构建预设的 pipeline
         if pipeline == "O0" {
             return Ok(self.build_debug_pipeline());
@@ -205,7 +205,7 @@ impl PassRegistry {
                 continue;
             }
 
-            return Err(format!("未知的 Pass: {}", pass_name));
+            return Err(format!("未知的 Pass: {}", pass_name).into());
         }
 
         Ok(manager)
@@ -230,7 +230,7 @@ impl PassRegistry {
             Box::new(ExplicitJumpPass::new()),
             // 基本块布局优化 - 即使是Debug模式也需要，确保生命周期分析正确
             Box::new(BlockLayoutPass::new()),
-            Box::new(SimpleStackRegisterAllocation::new()),
+            Box::new(LinearScanRegisterAllocation::new()),
             Box::new(crate::pass::stack_frame_layout::StackFrameLayoutPass::new()),
             Box::new(InstructionLoweringPass::new()),
             // 🔧 调用位置活跃寄存器标注 - 必须在 InstructionLowering 之后运行
@@ -261,7 +261,7 @@ impl PassRegistry {
             Box::new(ExplicitJumpPass::new()),
             // 基本块布局优化 - 必须在寄存器分配前
             Box::new(BlockLayoutPass::new()),
-            Box::new(SimpleStackRegisterAllocation::new()),
+            Box::new(LinearScanRegisterAllocation::new()),
             Box::new(crate::pass::stack_frame_layout::StackFrameLayoutPass::new()),
             Box::new(InstructionLoweringPass::new()),
             // 🔧 调用位置活跃寄存器标注 - 必须在 InstructionLowering 之后运行
@@ -295,21 +295,43 @@ impl PassRegistry {
             Box::new(EffectLoweringPass::new()),
             Box::new(ConstantFolding::new()),
             Box::new(SsaConstructionPass::new()),
+        ]);
+
+        // 在 debug 模式下添加 SSA 后 invariant check
+        if cfg!(debug_assertions) {
+            manager.add_function_pass(Box::new(PipelineVerifyPass::after_ssa()));
+        }
+
+        manager.add_function_passes(vec![
             Box::new(Memory2RegPass::new()),
+        ]);
+
+        // 在 debug 模式下添加 Memory2Reg 后 invariant check
+        if cfg!(debug_assertions) {
+            manager.add_function_pass(Box::new(PipelineVerifyPass::after_memory2reg()));
+        }
+
+        manager.add_function_passes(vec![
             Box::new(PhiEliminationPass::new()),
             // 🔧 显式化跳转 - 必须在基本块布局优化前，避免重排破坏隐式fall-through
             Box::new(ExplicitJumpPass::new()),
             // 🔧 基本块布局优化 - 必须在寄存器分配前运行
             Box::new(BlockLayoutPass::new()),
-            Box::new(SimpleStackRegisterAllocation::new()),
+            Box::new(LinearScanRegisterAllocation::new()),
+        ]);
+
+        // 在 debug 模式下添加寄存器分配后 invariant check
+        if cfg!(debug_assertions) {
+            manager.add_function_pass(Box::new(PipelineVerifyPass::after_register_allocation()));
+        }
+
+        manager.add_function_passes(vec![
             Box::new(crate::pass::stack_frame_layout::StackFrameLayoutPass::new()),
             Box::new(PeepholeOptimizer::new()),
             Box::new(DeadCodeElimination::new()),
             Box::new(PeepholeOptimizer::new()),
             Box::new(InstructionLoweringPass::new()),
             // 🔧 调用位置活跃寄存器标注 - 必须在 InstructionLowering 之后运行
-            // 标注调用位置的活跃寄存器信息到 instruction_metadata
-            // 此时指令序列已稳定，寄存器已分配为物理寄存器
             Box::new(CallsiteLiveRegisterPass::new()),
         ]);
 
@@ -327,19 +349,43 @@ impl PassRegistry {
     pub fn build_performance_pipeline(&self) -> PassManager {
         let mut manager = PassManager::new();
 
-        // 激进优化（批量添加）
+        // 激进优化
         manager.add_function_passes(vec![
             // 🔧 2025-12: Effect指令降级必须在CFG相关pass之前运行
             Box::new(EffectLoweringPass::new()),
             Box::new(ConstantFolding::new()),
             Box::new(SsaConstructionPass::new()),
+        ]);
+
+        // 在 debug 模式下添加 SSA 后 invariant check
+        if cfg!(debug_assertions) {
+            manager.add_function_pass(Box::new(PipelineVerifyPass::after_ssa()));
+        }
+
+        manager.add_function_passes(vec![
             Box::new(Memory2RegPass::new()),
+        ]);
+
+        // 在 debug 模式下添加 Memory2Reg 后 invariant check
+        if cfg!(debug_assertions) {
+            manager.add_function_pass(Box::new(PipelineVerifyPass::after_memory2reg()));
+        }
+
+        manager.add_function_passes(vec![
             Box::new(PhiEliminationPass::new()),
             // 🔧 显式化跳转 - 必须在基本块布局优化前
             Box::new(ExplicitJumpPass::new()),
             // 🔧 基本块布局优化 - 必须在寄存器分配前
             Box::new(BlockLayoutPass::new()),
-            Box::new(SimpleStackRegisterAllocation::new()),
+            Box::new(LinearScanRegisterAllocation::new()),
+        ]);
+
+        // 在 debug 模式下添加寄存器分配后 invariant check
+        if cfg!(debug_assertions) {
+            manager.add_function_pass(Box::new(PipelineVerifyPass::after_register_allocation()));
+        }
+
+        manager.add_function_passes(vec![
             Box::new(crate::pass::stack_frame_layout::StackFrameLayoutPass::new()),
             Box::new(PeepholeOptimizer::new()),
             Box::new(DeadCodeElimination::new()),

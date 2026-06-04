@@ -1,0 +1,7 @@
+module std.prelude
+
+import std.core::{abs, min, max, clamp}
+
+fn __prelude_init() -> number {
+    0
+}

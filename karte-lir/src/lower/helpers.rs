@@ -43,13 +43,13 @@ pub(super) fn collect_function_names_from_value(
         karte_mir::Value::Reference { value: inner, .. } => {
             collect_function_names_from_value(inner, set);
         }
-        karte_mir::Value::Constructor { arg, .. } => {
-            if let Some(a) = arg.as_ref() {
+        karte_mir::Value::Constructor { args, .. } => {
+            for a in args {
                 collect_function_names_from_value(a, set);
             }
         }
-        karte_mir::Value::QualifiedConstructor { arg, .. } => {
-            if let Some(a) = arg.as_ref() {
+        karte_mir::Value::QualifiedConstructor { args, .. } => {
+            for a in args {
                 collect_function_names_from_value(a, set);
             }
         }
@@ -199,13 +199,13 @@ pub(super) fn value_to_key(value: &Value) -> String {
             format!("closure:{}:({})", function_name, captured_str)
         }
         // Note: This is a simplification. Hash of constructor/struct would be better
-        Value::Constructor { name, arg, .. } => format!("ctor:{}({:?})", name, arg),
+        Value::Constructor { name, args, .. } => format!("ctor:{}({:?})", name, args),
         Value::QualifiedConstructor {
             type_name,
             constructor_name,
-            arg,
+            args,
             ..
-        } => format!("qctor:{}::{}({:?})", type_name, constructor_name, arg),
+        } => format!("qctor:{}::{}({:?})", type_name, constructor_name, args),
         Value::Number { value, .. } => format!("num:{}", value),
         Value::Boolean { value, .. } => format!("bool:{}", value),
         Value::Unit => "unit".to_string(),
@@ -220,6 +220,7 @@ pub(super) fn value_to_key(value: &Value) -> String {
         Value::Reference { value, .. } => {
             format!("ref:({})", value_to_key(value))
         }
+        Value::StringLiteral { value, .. } => format!("str:{}", value),
     }
 }
 

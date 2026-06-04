@@ -7,7 +7,7 @@ use super::types::LirLoweringContext;
 use crate::tagged_union::TaggedUnionManager;
 use crate::{Instruction, LabelId, LirFunction};
 use karte_mir::BasicBlockId;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 impl Default for LirLoweringContext {
     fn default() -> Self {
@@ -32,6 +32,9 @@ impl LirLoweringContext {
             global_struct_types: HashMap::new(),
             struct_value_layouts: HashMap::new(),
             handler_block_param: HashMap::new(),
+            known_constants: HashMap::new(),
+            returned_temp_ids: HashSet::new(),
+            force_struct_heap: false,
         }
     }
 
@@ -54,6 +57,9 @@ impl LirLoweringContext {
         // 清空栈分配，每个函数都重新开始
         self.stack_allocations.clear();
         self.label_seed = 0;
+        self.known_constants.clear();
+        self.returned_temp_ids = HashSet::new();
+        self.force_struct_heap = false;
         self.current_function_symbol = self
             .function_symbols
             .get(&name)

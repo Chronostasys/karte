@@ -194,7 +194,7 @@ impl RootScanner {
         {
             // 64位系统：用户空间通常在低地址
             // 避免内核空间地址 (通常 > 0x0000_7fff_ffff_ffff)
-            if addr > 0x0000_7fff_ffff_ffff {
+            if (addr as isize) <= 0 || addr > 0x0000_FFFF_FFFF_FFFF {
                 return false;
             }
         }

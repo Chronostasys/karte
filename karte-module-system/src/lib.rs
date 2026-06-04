@@ -484,72 +484,174 @@ fn topological_sort(
     Ok(order)
 }
 
+/// 查找项目自带的 std 库目录。
+/// 搜索策略：从 manifest 目录向上递归查找包含 `std/karte.mod.toml` 的目录。
+fn find_std_library_dir(start_dir: &Path) -> Option<PathBuf> {
+    let mut dir = start_dir.to_path_buf();
+    loop {
+        let std_manifest = dir.join("std").join(MANIFEST_NAME);
+        if std_manifest.exists() {
+            return Some(dir.join("std"));
+        }
+        dir = dir.parent()?.to_path_buf();
+    }
+}
+
+/// 从 std/ 目录的 karte.mod.toml 解析模块定义，注入到当前项目的模块图中，
+/// 并自动将 std.prelude 添加为所有其他模块的依赖。
 fn inject_prelude_module(
     manifest_dir: &Path,
     nodes: &mut HashMap<ModuleId, ModuleMetadata>,
     source_map: &mut HashMap<PathBuf, ModuleId>,
 ) -> Result<(), ModuleError> {
-    let Some((module_id, raw_path)) = prelude_env_config() else {
-        return Ok(());
-    };
+    // 1. 环境变量覆盖：如果设置了 KARTE_PRELUDE_PATH，使用旧逻辑
+    if let Some((module_id, raw_path)) = prelude_env_config() {
+        if !nodes.contains_key(&module_id) {
+            let resolved_base = if raw_path.is_absolute() {
+                raw_path
+            } else {
+                manifest_dir.join(raw_path)
+            };
+            let canonical_base = canonicalize(&resolved_base)?;
 
-    if nodes.contains_key(&module_id) {
-        // manifest 已显式声明，尊重用户配置
-        return Ok(());
-    }
+            let mut declared_sources = Vec::new();
+            if canonical_base.is_dir() {
+                let collected = collect_directory_sources(&canonical_base)?;
+                if collected.is_empty() {
+                    return Err(ModuleError::Io(
+                        canonical_base.clone(),
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "Prelude module `{}` directory {} contains no .karte files",
+                                module_id,
+                                canonical_base.display()
+                            ),
+                        ),
+                    ));
+                }
+                declared_sources.extend(collected);
+            } else {
+                declared_sources.push(canonical_base.clone());
+            }
 
-    let resolved_base = if raw_path.is_absolute() {
-        raw_path
-    } else {
-        manifest_dir.join(raw_path)
-    };
-    let canonical_base = canonicalize(&resolved_base)?;
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            let mut resolved_sources = Vec::new();
+            for src in declared_sources {
+                let resolved = canonicalize(&src)?;
+                let source_text =
+                    fs::read_to_string(&resolved).map_err(|e| ModuleError::Io(resolved.clone(), e))?;
+                resolved.to_string_lossy().hash(&mut hasher);
+                source_text.hash(&mut hasher);
+                source_map.insert(resolved.clone(), module_id.clone());
+                resolved_sources.push(resolved);
+            }
 
-    let mut declared_sources = Vec::new();
-    if canonical_base.is_dir() {
-        let collected = collect_directory_sources(&canonical_base)?;
-        if collected.is_empty() {
-            return Err(ModuleError::Io(
-                canonical_base.clone(),
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "Prelude module `{}` directory {} contains no .karte files",
-                        module_id,
-                        canonical_base.display()
-                    ),
-                ),
-            ));
+            let fingerprint = hasher.finish();
+            let module_name = module_id.as_str().to_string();
+            nodes.insert(
+                module_id,
+                ModuleMetadata {
+                    module_name,
+                    sources: resolved_sources,
+                    dependencies: Vec::new(),
+                    source_fingerprint: fingerprint,
+                    manifest_hash: fingerprint,
+                },
+            );
         }
-        declared_sources.extend(collected);
-    } else {
-        declared_sources.push(canonical_base.clone());
+        return Ok(());
     }
 
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    let mut resolved_sources = Vec::new();
-    for src in declared_sources {
-        let resolved = canonicalize(&src)?;
-        let source_text =
-            fs::read_to_string(&resolved).map_err(|e| ModuleError::Io(resolved.clone(), e))?;
-        resolved.to_string_lossy().hash(&mut hasher);
-        source_text.hash(&mut hasher);
-        source_map.insert(resolved.clone(), module_id.clone());
-        resolved_sources.push(resolved);
+    // 2. 自动发现：查找项目根目录下的 std/ 目录
+    let Some(std_dir) = find_std_library_dir(manifest_dir) else {
+        // 没有找到 std 目录，不做任何注入
+        return Ok(());
+    };
+
+    let std_manifest_path = std_dir.join(MANIFEST_NAME);
+    if !std_manifest_path.exists() {
+        return Ok(());
     }
 
-    let fingerprint = hasher.finish();
-    let module_name = module_id.as_str().to_string();
-    nodes.insert(
-        module_id,
-        ModuleMetadata {
-            module_name,
-            sources: resolved_sources,
-            dependencies: Vec::new(),
-            source_fingerprint: fingerprint,
-            manifest_hash: fingerprint,
-        },
-    );
+    let std_manifest_text = fs::read_to_string(&std_manifest_path)
+        .map_err(|e| ModuleError::Io(std_manifest_path.to_path_buf(), e))?;
+    let std_raw: RawManifest = toml::from_str(&std_manifest_text)
+        .map_err(|e| ModuleError::Parse(std_manifest_path.to_path_buf(), e))?;
+    let std_manifest_hash = fingerprint(&std_manifest_path, &std_manifest_text);
+
+    let mut std_module_ids: Vec<ModuleId> = Vec::new();
+
+    for module in std_raw.modules {
+        let id = ModuleId::new(module.id);
+
+        // 跳过已在项目中显式声明的模块
+        if nodes.contains_key(&id) {
+            continue;
+        }
+
+        let mut declared_sources: Vec<PathBuf> = Vec::new();
+        for source in module.sources {
+            declared_sources.push(std_dir.join(source));
+        }
+        if let Some(single) = module.path {
+            declared_sources.push(std_dir.join(single));
+        }
+        if let Some(dir) = module.dir {
+            let dir_path = std_dir.join(dir);
+            let collected = collect_directory_sources(&dir_path)?;
+            declared_sources.extend(collected);
+        }
+
+        if declared_sources.is_empty() {
+            continue;
+        }
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let mut resolved_sources = Vec::new();
+        for src in declared_sources {
+            let resolved = canonicalize(&src)?;
+            let source_text =
+                fs::read_to_string(&resolved).map_err(|e| ModuleError::Io(resolved.clone(), e))?;
+            resolved.to_string_lossy().hash(&mut hasher);
+            source_text.hash(&mut hasher);
+            source_map.insert(resolved.clone(), id.clone());
+            resolved_sources.push(resolved);
+        }
+
+        let fingerprint = hasher.finish();
+        let dependencies = module.deps.into_iter().map(ModuleId::new).collect();
+        nodes.insert(
+            id.clone(),
+            ModuleMetadata {
+                module_name: id.as_str().to_string(),
+                sources: resolved_sources,
+                dependencies,
+                source_fingerprint: fingerprint,
+                manifest_hash: std_manifest_hash,
+            },
+        );
+        std_module_ids.push(id);
+    }
+
+    // 3. 将所有 std 模块自动添加为所有非 std 模块的依赖
+    //    这样用户可以 import std.core、std.prelude 等任何 std 子模块
+    let all_std_ids: Vec<ModuleId> = std_module_ids.clone();
+    let module_ids: Vec<ModuleId> = nodes.keys().cloned().collect();
+    for mid in module_ids {
+        // 不修改 std 模块自身的依赖
+        if mid.as_str().starts_with("std.") {
+            continue;
+        }
+        if let Some(meta) = nodes.get_mut(&mid) {
+            for std_id in &all_std_ids {
+                if !meta.dependencies.contains(std_id) {
+                    meta.dependencies.push(std_id.clone());
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 

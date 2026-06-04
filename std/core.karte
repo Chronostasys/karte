@@ -1,0 +1,133 @@
+module std.core
+
+fn abs(x: number) -> number {
+    if x < 0 {
+        0 - x
+    } else {
+        x
+    }
+}
+
+fn min(a: number, b: number) -> number {
+    if a < b {
+        a
+    } else {
+        b
+    }
+}
+
+fn max(a: number, b: number) -> number {
+    if a > b {
+        a
+    } else {
+        b
+    }
+}
+
+fn clamp(v: number, lo: number, hi: number) -> number {
+    if v < lo {
+        lo
+    } else {
+        if v > hi {
+            hi
+        } else {
+            v
+        }
+    }
+}
+
+fn sign(x: number) -> number {
+    if x > 0 {
+        1
+    } else {
+        if x < 0 {
+            0 - 1
+        } else {
+            0
+        }
+    }
+}
+
+fn floor_div(a: number, b: number) -> number {
+    let q = a / b;
+    let r = a - q * b;
+    if r != 0 {
+        if (a < 0) != (b < 0) {
+            q - 1
+        } else {
+            q
+        }
+    } else {
+        q
+    }
+}
+
+fn factorial(n: number) -> number {
+    if n <= 1 {
+        1
+    } else {
+        n * factorial(n - 1)
+    }
+}
+
+fn gcd(a: number, b: number) -> number {
+    let x = abs(a);
+    let y = abs(b);
+    while y != 0 {
+        let t = y;
+        y = x % y;
+        x = t
+    };
+    x
+}
+
+fn lcm(a: number, b: number) -> number {
+    if a == 0 {
+        0
+    } else {
+        if b == 0 {
+            0
+        } else {
+            abs(a) / gcd(a, b) * abs(b)
+        }
+    }
+}
+
+fn pow(base: number, exp: number) -> number {
+    let result = 1;
+    let b = base;
+    let e = exp;
+    while e > 0 {
+        if e % 2 == 1 {
+            result = result * b
+        };
+        b = b * b;
+        e = e / 2
+    };
+    result
+}
+
+fn fibonacci(n: number) -> number {
+    if n <= 0 {
+        0
+    } else {
+        if n == 1 {
+            1
+        } else {
+            let a = 0;
+            let b = 1;
+            let i = 2;
+            while i <= n {
+                let temp = a + b;
+                a = b;
+                b = temp;
+                i = i + 1
+            };
+            b
+        }
+    }
+}
+
+fn sum_to(n: number) -> number {
+    n * (n + 1) / 2
+}

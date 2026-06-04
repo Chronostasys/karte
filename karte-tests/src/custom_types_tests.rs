@@ -110,6 +110,33 @@ mod simple_custom_types {
         let result = test_evaluate(r#"{ enum Color { Red, Green, Blue }; match Blue { Blue -> 3, Red -> 1, Green -> 2 } }"#).unwrap();
         assert_eq!(result, 3);
     }
+
+    #[test]
+    fn test_or_pattern_enum_first() {
+        let result = test_evaluate(
+            r#"{ enum Color { R, G, B }; match Color::R { Color::R | Color::G => 0, Color::B => 1 } }"#,
+        )
+        .unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_or_pattern_enum_second() {
+        let result = test_evaluate(
+            r#"{ enum Color { R, G, B }; match Color::G { Color::R | Color::G => 0, Color::B => 1 } }"#,
+        )
+        .unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_or_pattern_enum_third() {
+        let result = test_evaluate(
+            r#"{ enum Color { R, G, B }; match Color::B { Color::R | Color::G => 0, Color::B => 1 } }"#,
+        )
+        .unwrap();
+        assert_eq!(result, 1);
+    }
 }
 
 mod parametric_custom_types {
@@ -240,13 +267,13 @@ mod type_checking_tests {
                 assert_eq!(variants[1].name, "None");
 
                 // 检查Some变体的数据类型
-                match &variants[0].data_type {
-                    Some(Type::Number) => {}
-                    _ => panic!("Expected Some to have Number data type"),
+                match &variants[0].data_types {
+                    types if types.len() == 1 && matches!(&types[0], Type::Number) => {}
+                    _ => panic!("Expected Some to have [Number] data types"),
                 }
 
                 // 检查None变体没有数据类型
-                assert_eq!(variants[1].data_type, None);
+                assert!(variants[1].data_types.is_empty());
             }
             _ => panic!("Expected Sum type, got {:?}", result),
         }

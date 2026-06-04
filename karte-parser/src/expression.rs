@@ -35,10 +35,90 @@ impl<'a> Parser<'a> {
         self.parse_assignment()
     }
 
-    // assignment = logical_or ('=' assignment)?
+    // assignment = logical_or (('=' | '+=' | '-=' | '*=' | '/=' | 'bitand=' | 'bitor=' | 'bitxor=' | 'shl=' | 'shr=') assignment)?
     pub(crate) fn parse_assignment(&mut self) -> Result<Expr, ParseError> {
         let expr = self.parse_logical_or()?;
 
+        // 检测复合赋值运算符（单 token: += -= *= /=）
+        let compound_op = if let Some(token) = self.peek() {
+            match &token.token {
+                Token::PlusEqual => Some(BinaryOperator::Add),
+                Token::MinusEqual => Some(BinaryOperator::Subtract),
+                Token::StarEqual => Some(BinaryOperator::Multiply),
+                Token::SlashEqual => Some(BinaryOperator::Divide),
+                Token::AmpersandEqual => Some(BinaryOperator::BitAnd),
+                Token::PipeEqual => Some(BinaryOperator::BitOr),
+                Token::CaretEqual => Some(BinaryOperator::BitXor),
+                Token::ShiftLeftEqual => Some(BinaryOperator::ShiftLeft),
+                Token::ShiftRightEqual => Some(BinaryOperator::ShiftRight),
+                _ => {
+                    // 双 token 复合赋值：bitand= bitor= bitxor= shl= shr=
+                    // 需要 lookahead 一个 token
+                    let tok = &token.token;
+                    let next_tok = self.tokens.get(self.position + 1).map(|t| &t.token);
+                    match (tok, next_tok) {
+                        (Token::BitAnd, Some(Token::Equal)) => Some(BinaryOperator::BitAnd),
+                        (Token::BitOr, Some(Token::Equal)) => Some(BinaryOperator::BitOr),
+                        (Token::BitXor, Some(Token::Equal)) => Some(BinaryOperator::BitXor),
+                        (Token::ShiftLeft, Some(Token::Equal))
+                        | (Token::ShiftLeftSym, Some(Token::Equal)) => {
+                            Some(BinaryOperator::ShiftLeft)
+                        }
+                        (Token::ShiftRight, Some(Token::Equal))
+                        | (Token::ShiftRightSym, Some(Token::Equal)) => {
+                            Some(BinaryOperator::ShiftRight)
+                        }
+                        _ => None,
+                    }
+                }
+            }
+        } else {
+            None
+        };
+
+        if let Some(op) = compound_op {
+            let span_start = expr.span().start;
+            // 判断是单 token 还是双 token 复合赋值
+            let is_single_token = matches!(
+                self.peek().map(|t| &t.token),
+                Some(
+                    Token::PlusEqual
+                        | Token::MinusEqual
+                        | Token::StarEqual
+                        | Token::SlashEqual
+                        | Token::AmpersandEqual
+                        | Token::PipeEqual
+                        | Token::CaretEqual
+                        | Token::ShiftLeftEqual
+                        | Token::ShiftRightEqual
+                )
+            );
+
+            if is_single_token {
+                self.advance(); // 消费 += 等
+            } else {
+                self.advance(); // 消费 bitand 等
+                self.advance(); // 消费 =
+            }
+
+            let right = self.parse_assignment()?; // 右结合
+            let span = Span::new(span_start, right.span().end);
+            let target = expr.clone();
+            // 复合赋值展开为 target = target op right
+            let value = Expr::BinaryOp {
+                left: Box::new(target.clone()),
+                op,
+                right: Box::new(right),
+                span,
+            };
+            return Ok(Expr::Assignment {
+                target: Box::new(target),
+                value: Box::new(value),
+                span,
+            });
+        }
+
+        // 普通赋值
         if let Some(token) = self.peek() {
             if matches!(token.token, Token::Equal) {
                 self.advance(); // consume '='
@@ -103,13 +183,13 @@ impl<'a> Parser<'a> {
 
     // comparison = additive (('==' | '>=' | '<=' | '>' | '<') additive)*
     pub(crate) fn parse_comparison(&mut self) -> Result<Expr, ParseError> {
-        let mut left = self.parse_additive()?;
+        let mut left = self.parse_bitwise_or()?;
 
         while let Some(token) = self.peek() {
             match token.token {
                 Token::EqualEqual => {
                     self.advance();
-                    let right = self.parse_additive()?;
+                    let right = self.parse_bitwise_or()?;
                     let span = Span::new(left.span().start, right.span().end);
                     left = Expr::BinaryOp {
                         left: Box::new(left),
@@ -118,9 +198,20 @@ impl<'a> Parser<'a> {
                         span,
                     };
                 }
+                Token::NotEqual => {
+                    self.advance();
+                    let right = self.parse_bitwise_or()?;
+                    let span = Span::new(left.span().start, right.span().end);
+                    left = Expr::BinaryOp {
+                        left: Box::new(left),
+                        op: BinaryOperator::NotEqual,
+                        right: Box::new(right),
+                        span,
+                    };
+                }
                 Token::GreaterEqual => {
                     self.advance();
-                    let right = self.parse_additive()?;
+                    let right = self.parse_bitwise_or()?;
                     let span = Span::new(left.span().start, right.span().end);
                     left = Expr::BinaryOp {
                         left: Box::new(left),
@@ -131,7 +222,7 @@ impl<'a> Parser<'a> {
                 }
                 Token::LessEqual => {
                     self.advance();
-                    let right = self.parse_additive()?;
+                    let right = self.parse_bitwise_or()?;
                     let span = Span::new(left.span().start, right.span().end);
                     left = Expr::BinaryOp {
                         left: Box::new(left),
@@ -142,7 +233,7 @@ impl<'a> Parser<'a> {
                 }
                 Token::Greater => {
                     self.advance();
-                    let right = self.parse_additive()?;
+                    let right = self.parse_bitwise_or()?;
                     let span = Span::new(left.span().start, right.span().end);
                     left = Expr::BinaryOp {
                         left: Box::new(left),
@@ -153,7 +244,7 @@ impl<'a> Parser<'a> {
                 }
                 Token::Less => {
                     self.advance();
-                    let right = self.parse_additive()?;
+                    let right = self.parse_bitwise_or()?;
                     let span = Span::new(left.span().start, right.span().end);
                     left = Expr::BinaryOp {
                         left: Box::new(left),
@@ -166,6 +257,149 @@ impl<'a> Parser<'a> {
             }
         }
 
+        Ok(left)
+    }
+
+    // bitwise_or = bitwise_xor ((bitor | |) bitwise_xor)*
+    // 注意：需要排除 bitor= 复合赋值的情况
+    pub(crate) fn parse_bitwise_or(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_bitwise_xor()?;
+        while let Some(token) = self.peek() {
+            if token.token == Token::BitOr || token.token == Token::Pipe {
+                // BitOr 关键字形式需要排除 bitor= 复合赋值
+                // Pipe 符号形式不需要排除，因为 |= 已经是单 Token PipeEqual
+                if token.token == Token::BitOr {
+                    if let Some(next) = self.tokens.get(self.position + 1) {
+                        if matches!(next.token, Token::Equal) {
+                            break; // 交给 parse_assignment 处理
+                        }
+                    }
+                }
+                self.advance();
+                let right = self.parse_bitwise_xor()?;
+                let span = Span::new(left.span().start, right.span().end);
+                left = Expr::BinaryOp {
+                    left: Box::new(left),
+                    op: BinaryOperator::BitOr,
+                    right: Box::new(right),
+                    span,
+                };
+            } else {
+                break;
+            }
+        }
+        Ok(left)
+    }
+
+    // bitwise_xor = bitwise_and ((bitxor | ^) bitwise_and)*
+    // 注意：需要排除 bitxor= 复合赋值的情况
+    pub(crate) fn parse_bitwise_xor(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_bitwise_and()?;
+        while let Some(token) = self.peek() {
+            if token.token == Token::BitXor || token.token == Token::Caret {
+                // BitXor 关键字形式需要排除 bitxor= 复合赋值
+                // Caret 符号形式不需要排除，因为 ^= 已经是单 Token CaretEqual
+                if token.token == Token::BitXor {
+                    if let Some(next) = self.tokens.get(self.position + 1) {
+                        if matches!(next.token, Token::Equal) {
+                            break; // 交给 parse_assignment 处理
+                        }
+                    }
+                }
+                self.advance();
+                let right = self.parse_bitwise_and()?;
+                let span = Span::new(left.span().start, right.span().end);
+                left = Expr::BinaryOp {
+                    left: Box::new(left),
+                    op: BinaryOperator::BitXor,
+                    right: Box::new(right),
+                    span,
+                };
+            } else {
+                break;
+            }
+        }
+        Ok(left)
+    }
+
+    // bitwise_and = shift ((bitand | &) shift)*
+    // 注意：需要排除 bitand= 复合赋值的情况
+    pub(crate) fn parse_bitwise_and(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_shift()?;
+        while let Some(token) = self.peek() {
+            if token.token == Token::BitAnd || token.token == Token::Ampersand {
+                // BitAnd 关键字形式需要排除 bitand= 复合赋值
+                // Ampersand 符号形式不需要排除，因为 &= 已经是单 Token AmpersandEqual
+                if token.token == Token::BitAnd {
+                    if let Some(next) = self.tokens.get(self.position + 1) {
+                        if matches!(next.token, Token::Equal) {
+                            break; // 交给 parse_assignment 处理
+                        }
+                    }
+                }
+                self.advance();
+                let right = self.parse_shift()?;
+                let span = Span::new(left.span().start, right.span().end);
+                left = Expr::BinaryOp {
+                    left: Box::new(left),
+                    op: BinaryOperator::BitAnd,
+                    right: Box::new(right),
+                    span,
+                };
+            } else {
+                break;
+            }
+        }
+        Ok(left)
+    }
+
+    // shift = additive ((shl | shr | << | >>) additive)*
+    // 注意：需要排除 shl= / shr= 复合赋值的情况
+    pub(crate) fn parse_shift(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_additive()?;
+        while let Some(token) = self.peek() {
+            match token.token {
+                Token::ShiftLeft | Token::ShiftLeftSym => {
+                    // 检查是否为 shl= 复合赋值（仅关键字形式）
+                    if token.token == Token::ShiftLeft {
+                        if let Some(next) = self.tokens.get(self.position + 1) {
+                            if matches!(next.token, Token::Equal) {
+                                break; // 交给 parse_assignment 处理
+                            }
+                        }
+                    }
+                    self.advance();
+                    let right = self.parse_additive()?;
+                    let span = Span::new(left.span().start, right.span().end);
+                    left = Expr::BinaryOp {
+                        left: Box::new(left),
+                        op: BinaryOperator::ShiftLeft,
+                        right: Box::new(right),
+                        span,
+                    };
+                }
+                Token::ShiftRight | Token::ShiftRightSym => {
+                    // 检查是否为 shr= 复合赋值（仅关键字形式）
+                    if token.token == Token::ShiftRight {
+                        if let Some(next) = self.tokens.get(self.position + 1) {
+                            if matches!(next.token, Token::Equal) {
+                                break; // 交给 parse_assignment 处理
+                            }
+                        }
+                    }
+                    self.advance();
+                    let right = self.parse_additive()?;
+                    let span = Span::new(left.span().start, right.span().end);
+                    left = Expr::BinaryOp {
+                        left: Box::new(left),
+                        op: BinaryOperator::ShiftRight,
+                        right: Box::new(right),
+                        span,
+                    };
+                }
+                _ => break,
+            }
+        }
         Ok(left)
     }
 
@@ -232,6 +466,17 @@ impl<'a> Parser<'a> {
                         span,
                     };
                 }
+                Token::Percent => {
+                    self.advance();
+                    let right = self.parse_factor()?;
+                    let span = Span::new(left.span().start, right.span().end);
+                    left = Expr::BinaryOp {
+                        left: Box::new(left),
+                        op: BinaryOperator::Modulo,
+                        right: Box::new(right),
+                        span,
+                    };
+                }
                 _ => break,
             }
         }
@@ -290,15 +535,353 @@ impl<'a> Parser<'a> {
                         pointer: Box::new(pointer),
                         span,
                     });
-                } else if name == "len" {
+                }
+            }
+
+            // bitnot 一元运算符（支持 bitnot 关键字和 ~ 符号）
+            if token.token == Token::BitNot || token.token == Token::Tilde {
+                let start_span = token.span;
+                self.advance();
+                let operand = self.parse_factor()?;
+                let span = Span::new(start_span.start, operand.span().end);
+                return Ok(Expr::UnaryOp {
+                    op: UnaryOperator::BitNot,
+                    operand: Box::new(operand),
+                    span,
+                });
+            }
+
+            // unsafe 内存操作内建函数
+            match &token.token {
+                Token::UnsafeLoad | Token::UnsafeLoad8 | Token::UnsafeLoad32 => {
+                    let byte_size = match &token.token {
+                        Token::UnsafeLoad => 8,
+                        Token::UnsafeLoad8 => 1,
+                        Token::UnsafeLoad32 => 4,
+                        _ => unreachable!(),
+                    };
                     let start_span = token.span;
-                    self.advance(); // consume 'len'
-                    let array = self.parse_primary()?;
-                    let span = Span::new(start_span.start, array.span().end);
-                    return Ok(Expr::ArrayLen {
-                        array: Box::new(array),
+                    self.advance();
+                    self.expect_token(Token::LeftParen)?;
+                    let addr = self.parse_expression()?;
+                    self.expect_token(Token::RightParen)?;
+                    let span = Span::new(start_span.start, self.current_span().end);
+                    return Ok(Expr::UnsafeLoad {
+                        addr: Box::new(addr),
+                        byte_size,
                         span,
                     });
+                }
+                Token::UnsafeStore | Token::UnsafeStore8 | Token::UnsafeStore32 => {
+                    let byte_size = match &token.token {
+                        Token::UnsafeStore => 8,
+                        Token::UnsafeStore8 => 1,
+                        Token::UnsafeStore32 => 4,
+                        _ => unreachable!(),
+                    };
+                    let start_span = token.span;
+                    self.advance();
+                    self.expect_token(Token::LeftParen)?;
+                    let addr = self.parse_expression()?;
+                    self.expect_token(Token::Comma)?;
+                    let value = self.parse_expression()?;
+                    self.expect_token(Token::RightParen)?;
+                    let span = Span::new(start_span.start, self.current_span().end);
+                    return Ok(Expr::UnsafeStore {
+                        addr: Box::new(addr),
+                        value: Box::new(value),
+                        byte_size,
+                        span,
+                    });
+                }
+                _ => {}
+            }
+
+            // runtime 内建函数
+            match &token.token {
+                Token::RuntimeHeapBase | Token::RuntimeHeapLimit | Token::RuntimeStackBottom | Token::RuntimeStackTop | Token::RuntimeVmSp => {
+                    let name = match &token.token {
+                        Token::RuntimeHeapBase => "heap_base",
+                        Token::RuntimeHeapLimit => "heap_limit",
+                        Token::RuntimeStackBottom => "stack_bottom",
+                        Token::RuntimeStackTop => "stack_top",
+                        Token::RuntimeVmSp => "vm_sp",
+                        _ => unreachable!(),
+                    };
+                    let start_span = token.span;
+                    self.advance();
+                    self.expect_token(Token::LeftParen)?;
+                    self.expect_token(Token::RightParen)?;
+                    let span = Span::new(start_span.start, self.current_span().end);
+                    return Ok(Expr::RuntimeGlobal { name: name.to_string(), span });
+                }
+                // GC 寄存器保存/恢复内建函数
+                Token::GcPushRegs | Token::GcPopRegs => {
+                    let is_push = matches!(&token.token, Token::GcPushRegs);
+                    let start_span = token.span;
+                    self.advance();
+                    self.expect_token(Token::LeftParen)?;
+                    self.expect_token(Token::RightParen)?;
+                    let span = Span::new(start_span.start, self.current_span().end);
+                    return Ok(Expr::GcRegOp { is_push, span });
+                }
+                _ => {}
+            }
+
+            // len 内建函数：只有 len(expr) 形式才解析为 ArrayLen
+            // 否则 len 将在 parse_primary 的 Identifier 分支中被当作普通变量名
+            if let Token::Identifier(name) = &token.token {
+                if name == "len" {
+                    // 前瞻检查下一个 token 是否是 '('
+                    let next_is_lparen = self
+                        .tokens
+                        .get(self.position + 1)
+                        .map_or(false, |t| matches!(t.token, Token::LeftParen));
+                    if next_is_lparen {
+                        let start_span = token.span;
+                        self.advance(); // consume 'len'
+                        self.advance(); // consume '('
+                        let array = self.parse_expression()?;
+                        self.expect_token(Token::RightParen)?;
+                        let span = Span::new(start_span.start, self.current_span().end);
+                        return Ok(Expr::ArrayLen {
+                            array: Box::new(array),
+                            span,
+                        });
+                    }
+                    // 不是 len(...) 形式，fall through 让 parse_primary 当普通标识符处理
+                }
+            }
+
+            // abs/min/max 内建函数
+            if let Token::Identifier(name) = &token.token {
+                if name == "abs" {
+                    let next_is_lparen = self
+                        .tokens
+                        .get(self.position + 1)
+                        .map_or(false, |t| matches!(t.token, Token::LeftParen));
+                    if next_is_lparen {
+                        let start_span = token.span;
+                        self.advance(); // consume 'abs'
+                        self.advance(); // consume '('
+                        let value = self.parse_expression()?;
+                        self.expect_token(Token::RightParen)?;
+                        let span = Span::new(start_span.start, self.current_span().end);
+                        return Ok(Expr::Abs {
+                            value: Box::new(value),
+                            span,
+                        });
+                    }
+                }
+                if name == "min" {
+                    let next_is_lparen = self
+                        .tokens
+                        .get(self.position + 1)
+                        .map_or(false, |t| matches!(t.token, Token::LeftParen));
+                    if next_is_lparen {
+                        let start_span = token.span;
+                        self.advance(); // consume 'min'
+                        self.advance(); // consume '('
+                        let left = self.parse_expression()?;
+                        self.expect_token(Token::Comma)?;
+                        let right = self.parse_expression()?;
+                        self.expect_token(Token::RightParen)?;
+                        let span = Span::new(start_span.start, self.current_span().end);
+                        return Ok(Expr::Min {
+                            left: Box::new(left),
+                            right: Box::new(right),
+                            span,
+                        });
+                    }
+                }
+                if name == "max" {
+                    let next_is_lparen = self
+                        .tokens
+                        .get(self.position + 1)
+                        .map_or(false, |t| matches!(t.token, Token::LeftParen));
+                    if next_is_lparen {
+                        let start_span = token.span;
+                        self.advance(); // consume 'max'
+                        self.advance(); // consume '('
+                        let left = self.parse_expression()?;
+                        self.expect_token(Token::Comma)?;
+                        let right = self.parse_expression()?;
+                        self.expect_token(Token::RightParen)?;
+                        let span = Span::new(start_span.start, self.current_span().end);
+                        return Ok(Expr::Max {
+                            left: Box::new(left),
+                            right: Box::new(right),
+                            span,
+                        });
+                    }
+                }
+                if name == "clamp" {
+                    let next_is_lparen = self
+                        .tokens
+                        .get(self.position + 1)
+                        .map_or(false, |t| matches!(t.token, Token::LeftParen));
+                    if next_is_lparen {
+                        let start_span = token.span;
+                        self.advance(); // consume 'clamp'
+                        self.advance(); // consume '('
+                        let value = self.parse_expression()?;
+                        self.expect_token(Token::Comma)?;
+                        let min_val = self.parse_expression()?;
+                        self.expect_token(Token::Comma)?;
+                        let max_val = self.parse_expression()?;
+                        self.expect_token(Token::RightParen)?;
+                        let span = Span::new(start_span.start, self.current_span().end);
+                        return Ok(Expr::Clamp {
+                            value: Box::new(value),
+                            min_val: Box::new(min_val),
+                            max_val: Box::new(max_val),
+                            span,
+                        });
+                    }
+                }
+                if name == "str_index" {
+                    let next_is_lparen = self
+                        .tokens
+                        .get(self.position + 1)
+                        .map_or(false, |t| matches!(t.token, Token::LeftParen));
+                    if next_is_lparen {
+                        let start_span = token.span;
+                        self.advance(); // consume 'str_index'
+                        self.advance(); // consume '('
+                        let string = self.parse_expression()?;
+                        self.expect_token(Token::Comma)?;
+                        let index = self.parse_expression()?;
+                        self.expect_token(Token::RightParen)?;
+                        let span = Span::new(start_span.start, self.current_span().end);
+                        return Ok(Expr::StrIndex {
+                            string: Box::new(string),
+                            index: Box::new(index),
+                            span,
+                        });
+                    }
+                }
+                if name == "char_at" {
+                    let next_is_lparen = self
+                        .tokens
+                        .get(self.position + 1)
+                        .map_or(false, |t| matches!(t.token, Token::LeftParen));
+                    if next_is_lparen {
+                        let start_span = token.span;
+                        self.advance(); // consume 'char_at'
+                        self.advance(); // consume '('
+                        let string = self.parse_expression()?;
+                        self.expect_token(Token::Comma)?;
+                        let index = self.parse_expression()?;
+                        self.expect_token(Token::RightParen)?;
+                        let span = Span::new(start_span.start, self.current_span().end);
+                        return Ok(Expr::CharAt {
+                            string: Box::new(string),
+                            index: Box::new(index),
+                            span,
+                        });
+                    }
+                }
+                if name == "substring" {
+                    let next_is_lparen = self
+                        .tokens
+                        .get(self.position + 1)
+                        .map_or(false, |t| matches!(t.token, Token::LeftParen));
+                    if next_is_lparen {
+                        let start_span = token.span;
+                        self.advance(); // consume 'substring'
+                        self.advance(); // consume '('
+                        let string = self.parse_expression()?;
+                        self.expect_token(Token::Comma)?;
+                        let start = self.parse_expression()?;
+                        self.expect_token(Token::Comma)?;
+                        let length = self.parse_expression()?;
+                        self.expect_token(Token::RightParen)?;
+                        let span = Span::new(start_span.start, self.current_span().end);
+                        return Ok(Expr::Substring {
+                            string: Box::new(string),
+                            start: Box::new(start),
+                            length: Box::new(length),
+                            span,
+                        });
+                    }
+                }
+                if name == "str_contains" {
+                    let next_is_lparen = self
+                        .tokens
+                        .get(self.position + 1)
+                        .map_or(false, |t| matches!(t.token, Token::LeftParen));
+                    if next_is_lparen {
+                        let start_span = token.span;
+                        self.advance(); // consume 'str_contains'
+                        self.advance(); // consume '('
+                        let string = self.parse_expression()?;
+                        self.expect_token(Token::Comma)?;
+                        let char_code = self.parse_expression()?;
+                        self.expect_token(Token::RightParen)?;
+                        let span = Span::new(start_span.start, self.current_span().end);
+                        return Ok(Expr::StrContains {
+                            string: Box::new(string),
+                            char_code: Box::new(char_code),
+                            span,
+                        });
+                    }
+                }
+                if name == "split_count" {
+                    let next_is_lparen = self
+                        .tokens
+                        .get(self.position + 1)
+                        .map_or(false, |t| matches!(t.token, Token::LeftParen));
+                    if next_is_lparen {
+                        let start_span = token.span;
+                        self.advance(); // consume 'split_count'
+                        self.advance(); // consume '('
+                        let string = self.parse_expression()?;
+                        self.expect_token(Token::Comma)?;
+                        let separator = self.parse_expression()?;
+                        self.expect_token(Token::RightParen)?;
+                        let span = Span::new(start_span.start, self.current_span().end);
+                        return Ok(Expr::SplitCount {
+                            string: Box::new(string),
+                            separator: Box::new(separator),
+                            span,
+                        });
+                    }
+                }
+                if name == "to_string" {
+                    let next_is_lparen = self
+                        .tokens
+                        .get(self.position + 1)
+                        .map_or(false, |t| matches!(t.token, Token::LeftParen));
+                    if next_is_lparen {
+                        let start_span = token.span;
+                        self.advance(); // consume 'to_string'
+                        self.advance(); // consume '('
+                        let expr = self.parse_expression()?;
+                        self.expect_token(Token::RightParen)?;
+                        let span = Span::new(start_span.start, self.current_span().end);
+                        return Ok(Expr::ToString {
+                            expr: Box::new(expr),
+                            span,
+                        });
+                    }
+                }
+                if name == "trim" {
+                    let next_is_lparen = self
+                        .tokens
+                        .get(self.position + 1)
+                        .map_or(false, |t| matches!(t.token, Token::LeftParen));
+                    if next_is_lparen {
+                        let start_span = token.span;
+                        self.advance(); // consume 'trim'
+                        self.advance(); // consume '('
+                        let string = self.parse_expression()?;
+                        self.expect_token(Token::RightParen)?;
+                        let span = Span::new(start_span.start, self.current_span().end);
+                        return Ok(Expr::Trim {
+                            string: Box::new(string),
+                            span,
+                        });
+                    }
                 }
             }
 
@@ -374,6 +957,12 @@ impl<'a> Parser<'a> {
                     let span = token.span;
                     self.advance();
                     Ok(Expr::Number { value, span })
+                }
+                Token::StringLiteral(value) => {
+                    let value = value.clone();
+                    let span = token.span;
+                    self.advance();
+                    Ok(Expr::StringLiteral { value, span })
                 }
                 Token::KwPerform => {
                     let span = token.span;
@@ -880,11 +1469,11 @@ impl<'a> Parser<'a> {
                                         if let Some(arg_token) = self.peek() {
                                             if matches!(arg_token.token, Token::LeftParen) {
                                                 self.advance(); // consume '('
-                                                let arg = if let Some(peeked) = self.peek() {
+                                                let args = if let Some(peeked) = self.peek() {
                                                     if matches!(peeked.token, Token::RightParen) {
-                                                        None
+                                                        vec![]
                                                     } else {
-                                                        Some(Box::new(self.parse_expression()?))
+                                                        vec![self.parse_expression()?]
                                                     }
                                                 } else {
                                                     return Err(ParseError::UnexpectedEof {
@@ -904,7 +1493,7 @@ impl<'a> Parser<'a> {
                                                         Ok(Expr::QualifiedConstructor {
                                                             type_name: name,
                                                             constructor_name,
-                                                            arg,
+                                                            args,
                                                             span: full_span,
                                                         })
                                                     } else {
@@ -926,7 +1515,7 @@ impl<'a> Parser<'a> {
                                                 Ok(Expr::QualifiedConstructor {
                                                     type_name: name,
                                                     constructor_name,
-                                                    arg: None,
+                                                    args: vec![],
                                                     span: full_span,
                                                 })
                                             }
@@ -937,7 +1526,7 @@ impl<'a> Parser<'a> {
                                             Ok(Expr::QualifiedConstructor {
                                                 type_name: name,
                                                 constructor_name,
-                                                arg: None,
+                                                args: vec![],
                                                 span: full_span,
                                             })
                                         }
@@ -956,19 +1545,21 @@ impl<'a> Parser<'a> {
                             } else if matches!(next_token.token, Token::LeftParen)
                                 && self.is_constructor(&name)
                             {
-                                // 只有已知构造器才处理构造器调用 Constructor(arg)
+                                // 只有已知构造器才处理构造器调用 Constructor(arg, ...)
                                 self.advance(); // consume '('
-                                let arg = if let Some(peeked) = self.peek() {
-                                    if matches!(peeked.token, Token::RightParen) {
-                                        // 无参数构造器
-                                        None
-                                    } else {
-                                        Some(Box::new(self.parse_expression()?))
+                                let mut args = Vec::new();
+                                if let Some(peeked) = self.peek() {
+                                    if !matches!(peeked.token, Token::RightParen) {
+                                        args.push(self.parse_expression()?);
+                                        while let Some(next) = self.peek() {
+                                            if matches!(next.token, Token::Comma) {
+                                                self.advance();
+                                                args.push(self.parse_expression()?);
+                                            } else {
+                                                break;
+                                            }
+                                        }
                                     }
-                                } else {
-                                    return Err(ParseError::UnexpectedEof {
-                                        expected: "expression or ')'".to_string(),
-                                    });
                                 };
 
                                 if let Some(token) = self.peek() {
@@ -978,7 +1569,7 @@ impl<'a> Parser<'a> {
                                         let full_span = Span::new(span.start, end_span.end);
                                         Ok(Expr::Constructor {
                                             name,
-                                            arg,
+                                            args,
                                             span: full_span,
                                         })
                                     } else {
@@ -1095,7 +1686,7 @@ impl<'a> Parser<'a> {
                                     if self.is_constructor(&name) {
                                         Ok(Expr::Constructor {
                                             name,
-                                            arg: None,
+                                            args: vec![],
                                             span,
                                         })
                                     } else {
@@ -1107,7 +1698,7 @@ impl<'a> Parser<'a> {
                                 if self.is_constructor(&name) {
                                     Ok(Expr::Constructor {
                                         name,
-                                        arg: None,
+                                        args: vec![],
                                         span,
                                     })
                                 } else {
@@ -1119,7 +1710,7 @@ impl<'a> Parser<'a> {
                             if self.is_constructor(&name) {
                                 Ok(Expr::Constructor {
                                     name,
-                                    arg: None,
+                                    args: vec![],
                                     span,
                                 })
                             } else {
@@ -1127,6 +1718,42 @@ impl<'a> Parser<'a> {
                             }
                         }
                     }
+                }
+                Token::KwFor => {
+                    self.parse_for_in()
+                }
+                Token::KwBreak => {
+                    let span = token.span;
+                    self.advance();
+                    Ok(Expr::Break { span })
+                }
+                Token::KwContinue => {
+                    let span = token.span;
+                    self.advance();
+                    Ok(Expr::Continue { span })
+                }
+                Token::KwReturn => {
+                    let start_span = token.span;
+                    self.advance();
+                    // return 后面可以跟表达式，也可以没有
+                    let value = if let Some(tok) = self.peek() {
+                        // 检查下一个 token 是否可以开始一个表达式
+                        match &tok.token {
+                            Token::RightBrace | Token::Semicolon | Token::Comma => None,
+                            _ => Some(Box::new(self.parse_expression()?)),
+                        }
+                    } else {
+                        None
+                    };
+                    let end_span = if let Some(v) = &value {
+                        v.span()
+                    } else {
+                        start_span
+                    };
+                    Ok(Expr::Return {
+                        value,
+                        span: Span::new(start_span.start, end_span.end),
+                    })
                 }
                 Token::Pipe => {
                     // 解析lambda表达式: |param1, param2| body
@@ -1138,22 +1765,53 @@ impl<'a> Parser<'a> {
                 }
                 Token::LeftParen => {
                     self.advance(); // consume '('
-                    let expr = self.parse_expression()?;
+                    let first_expr = self.parse_expression()?;
 
                     if let Some(token) = self.peek() {
                         if matches!(token.token, Token::RightParen) {
+                            // 单表达式 + ')' → 括号分组
                             self.advance(); // consume ')'
-                            Ok(expr)
+                            Ok(first_expr)
+                        } else if matches!(token.token, Token::Comma) {
+                            // 逗号 → 元组字面量
+                            let start_span = first_expr.span();
+                            self.advance(); // consume ','
+                            let mut elements = vec![first_expr];
+                            loop {
+                                let elem = self.parse_expression()?;
+                                elements.push(elem);
+                                if let Some(tok) = self.peek() {
+                                    if matches!(tok.token, Token::Comma) {
+                                        self.advance(); // consume ','
+                                    } else if matches!(tok.token, Token::RightParen) {
+                                        self.advance(); // consume ')'
+                                        break;
+                                    } else {
+                                        return Err(ParseError::UnexpectedToken {
+                                            expected: "',' or ')'".to_string(),
+                                            found: tok.token.clone(),
+                                            span: tok.span,
+                                        });
+                                    }
+                                } else {
+                                    return Err(ParseError::UnexpectedEof {
+                                        expected: "',' or ')'".to_string(),
+                                    });
+                                }
+                            }
+                            let end_span = elements.last().unwrap().span();
+                            let span = Span::new(start_span.start, end_span.end);
+                            Ok(Expr::TupleLiteral { elements, span })
                         } else {
                             Err(ParseError::UnexpectedToken {
-                                expected: "')'".to_string(),
+                                expected: "',' or ')'".to_string(),
                                 found: token.token.clone(),
                                 span: token.span,
                             })
                         }
                     } else {
                         Err(ParseError::UnexpectedEof {
-                            expected: "')'".to_string(),
+                            expected: "',' or ')'".to_string(),
                         })
                     }
                 }
@@ -1314,18 +1972,50 @@ impl<'a> Parser<'a> {
                                     field: field_name,
                                     span,
                                 };
+                            } else if let Token::Number(n) = &field_token.token {
+                                // 数字索引 → 元组访问 t.0, t.1
+                                if *n >= 0 {
+                                    let index = *n as usize;
+                                    let end_span = field_token.span;
+                                    self.advance();
+                                    let span = Span::new(expr.span().start, end_span.end);
+                                    expr = Expr::TupleAccess {
+                                        object: Box::new(expr),
+                                        index,
+                                        span,
+                                    };
+                                } else {
+                                    return Err(ParseError::UnexpectedToken {
+                                        expected: "non-negative tuple index".to_string(),
+                                        found: field_token.token.clone(),
+                                        span: field_token.span,
+                                    });
+                                }
                             } else {
                                 return Err(ParseError::UnexpectedToken {
-                                    expected: "field name".to_string(),
+                                    expected: "field name or tuple index".to_string(),
                                     found: field_token.token.clone(),
                                     span: field_token.span,
                                 });
                             }
                         } else {
                             return Err(ParseError::UnexpectedEof {
-                                expected: "field name".to_string(),
+                                expected: "field name or tuple index".to_string(),
                             });
                         }
+                    }
+                    Token::Identifier(ref name) if name == "as" => {
+                        progressed = true;
+                        let start_span = expr.span();
+                        self.advance(); // consume 'as'
+                        let target_type = self.parse_type_expression()?;
+                        let end_span = self.peek().map(|t| t.span).unwrap_or(start_span);
+                        let span = Span::new(start_span.start, end_span.end);
+                        expr = Expr::TypeCast {
+                            expr: Box::new(expr),
+                            target_type,
+                            span,
+                        };
                     }
                     _ => {}
                 }
@@ -1371,16 +2061,25 @@ impl<'a> Parser<'a> {
                 break;
             }
 
-            // 解析模式
-            let pattern = self.parse_pattern()?;
+            // 解析模式（支持 or-pattern: P1 | P2 | P3）
+            let first_pattern = self.parse_pattern()?;
+            let mut patterns = vec![first_pattern];
+            while let Some(next_token) = self.peek() {
+                if matches!(next_token.token, Token::Pipe) {
+                    self.advance(); // consume '|'
+                    patterns.push(self.parse_pattern()?);
+                } else {
+                    break;
+                }
+            }
 
-            // 期望 '->'
+            // 期望 '->' 或 '=>'（match arm 分隔符，向后兼容两种语法）
             if let Some(token) = self.peek() {
-                if matches!(token.token, Token::Arrow) {
-                    self.advance(); // consume '->'
+                if matches!(token.token, Token::Arrow | Token::FatArrow) {
+                    self.advance(); // consume '->' or '=>'
                 } else {
                     return Err(ParseError::UnexpectedToken {
-                        expected: "'->'".to_string(),
+                        expected: "'->' or '=>'".to_string(),
                         found: token.token.clone(),
                         span: token.span,
                     });
@@ -1393,13 +2092,17 @@ impl<'a> Parser<'a> {
 
             // 解析分支体
             let body = self.parse_expression()?;
-            let arm_span = Span::new(pattern.span().start, body.span().end);
+            let arm_span_start = patterns[0].span().start;
+            let arm_span_end = body.span().end;
 
-            arms.push(karte_hir::MatchArm {
-                pattern,
-                body,
-                span: arm_span,
-            });
+            // 为每个 pattern 创建一个 arm（共享 body）
+            for pattern in patterns {
+                arms.push(karte_hir::MatchArm {
+                    pattern,
+                    body: body.clone(),
+                    span: Span::new(arm_span_start, arm_span_end),
+                });
+            }
 
             // 检查是否有更多分支
             if let Some(token) = self.peek() {
@@ -1718,5 +2421,152 @@ impl<'a> Parser<'a> {
             body: Box::new(body),
             span,
         })
+    }
+
+    /// 解析 for-in 表达式: for ident in start..end { body }
+    pub(crate) fn parse_for_in(&mut self) -> Result<Expr, ParseError> {
+        let start_span = self.peek().unwrap().span;
+        self.advance(); // consume 'for'
+
+        // 解析循环变量名
+        let var = if let Some(tok) = self.peek() {
+            if let Token::Identifier(name) = &tok.token {
+                name.clone()
+            } else {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "identifier".to_string(),
+                    found: tok.token.clone(),
+                    span: tok.span,
+                });
+            }
+        } else {
+            return Err(ParseError::UnexpectedEof {
+                expected: "loop variable name".to_string(),
+            });
+        };
+        self.advance(); // consume var name
+
+        // 期望 'in'
+        if let Some(tok) = self.peek() {
+            match &tok.token {
+                Token::KwIn => {
+                    self.advance();
+                }
+                Token::Identifier(id) if id == "in" => {
+                    self.advance();
+                }
+                _ => {
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "'in'".to_string(),
+                        found: tok.token.clone(),
+                        span: tok.span,
+                    });
+                }
+            }
+        } else {
+            return Err(ParseError::UnexpectedEof {
+                expected: "'in'".to_string(),
+            });
+        }
+
+        // 解析 start/array 表达式
+        let start = self.parse_expression()?;
+
+        // 检查下一个 token 决定是范围遍历还是数组遍历
+        if let Some(tok) = self.peek() {
+            match &tok.token {
+                Token::DoubleDot | Token::DotDotEqual => {
+                    // 范围遍历: for ident in start..end { body }
+                    let inclusive = if matches!(tok.token, Token::DotDotEqual) {
+                        self.advance(); // consume '..='
+                        true
+                    } else {
+                        self.advance(); // consume '..'
+                        false
+                    };
+
+                    // 解析 end 表达式
+                    let end = self.parse_expression()?;
+
+                    // 期望 '{' (或 do)
+                    if let Some(tok) = self.peek() {
+                        match &tok.token {
+                            Token::LeftBrace => {
+                                // 允许 for x in 0..10 { ... } 语法，不需要 consume
+                            }
+                            Token::Identifier(name) if name == "do" => {
+                                self.advance(); // consume 'do'
+                            }
+                            _ => {
+                                return Err(ParseError::UnexpectedToken {
+                                    expected: "'{' or 'do'".to_string(),
+                                    found: tok.token.clone(),
+                                    span: tok.span,
+                                });
+                            }
+                        }
+                    } else {
+                        return Err(ParseError::UnexpectedEof {
+                            expected: "'{' or 'do'".to_string(),
+                        });
+                    }
+
+                    // 解析循环体
+                    let body = self.parse_expression()?;
+                    let end_span = body.span();
+                    let span = Span::new(start_span.start, end_span.end);
+
+                    Ok(Expr::ForIn {
+                        var,
+                        start: Box::new(start),
+                        end: Box::new(end),
+                        body: Box::new(body),
+                        inclusive,
+                        span,
+                    })
+                }
+                Token::LeftBrace => {
+                    // 数组遍历: for ident in array { body }
+                    // 不需要 consume '{'，parse_expression 内部的 parse_block 会处理
+                    let array_expr = start;
+                    let body = self.parse_expression()?;
+                    let end_span = body.span();
+                    let span = Span::new(start_span.start, end_span.end);
+
+                    Ok(Expr::ForArray {
+                        var,
+                        array: Box::new(array_expr),
+                        body: Box::new(body),
+                        span,
+                    })
+                }
+                Token::Identifier(name) if name == "do" => {
+                    // 数组遍历: for ident in array do body
+                    self.advance(); // consume 'do'
+                    let array_expr = start;
+                    let body = self.parse_expression()?;
+                    let end_span = body.span();
+                    let span = Span::new(start_span.start, end_span.end);
+
+                    Ok(Expr::ForArray {
+                        var,
+                        array: Box::new(array_expr),
+                        body: Box::new(body),
+                        span,
+                    })
+                }
+                _ => {
+                    Err(ParseError::UnexpectedToken {
+                        expected: "'..' or '..=' or '{'".to_string(),
+                        found: tok.token.clone(),
+                        span: tok.span,
+                    })
+                }
+            }
+        } else {
+            Err(ParseError::UnexpectedEof {
+                expected: "'..' or '..=' or '{'".to_string(),
+            })
+        }
     }
 }

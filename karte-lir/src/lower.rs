@@ -113,6 +113,22 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
         // 🔧 修复：使用带参数信息的函数创建方法
         context.start_function_with_params(name.clone(), &mir_function.params);
 
+        // 🔧 修复 struct 返回值悬挂指针 bug：
+        // 预扫描当前函数的所有 Return 终结符，收集被返回的 temp ID
+        // 这些 temp 持有的 struct 值需要使用堆分配（而非栈分配），
+        // 因为函数返回后栈帧会被释放，返回的 struct 指针会变为悬挂指针
+        {
+            let mut returned_temps = HashSet::new();
+            for block in mir_function.basic_blocks.values() {
+                if let Some(Terminator::Return { value: Some(val), .. }) = &block.terminator {
+                    if let Value::Temp { id, .. } = val {
+                        returned_temps.insert(id.0);
+                    }
+                }
+            }
+            context.returned_temp_ids = returned_temps;
+        }
+
         // 使用预分配的入口标签
         let entry_label = context
             .function_labels
@@ -136,28 +152,43 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
             context.allocate_label_for_block(block_id);
         }
 
+        // MIR Phi 节点收集：
+        // MIR Phi 节点延迟收集：
+        // 收集 Phi 信息，在 terminator 之前生成 Store64 传递变量值
+        let mut phi_info_list: Vec<(BasicBlockId, Value, Vec<(BasicBlockId, Value)>)> = Vec::new();
+        for (block_id, block) in &mir_function.basic_blocks {
+            for statement in &block.statements {
+                if let Statement::Phi {
+                    target: phi_target,
+                    incoming,
+                    ..
+                } = statement
+                {
+                    phi_info_list.push((*block_id, phi_target.clone(), incoming.clone()));
+                }
+            }
+        }
+
         // 转换每个基本块
-        // 按ID顺序处理基本块
         let mut block_ids: Vec<_> = mir_function.basic_blocks.keys().copied().collect();
         block_ids.sort_by_key(|id| id.0);
 
         for block_id in block_ids {
             if let Some(block) = mir_function.basic_blocks.get(&block_id) {
-                // 添加基本块标签
+                // 每个基本块边界清理常量缓存，防止跨控制流分支的常量污染
+                // 常量传播优化由后续 ConstantFolding pass 负责
+                context.known_constants.clear();
                 let label = context.allocate_label_for_block(block_id);
                 context.add_instruction(Instruction::Label {
                     id: label,
-                    span: karte_diagnostics::Span::new(0, 0), // 简化span处理
+                    span: karte_diagnostics::Span::new(0, 0),
                 });
-                // 如果这是一个handler入口块，绑定payload到变量（通过将r1写入变量的栈槽）
                 if let Some(param_name) = context.handler_block_param.get(&block_id) {
-                    // 把 r1 写入变量 param_name 的栈槽
                     let var_value = Value::Variable {
                         name: param_name.clone(),
                         ty: None,
                     };
                     let var_addr = context.lower_to_lvalue(&var_value);
-                    // 确保目标是寄存器地址
                     let addr_reg = match var_addr {
                         Operand::Register { id } => id,
                         _ => context.current_function_mut().new_register(),
@@ -169,15 +200,38 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
                             id: Register::Physical(
                                 karte_common::calling_convention::REG_EFFECT_PAYLOAD,
                             ),
-                        }, // r1 (payload)
+                        },
                         span: karte_diagnostics::Span::dummy(),
                     });
                 }
 
-                // 转换基本块中的语句
+                // 转换基本块中的语句（跳过 Phi 节点）
                 for statement in &block.statements {
+                    if let Statement::Phi { .. } = statement {
+                        continue;
+                    }
                     if let Err(errors) = lower_statement(&mut context, statement) {
                         context.errors.extend(errors);
+                    }
+                }
+
+                // 在 terminator 之前，为后继块的 phi 节点生成 Store64 指令
+                // 延迟评估：在生成所有语句后才调用 lower_to_lvalue/lower_to_rvalue
+                for (phi_block_id, phi_target, phi_incoming) in &phi_info_list {
+                    for (pred_block, pred_value) in phi_incoming {
+                        if *pred_block == block_id {
+                            let phi_addr = match context.lower_to_lvalue(phi_target) {
+                                Operand::Register { id } => id,
+                                _ => continue,
+                            };
+                            let src = context.lower_to_rvalue_with_const_prop(pred_value);
+                            context.add_instruction(Instruction::Store64 {
+                                addr: phi_addr,
+                                offset: 0,
+                                src,
+                                span: karte_diagnostics::Span { start: usize::MAX, end: usize::MAX },
+                            });
+                        }
                     }
                 }
 

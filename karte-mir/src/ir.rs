@@ -55,6 +55,15 @@ pub enum Value {
         ty: Option<Type>,
     },
 
+    /// 字符串字面量
+    #[ir_codec(token = "str")]
+    StringLiteral {
+        #[ir_codec(args)]
+        value: String,
+        #[ir_codec(skip)]
+        ty: Option<Type>,
+    },
+
     /// 单元值
     #[ir_codec(token = "()")]
     #[default]
@@ -71,7 +80,7 @@ pub enum Value {
     /// 构造器值
     Constructor {
         name: String,
-        arg: Option<Box<Value>>,
+        args: Vec<Value>,
         #[ir_codec(skip)]
         ty: Option<Type>,
     },
@@ -80,7 +89,7 @@ pub enum Value {
     QualifiedConstructor {
         type_name: String,
         constructor_name: String,
-        arg: Option<Box<Value>>,
+        args: Vec<Value>,
         #[ir_codec(skip)]
         ty: Option<Type>,
     },
@@ -240,6 +249,20 @@ pub enum Statement {
         #[ir_codec(skip)]
         span: Span,
     },
+    /// 类型转换 (显示为: target = cast source, dst_bits, signed)
+    #[ir_codec(token = "cast")]
+    TypeCast {
+        #[ir_codec(args, target)]
+        target: Value,
+        #[ir_codec(args)]
+        source: Value,
+        #[ir_codec(args)]
+        dst_bits: u8,
+        #[ir_codec(args)]
+        signed: bool,
+        #[ir_codec(skip)]
+        span: Span,
+    },
     /// 函数调用
     #[ir_codec(token = "call")]
     Call {
@@ -379,7 +402,51 @@ pub enum Statement {
         #[ir_codec(args)]
         alignment: usize,
         #[ir_codec(skip)]
-        offset: Option<isize>, // 栈偏移（由后端计算）
+        offset: Option<isize>,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+    /// unsafe 内存读取 - 从任意地址读取指定字节大小
+    #[ir_codec(token = "unsafe_load")]
+    UnsafeLoad {
+        #[ir_codec(args, target)]
+        target: Value,
+        #[ir_codec(args)]
+        addr: Value,
+        #[ir_codec(args)]
+        byte_size: u8,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+    /// unsafe 内存写入 - 向任意地址写入指定字节大小
+    #[ir_codec(token = "unsafe_store")]
+    UnsafeStore {
+        #[ir_codec(args)]
+        addr: Value,
+        #[ir_codec(args)]
+        value: Value,
+        #[ir_codec(args)]
+        byte_size: u8,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+    /// runtime 内建函数 - 读取 runtime 全局变量
+    #[ir_codec(token = "runtime_global")]
+    RuntimeGlobal {
+        #[ir_codec(args, target)]
+        target: Value,
+        #[ir_codec(args)]
+        global_name: String,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+    /// GC 寄存器保存/恢复 - 把所有 callee-saved 寄存器 dump 到虚拟栈
+    #[ir_codec(token = "gc_reg_op")]
+    GcRegOp {
+        #[ir_codec(args, target)]
+        target: Value,
+        #[ir_codec(args)]
+        is_push: bool, // true = push, false = pop
         #[ir_codec(skip)]
         span: Span,
     },
@@ -480,7 +547,7 @@ pub enum Pattern {
     /// 变量绑定
     Variable { name: String },
     /// 构造器模式
-    Constructor { name: String, arg: Option<String> },
+    Constructor { name: String, args: Vec<String> },
     /// 数字模式
     Number { value: i64 },
     /// 布尔模式
@@ -615,6 +682,10 @@ impl MirFunction {
         id
     }
 
+    pub fn remove_block(&mut self, id: BasicBlockId) {
+        self.basic_blocks.remove(&id);
+    }
+
     pub fn new_temp(&mut self) -> TempId {
         let id = TempId(self.next_temp_id);
         self.next_temp_id += 1;
@@ -730,6 +801,8 @@ pub enum BinaryOperator {
     Multiply,
     #[ir_codec(token = "/")]
     Divide,
+    #[ir_codec(token = "%")]
+    Modulo,
     #[ir_codec(token = "==")]
     Equal,
     #[ir_codec(token = "!=")]
@@ -747,6 +820,17 @@ pub enum BinaryOperator {
     And,
     #[ir_codec(token = "||")]
     Or,
+    // 位运算符
+    #[ir_codec(token = "&")]
+    BitAnd,
+    #[ir_codec(token = "|")]
+    BitOr,
+    #[ir_codec(token = "^")]
+    BitXor,
+    #[ir_codec(token = "<<")]
+    ShiftLeft,
+    #[ir_codec(token = ">>")]
+    ShiftRight,
 }
 
 /// 一元运算符
@@ -758,4 +842,6 @@ pub enum UnaryOperator {
     Minus,
     #[ir_codec(token = "!")]
     Not,
+    #[ir_codec(token = "~")]
+    BitNot,
 }

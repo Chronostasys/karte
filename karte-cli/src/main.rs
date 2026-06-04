@@ -24,9 +24,9 @@ struct Cli {
     #[arg(short, long, value_enum, default_value_t = OptimizationArg::Balanced)]
     optimization: OptimizationArg,
 
-    /// 显示详细的编译过程
-    #[arg(short, long)]
-    verbose: bool,
+    /// 显示详细的编译过程 (-v 基本信息/-vv 详细/-vvv 全部)
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    verbose: u8,
 
     /// 解析模式 (script/project)
     #[arg(long, value_enum)]
@@ -43,6 +43,10 @@ struct Cli {
     /// 在执行后输出 heap/RC 统计信息
     #[arg(long)]
     heap_stats: bool,
+
+    /// 输出 JIT 生成的机器码反汇编
+    #[arg(long)]
+    emit_asm: bool,
 
     /// 输入文件或表达式
     input: Option<String>,
@@ -70,6 +74,10 @@ enum Commands {
         /// 在执行后输出 heap/RC 统计信息
         #[arg(long)]
         heap_stats: bool,
+
+        /// 输出 JIT 生成的机器码反汇编
+        #[arg(long)]
+        emit_asm: bool,
     },
 
     /// 运行LIR文件
@@ -123,6 +131,28 @@ enum Commands {
         /// 启用调试模式（打印管线信息）
         #[arg(long)]
         debug: bool,
+    },
+
+    /// AOT 编译：生成独立可执行文件（不依赖 glibc）
+    Aot {
+        /// 输入文件
+        input: String,
+
+        /// 输出文件名
+        #[arg(short, long)]
+        output: Option<String>,
+
+        /// 解析模式 (script/project)
+        #[arg(long, value_enum)]
+        mode: Option<ModeArg>,
+
+        /// 目标架构 (x86_64/riscv64)
+        #[arg(long, default_value = "x86_64")]
+        target: String,
+
+        /// GC 模式 (runtime=使用内置bump allocator, karte=使用karte实现的GC)
+        #[arg(long, default_value = "runtime")]
+        gc: String,
     },
 }
 
@@ -193,9 +223,9 @@ fn load_ir_for_execution(
     filename: &str,
     stage: IrStage,
     optimization_level: OptimizationLevel,
-    verbose: bool,
+    verbose: u8,
 ) -> Result<LirProgram, Box<dyn std::error::Error>> {
-    if verbose {
+    if verbose > 0 {
         println!("Loading {} from: {}", stage.label(), filename);
     }
 
@@ -203,26 +233,26 @@ fn load_ir_for_execution(
 
     let mut lir_program = match stage {
         IrStage::Lir => {
-            if verbose {
+            if verbose > 0 {
                 println!("解析 LIR...");
             }
             parse_ir_content::<LirProgram>(&content, "LIR")?
         }
         IrStage::Mir => {
-            if verbose {
+            if verbose > 0 {
                 println!("解析 MIR...");
             }
             let mir_program = parse_ir_content::<MirProgram>(&content, "MIR")?;
-            if verbose {
+            if verbose > 0 {
                 println!("MIR 解析完成，降级到未优化LIR");
             }
-            lower_mir_to_unoptimized_lir(&mir_program, verbose)?
+            lower_mir_to_unoptimized_lir(&mir_program, verbose > 0)?
         }
     };
 
     // 智能优化：检测是否需要优化
     if lir_program.contains_virtual_registers() {
-        if verbose {
+        if verbose > 0 {
             println!("检测到虚拟寄存器，应用优化管道...");
         }
         let mut pipeline = karte_lir::OptimizationPipeline::new(optimization_level);
@@ -231,11 +261,11 @@ fn load_ir_for_execution(
             .map_err(|errors| -> Box<dyn std::error::Error> {
                 format!("LIR优化失败: {}", errors.join(", ")).into()
             })?;
-        if verbose {
+        if verbose > 0 {
             println!("优化完成");
         }
     } else {
-        if verbose {
+        if verbose > 0 {
             println!("LIR已优化（仅包含物理寄存器），直接执行");
         }
     }
@@ -247,10 +277,10 @@ fn load_and_execute_ir(
     filename: &str,
     stage: IrStage,
     optimization_level: OptimizationLevel,
-    verbose: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+    verbose: u8,
+) -> Result<i64, Box<dyn std::error::Error>> {
     let lir_program = load_ir_for_execution(filename, stage, optimization_level, verbose)?;
-    runner::execute_lir(&lir_program, verbose)
+    runner::execute_lir(&lir_program, verbose, false)
 }
 
 #[cfg(test)]
@@ -332,6 +362,7 @@ fn main() {
             output,
             heap_stats,
             mode,
+            emit_asm,
         }) => match input {
             Some(ref input_str) => {
                 let (mode, mode_is_explicit) = if let Some(m) = mode {
@@ -342,7 +373,7 @@ fn main() {
                     (default_mode, false)
                 };
                 if Path::new(input_str).exists() {
-                    if let Err(err) = runner::process_file(
+                    match runner::process_file(
                         input_str,
                         optimization_level,
                         cli.verbose,
@@ -351,21 +382,35 @@ fn main() {
                         heap_stats,
                         mode,
                         mode_is_explicit,
+                        emit_asm,
                     ) {
-                        error!("Error: {}", err);
-                        std::process::exit(1);
+                        Ok(exit_code) => {
+                            std::process::exit(exit_code as i32);
+                        }
+                        Err(err) => {
+                            error!("Error: {}", err);
+                            std::process::exit(1);
+                        }
                     }
-                } else if let Err(err) = runner::process_expression(
-                    input_str,
-                    optimization_level,
-                    cli.verbose,
-                    emit_lir,
-                    output.as_deref(),
-                    heap_stats,
-                    mode,
-                ) {
-                    error!("Error: {}", err);
-                    std::process::exit(1);
+                } else {
+                    match runner::process_expression(
+                        input_str,
+                        optimization_level,
+                        cli.verbose,
+                        emit_lir,
+                        output.as_deref(),
+                        heap_stats,
+                        mode,
+                        emit_asm,
+                    ) {
+                        Ok(exit_code) => {
+                            std::process::exit(exit_code as i32);
+                        }
+                        Err(err) => {
+                            error!("Error: {}", err);
+                            std::process::exit(1);
+                        }
+                    }
                 }
             }
             None => {
@@ -373,9 +418,14 @@ fn main() {
             }
         },
         Some(Commands::Execute { input, stage }) => {
-            if let Err(err) = load_and_execute_ir(&input, stage, optimization_level, cli.verbose) {
-                error!("Error: {}", err);
-                std::process::exit(1);
+            match load_and_execute_ir(&input, stage, optimization_level, cli.verbose) {
+                Ok(exit_code) => {
+                    std::process::exit(exit_code as i32);
+                }
+                Err(err) => {
+                    error!("Error: {}", err);
+                    std::process::exit(1);
+                }
             }
         }
         Some(Commands::Repl) => {
@@ -430,10 +480,29 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        Some(Commands::Aot { input, output, mode, target, gc }) => {
+            let mode = mode.map(|m| m.into()).unwrap_or_else(|| {
+                if default_mode_is_explicit { default_mode } else { ParserMode::Script }
+            });
+            let output_path = output.unwrap_or_else(|| "a.out".to_string());
+            let aot_target = match target.as_str() {
+                "x86_64" | "x86" => karte_aot::AotTarget::X86_64,
+                "riscv64" | "rv64" => karte_aot::AotTarget::Riscv64,
+                "aarch64" | "arm64" => karte_aot::AotTarget::AArch64,
+                _ => {
+                    error!("不支持的目标架构: {} (支持: x86_64, riscv64, aarch64)", target);
+                    std::process::exit(1);
+                }
+            };
+            if let Err(e) = runner::aot_compile(&input, &output_path, optimization_level, mode, cli.verbose, aot_target, gc.as_str()) {
+                error!("AOT 编译失败: {}", e);
+                std::process::exit(1);
+            }
+        }
         None => {
             if let Some(ref input) = cli.input {
                 if Path::new(input).exists() {
-                    if let Err(err) = runner::process_file(
+                    match runner::process_file(
                         input,
                         optimization_level,
                         cli.verbose,
@@ -442,21 +511,35 @@ fn main() {
                         cli.heap_stats,
                         default_mode,
                         default_mode_is_explicit,
+                        cli.emit_asm,
                     ) {
-                        error!("Error: {}", err);
-                        std::process::exit(1);
+                        Ok(exit_code) => {
+                            std::process::exit(exit_code as i32);
+                        }
+                        Err(err) => {
+                            error!("Error: {}", err);
+                            std::process::exit(1);
+                        }
                     }
-                } else if let Err(err) = runner::process_expression(
-                    input,
-                    optimization_level,
-                    cli.verbose,
-                    cli.emit_lir,
-                    cli.output.as_deref(),
-                    cli.heap_stats,
-                    default_mode,
-                ) {
-                    error!("Error: {}", err);
-                    std::process::exit(1);
+                } else {
+                    match runner::process_expression(
+                        input,
+                        optimization_level,
+                        cli.verbose,
+                        cli.emit_lir,
+                        cli.output.as_deref(),
+                        cli.heap_stats,
+                        default_mode,
+                        cli.emit_asm,
+                    ) {
+                        Ok(exit_code) => {
+                            std::process::exit(exit_code as i32);
+                        }
+                        Err(err) => {
+                            error!("Error: {}", err);
+                            std::process::exit(1);
+                        }
+                    }
                 }
             } else {
                 runner::run_repl(optimization_level, cli.verbose);

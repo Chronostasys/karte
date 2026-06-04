@@ -1,0 +1,137 @@
+module std.gc
+
+fn gc_init() -> number {
+    let heap = runtime_heap_base();
+    let bump_start = heap + 24;
+    unsafe_store(heap, bump_start);
+    unsafe_store(heap + 8, 0);
+    unsafe_store(heap + 16, 256);
+    heap
+}
+
+fn gc_alloc_inner(total_size: number) -> number {
+    let heap = runtime_heap_base();
+    let bump = unsafe_load(heap);
+    let bump_off = bump - heap;
+    let limit_off = runtime_heap_limit() - heap;
+    let new_off = bump_off + total_size;
+    if new_off >= limit_off {
+        0
+    } else {
+        let new_bump = heap + new_off;
+        unsafe_store(heap, new_bump);
+        unsafe_store(heap + 8, unsafe_load(heap + 8) + 1);
+        unsafe_store(bump, 0);
+        unsafe_store(bump + 8, total_size);
+        bump + 16
+    }
+}
+
+fn gc_alloc(size: number) -> number {
+    let heap = runtime_heap_base();
+    let total_size = (size + 16 + 15) bitand (0 - 16);
+    let alloc_count = unsafe_load(heap + 8);
+    let threshold = unsafe_load(heap + 16);
+    let should_collect = alloc_count >= threshold;
+    if should_collect {
+        gc_collect()
+    } else {
+        gc_alloc_inner(total_size)
+    }
+}
+
+fn gc_mark(obj: number, heap: number, heap_size: number) -> number {
+    let obj_off = obj - heap;
+    if obj_off < 24 {
+        0
+    } else {
+        if obj_off >= heap_size {
+            0
+        } else {
+            let header_ptr = obj - 16;
+            let size_field = unsafe_load(header_ptr + 8);
+            if size_field < 32 {
+                0
+            } else {
+                if size_field > 4096 {
+                    0
+                } else {
+                    let header = unsafe_load(header_ptr);
+                    if header bitand 1 != 0 {
+                        0
+                    } else {
+                        unsafe_store(header_ptr, header bitor 1);
+                        let data_size = size_field - 16;
+                        let i = 0;
+                        while i < data_size {
+                            let field = unsafe_load(obj + i);
+                            let foff = field - heap;
+                            if foff >= 24 {
+                                if foff < heap_size {
+                                    gc_mark(field, heap, heap_size)
+                                } else {
+                                    0
+                                }
+                            } else {
+                                0
+                            };
+                            i = i + 8
+                        };
+                        0
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn gc_sweep(heap: number) -> number {
+    let bump = unsafe_load(heap);
+    let ptr = heap + 24;
+    let new_bump = heap + 24;
+    while ptr < bump {
+        let total_size = unsafe_load(ptr + 8);
+        if total_size < 16 {
+            ptr = bump
+        } else {
+            let header = unsafe_load(ptr);
+            let marked = header bitand 1;
+            if marked != 0 {
+                unsafe_store(ptr, header bitand (0 - 2));
+                new_bump = ptr + total_size;
+                ptr = ptr + total_size
+            } else {
+                ptr = ptr + total_size
+            }
+        }
+    };
+    unsafe_store(heap, new_bump);
+    unsafe_store(heap + 8, 0);
+    new_bump
+}
+
+fn gc_collect() -> number {
+    gc_push_regs();
+    let heap = runtime_heap_base();
+    let heap_size = runtime_heap_limit() - heap;
+    let vm_sp = runtime_vm_sp();
+    let stack_top = runtime_stack_top();
+    let scan = vm_sp;
+    while scan < stack_top {
+        let val = unsafe_load(scan);
+        let voff = val - heap;
+        if voff >= 24 {
+            if voff < heap_size {
+                gc_mark(val, heap, heap_size)
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        scan = scan + 8
+    };
+    let result = gc_sweep(heap);
+    gc_pop_regs();
+    result
+}

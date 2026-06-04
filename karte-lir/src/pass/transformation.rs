@@ -130,6 +130,7 @@ impl DeadCodeElimination {
             Instruction::JumpGreater { .. } => true,
             Instruction::JumpGreaterEqual { .. } => true,
             Instruction::Compare { .. } => true,
+            Instruction::CompareSet { .. } => true,
             Instruction::Label { .. } => true,
             // JumpRegister 已合并为 JumpIndirect
             Instruction::EffectPushHandler { .. }
@@ -141,15 +142,48 @@ impl DeadCodeElimination {
             Instruction::Sub { .. } => false,
             Instruction::Mul { .. } => false,
             Instruction::Div { .. } => false,
+            Instruction::Mod { .. } => false,
+            Instruction::BitAnd { .. }
+            | Instruction::BitOr { .. }
+            | Instruction::BitXor { .. }
+            | Instruction::ShiftLeft { .. }
+            | Instruction::ShiftRight { .. } => false,
+            Instruction::BitNot { .. } => false,
+            Instruction::IntCast { .. } => false,
             Instruction::Load64 { .. } => false,
+            Instruction::Load32 { .. } => false,
+            Instruction::Load8 { .. } => false,
+            Instruction::LoadGlobal { .. } => false,
+            Instruction::GcRegOp { .. } => true, // 保存/恢复寄存器有副作用
+            Instruction::Store32 { .. } => true,
+            Instruction::Store8 { .. } => true,
             Instruction::LoadPair { .. } => false,
             Instruction::StructFieldLoad { .. } => false,
             Instruction::StructFieldAddr { .. } => false,
             Instruction::Nop { .. } => false,
             Instruction::Phi { .. } => false,
+            Instruction::BitAnd { .. } => false,
+            Instruction::BitOr { .. } => false,
+            Instruction::BitXor { .. } => false,
+            Instruction::ShiftLeft { .. } => false,
+            Instruction::ShiftRight { .. } => false,
+            Instruction::BitNot { .. } => false,
+            Instruction::IntCast { .. } => false,
+            Instruction::Safepoint { .. } => true,
             Instruction::JumpIndirect { .. } => true,
             Instruction::JumpRegister { .. } => true,
             Instruction::Safepoint { .. } => false,
+            Instruction::StringConcat { .. } => true,
+            Instruction::StringEqual { .. } => true,
+            Instruction::StringCharAt { .. } => true,
+            Instruction::StringSubstring { .. } => true,
+            Instruction::StringContains { .. } => true,
+            Instruction::SplitCount { .. } => true,
+            Instruction::Trim { .. } => true,
+            Instruction::ToString { .. } => true,
+            Instruction::PrintString { .. } => true,
+            Instruction::PrintNumber { .. } => true,
+            Instruction::PrintBool { .. } => true,
         }
     }
 
@@ -164,18 +198,37 @@ impl DeadCodeElimination {
             Instruction::Add { src1, src2, .. }
             | Instruction::Sub { src1, src2, .. }
             | Instruction::Mul { src1, src2, .. }
-            | Instruction::Div { src1, src2, .. } => {
+            | Instruction::Div { src1, src2, .. }
+            | Instruction::Mod { src1, src2, .. }
+            | Instruction::BitAnd { src1, src2, .. }
+            | Instruction::BitOr { src1, src2, .. }
+            | Instruction::BitXor { src1, src2, .. }
+            | Instruction::ShiftLeft { src1, src2, .. }
+            | Instruction::ShiftRight { src1, src2, .. } => {
                 self.add_operand_registers(src1, &mut used);
                 self.add_operand_registers(src2, &mut used);
             }
-            Instruction::Compare { src1, src2, .. } => {
+            Instruction::BitNot { src, .. } => {
+                self.add_operand_registers(src, &mut used);
+            }
+            Instruction::IntCast { src, .. } => {
+                self.add_operand_registers(src, &mut used);
+            }
+            Instruction::Compare { src1, src2, .. }
+            | Instruction::CompareSet { src1, src2, .. } => {
                 self.add_operand_registers(src1, &mut used);
                 self.add_operand_registers(src2, &mut used);
             }
-            Instruction::Load64 { addr, .. } => {
+            Instruction::Load64 { addr, .. }
+            | Instruction::Load32 { addr, .. }
+            | Instruction::Load8 { addr, .. } => {
                 used.push(*addr);
             }
-            Instruction::Store64 { addr, src, .. } => {
+            Instruction::LoadGlobal { .. } => {
+            }
+            Instruction::Store64 { addr, src, .. }
+            | Instruction::Store32 { addr, src, .. }
+            | Instruction::Store8 { addr, src, .. } => {
                 used.push(*addr);
                 self.add_operand_registers(src, &mut used);
             }
@@ -260,6 +313,42 @@ impl DeadCodeElimination {
                 used.push(Register::Virtual(3));
                 used.push(Register::Virtual(4));
             }
+            Instruction::PrintNumber { value, .. } => {
+                used.push(*value);
+            }
+            Instruction::PrintBool { value, .. } => {
+                used.push(*value);
+            }
+            Instruction::PrintString { ptr, .. } => {
+                used.push(*ptr);
+            }
+            Instruction::StringEqual { left, right, .. } => {
+                used.push(*left);
+                used.push(*right);
+            }
+            Instruction::StringCharAt { str_ptr, index, .. } => {
+                used.push(*str_ptr);
+                used.push(*index);
+            }
+            Instruction::StringSubstring { str_ptr, start, length, .. } => {
+                used.push(*str_ptr);
+                used.push(*start);
+                used.push(*length);
+            }
+            Instruction::StringContains { str_ptr, char_code, .. } => {
+                used.push(*str_ptr);
+                used.push(*char_code);
+            }
+            Instruction::SplitCount { str_ptr, separator, .. } => {
+                used.push(*str_ptr);
+                used.push(*separator);
+            }
+            Instruction::Trim { str_ptr, .. } => {
+                used.push(*str_ptr);
+            }
+            Instruction::ToString { value, .. } => {
+                used.push(*value);
+            }
             _ => {}
         }
 
@@ -284,11 +373,29 @@ impl DeadCodeElimination {
             | Instruction::Sub { dst, .. }
             | Instruction::Mul { dst, .. }
             | Instruction::Div { dst, .. }
+            | Instruction::Mod { dst, .. }
+            | Instruction::BitAnd { dst, .. }
+            | Instruction::BitOr { dst, .. }
+            | Instruction::BitXor { dst, .. }
+            | Instruction::ShiftLeft { dst, .. }
+            | Instruction::ShiftRight { dst, .. }
+            | Instruction::BitNot { dst, .. }
+            | Instruction::IntCast { dst, .. }
             | Instruction::Load64 { dst, .. }
+            | Instruction::Load32 { dst, .. }
+            | Instruction::Load8 { dst, .. }
+            | Instruction::LoadGlobal { dst, .. }
             | Instruction::Alloc { dst, .. }
             | Instruction::StructAlloc { dst, .. }
             | Instruction::StructFieldLoad { dst, .. }
             | Instruction::StructFieldAddr { dst, .. } => Some(*dst),
+            Instruction::StringEqual { dst, .. } => Some(*dst),
+            Instruction::StringCharAt { dst, .. } => Some(*dst),
+            Instruction::StringSubstring { dst, .. } => Some(*dst),
+            Instruction::StringContains { dst, .. } => Some(*dst),
+            Instruction::SplitCount { dst, .. } => Some(*dst),
+            Instruction::Trim { dst, .. } => Some(*dst),
+            Instruction::ToString { dst, .. } => Some(*dst),
             Instruction::LoadPair { dst1, .. } => Some(*dst1),
             Instruction::Call {
                 result: Some(dst), ..
@@ -431,6 +538,114 @@ impl ConstantFolding {
                         changed = true;
                     }
                 }
+                Instruction::Mod {
+                    dst,
+                    src1,
+                    src2,
+                    span,
+                } => {
+                    let dst_reg = *dst;
+                    let span_copy = *span;
+                    if let (Some(&val1), Some(&val2)) = (
+                        self.get_constant_value(src1, &constant_values),
+                        self.get_constant_value(src2, &constant_values),
+                    ) {
+                        if val2 != 0 {
+                            // 折叠取余运算（避免除零）
+                            let result = val1 % val2;
+                            *instruction = Instruction::Move {
+                                dst: dst_reg,
+                                src: Operand::Immediate { value: result },
+                                span: span_copy,
+                            };
+                            constant_values.insert(dst_reg, result);
+                            changed = true;
+                        }
+                    }
+                }
+                Instruction::BitAnd {
+                    dst,
+                    src1,
+                    src2,
+                    span,
+                } => {
+                    let dst_reg = *dst;
+                    let span_copy = *span;
+                    let v1 = self.get_constant_value(src1, &constant_values);
+                    let v2 = self.get_constant_value(src2, &constant_values);
+                    if let (Some(&val1), Some(&val2)) = (v1, v2) {
+                        let result = val1 & val2;
+                        *instruction = Instruction::Move {
+                            dst: dst_reg,
+                            src: Operand::Immediate { value: result },
+                            span: span_copy,
+                        };
+                        constant_values.insert(dst_reg, result);
+                        changed = true;
+                    }
+                }
+                Instruction::BitOr {
+                    dst,
+                    src1,
+                    src2,
+                    span,
+                }
+                | Instruction::BitXor {
+                    dst,
+                    src1,
+                    src2,
+                    span,
+                }
+                | Instruction::ShiftLeft {
+                    dst,
+                    src1,
+                    src2,
+                    span,
+                }
+                | Instruction::ShiftRight {
+                    dst,
+                    src1,
+                    src2,
+                    span,
+                } => {
+                    let dst_reg = *dst;
+                    let span_copy = *span;
+                    if let (Some(&val1), Some(&val2)) = (
+                        self.get_constant_value(src1, &constant_values),
+                        self.get_constant_value(src2, &constant_values),
+                    ) {
+                        let result = match instruction {
+                            Instruction::BitOr { .. } => val1 | val2,
+                            Instruction::BitXor { .. } => val1 ^ val2,
+                            Instruction::ShiftLeft { .. } => val1 << (val2 & 63),
+                            Instruction::ShiftRight { .. } => {
+                                (val1 as u64 >> (val2 as u64 & 63)) as i64
+                            }
+                            _ => unreachable!(),
+                        };
+                        *instruction = Instruction::Move {
+                            dst: dst_reg,
+                            src: Operand::Immediate { value: result },
+                            span: span_copy,
+                        };
+                        constant_values.insert(dst_reg, result);
+                        changed = true;
+                    }
+                }
+                Instruction::BitNot { dst, src, span } => {
+                    let dst_reg = *dst;
+                    let span_copy = *span;
+                    if let Some(&val) = self.get_constant_value(src, &constant_values) {
+                        let result = !val;
+                        *instruction = Instruction::Move {
+                            dst: dst_reg,
+                            src: Operand::Immediate { value: result },
+                            span: span_copy,
+                        };
+                        constant_values.insert(dst_reg, result);
+                        changed = true;
+                    }
+                }
                 _ => {
                     // 其他指令可能使常量值失效
                     if let Some(defined_reg) = self.get_defined_register(instruction) {
@@ -464,6 +679,7 @@ impl ConstantFolding {
             | Instruction::Sub { dst, .. }
             | Instruction::Mul { dst, .. }
             | Instruction::Div { dst, .. }
+            | Instruction::Mod { dst, .. }
             | Instruction::Load64 { dst, .. }
             | Instruction::Alloc { dst, .. }
             | Instruction::StructAlloc { dst, .. }

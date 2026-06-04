@@ -267,6 +267,42 @@ impl FunctionSummaryDatabase {
             },
         );
 
+        // __runtime_string_char_at: 不保存参数，返回新分配
+        self.builtin_summaries.insert(
+            "__runtime_string_char_at".to_string(),
+            FunctionSummary {
+                function_id: FunctionId("__runtime_string_char_at".to_string()),
+                parameter_tags: vec![ParameterTag::NoEscape, ParameterTag::NoEscape],
+                return_source: ReturnSource::LocalAllocation,
+                modifies_global_state: false,
+                is_recursive: false,
+            },
+        );
+
+        // __runtime_string_substring: 不保存参数，返回新分配
+        self.builtin_summaries.insert(
+            "__runtime_string_substring".to_string(),
+            FunctionSummary {
+                function_id: FunctionId("__runtime_string_substring".to_string()),
+                parameter_tags: vec![ParameterTag::NoEscape, ParameterTag::NoEscape, ParameterTag::NoEscape],
+                return_source: ReturnSource::LocalAllocation,
+                modifies_global_state: false,
+                is_recursive: false,
+            },
+        );
+
+        // __runtime_string_contains: 不保存参数，不分配内存，返回数值
+        self.builtin_summaries.insert(
+            "__runtime_string_contains".to_string(),
+            FunctionSummary {
+                function_id: FunctionId("__runtime_string_contains".to_string()),
+                parameter_tags: vec![ParameterTag::NoEscape, ParameterTag::NoEscape],
+                return_source: ReturnSource::Constant,
+                modifies_global_state: false,
+                is_recursive: false,
+            },
+        );
+
         // 未来可以添加更多内置函数...
     }
 

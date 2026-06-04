@@ -245,11 +245,12 @@ mod tests {
             statements: vec![Statement::FunctionDef {
                 name: "foo".to_string(),
                 params: vec![],
-                return_type: Some("number".to_string()),
+                return_type: Some(Type::Number),
                 body: Expr::Boolean {
                     value: true,
                     span: dummy_span(),
                 },
+                is_pub: false,
                 span: dummy_span(),
             }],
             final_expr: None,
@@ -275,10 +276,10 @@ mod tests {
                 name: "foo".to_string(),
                 params: vec![Parameter {
                     name: "x".to_string(),
-                    type_annotation: Some("number".to_string()),
+                    type_annotation: Some(Type::Number),
                     span: dummy_span(),
                 }],
-                return_type: Some("number".to_string()),
+                return_type: Some(Type::Number),
                 body: Expr::BinaryOp {
                     left: Box::new(Expr::Identifier {
                         name: "x".to_string(),
@@ -291,6 +292,7 @@ mod tests {
                     }),
                     span: dummy_span(),
                 },
+                is_pub: false,
                 span: dummy_span(),
             }],
             final_expr: None,
@@ -304,22 +306,23 @@ mod tests {
     }
 
     #[test]
-    fn test_function_undefined_type_annotation_error() {
-        // fn foo(x: UnknownType) -> number { 42 }
-        // 使用未定义的类型，应该报错
+    fn test_function_unknown_type_annotation_compatible() {
+        // fn foo(x: Unknown) -> number { 42 }
+        // Type::Unknown 作为类型标注，type checker 不会报错（Unknown 与任何类型兼容）
         let expr = Expr::Block {
             statements: vec![Statement::FunctionDef {
                 name: "foo".to_string(),
                 params: vec![Parameter {
                     name: "x".to_string(),
-                    type_annotation: Some("UnknownType".to_string()),
+                    type_annotation: Some(Type::Unknown),
                     span: dummy_span(),
                 }],
-                return_type: Some("number".to_string()),
+                return_type: Some(Type::Number),
                 body: Expr::Number {
                     value: 42,
                     span: dummy_span(),
                 },
+                is_pub: false,
                 span: dummy_span(),
             }],
             final_expr: None,
@@ -328,12 +331,8 @@ mod tests {
 
         let (_, diagnostics) = type_check(&expr);
 
-        // 应该有 UndefinedType 错误
-        assert!(diagnostics.has_errors());
-        assert!(diagnostics
-            .diagnostics
-            .iter()
-            .any(|d| d.message.contains("Undefined type")));
+        // Type::Unknown 不报错，因为 Unknown 与任何类型兼容
+        assert!(!diagnostics.has_errors());
     }
 
     #[test]
@@ -344,11 +343,12 @@ mod tests {
             statements: vec![Statement::FunctionDef {
                 name: "foo".to_string(),
                 params: vec![],
-                return_type: Some("number".to_string()),
+                return_type: Some(Type::Number),
                 body: Expr::Number {
                     value: 42,
                     span: dummy_span(),
                 },
+                is_pub: false,
                 span: dummy_span(),
             }],
             final_expr: None,
@@ -370,16 +370,16 @@ mod tests {
                 params: vec![
                     Parameter {
                         name: "x".to_string(),
-                        type_annotation: Some("number".to_string()),
+                        type_annotation: Some(Type::Number),
                         span: dummy_span(),
                     },
                     Parameter {
                         name: "y".to_string(),
-                        type_annotation: Some("number".to_string()),
+                        type_annotation: Some(Type::Number),
                         span: dummy_span(),
                     },
                 ],
-                return_type: Some("number".to_string()),
+                return_type: Some(Type::Number),
                 body: Expr::BinaryOp {
                     left: Box::new(Expr::Identifier {
                         name: "x".to_string(),
@@ -392,6 +392,7 @@ mod tests {
                     }),
                     span: dummy_span(),
                 },
+                is_pub: false,
                 span: dummy_span(),
             }],
             final_expr: None,
@@ -415,10 +416,10 @@ mod tests {
                 name: "foo".to_string(),
                 params: vec![Parameter {
                     name: "x".to_string(),
-                    type_annotation: Some("number".to_string()),
+                    type_annotation: Some(Type::Number),
                     span: dummy_span(),
                 }],
-                return_type: Some("number".to_string()),
+                return_type: Some(Type::Number),
                 body: Expr::If {
                     condition: Box::new(Expr::BinaryOp {
                         left: Box::new(Expr::Identifier {
@@ -442,6 +443,7 @@ mod tests {
                     })),
                     span: dummy_span(),
                 },
+                is_pub: false,
                 span: dummy_span(),
             }],
             final_expr: None,
@@ -479,6 +481,7 @@ mod tests {
                     }),
                     span: dummy_span(),
                 },
+                is_pub: false,
                 span: dummy_span(),
             }],
             final_expr: None,

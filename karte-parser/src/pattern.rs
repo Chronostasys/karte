@@ -56,11 +56,29 @@ impl<'a> Parser<'a> {
                             } else if matches!(next_token.token, Token::LeftParen) {
                                 self.parse_constructor_pattern(name, span)
                             } else {
-                                // 变量模式或简单构造器
-                                Ok(karte_hir::Pattern::Variable { name, span })
+                                // 大写字母开头的标识符视为零参数构造器模式
+                                // （枚举变体如 Red、Green、Blue），小写字母开头视为变量绑定
+                                if name.chars().next().map_or(false, |c| c.is_uppercase()) {
+                                    Ok(karte_hir::Pattern::Constructor {
+                                        name,
+                                        args: vec![],
+                                        span,
+                                    })
+                                } else {
+                                    Ok(karte_hir::Pattern::Variable { name, span })
+                                }
                             }
                         } else {
-                            Ok(karte_hir::Pattern::Variable { name, span })
+                            // 大写字母开头的标识符视为零参数构造器模式
+                            if name.chars().next().map_or(false, |c| c.is_uppercase()) {
+                                Ok(karte_hir::Pattern::Constructor {
+                                    name,
+                                    args: vec![],
+                                    span,
+                                })
+                            } else {
+                                Ok(karte_hir::Pattern::Variable { name, span })
+                            }
                         }
                     }
                 }
@@ -96,11 +114,11 @@ impl<'a> Parser<'a> {
                 if let Some(arg_token) = self.peek() {
                     if matches!(arg_token.token, Token::LeftParen) {
                         self.advance(); // consume '('
-                        let arg = if let Some(peeked) = self.peek() {
+                        let args = if let Some(peeked) = self.peek() {
                             if matches!(peeked.token, Token::RightParen) {
-                                None
+                                vec![]
                             } else {
-                                Some(Box::new(self.parse_pattern()?))
+                                vec![self.parse_pattern()?]
                             }
                         } else {
                             return Err(ParseError::UnexpectedEof {
@@ -116,7 +134,7 @@ impl<'a> Parser<'a> {
                                 Ok(karte_hir::Pattern::QualifiedConstructor {
                                     type_name,
                                     constructor_name,
-                                    arg,
+                                    args,
                                     span: full_span,
                                 })
                             } else {
@@ -137,7 +155,7 @@ impl<'a> Parser<'a> {
                         Ok(karte_hir::Pattern::QualifiedConstructor {
                             type_name,
                             constructor_name,
-                            arg: None,
+                            args: vec![],
                             span: full_span,
                         })
                     }
@@ -147,7 +165,7 @@ impl<'a> Parser<'a> {
                     Ok(karte_hir::Pattern::QualifiedConstructor {
                         type_name,
                         constructor_name,
-                        arg: None,
+                        args: vec![],
                         span: full_span,
                     })
                 }
@@ -172,11 +190,18 @@ impl<'a> Parser<'a> {
         start_span: Span,
     ) -> Result<karte_hir::Pattern, ParseError> {
         self.advance(); // consume '('
-        let arg = if let Some(peeked) = self.peek() {
-            if matches!(peeked.token, Token::RightParen) {
-                None
-            } else {
-                Some(Box::new(self.parse_pattern()?))
+        let mut args = Vec::new();
+        if let Some(peeked) = self.peek() {
+            if !matches!(peeked.token, Token::RightParen) {
+                args.push(self.parse_pattern()?);
+                while let Some(next) = self.peek() {
+                    if matches!(next.token, Token::Comma) {
+                        self.advance();
+                        args.push(self.parse_pattern()?);
+                    } else {
+                        break;
+                    }
+                }
             }
         } else {
             return Err(ParseError::UnexpectedEof {
@@ -191,7 +216,7 @@ impl<'a> Parser<'a> {
                 let full_span = Span::new(start_span.start, end_span.end);
                 Ok(karte_hir::Pattern::Constructor {
                     name,
-                    arg,
+                    args,
                     span: full_span,
                 })
             } else {

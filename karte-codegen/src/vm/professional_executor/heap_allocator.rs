@@ -112,7 +112,7 @@ impl HeapAllocator {
     ///
     /// # 返回值
     /// 返回分配的地址，失败时返回错误
-    pub fn allocate_closure_env(&mut self, field_count: usize) -> Result<usize, String> {
+    pub fn allocate_closure_env(&mut self, field_count: usize) -> crate::Result<usize> {
         // 每个字段8字节，加上对象头部的8字节
         let size = 8 + field_count * 8;
         let aligned_size = align_up(size, 8);
@@ -131,7 +131,7 @@ impl HeapAllocator {
         name: String,
         field_count: usize,
         size: usize,
-    ) -> Result<usize, String> {
+    ) -> crate::Result<usize> {
         let aligned_size = align_up(size, 8);
 
         let obj_type = HeapObjectType::Struct {
@@ -144,7 +144,7 @@ impl HeapAllocator {
     }
 
     /// 分配原始内存块
-    pub fn allocate_raw(&mut self, size: usize) -> Result<usize, String> {
+    pub fn allocate_raw(&mut self, size: usize) -> crate::Result<usize> {
         let aligned_size = align_up(size, 8);
 
         let obj_type = HeapObjectType::Raw { size: aligned_size };
@@ -153,11 +153,11 @@ impl HeapAllocator {
     }
 
     /// 通用对象分配函数
-    fn allocate_object(&mut self, obj_type: HeapObjectType, size: usize) -> Result<usize, String> {
+    fn allocate_object(&mut self, obj_type: HeapObjectType, size: usize) -> crate::Result<usize> {
         // 查找合适的空闲块
         let block_index = self
             .find_suitable_block(size)
-            .ok_or_else(|| format!("堆内存不足：需要 {} 字节", size))?;
+            .ok_or_else(|| crate::KarteError::from(format!("堆内存不足：需要 {} 字节", size)))?;
 
         let alloc_addr = self.free_blocks[block_index].start_addr;
         let old_block_size = self.free_blocks[block_index].size;

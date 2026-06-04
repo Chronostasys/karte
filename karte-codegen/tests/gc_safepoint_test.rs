@@ -51,6 +51,7 @@ fn test_safepoint_instruction_compilation() {
         main_function: Some("main".to_string()),
         global_struct_types: HashMap::new(),
         global_variables: HashMap::new(),
+        target: "x86_64".to_string(),
     };
 
     // 创建执行引擎
@@ -148,6 +149,7 @@ fn test_multiple_safepoints_in_loop() {
         main_function: Some("main".to_string()),
         global_struct_types: HashMap::new(),
         global_variables: HashMap::new(),
+        target: "x86_64".to_string(),
     };
 
     // 创建执行引擎

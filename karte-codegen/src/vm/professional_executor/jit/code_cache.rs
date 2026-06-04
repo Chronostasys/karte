@@ -80,7 +80,7 @@ impl CodeCache {
         &mut self,
         function_name: String,
         compiled_function: CompiledFunction,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let function_size = compiled_function.code_size();
 
         // 检查是否会超出大小限制
@@ -172,7 +172,7 @@ impl CodeCache {
     }
 
     /// 驱逐最少使用的函数以释放空间
-    fn evict_lru_functions(&mut self, needed_space: usize) -> Result<(), String> {
+    fn evict_lru_functions(&mut self, needed_space: usize) -> crate::Result<()> {
         let mut functions_by_usage: Vec<_> = self
             .call_counts
             .iter()
@@ -200,7 +200,7 @@ impl CodeCache {
             return Err(format!(
                 "无法释放足够空间：需要 {} 字节，最多只能释放 {} 字节",
                 needed_space, freed_space
-            ));
+            ).into());
         }
 
         // 移除选中的函数
@@ -222,7 +222,7 @@ impl CodeCache {
     }
 
     /// 设置大小限制
-    pub fn set_size_limit(&mut self, new_limit: usize) -> Result<(), String> {
+    pub fn set_size_limit(&mut self, new_limit: usize) -> crate::Result<()> {
         if new_limit < self.total_size {
             // 需要清理一些函数
             let excess = self.total_size - new_limit;

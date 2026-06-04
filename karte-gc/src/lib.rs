@@ -222,22 +222,12 @@ unsafe fn karte_virtual_stack_scanner(
 ) -> Vec<*mut u8> {
     let mut roots = Vec::new();
 
-    // 获取当前栈顶（r6的值）
-    let current_top = CURRENT_VIRTUAL_STACK_TOP.with(|top| top.get());
-
-    // 如果栈顶有效且在合理范围内，使用它；否则使用整个栈区间（后备方案）
-    let scan_start =
-        if !current_top.is_null() && current_top >= stack_start && current_top <= stack_end {
-            log::debug!(
-                "Using dynamic stack top: {:p} (saving {} bytes scan)",
-                current_top,
-                current_top as usize - stack_start as usize
-            );
-            current_top
-        } else {
-            log::debug!("Using full stack range (stack top not set or invalid)");
-            stack_start
-        };
+    // 🔧 修复：始终扫描完整虚拟栈区间
+    // current_top 是通过 update_virtual_stack_top 设置的，但 gc_safepoint 中
+    // 传入的是 C 系统栈指针（immix::current_sp()），不是 Karte 虚拟栈的 vm_sp。
+    // 这导致扫描只覆盖虚拟栈的一小部分，遗漏了很多 GC 根指针。
+    // 安全起见，始终扫描完整区间。
+    let scan_start = stack_start;
 
     // 按 8 字节对齐遍历栈区间
     let mut current = scan_start as *const u64;
@@ -257,7 +247,7 @@ unsafe fn karte_virtual_stack_scanner(
         if value != 0 && value % 8 == 0 {
             // 检查是否在用户空间地址范围内
             // 避免内核地址 (> 0x0000_7fff_ffff_ffff) 和明显无效地址 (< 0x1000)
-            if value > 0x1000 && value < 0x0000_7fff_ffff_ffff {
+            if (value as isize) > 0 && value < 0x0000_FFFF_FFFF_FFFF {
                 // 🔧 修复：返回栈位置的地址（指向对象指针的指针），而不是对象指针本身
                 // mark_ptr 期望接收指向对象指针的指针，它会解引用获取实际的对象指针
                 log::debug!("  [ROOT] stack_loc={:p} -> heap_ptr=0x{:X}", current, value);

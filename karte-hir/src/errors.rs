@@ -73,6 +73,21 @@ pub enum TypeCheckError {
         symbol: String,
         span: Span,
     },
+    IndexOutOfBounds {
+        index: i64,
+        length: i64,
+        span: Span,
+    },
+    DuplicateFunctionDefinition {
+        name: String,
+        span: Span,
+    },
+    /// 内建函数使用错误
+    BuiltinFunctionError {
+        function: String,
+        message: String,
+        span: Span,
+    },
 }
 
 impl fmt::Display for TypeCheckError {
@@ -84,7 +99,7 @@ impl fmt::Display for TypeCheckError {
             TypeCheckError::TypeMismatch {
                 expected, found, ..
             } => {
-                write!(f, "Type mismatch: expected {}, found {}", expected, found)
+                write!(f, "Type mismatch: expected `{}`, found `{}`", expected, found)
             }
             TypeCheckError::ArityMismatch {
                 expected, found, ..
@@ -151,6 +166,15 @@ impl fmt::Display for TypeCheckError {
             TypeCheckError::UndefinedModuleSymbol { module, symbol, .. } => {
                 write!(f, "Module `{}` does not export `{}`", module, symbol)
             }
+            TypeCheckError::DuplicateFunctionDefinition { name, .. } => {
+                write!(f, "Duplicate function definition: {}", name)
+            }
+            TypeCheckError::IndexOutOfBounds { index, length, .. } => {
+                write!(f, "Index {} out of bounds (length {})", index, length)
+            }
+            TypeCheckError::BuiltinFunctionError { function, message, .. } => {
+                write!(f, "Builtin function `{}`: {}", function, message)
+            }
         }
     }
 }
@@ -173,7 +197,10 @@ impl TypeCheckError {
             | TypeCheckError::UndefinedType { span, .. }
             | TypeCheckError::InvalidAssignmentTarget { span }
             | TypeCheckError::ModuleInterfaceUnavailable { span, .. }
-            | TypeCheckError::UndefinedModuleSymbol { span, .. } => *span,
+            | TypeCheckError::UndefinedModuleSymbol { span, .. }
+            | TypeCheckError::DuplicateFunctionDefinition { span, .. }
+            | TypeCheckError::IndexOutOfBounds { span, .. }
+            | TypeCheckError::BuiltinFunctionError { span, .. } => *span,
         }
     }
 }

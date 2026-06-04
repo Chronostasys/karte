@@ -267,12 +267,16 @@ pub fn compile_source_to_artifacts(
         }
     }
 
-    let result = result.ok_or("Failed to parse expression or type check failed")?;
-    let parsed_program = result.program;
-    let result_type = result.result_type;
-    let module_context = result.module_context;
+    let mut result = result.ok_or("Failed to parse expression or type check failed")?;
+
+    // 先使用 result 的引用构建 LoweringOptions 和完成 MIR lowering，
+    // 再 move result.program。虽然 ParsedProgram.body 已经是 Box<Expr>（堆分配），
+    // 但仍需在 move 前完成 MIR lowering 以确保 expr_types 中的指针键有效。
+    let result_type = result.result_type.clone();
+    let module_context = result.module_context().clone();
     let lowering_options = LoweringOptions {
-        known_functions: module_context
+        known_functions: result
+            .module_context()
             .imports
             .iter()
             .filter(|binding| binding.symbol != "*")
@@ -283,7 +287,7 @@ pub fn compile_source_to_artifacts(
     };
 
     if verbose && filename == "input" {
-        println!("AST: {}", &parsed_program.body);
+        println!("AST: {}", result.expr());
     }
     if verbose {
         println!("Type: {}", result_type);
@@ -292,12 +296,8 @@ pub fn compile_source_to_artifacts(
     if verbose {
         println!("\n--- Lowering to MIR ---");
     }
-    println!(
-        "[Project] expr_types size in lowering_options: {}",
-        lowering_options.expr_types.len()
-    );
     let mut mir_program =
-        match lower_expr_to_mir_with_options(&parsed_program.body, lowering_options) {
+        match lower_expr_to_mir_with_options(result.expr(), lowering_options) {
             Ok(prog) => prog,
             Err(errors) => {
                 for err in errors {
@@ -357,6 +357,9 @@ pub fn compile_source_to_artifacts(
         let key_str = format!("{}-{:x}", safe_module_id, ctx.interface_hash);
         cache.store(&key_str, &mir_program, &lir_program);
     }
+
+    // 在所有使用 result 引用的操作完成之后，再 move program
+    let parsed_program = result.program;
 
     Ok(CompilationArtifacts {
         parsed_program,

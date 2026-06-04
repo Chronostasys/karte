@@ -11,6 +11,7 @@ pub mod pass_manager;
 pub mod pass_registry;
 pub mod peephole_optimization_pass;
 pub mod phi_elimination;
+pub mod pipeline_invariants;
 pub mod register_allocation;
 pub mod ssa_construction;
 pub mod stack_frame_layout;
@@ -30,6 +31,7 @@ pub use pass_manager::*;
 pub use pass_registry::{PassRegistry, PipelinePreset};
 pub use peephole_optimization_pass::*;
 pub use phi_elimination::*;
+pub use pipeline_invariants::*;
 pub use register_allocation::*;
 pub use ssa_construction::*;
 pub use stack_frame_layout::*;
@@ -127,7 +129,7 @@ pub trait AnalysisPass: Send + Sync {
         &mut self,
         function: &LirFunction,
         analyses: &AnalysisManager,
-    ) -> Result<Box<dyn AnalysisResult>, String>;
+    ) -> crate::Result<Box<dyn AnalysisResult>>;
 
     /// 获取需要的分析信息
     fn required_analyses(&self) -> Vec<&'static str> {
@@ -140,13 +142,28 @@ pub trait AnalysisPass: Send + Sync {
 pub struct AnalysisManager {
     /// 存储分析结果
     pub results: HashMap<String, Box<dyn AnalysisResult>>,
+    /// 目标架构的调用约定（由 PassManager 在运行前注入）
+    calling_convention: Option<karte_common::calling_convention::CallingConvention>,
 }
 
 impl AnalysisManager {
     pub fn new() -> Self {
         Self {
             results: HashMap::new(),
+            calling_convention: None,
         }
+    }
+
+    /// 存储目标架构的调用约定
+    pub fn store_calling_convention(&mut self, cc: karte_common::calling_convention::CallingConvention) {
+        self.calling_convention = Some(cc);
+    }
+
+    /// 获取目标架构的调用约定
+    /// 如果没有设置，回退到 CallingConvention::standard()（编译主机架构）
+    pub fn get_calling_convention(&self) -> karte_common::calling_convention::CallingConvention {
+        self.calling_convention.clone()
+            .unwrap_or_else(karte_common::calling_convention::CallingConvention::standard)
     }
 
     /// 存储分析结果

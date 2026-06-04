@@ -3,3 +3,5 @@
 pub mod lir_codegen;
 pub mod vm;
 pub use lir_codegen::*;
+
+pub use karte_common::error::{KarteError, Result};

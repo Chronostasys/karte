@@ -18,7 +18,7 @@ use std::collections::{HashMap, HashSet};
 ///
 /// 调用约定：
 /// - r0: 返回值
-/// - r1-r4: 参数传递（最多4个参数）
+/// - 参数寄存器：具体数量由目标架构调用约定决定（x86_64=6, AArch64/RISC-V=8）
 /// - r5: 返回地址
 /// - r6: 栈指针（SP）
 /// - r7: 帧指针（FP）
@@ -61,6 +61,11 @@ impl SimpleStackRegisterAllocation {
             stack_address_registers: std::collections::HashSet::new(),
         }
     }
+
+    /// 获取当前使用的调用约定
+    pub fn calling_convention(&self) -> &CallingConvention {
+        &self.calling_convention
+    }
 }
 
 impl FunctionPass for SimpleStackRegisterAllocation {
@@ -77,6 +82,9 @@ impl FunctionPass for SimpleStackRegisterAllocation {
         function: &mut LirFunction,
         analyses: &mut AnalysisManager,
     ) -> PassResult {
+        // 从 AnalysisManager 获取目标架构的调用约定（支持 cross-compile）
+        self.calling_convention = analyses.get_calling_convention();
+
         info!("🎯 开始遵循调用约定的寄存器分配：{}", function.name);
 
         // 重置状态
@@ -195,14 +203,14 @@ impl SimpleStackRegisterAllocation {
     /// 4. 上述逻辑全部失败则分配失败，需要生成栈溢出槽
     fn build_calling_convention_allocation_map(
         &mut self,
-        function: &LirFunction,
+        function: &mut LirFunction,
         virtual_registers: &[Register],
     ) -> HashMap<Register, AllocationTarget> {
         info!("🎯 开始遵循调用约定的寄存器分配：{}", function.name);
 
-        // 🔧 关键修复：首先进行生命周期分析
+        // 🔧 关键修复：首先进行生命周期分析（使用目标架构的调用约定）
         let lifetime_analyzer =
-            lifetime_analysis::LifetimeAnalyzer::new(types::CallingConvention::standard());
+            lifetime_analysis::LifetimeAnalyzer::new(self.calling_convention.clone());
         let (lifetimes, register_types) = lifetime_analyzer.analyze_simple(function);
 
         // 记录所有栈地址寄存器，供后续重写阶段使用
@@ -223,19 +231,40 @@ impl SimpleStackRegisterAllocation {
             lifetime_map.insert(lifetime.register, (lifetime.start, lifetime.end));
         }
 
+        // 🔧 收集 Div/Mod 指令位置：x86_64 的 idiv 隐式修改 RDX（寄存器2），
+        // 任何生命周期跨越 Div/Mod 的虚拟寄存器不能分配到 RDX。
+        let div_mod_positions: Vec<usize> = function.instructions.iter().enumerate()
+            .filter(|(_, inst)| matches!(inst, Instruction::Div { .. } | Instruction::Mod { .. }))
+            .map(|(i, _)| i)
+            .collect();
+
         let mut allocation_map = HashMap::new();
         let mut used_physical_regs = HashSet::new();
 
         // 第一步：为函数参数寄存器分配固定的物理寄存器
         info!("🔧 第一步：分配函数参数寄存器");
+        
+        // 使用 CallingConvention 集中定义的溢出寄存器列表
+        let overflow_regs = self.calling_convention.overflow_argument_registers();
+        let register_limit = self.calling_convention.register_passing_limit();
+
+        
         for (i, &param_reg) in function.parameter_registers.iter().enumerate() {
-            if i < self.calling_convention.argument_registers.len() {
-                let physical_reg = self.calling_convention.argument_registers[i];
+            if i < register_limit {
+                // 寄存器传递：argument_registers 或 overflow_argument_registers
+                let physical_reg = if i < self.calling_convention.argument_registers.len() {
+                    self.calling_convention.argument_registers[i]
+                } else {
+                    overflow_regs[i - self.calling_convention.argument_registers.len()]
+                };
                 allocation_map.insert(param_reg, AllocationTarget::Register(physical_reg));
                 used_physical_regs.insert(physical_reg);
-                info!("  参数寄存器 {:?} -> r{}", param_reg, physical_reg);
+                info!("  参数寄存器 {:?} -> r{} ({})", param_reg, physical_reg,
+                    if i < self.calling_convention.argument_registers.len() { "arg" } else { "overflow" });
             } else {
-                // 参数过多，需要溢出到栈
+                // 虚拟栈传递：分配到 Spill slot
+                // caller 端会将这些参数推入虚拟栈，callee 端的 prologue 会从虚拟栈
+                // 加载到对应的 spill slot
                 let spill_slot = allocation_map
                     .values()
                     .filter_map(|target| {
@@ -249,7 +278,61 @@ impl SimpleStackRegisterAllocation {
                     .unwrap_or(0)
                     + 1;
                 allocation_map.insert(param_reg, AllocationTarget::Spill(spill_slot));
-                info!("  参数寄存器 {:?} -> 溢出槽{}", param_reg, spill_slot);
+                info!("  栈传递参数 {:?} -> 溢出槽{}", param_reg, spill_slot);
+            }
+        }
+
+        // 🔧 修复：x86_64 的 idiv 隐式修改 RDX（物理寄存器2）
+        // 如果参数被分配到 RDX 且函数中有 Div/Mod 指令，
+        // 需要将参数移到安全的寄存器，在函数开头插入一条 Move 指令
+        if !div_mod_positions.is_empty() {
+            const RDX: u8 = 2; // x86_64 RDX
+
+            // 检查是否有参数被分配到 RDX
+            let mut params_on_rdx: Vec<(Register, u8)> = Vec::new(); // (虚拟寄存器, 调用约定中的参数索引)
+            for (i, &param_reg) in function.parameter_registers.iter().enumerate() {
+                if i < register_limit {
+                    if let Some(AllocationTarget::Register(phys)) = allocation_map.get(&param_reg) {
+                        if *phys == RDX {
+                            params_on_rdx.push((param_reg, i as u8));
+                        }
+                    }
+                }
+            }
+
+            if !params_on_rdx.is_empty() {
+                // 为每个需要从 RDX 移出的参数找一个安全的物理寄存器
+                for (param_vreg, _arg_idx) in &params_on_rdx {
+                    // 寻找安全的物理寄存器（不在 used_physical_regs 中的）
+                    let safe_reg = self.calling_convention.get_allocatable_registers()
+                        .into_iter()
+                        .find(|&r| !used_physical_regs.contains(&r) && r != RDX);
+
+                    if let Some(safe_phys) = safe_reg {
+                        // 在函数开头插入 Move: safe_phys <- RDX
+                        // 找到第一个 Label 后面的位置
+                        let insert_pos = function.instructions.iter().position(|inst| {
+                            matches!(inst, Instruction::Label { .. })
+                        }).map(|p| p + 1).unwrap_or(0);
+
+                        let move_inst = Instruction::Move {
+                            dst: Register::Physical(safe_phys),
+                            src: Operand::Register { id: Register::Physical(RDX) },
+                            span: Span::dummy(),
+                        };
+                        function.instructions.insert(insert_pos, move_inst);
+
+                        // 更新分配映射：参数从 RDX 改为 safe_phys
+                        allocation_map.insert(*param_vreg, AllocationTarget::Register(safe_phys));
+                        used_physical_regs.insert(safe_phys);
+
+                        info!("  ⚠️ 参数 {:?} 从 RDX(r2) 移到 r{} (避免 Div/Mod 隐式修改)", param_vreg, safe_phys);
+                    } else {
+                        // 没有可用的安全寄存器，溢出到栈
+                        // 这种情况在参数数量少时不太可能发生
+                        info!("  ⚠️ 参数 {:?} 无法从 RDX 移出，无可用寄存器", param_vreg);
+                    }
+                }
             }
         }
 
@@ -299,18 +382,82 @@ impl SimpleStackRegisterAllocation {
                         function_register, ..
                     } = inst
                     {
-                        allocation_map.insert(*function_register, AllocationTarget::Register(5));
-                        used_physical_regs.insert(5);
+                        // CallIndirect 的函数寄存器使用 effect_resume_temp
+                        // 这与 lower_call_indirect 中的临时寄存器一致
+                        let temp_reg = self.calling_convention.effect_resume_temp;
+                        allocation_map.insert(*function_register, AllocationTarget::Register(temp_reg));
+                        used_physical_regs.insert(temp_reg);
                     }
                 }
                 Instruction::JumpRegister {
                     target_register, ..
                 } => {
-                    used_physical_regs.insert(5);
-                    allocation_map.insert(*target_register, AllocationTarget::Register(5));
+                    let temp_reg = self.calling_convention.effect_resume_temp;
+                    used_physical_regs.insert(temp_reg);
+                    allocation_map.insert(*target_register, AllocationTarget::Register(temp_reg));
                     // JumpRegister 也不应该强制参数寄存器
                 }
                 _ => {}
+            }
+        }
+
+        // 🔧 收集 Call/CallIndirect 中使用的所有虚拟寄存器及其 Move/Load64 源操作数
+        // 这些寄存器在 instruction_lowering_pass 中被直接使用。
+        // apply_allocation_with_spilling 可能插入临时 load/store，覆盖这些物理寄存器。
+        // 禁止其他虚拟寄存器复用这些寄存器的物理寄存器。
+        let mut call_arg_operand_registers: HashSet<Register> = HashSet::new();
+        
+        // 首先收集 args 和 arg_operands 中的虚拟寄存器
+        for inst in &function.instructions {
+            match inst {
+                Instruction::Call { args, arg_operands, .. } |
+                Instruction::CallIndirect { args, arg_operands, .. } => {
+                    for op in arg_operands {
+                        if let Operand::Register { id } = op {
+                            if id.is_virtual() {
+                                call_arg_operand_registers.insert(*id);
+                            }
+                        }
+                    }
+                    for reg in args {
+                        if reg.is_virtual() {
+                            call_arg_operand_registers.insert(*reg);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        // 传递性收集：Move 和 Load64 的源操作数
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for inst in &function.instructions {
+                if let Instruction::Move { dst, src, .. } = inst {
+                    if let Register::Virtual(_) = dst {
+                        if call_arg_operand_registers.contains(dst) {
+                            if let Operand::Register { id } = src {
+                                if id.is_virtual() && !call_arg_operand_registers.contains(id) {
+                                    call_arg_operand_registers.insert(*id);
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Instruction::Load64 { dst, addr, .. } = inst {
+                    if let Register::Virtual(_) = dst {
+                        if call_arg_operand_registers.contains(dst) {
+                            if let Register::Virtual(_) = addr {
+                                if !call_arg_operand_registers.contains(addr) {
+                                    call_arg_operand_registers.insert(*addr);
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -370,6 +517,16 @@ impl SimpleStackRegisterAllocation {
             let mut assigned_physical_reg = None;
 
             for &physical_reg in &self.calling_convention.get_allocatable_registers() {
+                // 🔧 x86_64: idiv 隐式修改 RDX（物理寄存器2），生命周期跨越 Div/Mod
+                // 指令的虚拟寄存器不能分配到 RDX，否则值会被覆盖
+                if physical_reg == 2 && !div_mod_positions.is_empty() {
+                    let (current_start, current_end) = lifetime_map.get(&virtual_reg).copied().unwrap_or((0, 0));
+                    if div_mod_positions.iter().any(|&pos| pos >= current_start && pos <= current_end) {
+                        info!("    ❌ 跳过物理寄存器 r2 (RDX): 生命周期跨越 Div/Mod 指令");
+                        continue;
+                    }
+                }
+
                 info!("  🔍 尝试物理寄存器 r{}", physical_reg);
 
                 if used_physical_regs.contains(&physical_reg) {
@@ -383,6 +540,7 @@ impl SimpleStackRegisterAllocation {
                         physical_reg,
                         &allocation_map,
                         &lifetime_map,
+                        &call_arg_operand_registers,
                     );
 
                     if can_reuse {
@@ -449,6 +607,7 @@ impl SimpleStackRegisterAllocation {
         physical_reg: u8,
         allocation_map: &HashMap<Register, AllocationTarget>,
         lifetime_map: &HashMap<Register, (usize, usize)>,
+        call_arg_operand_registers: &HashSet<Register>,
     ) -> bool {
         let (current_start, current_end) =
             lifetime_map.get(&virtual_reg).copied().unwrap_or((0, 0));
@@ -460,9 +619,25 @@ impl SimpleStackRegisterAllocation {
         debug!("  当前寄存器生命周期: [{}, {}]", current_start, current_end);
 
         // 查找所有已分配到该物理寄存器的虚拟寄存器
-        for (allocated_virtual_reg, target) in allocation_map {
+        // 🔧 修复：按确定性顺序遍历，确保结果一致
+        let mut sorted_entries: Vec<_> = allocation_map.iter().collect();
+        sorted_entries.sort_by_key(|(reg, _)| reg.id());
+        for (allocated_virtual_reg, target) in &sorted_entries {
             if let AllocationTarget::Register(allocated_physical_reg) = target {
                 if *allocated_physical_reg == physical_reg {
+                    // 🔧 保护 Call/CallIndirect 相关的虚拟寄存器不被复用
+                    let is_current_protected = call_arg_operand_registers.contains(&virtual_reg);
+                    let is_allocated_protected = call_arg_operand_registers.contains(allocated_virtual_reg);
+                        
+                    if is_allocated_protected || is_current_protected {
+                        debug!(
+                            "  ❌ 物理寄存器 r{} 受保护（allocated={:?} protected={}, current={:?} protected={}）",
+                            physical_reg, allocated_virtual_reg, is_allocated_protected,
+                            virtual_reg, is_current_protected
+                        );
+                        return false;
+                    }
+
                     let (allocated_start, allocated_end) = lifetime_map
                         .get(allocated_virtual_reg)
                         .copied()
@@ -522,7 +697,7 @@ impl SimpleStackRegisterAllocation {
 
         // 🎯 第一步：使用生命周期分析器获取精确的寄存器活跃度信息
         let lifetime_analyzer =
-            lifetime_analysis::LifetimeAnalyzer::new(types::CallingConvention::standard());
+            lifetime_analysis::LifetimeAnalyzer::new(self.calling_convention.clone());
         let (lifetimes, _register_types) = lifetime_analyzer.analyze_simple(function);
 
         info!("📊 生命周期分析结果:");
@@ -560,9 +735,15 @@ impl SimpleStackRegisterAllocation {
         }
 
         // 🔧 应用指令级寄存器替换（针对溢出寄存器）
-        for (index, replacements) in pending_replacements {
+        // 🔧 修复：按指令索引排序，确保确定性
+        let mut sorted_pending: Vec<_> = pending_replacements.into_iter().collect();
+        sorted_pending.sort_by_key(|(idx, _)| *idx);
+        for (index, replacements) in sorted_pending {
             if let Some(instruction) = function.instructions.get_mut(index) {
-                for (old_reg, new_reg) in replacements {
+                // 🔧 修复：按寄存器 ID 排序替换列表，确保确定性
+                let mut sorted_replacements = replacements;
+                sorted_replacements.sort_by_key(|(old, _)| old.id());
+                for (old_reg, new_reg) in sorted_replacements {
                     instruction.replace_register(old_reg, new_reg);
                 }
             }
@@ -597,27 +778,31 @@ impl SimpleStackRegisterAllocation {
     fn has_non_address_usage(&self, register: Register, function: &LirFunction) -> bool {
         for instruction in &function.instructions {
             match instruction {
-                Instruction::Load64 { addr, dst, .. } => {
-                    // 作为地址使用，这是地址用途
+                Instruction::Load64 { addr, dst, .. }
+                | Instruction::Load32 { addr, dst, .. }
+                | Instruction::Load8 { addr, dst, .. } => {
                     if *addr == register {
                         continue;
                     }
-                    // 作为目标寄存器使用，这是非地址用途
                     if *dst == register {
                         return true;
                     }
-                    // 检查是否作为其他操作数使用
                     let used_regs = instruction.get_used_registers();
                     if used_regs.contains(&register) {
-                        return true; // 作为非地址操作数使用
+                        return true;
                     }
                 }
-                Instruction::Store64 { addr, src, .. } => {
-                    // 作为地址使用，这是地址用途
+                Instruction::LoadGlobal { dst, .. } => {
+                    if *dst == register {
+                        return true;
+                    }
+                }
+                Instruction::Store64 { addr, src, .. }
+                | Instruction::Store32 { addr, src, .. }
+                | Instruction::Store8 { addr, src, .. } => {
                     if *addr == register {
                         continue;
                     }
-                    // 作为存储的数据使用，这是非地址用途
                     if let Operand::Register { id } = src {
                         if *id == register {
                             return true;
@@ -651,8 +836,12 @@ impl SimpleStackRegisterAllocation {
     ) -> HashMap<Register, Register> {
         let mut replacements = HashMap::new();
 
+        // 🔧 修复：按确定性顺序遍历 allocation_map
+        let mut sorted_alloc: Vec<_> = allocation_map.iter().collect();
+        sorted_alloc.sort_by_key(|(reg, _)| reg.id());
+
         // 🔧 关键修复：分析寄存器用途，只跳过纯地址用途的寄存器
-        for (virtual_reg, target) in allocation_map {
+        for (virtual_reg, target) in sorted_alloc {
             // 检查栈地址寄存器是否有非地址用途
             if self.stack_address_registers.contains(virtual_reg) {
                 let has_non_address_usage = self.has_non_address_usage(*virtual_reg, function);
@@ -693,14 +882,19 @@ impl SimpleStackRegisterAllocation {
         instruction: &mut Instruction,
         replacements: &HashMap<Register, Register>,
     ) {
+        // 🔧 修复：按确定性顺序遍历替换映射，避免 HashMap 遍历顺序不确定
+        // 导致的链式替换错误（如 Virtual(A)→Physical(B) 和 Virtual(B)→Physical(C)）
+        let mut sorted_replacements: Vec<(&Register, &Register)> = replacements.iter().collect();
+        sorted_replacements.sort_by_key(|(old, _)| old.id());
+
         // 🔧 调试：打印指令替换前的状态
         trace!("🔧 替换前指令: {}", instruction);
 
         // 🔧 性能优化：只对指令中实际存在的虚拟寄存器进行替换
-        for (old_reg, new_reg) in replacements {
-            if self.instruction_contains_register(instruction, *old_reg) {
+        for (old_reg, new_reg) in &sorted_replacements {
+            if self.instruction_contains_register(instruction, **old_reg) {
                 info!("  🔄 替换寄存器 {} -> {}", old_reg, new_reg);
-                instruction.replace_register(*old_reg, *new_reg);
+                instruction.replace_register(**old_reg, **new_reg);
             }
         }
 
@@ -789,16 +983,77 @@ impl SimpleStackRegisterAllocation {
         let mut current_replacements = Vec::new();
 
         // 1. 收集所有涉及溢出的虚拟寄存器
+        // 排除 Call/CallIndirect 的 args 寄存器：它们是目标寄存器
+        // （由 InstructionLoweringPass 写入参数寄存器），不是源操作数。
+        // 同时排除 arg_operands 中的溢出寄存器：它们由 InstructionLoweringPass
+        // 直接从 spill slot 加载到参数传递的栈上，不需要临时寄存器中转。
+        // 这样可以大幅降低临时寄存器压力，避免多参数调用时 panic。
+        let (args_registers, arg_operand_registers): (HashSet<Register>, HashSet<Register>) = match &_function.instructions[instruction_index] {
+            crate::ir::Instruction::Call { args, arg_operands, .. } => {
+                let args_set: HashSet<Register> = args.iter().copied().collect();
+                let arg_op_set: HashSet<Register> = arg_operands.iter()
+                    .filter_map(|op| {
+                        if let Operand::Register { id } = op {
+                            if id.is_virtual() {
+                                Some(*id)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                (args_set, arg_op_set)
+            }
+            crate::ir::Instruction::CallIndirect { args, arg_operands, .. } => {
+                let args_set: HashSet<Register> = args.iter().copied().collect();
+                let arg_op_set: HashSet<Register> = arg_operands.iter()
+                    .filter_map(|op| {
+                        if let Operand::Register { id } = op {
+                            if id.is_virtual() {
+                                Some(*id)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                (args_set, arg_op_set)
+            }
+            _ => (HashSet::new(), HashSet::new()),
+        };
         let mut spilled_operands = HashSet::new();
         for &reg in used_registers.iter().chain(def_register.iter()) {
+            if args_registers.contains(&reg) {
+                continue; // args 是目标寄存器，不需要从溢出槽加载
+            }
+            // 🔧 新增：跳过 arg_operands 中的溢出寄存器
+            // 这些寄存器由 InstructionLoweringPass 直接从 spill slot 处理，
+            // 不需要在这里分配临时寄存器
+            if arg_operand_registers.contains(&reg) {
+                if let Some(AllocationTarget::Spill(_)) = allocation_map.get(&reg) {
+                    continue; // 溢出的 arg_operand 寄存器由 InstructionLoweringPass 处理
+                }
+            }
             if let Some(AllocationTarget::Spill(_)) = allocation_map.get(&reg) {
                 spilled_operands.insert(reg);
             }
         }
 
         // 1.5 收集当前指令中非溢出输入操作数占用的物理寄存器
+        // 🔧 修复：排除 arg_operand_registers 中已溢出的寄存器，
+        // 因为它们不会被加载到临时物理寄存器
         let mut unavailable_registers = HashSet::new();
         for &reg in used_registers.iter() {
+            // 跳过溢出的 arg_operand 寄存器，它们不占用物理寄存器
+            if arg_operand_registers.contains(&reg) {
+                if let Some(AllocationTarget::Spill(_)) = allocation_map.get(&reg) {
+                    continue;
+                }
+            }
             if let Some(AllocationTarget::Register(phys_reg)) = allocation_map.get(&reg) {
                 unavailable_registers.insert(*phys_reg);
             } else if let Register::Physical(phys_reg) = reg {
@@ -811,7 +1066,25 @@ impl SimpleStackRegisterAllocation {
             self.allocate_temp_registers_for_inst(&spilled_operands, &unavailable_registers);
 
         // 3. 处理输入操作数（Used）
+        // 跳过 Call/CallIndirect 的 args 寄存器和溢出的 arg_operand 寄存器
         for &used_reg in used_registers.iter() {
+            // args 是目标寄存器，不需要从溢出槽加载
+            if args_registers.contains(&used_reg) {
+                // 为溢出的 args 分配一个占位物理寄存器
+                // InstructionLoweringPass 不使用 args，所以任何寄存器都可以
+                if let Some(AllocationTarget::Spill(_slot_id)) = allocation_map.get(&used_reg) {
+                    current_replacements.push((used_reg, Register::Physical(0)));
+                }
+                continue;
+            }
+            // 🔧 新增：跳过溢出的 arg_operand 寄存器
+            // 它们由 InstructionLoweringPass 直接从 spill slot 加载
+            if arg_operand_registers.contains(&used_reg) {
+                if let Some(AllocationTarget::Spill(_slot_id)) = allocation_map.get(&used_reg) {
+                    // 不做替换，保持虚拟状态，InstructionLoweringPass 会处理
+                    continue;
+                }
+            }
             if let Some(AllocationTarget::Spill(slot_id)) = allocation_map.get(&used_reg) {
                 if live_registers.contains(&used_reg) {
                     let temp_physical_reg = *temp_assignments.get(&used_reg).unwrap();
@@ -947,10 +1220,13 @@ impl SimpleStackRegisterAllocation {
         let scratch_regs = &self.calling_convention.temp_registers;
 
         if scratch_regs.is_empty() {
-            // 极端情况回退
-            for &reg in spilled_operands {
-                assignments.insert(reg, 0);
-            }
+            // 极端情况：没有任何临时寄存器可用
+            // 不能静默分配到寄存器0，多个操作数共享同一寄存器会导致数据损坏
+            assert!(
+                spilled_operands.is_empty(),
+                "当前架构没有临时寄存器，但指令有 {} 个溢出操作数需要加载到临时寄存器",
+                spilled_operands.len()
+            );
             return assignments;
         }
 
@@ -973,9 +1249,23 @@ impl SimpleStackRegisterAllocation {
         let mut sorted_operands: Vec<Register> = spilled_operands.iter().copied().collect();
         sorted_operands.sort_by_key(|r| r.id());
 
-        // 简单轮询分配
+        // 安全检查：溢出操作数数量不能超过可用临时寄存器数量
+        // 如果超出，模运算会导致不同操作数分配到同一临时寄存器，
+        // 在指令执行前加载时后者覆盖前者，造成静默数据损坏。
+        // 当前的指令重写机制要求所有溢出操作数的值同时在寄存器中存活，
+        // 因此无法通过栈中转来解决——此处选择 fail-fast 以暴露问题。
+        assert!(
+            sorted_operands.len() <= use_regs.len(),
+            "溢出操作数数量（{}）超过可用临时寄存器数量（{}），\
+             无法为每个溢出操作数分配独立的临时寄存器。\
+             请检查寄存器分配器的压力是否过大，或增加临时寄存器池。",
+            sorted_operands.len(),
+            use_regs.len()
+        );
+
+        // 轮询分配（通过上面的断言保证不会发生模运算重叠）
         for (i, &reg) in sorted_operands.iter().enumerate() {
-            let temp_reg = use_regs[i % use_regs.len()];
+            let temp_reg = use_regs[i];
             assignments.insert(reg, temp_reg);
         }
 
@@ -1117,6 +1407,7 @@ impl SimpleStackRegisterAllocation {
         let mut register_mapping = HashMap::new();
         let mut spilled_registers = HashMap::new();
         let mut register_types = HashMap::new();
+        let mut full_allocation_map = HashMap::new();
 
         // 遍历所有虚拟寄存器，构建映射和溢出信息
         for reg in virtual_registers {
@@ -1126,10 +1417,12 @@ impl SimpleStackRegisterAllocation {
                         register_mapping.insert(*reg, *phys_reg);
                         // 默认都是 Data 类型（简化处理，未来可以更精确）
                         register_types.insert(*reg, RegisterType::Data);
+                        full_allocation_map.insert(*reg, AllocationTargetInfo::Register(*phys_reg));
                     }
                     AllocationTarget::Spill(slot_id) => {
                         spilled_registers.insert(*reg, SpillSlot { slot_id: *slot_id });
                         register_types.insert(*reg, RegisterType::Data);
+                        full_allocation_map.insert(*reg, AllocationTargetInfo::Spill(*slot_id));
                     }
                 }
             }
@@ -1148,6 +1441,7 @@ impl SimpleStackRegisterAllocation {
             spilled_registers,
             register_types,
             stats,
+            allocation_map: full_allocation_map,
         }
     }
 }
@@ -1157,6 +1451,163 @@ mod tests;
 
 #[cfg(test)]
 mod simple_stack_tests;
+
+/// 线性扫描寄存器分配 Pass
+///
+/// 使用 LinearScanAllocator 进行寄存器分配，
+/// 复用内部 helper 的重写逻辑完成最终分配。
+pub struct LinearScanRegisterAllocation {
+    /// 内部辅助结构，提供 apply_allocation_with_spilling 等重写逻辑
+    helper: SimpleStackRegisterAllocation,
+    /// 目标架构的调用约定
+    calling_convention: CallingConvention,
+}
+
+impl Default for LinearScanRegisterAllocation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LinearScanRegisterAllocation {
+    pub fn new() -> Self {
+        Self {
+            helper: SimpleStackRegisterAllocation::new(),
+            calling_convention: CallingConvention::standard(),
+        }
+    }
+
+    /// 预处理：将 Call/CallIndirect 的 arg_operands 提取为独立的 Move 指令
+    ///
+    /// 问题：Call/CallIndirect 指令同时包含 args（目标寄存器）和 arg_operands（源操作数），
+    /// get_used_registers 返回两套寄存器，导致寄存器压力翻倍，溢出时超出临时寄存器上限。
+    ///
+    /// 解决：在寄存器分配前，将每个 arg_operand 提取为独立的 Move 指令：
+    ///   Move { dst: args[i], src: arg_operands[i] }
+    /// 然后清空 arg_operands，减少 Call/CallIndirect 的操作数数量。
+
+    /// 执行寄存器分配（使用线性扫描算法）
+    fn run_linear_scan(
+        &mut self,
+        function: &mut LirFunction,
+        analyses: &mut AnalysisManager,
+    ) -> PassResult {
+        info!("🎯 开始线性扫描寄存器分配：{}", function.name);
+
+        // 重置 helper 状态
+        self.helper.spill_counter = 0;
+        self.helper.spill_slot_addr_map.clear();
+        self.helper.scratch_slot_addr_map.clear();
+        self.helper.stack_address_registers.clear();
+
+        // 第一步：进行生命周期分析
+        let lifetime_analyzer =
+            lifetime_analysis::LifetimeAnalyzer::new(self.calling_convention.clone());
+        let (lifetimes, register_types) = lifetime_analyzer.analyze_simple(function);
+
+        // 记录所有栈地址寄存器，供后续重写阶段使用
+        self.helper.stack_address_registers = register_types
+            .iter()
+            .filter_map(|(reg, ty)| {
+                if *ty == RegisterType::StackAddress {
+                    Some(*reg)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // 使用 SimpleStack 的分配逻辑构建 allocation_map
+        // 它正确处理函数参数预分配和冲突避免
+        let virtual_registers: Vec<Register> = function
+            .instructions
+            .iter()
+            .flat_map(|inst| {
+                let mut regs = Vec::new();
+                if let Some(def) = inst.get_def_register() {
+                    regs.push(def);
+                }
+                regs.extend(inst.get_used_registers());
+                regs
+            })
+            .filter(|reg| !reg.is_physical())
+            .collect();
+
+        let virtual_registers_set: HashSet<Register> = virtual_registers.iter().copied().collect();
+
+        let mut allocation_map =
+            self.helper.build_calling_convention_allocation_map(function, &virtual_registers);
+
+        // 为溢出的寄存器分配唯一的槽ID (按确定性顺序)
+        let mut next_spill_slot = 1;
+        for reg in &virtual_registers {
+            if let Some(target) = allocation_map.get_mut(reg) {
+                if let AllocationTarget::Spill(slot) = target {
+                    if *slot == 0 {
+                        *slot = next_spill_slot;
+                        next_spill_slot += 1;
+                    }
+                }
+            }
+        }
+
+        info!("🎯 寄存器分配映射: {:?}", allocation_map);
+
+        // 应用分配并处理溢出
+        let result = self.helper.apply_allocation_with_spilling(function, &allocation_map);
+
+        // 分析实际使用的寄存器并构建分配结果
+        match result {
+            PassResult::Unchanged | PassResult::Changed => {
+                let used_registers = self.helper.analyze_register_usage(function, &allocation_map);
+                function.set_used_regs(used_registers);
+
+                let allocation_result =
+                    self.helper.build_allocation_result(&allocation_map, &virtual_registers);
+                analyses.store_result(
+                    "register-allocation".to_string(),
+                    Box::new(allocation_result),
+                );
+
+                result
+            }
+            PassResult::Failed(_) => result,
+        }
+    }
+}
+
+impl FunctionPass for LinearScanRegisterAllocation {
+    fn name(&self) -> &str {
+        "linear-scan-register-allocation"
+    }
+
+    fn description(&self) -> &str {
+        "线性扫描寄存器分配 - 高效的线性扫描算法"
+    }
+
+    fn run_on_function(
+        &mut self,
+        function: &mut LirFunction,
+        analyses: &mut AnalysisManager,
+    ) -> PassResult {
+        info!("🎯 开始线性扫描寄存器分配：{}", function.name);
+
+        // 从 analyses 获取目标架构的调用约定
+        self.calling_convention = analyses.get_calling_convention();
+        self.helper.calling_convention = self.calling_convention.clone();
+
+        // 直接使用线性扫描分配器
+        self.run_linear_scan(function, analyses)
+    }
+
+    fn required_analyses(&self) -> Vec<&'static str> {
+        vec![]
+    }
+
+    fn invalidated_analyses(&self) -> Vec<&'static str> {
+        vec!["cfg", "def-use"]
+    }
+}
 
 /// 运行简单栈式寄存器分配的公共函数
 pub fn run_simple_stack_register_allocation(function: &mut LirFunction) -> PassResult {

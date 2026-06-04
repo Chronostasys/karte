@@ -9,7 +9,7 @@
 //! - Phi
 
 use crate::pass::lifetime_analysis_pass::LifetimeAnalysisResult;
-use crate::pass::register_allocation::RegisterAllocationResult;
+use crate::pass::register_allocation::types::{AllocationTargetInfo, RegisterAllocationResult};
 use crate::pass::{AnalysisManager, FunctionPass, PassResult};
 use crate::{AllocationType, Instruction, LirFunction, Operand, Register, StructTypeId};
 use karte_common::calling_convention::{CallingConvention, CC};
@@ -169,6 +169,50 @@ impl InstructionLoweringPass {
         Register::Virtual(self.next_register)
     }
 
+    /// 解析被溢出到栈的虚拟寄存器操作数
+    ///
+    /// 寄存器分配后，虚拟寄存器可能被溢出到栈帧上的 slot。
+    /// 此方法检查操作数是否为已溢出的虚拟寄存器，
+    /// 如果是，则从栈帧加载其值到临时寄存器，返回临时寄存器操作数。
+    /// 如果不是溢出寄存器（已由 rewrite_registers 替换为物理寄存器），
+    /// 则原样返回。
+    fn resolve_spilled_operand(
+        &self,
+        op: &Operand,
+        function: &LirFunction,
+        analyses: &AnalysisManager,
+        span: &Span,
+        temp_reg: Register,
+        instructions: &mut Vec<Instruction>,
+    ) -> Operand {
+        match op {
+            Operand::Register { id: reg_id @ Register::Virtual(_) } => {
+                if let Some(ra) = analyses.get_result::<RegisterAllocationResult>("register-allocation") {
+                    if let Some(target_info) = ra.allocation_map.get(reg_id) {
+                        match target_info {
+                            AllocationTargetInfo::Spill(slot_id) => {
+                                if let Some(&fp_offset) = function.spill_slot_offsets.get(slot_id) {
+                                    instructions.push(Instruction::Load64 {
+                                        dst: temp_reg,
+                                        addr: Register::Physical(self.calling_convention.frame_pointer),
+                                        offset: fp_offset,
+                                        span: *span,
+                                    });
+                                    return Operand::Register { id: temp_reg };
+                                }
+                            }
+                            AllocationTargetInfo::Register(_) => {
+                                // 已被 rewrite_registers 替换为物理寄存器，无需处理
+                            }
+                        }
+                    }
+                }
+                op.clone()
+            }
+            _ => op.clone(),
+        }
+    }
+
     /// 获取effect栈指针寄存器
     fn effect_stack_register(&self) -> Register {
         Register::Physical(self.calling_convention.effect_stack_pointer)
@@ -187,76 +231,23 @@ impl InstructionLoweringPass {
     /// 获取指定指令位置需要保存的调用者保存寄存器
     fn get_live_caller_saved_registers_at(
         &self,
-        instruction_index: usize,
-        analyses: &AnalysisManager,
+        _instruction_index: usize,
+        _analyses: &AnalysisManager,
     ) -> HashSet<u8> {
-        // 尝试获取生命周期分析和寄存器分配结果
-        let lifetime_result = analyses.get_result::<LifetimeAnalysisResult>("lifetime-analysis");
-        let register_alloc_result =
-            analyses.get_result::<RegisterAllocationResult>("register-allocation");
-
-        if let (Some(lifetimes), Some(allocation)) = (lifetime_result, register_alloc_result) {
-            // 🔧 使用生命周期和寄存器分配信息计算活跃的调用者保存寄存器
-            let mut live_caller_saved = HashSet::new();
-
-            log::debug!("指令 {} 位置活跃寄存器分析:", instruction_index);
-
-            // 遍历所有寄存器生命周期，找出在当前指令位置活跃的寄存器
-            for lifetime in &lifetimes.lifetimes {
-                // 检查寄存器是否在当前指令位置活跃
-                if instruction_index >= lifetime.start && instruction_index <= lifetime.end {
-                    log::debug!(
-                        "  寄存器 {:?} 活跃 (生命周期 [{}, {}])",
-                        lifetime.register,
-                        lifetime.start,
-                        lifetime.end
-                    );
-
-                    // 🔧 关键修复：如果寄存器本身就是物理寄存器，直接使用它的编号
-                    // 否则从寄存器映射表中查找对应的物理寄存器
-                    let physical_reg_opt = match lifetime.register {
-                        Register::Physical(phys_reg) => {
-                            log::debug!("    已经是物理寄存器 #p{}", phys_reg);
-                            Some(phys_reg)
-                        }
-                        Register::Virtual(_) => {
-                            allocation.register_mapping.get(&lifetime.register).copied()
-                        }
-                    };
-
-                    if let Some(physical_reg) = physical_reg_opt {
-                        if let Register::Virtual(_) = lifetime.register {
-                            log::debug!("    映射到物理寄存器 #p{}", physical_reg);
-                        }
-
-                        // 检查该物理寄存器是否是调用者保存寄存器
-                        if self.calling_convention.is_caller_saved(physical_reg) {
-                            // 排除返回值寄存器，因为它会被调用覆盖
-                            if physical_reg != self.calling_convention.return_register {
-                                log::debug!("      ✓ 是caller-saved且非返回值，需要保存");
-                                live_caller_saved.insert(physical_reg);
-                            } else {
-                                log::debug!("      ✗ 是返回值寄存器，不保存");
-                            }
-                        } else {
-                            log::debug!("      ✗ 不是caller-saved寄存器");
-                        }
-                    } else {
-                        log::debug!("    虚拟寄存器未映射到物理寄存器");
-                    }
-                }
-            }
-
-            log::debug!("最终需要保存的caller-saved寄存器: {:?}", live_caller_saved);
-            live_caller_saved
-        } else {
-            // 如果没有生命周期或寄存器分配结果，保守地保存所有调用者保存寄存器
-            self.calling_convention
-                .caller_saved
-                .iter()
-                .cloned()
-                .collect()
-        }
+        // 保守策略：保存所有 caller-saved 寄存器
+        //
+        // 关键：当返回值寄存器同时也是参数寄存器时（如 RISC-V 的 a0），
+        // 必须保存它，否则跨调用后参数值会丢失。
+        // lower_call/lower_call_indirect 会在恢复 caller-saved 之前，
+        // 先将返回值暂存到 vm_sp 下方的安全位置，因此返回值不会丢失。
+        //
+        // 对于 x86，返回值寄存器 RAX (p0) 不是参数寄存器，保存它只是
+        // 多了一对额外的 save/restore，不会影响正确性。
+        self.calling_convention
+            .caller_saved
+            .iter()
+            .cloned()
+            .collect()
     }
 
     /// 降级Alloc指令
@@ -269,7 +260,7 @@ impl InstructionLoweringPass {
         span: &Span,
         instructions: &mut Vec<Instruction>,
         function: &mut LirFunction,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         match allocation_type {
             AllocationType::Stack => {
                 // 栈分配：SP = SP - size; dst = SP
@@ -310,7 +301,7 @@ impl InstructionLoweringPass {
         offset: i64,
         span: &Span,
         instructions: &mut Vec<Instruction>,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         instructions.push(Instruction::Load64 {
             dst: *dst,
             addr: *addr,
@@ -328,7 +319,7 @@ impl InstructionLoweringPass {
         src: &Operand,
         span: &Span,
         instructions: &mut Vec<Instruction>,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         instructions.push(Instruction::Store64 {
             addr: *addr,
             offset,
@@ -347,7 +338,7 @@ impl InstructionLoweringPass {
         span: &Span,
         instructions: &mut Vec<Instruction>,
         function: &mut LirFunction,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let struct_layout = function
             .struct_types
             .get(struct_type)
@@ -372,7 +363,7 @@ impl InstructionLoweringPass {
         field_offset: usize,
         span: &Span,
         instructions: &mut Vec<Instruction>,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         self.lower_load64(dst, struct_addr, field_offset as i64, span, instructions)
     }
 
@@ -384,11 +375,22 @@ impl InstructionLoweringPass {
         src: &Operand,
         span: &Span,
         instructions: &mut Vec<Instruction>,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         self.lower_store64(struct_addr, field_offset as i64, src, span, instructions)
     }
 
     /// 降级Call指令
+    ///
+    /// 参数传递机制：
+    /// - 前 register_passing_limit 个参数通过物理寄存器传递
+    ///   （argument_registers + overflow_argument_registers）
+    /// - 超过 limit 的参数通过虚拟栈传递
+    ///
+    /// 虚拟栈布局（callee 入口时，从 vm_sp 由低到高）：
+    ///   [return_address]       ← vm_sp
+    ///   [stack_param_0]        ← vm_sp + 16
+    ///   [stack_param_1]        ← vm_sp + 32
+    ///   ...
     fn lower_call(
         &mut self,
         target: crate::LabelId,
@@ -399,27 +401,59 @@ impl InstructionLoweringPass {
         function: &mut LirFunction,
         instruction_index: usize,
         analyses: &AnalysisManager,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let return_label = function.new_label();
+
+        let register_limit = self.calling_convention.register_passing_limit();
+        let overflow_regs = self.calling_convention.overflow_argument_registers();
+        let num_stack_params = arg_operands.len().saturating_sub(register_limit);
 
         // 获取需要保存的调用者保存寄存器
         let live_caller_saved =
             self.get_live_caller_saved_registers_at(instruction_index, analyses);
         let mut caller_saved: Vec<_> = live_caller_saved.into_iter().collect();
+        
+        // 溢出参数使用 callee-saved 寄存器传递，需要在调用前保存/恢复
+        let overflow_arg_count = arg_operands.len().saturating_sub(self.calling_convention.argument_registers.len());
+        for i in 0..overflow_arg_count.min(overflow_regs.len()) {
+            if !caller_saved.contains(&overflow_regs[i]) {
+                caller_saved.push(overflow_regs[i]);
+            }
+        }
+        
         caller_saved.sort();
 
         log::debug!(
-            "函数调用优化：需要保存 {} 个调用者保存寄存器: {:?} f: {}",
+            "函数调用：保存 {} 个寄存器, {} 个寄存器参数, {} 个栈参数 f: {}",
             caller_saved.len(),
-            caller_saved,
+            arg_operands.len().min(register_limit),
+            num_stack_params,
             function.name
         );
 
         // 保存caller-saved寄存器到栈，使用StorePair优化
         self.save_registers_to_stack(&caller_saved, span, instructions);
 
-        // 参数传递：使用栈作为中间存储避免寄存器覆盖
-        for op in arg_operands.iter() {
+        // === 参数传递 ===
+        // 使用虚拟栈作为中间存储，避免寄存器覆盖（如 mov #p2, #p4; mov #p3, #p2）
+        // 
+        // 步骤：
+        // 1. 将栈传参数逆序压入虚拟栈（callee 从 vm_sp+16 开始顺序读取）
+        // 2. 将寄存器传参数顺序压入虚拟栈
+        // 3. 从虚拟栈逆序弹出寄存器传参数到物理寄存器
+        // 4. 栈传参数留在虚拟栈上（位于返回地址之上）
+
+        // 使用 RAX（返回值寄存器）作为临时寄存器，避免与参数寄存器冲突
+        // RAX 是 caller-saved（已在上方保存到虚拟栈），且不是参数寄存器
+        let temp_operand_reg = Register::Physical(self.calling_convention.return_register);
+
+        // 步骤 1：逆序压入栈传参数
+        // 这样 callee 可以从 vm_sp+16 开始顺序读取
+        for i in (0..num_stack_params).rev() {
+            let op = &arg_operands[register_limit + i];
+            let resolved_op = self.resolve_spilled_operand(
+                op, function, analyses, span, temp_operand_reg, instructions,
+            );
             instructions.push(Instruction::Sub {
                 dst: self.stack_pointer_reg,
                 src1: Operand::Register {
@@ -431,32 +465,60 @@ impl InstructionLoweringPass {
             instructions.push(Instruction::Store64 {
                 addr: self.stack_pointer_reg,
                 offset: 0,
-                src: op.clone(),
+                src: resolved_op,
                 span: *span,
             });
         }
 
-        // 从栈加载到参数寄存器（逆序）
-        for i in (0..arg_operands.len()).rev() {
-            if let Some(phys_reg) = self.calling_convention.argument_registers.get(i) {
-                instructions.push(Instruction::Load64 {
-                    dst: Register::Physical(*phys_reg),
-                    addr: self.stack_pointer_reg,
-                    offset: 0,
-                    span: *span,
-                });
-                instructions.push(Instruction::Add {
-                    dst: self.stack_pointer_reg,
-                    src1: Operand::Register {
-                        id: self.stack_pointer_reg,
-                    },
-                    src2: Operand::Immediate { value: 16 },
-                    span: *span,
-                });
-            }
+        // 步骤 2：顺序压入寄存器传参数
+        for i in 0..arg_operands.len().min(register_limit) {
+            let op = &arg_operands[i];
+            let resolved_op = self.resolve_spilled_operand(
+                op, function, analyses, span, temp_operand_reg, instructions,
+            );
+            instructions.push(Instruction::Sub {
+                dst: self.stack_pointer_reg,
+                src1: Operand::Register {
+                    id: self.stack_pointer_reg,
+                },
+                src2: Operand::Immediate { value: 16 },
+                span: *span,
+            });
+            instructions.push(Instruction::Store64 {
+                addr: self.stack_pointer_reg,
+                offset: 0,
+                src: resolved_op,
+                span: *span,
+            });
         }
 
-        // 压入返回地址
+        // 步骤 3：逆序弹出寄存器传参数到物理寄存器
+        let arg_reg_count = self.calling_convention.argument_registers.len();
+        for i in (0..arg_operands.len().min(register_limit)).rev() {
+            let phys_reg = if i < arg_reg_count {
+                self.calling_convention.argument_registers[i]
+            } else {
+                overflow_regs[i - arg_reg_count]
+            };
+            instructions.push(Instruction::Load64 {
+                dst: Register::Physical(phys_reg),
+                addr: self.stack_pointer_reg,
+                offset: 0,
+                span: *span,
+            });
+            instructions.push(Instruction::Add {
+                dst: self.stack_pointer_reg,
+                src1: Operand::Register {
+                    id: self.stack_pointer_reg,
+                },
+                src2: Operand::Immediate { value: 16 },
+                span: *span,
+            });
+        }
+
+        // 此时虚拟栈上只剩下栈传参数（顺序排列，第一个在栈顶）
+
+        // 压入返回地址（在栈传参数之上）
         instructions.push(Instruction::Sub {
             dst: self.stack_pointer_reg,
             src1: Operand::Register {
@@ -494,16 +556,41 @@ impl InstructionLoweringPass {
             span: *span,
         });
 
-        // 恢复caller-saved寄存器，使用LoadPair优化
+        // 清理栈传参数占用的虚拟栈空间
+        if num_stack_params > 0 {
+            instructions.push(Instruction::Add {
+                dst: self.stack_pointer_reg,
+                src1: Operand::Register {
+                    id: self.stack_pointer_reg,
+                },
+                src2: Operand::Immediate { value: (num_stack_params * 16) as i64 },
+                span: *span,
+            });
+        }
+
+        // 将返回值暂存到 vm_sp 下方的安全位置（不改变 vm_sp）
+        let return_reg = self.calling_convention.return_register;
+        instructions.push(Instruction::Store64 {
+            addr: self.stack_pointer_reg,
+            offset: -8,
+            src: Operand::Register {
+                id: Register::Physical(return_reg),
+            },
+            span: *span,
+        });
+
+        // 恢复caller-saved寄存器
         self.restore_registers_from_stack(&caller_saved, span, instructions);
 
-        // 处理返回值
+        // 处理返回值：从暂存位置加载到 result 寄存器
         if let Some(result_reg) = result {
-            instructions.push(Instruction::Move {
+            let total_size = caller_saved.len() * 8;
+            let aligned_size = self.align_stack_size(total_size);
+            let restore_offset = -(aligned_size as i64) - 8;
+            instructions.push(Instruction::Load64 {
                 dst: *result_reg,
-                src: Operand::Register {
-                    id: Register::Physical(self.calling_convention.return_register),
-                },
+                addr: self.stack_pointer_reg,
+                offset: restore_offset,
                 span: *span,
             });
         }
@@ -512,6 +599,11 @@ impl InstructionLoweringPass {
     }
 
     /// 降级CallIndirect指令
+    ///
+    /// 与 Call 相同的参数传递机制，额外处理函数指针。
+    /// effect_resume_temp (RAX) 用于保存函数指针。
+    /// RAX 是 caller-saved 寄存器（已被保存），且不是参数寄存器，
+    /// 因此在参数弹出过程中不会被覆盖，无需通过虚拟栈暂存。
     fn lower_call_indirect(
         &mut self,
         function_register: &Register,
@@ -522,25 +614,42 @@ impl InstructionLoweringPass {
         function: &mut LirFunction,
         instruction_index: usize,
         analyses: &AnalysisManager,
-    ) -> Result<(), String> {
+    ) -> crate::Result<()> {
         let return_label = function.new_label();
+
+        let register_limit = self.calling_convention.register_passing_limit();
+        let overflow_regs = self.calling_convention.overflow_argument_registers();
+        let num_stack_params = arg_operands.len().saturating_sub(register_limit);
 
         // 获取需要保存的调用者保存寄存器
         let live_caller_saved =
             self.get_live_caller_saved_registers_at(instruction_index, analyses);
         let mut caller_saved: Vec<_> = live_caller_saved.into_iter().collect();
+        
+        // 溢出参数使用 callee-saved 寄存器传递，需要在调用前保存/恢复
+        let overflow_arg_count = arg_operands.len().saturating_sub(self.calling_convention.argument_registers.len());
+        for i in 0..overflow_arg_count.min(overflow_regs.len()) {
+            if !caller_saved.contains(&overflow_regs[i]) {
+                caller_saved.push(overflow_regs[i]);
+            }
+        }
+        
         caller_saved.sort();
 
         log::debug!(
-            "间接函数调用优化：需要保存 {} 个调用者保存寄存器: {:?}",
+            "间接函数调用：保存 {} 个寄存器, {} 个寄存器参数, {} 个栈参数",
             caller_saved.len(),
-            caller_saved
+            arg_operands.len().min(register_limit),
+            num_stack_params,
         );
 
-        // 保存caller-saved寄存器到栈，使用StorePair优化
+        // 保存caller-saved寄存器到栈
         self.save_registers_to_stack(&caller_saved, span, instructions);
 
-        // 将函数地址移动到临时寄存器
+        // 将函数地址移动到临时寄存器（RAX = effect_resume_temp）
+        // RAX 是 caller-saved，已在上方保存到虚拟栈。
+        // RAX 不是参数寄存器（argument_registers 和 overflow_regs 都不包含 RAX），
+        // 因此后续的参数弹出不会覆盖 RAX 中的函数指针。
         let temp_func_reg = self.effect_resume_temp_register();
         instructions.push(Instruction::Move {
             dst: temp_func_reg,
@@ -550,8 +659,23 @@ impl InstructionLoweringPass {
             span: *span,
         });
 
-        // 参数传递：使用栈作为中间存储避免寄存器覆盖
-        for op in arg_operands.iter() {
+        // === 参数传递 ===
+        // 与 Call 相同的机制：
+        // 1. 逆序压入栈传参数
+        // 2. 顺序压入寄存器传参数
+        // 3. 逆序弹出寄存器传参数到物理寄存器
+        // 4. 栈传参数留在虚拟栈上
+
+        // 使用 RAX（返回值寄存器）作为临时寄存器，避免与参数寄存器冲突
+        // RAX 是 caller-saved（已在上方保存到虚拟栈），且不是参数寄存器
+        let temp_operand_reg = Register::Physical(self.calling_convention.return_register);
+
+        // 步骤 1：逆序压入栈传参数
+        for i in (0..num_stack_params).rev() {
+            let op = &arg_operands[register_limit + i];
+            let resolved_op = self.resolve_spilled_operand(
+                op, function, analyses, span, temp_operand_reg, instructions,
+            );
             instructions.push(Instruction::Sub {
                 dst: self.stack_pointer_reg,
                 src1: Operand::Register {
@@ -563,32 +687,60 @@ impl InstructionLoweringPass {
             instructions.push(Instruction::Store64 {
                 addr: self.stack_pointer_reg,
                 offset: 0,
-                src: op.clone(),
+                src: resolved_op,
                 span: *span,
             });
         }
 
-        // 从栈加载到参数寄存器（逆序）
-        for i in (0..arg_operands.len()).rev() {
-            if let Some(phys_reg) = self.calling_convention.argument_registers.get(i) {
-                instructions.push(Instruction::Load64 {
-                    dst: Register::Physical(*phys_reg),
-                    addr: self.stack_pointer_reg,
-                    offset: 0,
-                    span: *span,
-                });
-                instructions.push(Instruction::Add {
-                    dst: self.stack_pointer_reg,
-                    src1: Operand::Register {
-                        id: self.stack_pointer_reg,
-                    },
-                    src2: Operand::Immediate { value: 16 },
-                    span: *span,
-                });
-            }
+        // 步骤 2：顺序压入寄存器传参数
+        for i in 0..arg_operands.len().min(register_limit) {
+            let op = &arg_operands[i];
+            let resolved_op = self.resolve_spilled_operand(
+                op, function, analyses, span, temp_operand_reg, instructions,
+            );
+            instructions.push(Instruction::Sub {
+                dst: self.stack_pointer_reg,
+                src1: Operand::Register {
+                    id: self.stack_pointer_reg,
+                },
+                src2: Operand::Immediate { value: 16 },
+                span: *span,
+            });
+            instructions.push(Instruction::Store64 {
+                addr: self.stack_pointer_reg,
+                offset: 0,
+                src: resolved_op,
+                span: *span,
+            });
         }
 
-        // 压入返回地址
+        // 步骤 3：逆序弹出寄存器传参数到物理寄存器
+        let arg_reg_count = self.calling_convention.argument_registers.len();
+        for i in (0..arg_operands.len().min(register_limit)).rev() {
+            let phys_reg = if i < arg_reg_count {
+                self.calling_convention.argument_registers[i]
+            } else {
+                overflow_regs[i - arg_reg_count]
+            };
+            instructions.push(Instruction::Load64 {
+                dst: Register::Physical(phys_reg),
+                addr: self.stack_pointer_reg,
+                offset: 0,
+                span: *span,
+            });
+            instructions.push(Instruction::Add {
+                dst: self.stack_pointer_reg,
+                src1: Operand::Register {
+                    id: self.stack_pointer_reg,
+                },
+                src2: Operand::Immediate { value: 16 },
+                span: *span,
+            });
+        }
+
+        // 栈传参数留在虚拟栈上，RAX 仍持有函数指针（未被参数弹出覆盖）
+
+        // 压入返回地址（在栈传参数之上）
         instructions.push(Instruction::Sub {
             dst: self.stack_pointer_reg,
             src1: Operand::Register {
@@ -604,7 +756,7 @@ impl InstructionLoweringPass {
             span: *span,
         });
 
-        // 间接跳转
+        // 间接跳转（通过 RAX 中的函数指针）
         instructions.push(Instruction::JumpIndirect {
             function_register: temp_func_reg,
             span: *span,
@@ -626,16 +778,41 @@ impl InstructionLoweringPass {
             span: *span,
         });
 
-        // 恢复caller-saved寄存器，使用LoadPair优化
+        // 清理栈传参数占用的虚拟栈空间
+        if num_stack_params > 0 {
+            instructions.push(Instruction::Add {
+                dst: self.stack_pointer_reg,
+                src1: Operand::Register {
+                    id: self.stack_pointer_reg,
+                },
+                src2: Operand::Immediate { value: (num_stack_params * 16) as i64 },
+                span: *span,
+            });
+        }
+
+        // 将返回值暂存到 vm_sp 下方的安全位置
+        let return_reg = self.calling_convention.return_register;
+        instructions.push(Instruction::Store64 {
+            addr: self.stack_pointer_reg,
+            offset: -8,
+            src: Operand::Register {
+                id: Register::Physical(return_reg),
+            },
+            span: *span,
+        });
+
+        // 恢复caller-saved寄存器
         self.restore_registers_from_stack(&caller_saved, span, instructions);
 
         // 处理返回值
         if let Some(result_reg) = result {
-            instructions.push(Instruction::Move {
+            let total_size = caller_saved.len() * 8;
+            let aligned_size = self.align_stack_size(total_size);
+            let restore_offset = -(aligned_size as i64) - 8;
+            instructions.push(Instruction::Load64 {
                 dst: *result_reg,
-                src: Operand::Register {
-                    id: Register::Physical(self.calling_convention.return_register),
-                },
+                addr: self.stack_pointer_reg,
+                offset: restore_offset,
                 span: *span,
             });
         }
@@ -644,35 +821,76 @@ impl InstructionLoweringPass {
     }
 
     /// 降级Phi指令
+    ///
+    /// Phi 指令不应该出现在指令降级阶段，说明 SSA 降级不完整。
+    /// 直接 panic 以便暴露问题，而非静默使用第一个 incoming 值导致语义错误。
     fn lower_phi(
         &mut self,
-        dst: &Register,
+        _dst: &Register,
         incoming: &[(crate::LabelId, Operand)],
-        span: &Span,
-        instructions: &mut Vec<Instruction>,
-    ) -> Result<(), String> {
-        println!("🔧 专业降级φ指令: dst={:?}, incoming={:?}", dst, incoming);
+        _span: &Span,
+        _instructions: &mut Vec<Instruction>,
+    ) -> crate::Result<()> {
+        panic!(
+            "Phi 指令出现在降级阶段，这表明 SSA 降级不完整。Phi 目标: {:?}, incoming 数量: {}",
+            _dst, incoming.len()
+        );
+    }
 
-        if incoming.is_empty() {
-            return Err("φ指令没有incoming值".to_string());
+    /// 消除冗余Move指令
+    /// 
+    /// 根因：多个编译pass（phi elimination、transformation等）在前驱块末尾插入
+    /// Move指令。block layout 合并块后，这些 Move 在物理序列中出现在后继块的
+    /// Load64（从vm_fp栈帧加载）之后，覆盖了正确的值。
+    /// 
+    /// 策略：扫描指令序列，找到 Load64(addr=vm_fp) 后被同一基本块内后续 Move
+    /// 覆盖同一 dst 寄存器的模式。如果 Load64 和 Move 之间没有指令使用 Load64
+    /// 的值，则 Move 是冗余的，予以消除。
+    fn eliminate_redundant_moves(instructions: &mut Vec<Instruction>) {
+        if instructions.is_empty() {
+            return;
         }
 
-        println!("⚠️  警告：φ指令出现在降级阶段，这表明SSA降级不完整");
+        let has_phi = instructions.iter().any(|i| matches!(i, Instruction::Phi { .. }));
+        if !has_phi {
+            return;
+        }
 
-        // 选择第一个incoming值作为fallback
-        let (source_block, ref operand) = incoming[0];
-        println!(
-            "🔧 使用fallback策略，选择来自块 {:?} 的值: {:?}",
-            source_block, operand
-        );
+        let len = instructions.len();
+        let mut remove_set = std::collections::HashSet::new();
 
-        instructions.push(Instruction::Move {
-            dst: *dst,
-            src: operand.clone(),
-            span: *span,
-        });
+        // vm_fp 通常是 Physical(11)
+        const VM_FP: u8 = 11;
 
-        Ok(())
+        // 扫描所有指令，寻找 Load64(vm_fp) 后紧跟冗余 Move 的模式
+        let mut i = 0;
+        while i < len - 1 {
+            // 检测模式：Load64 dst=Rd, addr=VM_FP, offset=N 紧跟 Move dst=Rd, src=Register
+            if let Instruction::Load64 { dst: Register::Physical(dst_phys), addr: Register::Physical(addr_phys), .. } = &instructions[i] {
+                if *addr_phys == VM_FP {
+                    // 检查下一条指令是否是覆盖同一寄存器的 dummy/phi Move
+                    if let Instruction::Move { dst: Register::Physical(move_dst), src: Operand::Register { .. }, span } = &instructions[i + 1] {
+                        let is_dummy = span.start == 0 && span.end == 0;
+                        let is_phi = span.start == usize::MAX && span.end == usize::MAX;
+                        if (is_dummy || is_phi) && *move_dst == *dst_phys {
+                            // Load64 的值未被中间指令使用（它们紧邻，所以一定没有被使用）
+                            remove_set.insert(i + 1);
+                        }
+                    }
+                }
+            }
+            i += 1;
+        }
+
+        if !remove_set.is_empty() {
+            log::debug!("消除了 {} 条冗余 Move 指令（覆盖 Load64 from vm_fp）", remove_set.len());
+            let new: Vec<_> = instructions.drain(..)
+                .enumerate()
+                .filter(|(i, _)| !remove_set.contains(i))
+                .map(|(_, instr)| instr)
+                .collect();
+            *instructions = new;
+        }
     }
 }
 
@@ -707,6 +925,11 @@ impl FunctionPass for InstructionLoweringPass {
         function: &mut LirFunction,
         analyses: &mut AnalysisManager,
     ) -> PassResult {
+        // 从 AnalysisManager 获取目标架构的调用约定（支持 cross-compile）
+        self.calling_convention = analyses.get_calling_convention();
+        self.stack_pointer_reg = Register::Physical(self.calling_convention.stack_pointer);
+        self.frame_pointer_reg = Register::Physical(self.calling_convention.frame_pointer);
+
         let mut new_instructions = Vec::new();
         let mut changed = false;
         let instructions_to_process = function.instructions.clone();
@@ -758,6 +981,76 @@ impl FunctionPass for InstructionLoweringPass {
                                 src: Operand::Immediate { value: 0 },
                                 span: Span::dummy(),
                             });
+                        }
+
+                        // === 加载栈传递参数 ===
+                        // 对于超过 register_passing_limit 的参数，caller 将它们留在
+                        // 虚拟栈上（位于返回地址之上）。此时 LIR prologue 已设置好
+                        // vm_fp 并分配了帧空间，可以计算栈参数的偏移。
+                        //
+                        // 虚拟栈布局（从低到高）：
+                        //   vm_sp → [frame space]                ← frame_size 字节
+                        //            [callee-saved N-1]           ← N 个 × 16 字节
+                        //            ...
+                        //            [callee-saved 0]
+                        //            [old_fp, old_sp]             ← 16 字节
+                        //            [return_address]             ← 16 字节
+                        //   vm_fp = vm_sp + frame_size
+                        //            [stack_param_0]              ← vm_fp + (N+2)*16
+                        //            [stack_param_1]              ← vm_fp + (N+2)*16 + 16
+                        //            ...
+                        //
+                        // 栈参数 i 从 vm_fp 的偏移：base_offset + 16 * i
+                        // 其中 base_offset = (N_callee + 2) * 16
+
+                        let register_limit = self.calling_convention.register_passing_limit();
+                        let num_stack_params = function.parameter_registers.len().saturating_sub(register_limit);
+
+                        if num_stack_params > 0 {
+                            // 计算 callee-saved 寄存器使用数量
+                            // 与 JIT prologue 的 get_callee_saved_registers() 保持一致
+                            let n_callee = function.get_used_regs().iter()
+                                .filter(|&&r| {
+                                    self.calling_convention.is_callee_saved(r)
+                                        && r != self.calling_convention.stack_pointer
+                                        && r != self.calling_convention.frame_pointer
+                                })
+                                .count();
+
+                            let base_offset = ((n_callee + 2) * 16) as i64;
+                            let fp_reg = self.frame_pointer_reg;
+                            // 使用返回值寄存器（RAX）作为临时寄存器，避免覆盖参数寄存器
+                            // RAX 不是参数寄存器，在函数入口处是空闲的
+                            let temp_reg = Register::Physical(self.calling_convention.return_register);
+
+                            // 从虚拟栈加载每个栈传参数，写入对应的 spill slot
+                            if let Some(ra) = analyses.get_result::<RegisterAllocationResult>("register-allocation") {
+                                for i in 0..num_stack_params {
+                                    let param_idx = register_limit + i;
+                                    let param_reg = function.parameter_registers[param_idx];
+
+                                    if let Some(AllocationTargetInfo::Spill(slot_id)) = ra.allocation_map.get(&param_reg) {
+                                        if let Some(&fp_offset) = function.spill_slot_offsets.get(slot_id) {
+                                            let stack_offset = base_offset + (16 * i) as i64;
+
+                                            // 从虚拟栈加载到临时寄存器
+                                            new_instructions.push(Instruction::Load64 {
+                                                dst: temp_reg,
+                                                addr: fp_reg,
+                                                offset: stack_offset,
+                                                span: Span::dummy(),
+                                            });
+                                            // 从临时寄存器写入 spill slot
+                                            new_instructions.push(Instruction::Store64 {
+                                                addr: fp_reg,
+                                                offset: fp_offset,
+                                                src: Operand::Register { id: temp_reg },
+                                                span: Span::dummy(),
+                                            });
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -980,6 +1273,9 @@ impl FunctionPass for InstructionLoweringPass {
         }
 
         if changed {
+            // 消除冗余Move：phi elimination在BlockLayout重排后产生的冗余Move覆盖问题
+            Self::eliminate_redundant_moves(&mut new_instructions);
+
             function.instructions = new_instructions;
             PassResult::Changed
         } else {

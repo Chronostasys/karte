@@ -28,7 +28,7 @@ impl PeepholeOptimizationPass {
         }
     }
 
-    fn optimize_instructions(&mut self, instructions: &mut Vec<Instruction>) -> Result<(), String> {
+    fn optimize_instructions(&mut self, instructions: &mut Vec<Instruction>) -> crate::Result<()> {
         let mut i = 0;
 
         while i < instructions.len() {
@@ -361,7 +361,7 @@ impl FunctionPass for PeepholeOptimizationPass {
     ) -> PassResult {
         // 优化指令序列
         if let Err(e) = self.optimize_instructions(&mut function.instructions) {
-            return PassResult::Failed(e);
+            return PassResult::Failed(e.to_string());
         }
 
         PassResult::Changed

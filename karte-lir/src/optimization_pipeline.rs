@@ -3,6 +3,12 @@ use crate::pass::PipelinePreset;
 use crate::pass::*;
 use crate::LirProgram;
 
+/// 流水线版本号
+///
+/// 每次修改流水线配置（增加/删除/重排 Pass）时必须递增此版本号。
+/// JIT codegen 依赖流水线生成特定模式的 LIR，版本不匹配可能导致运行时崩溃。
+pub const PIPELINE_VERSION: u32 = 1;
+
 /// 优化级别
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptimizationLevel {
@@ -95,7 +101,7 @@ impl OptimizationPipeline {
         let registry = PassRegistry::default();
         let mut pass_manager = registry
             .build_pipeline_from_string(pipeline_str)
-            .map_err(|e| vec![e])?;
+            .map_err(|e| vec![e.to_string()])?;
 
         if debug {
             println!("=== 使用自定义Pass管线 ===");
@@ -109,7 +115,7 @@ impl OptimizationPipeline {
             .sum();
 
         let start_time = std::time::Instant::now();
-        pass_manager.run_on_program(program).map_err(|e| vec![e])?;
+        pass_manager.run_on_program(program).map_err(|e| vec![e.to_string()])?;
         let total_time = start_time.elapsed();
 
         let instructions_after = program
@@ -164,7 +170,7 @@ impl OptimizationPipeline {
 
         // 运行优化
         let start_time = std::time::Instant::now();
-        pass_manager.run_on_program(program).map_err(|e| vec![e])?;
+        pass_manager.run_on_program(program).map_err(|e| vec![e.to_string()])?;
         let total_time = start_time.elapsed();
 
         // 统计优化后的指令数

@@ -28,6 +28,9 @@ impl<'a> LoweringContext<'a> {
             function_return_types: std::collections::HashMap::new(),
             temp_types: std::collections::HashMap::new(),
             expr_types: std::collections::HashMap::new(),
+            analysis_mode: false,
+            loop_stack: Vec::new(),
+            return_target: None,
         };
         ctx.enter_scope();
         ctx
@@ -140,6 +143,10 @@ impl<'a> LoweringContext<'a> {
         self.current_function_mut().new_block()
     }
 
+    pub(crate) fn remove_block(&mut self, id: BasicBlockId) {
+        self.current_function_mut().remove_block(id);
+    }
+
     /// 创建新的临时变量
     pub(crate) fn new_temp(&mut self) -> Value {
         let id = self.current_function_mut().new_temp();
@@ -171,6 +178,13 @@ impl<'a> LoweringContext<'a> {
             .expect("at least one scope must exist")
     }
 
+    /// 获取当前作用域的不可变引用
+    pub(crate) fn current_scope(&self) -> &ScopeFrame {
+        self.scopes
+            .last()
+            .expect("at least one scope must exist")
+    }
+
     /// 绑定变量
     ///
     /// 在当前作用域中添加新的变量绑定
@@ -180,6 +194,24 @@ impl<'a> LoweringContext<'a> {
         value: Value,
         ownership: Option<OwnershipKind>,
     ) {
+        let struct_name = match &value {
+            Value::Struct { name, .. } => Some(name.clone()),
+            _ => None,
+        };
+        self.bind_variable_with_struct_name(name, value, ownership, struct_name);
+    }
+
+    /// 绑定变量（带结构体名称）
+    ///
+    /// 当变量的结构体类型信息已知时（如从 HIR StructLiteral 表达式中获取），
+    /// 可以通过此方法将类型名称传入，用于后续闭包捕获分析
+    pub(crate) fn bind_variable_with_struct_name(
+        &mut self,
+        name: String,
+        value: Value,
+        ownership: Option<OwnershipKind>,
+        struct_name: Option<String>,
+    ) {
         let frame = self.current_scope_mut();
         frame.order.push(name.clone());
         frame.bindings.insert(
@@ -188,6 +220,7 @@ impl<'a> LoweringContext<'a> {
                 value,
                 ownership,
                 moved: false,
+                struct_name,
             },
         );
     }

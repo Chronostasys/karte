@@ -138,6 +138,18 @@ fn canonicalize_statement(statement: &mut Statement, symbols: &HashMap<String, S
             canonicalize_value(target, symbols);
             canonicalize_value(operand, symbols);
         }
+        Statement::TypeCast {
+            target, source, ..
+        } => {
+            canonicalize_value(target, symbols);
+            canonicalize_value(source, symbols);
+        }
+        Statement::TypeCast {
+            target, source, ..
+        } => {
+            canonicalize_value(target, symbols);
+            canonicalize_value(source, symbols);
+        }
         Statement::Call {
             target,
             function,
@@ -231,6 +243,20 @@ fn canonicalize_statement(statement: &mut Statement, symbols: &HashMap<String, S
         Statement::StackAllocate { target, .. } => {
             canonicalize_value(target, symbols);
         }
+        Statement::UnsafeLoad { target, addr, .. } => {
+            canonicalize_value(target, symbols);
+            canonicalize_value(addr, symbols);
+        }
+        Statement::UnsafeStore { addr, value, .. } => {
+            canonicalize_value(addr, symbols);
+            canonicalize_value(value, symbols);
+        }
+        Statement::RuntimeGlobal { .. } => {
+            // 无需 canonicalize
+        }
+        Statement::GcRegOp { .. } => {
+            // 无需 canonicalize
+        }
     }
 }
 
@@ -270,8 +296,8 @@ fn canonicalize_value(value: &mut Value, symbols: &HashMap<String, String>) {
                 canonicalize_value(captured, symbols);
             }
         }
-        Value::Constructor { arg, .. } | Value::QualifiedConstructor { arg, .. } => {
-            if let Some(arg) = arg.as_deref_mut() {
+        Value::Constructor { args, .. } | Value::QualifiedConstructor { args, .. } => {
+            for arg in args {
                 canonicalize_value(arg, symbols);
             }
         }
@@ -287,7 +313,8 @@ fn canonicalize_value(value: &mut Value, symbols: &HashMap<String, String>) {
         | Value::Number { .. }
         | Value::Boolean { .. }
         | Value::Unit
-        | Value::Temp { .. } => {}
+        | Value::Temp { .. }
+        | Value::StringLiteral { .. } => {}
     }
 }
 
@@ -422,25 +449,25 @@ fn create_progress_bar(
 fn compile_script_entry(
     entry_path: &Path,
     optimization_level: OptimizationLevel,
-    verbose: bool,
+    verbose: u8,
 ) -> Result<CompilationArtifacts, String> {
     let path_str = entry_path
         .to_str()
         .ok_or_else(|| "入口文件路径不是有效的 UTF-8".to_string())?;
-    compile_entry_file(path_str, optimization_level, verbose, ParserMode::Script)
+    compile_entry_file(path_str, optimization_level, verbose > 0, ParserMode::Script)
         .map_err(|e| e.to_string())
 }
 
 fn build_project_product(
     context: ProjectBuildContext,
     optimization_level: OptimizationLevel,
-    verbose: bool,
+    verbose: u8,
     progress: bool,
     announce: bool,
 ) -> Result<BuildProduct, String> {
     if announce {
         println!("构建计划: {} 个模块", context.total_modules());
-        if verbose {
+        if verbose > 0 {
             for module in &context.plan.sequence {
                 println!("  - {}", module);
             }
@@ -451,7 +478,7 @@ fn build_project_product(
     let progress_bar =
         create_progress_bar(context.total_modules(), context.layer_count(), progress);
     let project =
-        compile_project_with_context(&context, optimization_level, verbose, progress_bar)?;
+        compile_project_with_context(&context, optimization_level, verbose > 0, progress_bar)?;
 
     if announce {
         println!("构建完成！");
@@ -463,7 +490,7 @@ fn build_project_product(
 fn build_script_product(
     entry_path: &Path,
     optimization_level: OptimizationLevel,
-    verbose: bool,
+    verbose: u8,
     announce: bool,
 ) -> Result<BuildProduct, String> {
     if announce {
@@ -480,7 +507,7 @@ fn build_product_for_entry(
     entry_path: &Path,
     input: BuildInput,
     optimization_level: OptimizationLevel,
-    verbose: bool,
+    verbose: u8,
     progress: bool,
     announce: bool,
 ) -> Result<BuildProduct, String> {
@@ -503,14 +530,15 @@ fn build_product_for_entry(
 
 pub fn execute_lir(
     lir_program: &LirProgram,
-    verbose: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if verbose {
+    verbose: u8,
+    emit_asm: bool,
+) -> Result<i64, Box<dyn std::error::Error>> {
+    if verbose > 0 {
         println!("\n--- Executing LIR ---");
     }
 
-    // 始终尝试使用 JIT 执行；解释器已被移除，因此失败会返回错误
-    if verbose {
+    // 始终尝试使用 JIT 执行
+    if verbose > 0 {
         println!(
             "entry: {}",
             lir_program
@@ -521,15 +549,21 @@ pub fn execute_lir(
         println!("尝试使用 JIT 执行...");
     }
 
-    match ProfessionalExecutor::new_with_jit(verbose) {
+    match ProfessionalExecutor::new_with_jit(verbose > 0) {
         Ok(mut executor) => {
-            if verbose {
+            if verbose > 0 {
                 println!("使用JIT执行器");
+            }
+            if emit_asm {
+                executor.enable_asm_dump();
             }
             match executor.execute_with_jit(lir_program) {
                 Ok(exit_code) => {
+                    if emit_asm {
+                        executor.dump_asm();
+                    }
                     println!("JIT执行完成，退出码: {}", exit_code);
-                    Ok(())
+                    Ok(exit_code)
                 }
                 Err(err) => Err(format!("JIT执行失败: {}", err).into()),
             }
@@ -593,13 +627,14 @@ pub fn write_content_creating_parent<P: AsRef<Path>>(path: P, content: &str) -> 
 pub fn process_file(
     filename: &str,
     optimization_level: OptimizationLevel,
-    verbose: bool,
+    verbose: u8,
     emit_lir: bool,
     output_file: Option<&str>,
     heap_stats: bool,
     mode: ParserMode,
     mode_is_explicit: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+    emit_asm: bool,
+) -> Result<i64, Box<dyn std::error::Error>> {
     let entry_path = Path::new(filename);
     let project_context = ProjectBuildContext::try_new(entry_path)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
@@ -655,22 +690,136 @@ pub fn process_file(
         println!("LIR代码已输出到: {}", output_path);
     }
 
-    if emit_lir {
+    // 先运行优化 pipeline，再输出/执行
+    let mut pipeline = karte_lir::OptimizationPipeline::new(optimization_level);
+    pipeline
+        .optimize(&mut lir_program)
+        .map_err(|errors| -> Box<dyn std::error::Error> {
+            format!("LIR优化失败: {}", errors.join(", ")).into()
+        })?;
+
+    let exit_code = if emit_lir {
+        // 在 pipeline 之后输出优化过的 LIR
         println!("{}", lir_program.to_ir_string());
+        0
     } else {
-        let mut pipeline = karte_lir::OptimizationPipeline::new(optimization_level);
-        pipeline
-            .optimize(&mut lir_program)
-            .map_err(|errors| -> Box<dyn std::error::Error> {
-                format!("LIR优化失败: {}", errors.join(", ")).into()
-            })?;
-        execute_lir(&lir_program, verbose)?;
-    }
+        execute_lir(&lir_program, verbose, emit_asm)?
+    };
 
     if let Some(before) = before_stats {
         let after = capture_heap_stats();
         print_heap_stats("file", filename, before, after);
     }
+
+    Ok(exit_code)
+}
+
+/// 从 karte-stdlib/gc.karte 中提取函数定义（去掉 main），拼接到用户源码前面
+fn inject_gc_functions(user_source: &str, gc_mode: &str) -> String {
+    // 只有 karte GC 模式才注入
+    if gc_mode != "karte" {
+        return user_source.to_string();
+    }
+
+    // 尝试读取 karte-stdlib/gc.karte
+    let gc_path = std::path::Path::new("karte-stdlib/gc.karte");
+    if !gc_path.exists() {
+        // 尝试相对于可执行文件的路径
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(parent) = exe_path.parent() {
+                let alt_path = parent.join("../../karte-stdlib/gc.karte");
+                if !alt_path.exists() {
+                    eprintln!("警告: 找不到 karte-stdlib/gc.karte，跳过 GC 注入");
+                    return user_source.to_string();
+                }
+            }
+        }
+        return user_source.to_string();
+    }
+
+    match fs::read_to_string(gc_path) {
+        Ok(gc_source) => {
+            // 提取 fn main 之前的所有内容（函数定义）
+            let gc_fns = if let Some(main_pos) = gc_source.find("fn main()") {
+                &gc_source[..main_pos]
+            } else {
+                &gc_source
+            };
+            format!("{}\n{}", gc_fns.trim(), user_source)
+        }
+        Err(e) => {
+            eprintln!("警告: 读取 gc.karte 失败: {}，跳过 GC 注入", e);
+            user_source.to_string()
+        }
+    }
+}
+
+/// AOT 编译: 将 Karte 源码编译为独立可执行文件
+pub fn aot_compile(
+    input: &str,
+    output_path: &str,
+    optimization_level: OptimizationLevel,
+    mode: ParserMode,
+    verbose: u8,
+    target: karte_aot::AotTarget,
+    gc_mode: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    // 1. 读取源码 (input 可能是文件路径或内联表达式)
+    let source = if std::path::Path::new(input).exists() {
+        fs::read_to_string(input)?
+    } else {
+        input.to_string()
+    };
+
+    // 1.5 自动引入 GC 函数 (从 karte-stdlib/gc.karte 中提取非 main 函数)
+    let source = inject_gc_functions(&source, gc_mode);
+
+    // 1. 编译到 LIR
+    let mut lir_program = compile_to_lir(&source, "aot", optimization_level, verbose > 0, mode)?;
+
+    // 设置目标架构（让 LIR pipeline 使用正确的调用约定）
+    let target_str = match target {
+        karte_aot::AotTarget::X86_64 => "x86_64",
+        karte_aot::AotTarget::AArch64 => "aarch64",
+        karte_aot::AotTarget::Riscv64 => "riscv64",
+    };
+    lir_program.set_target(target_str.to_string());
+
+    // 2. 优化
+    let mut pipeline = karte_lir::OptimizationPipeline::new(optimization_level);
+    pipeline.optimize(&mut lir_program).map_err(|errors| -> Box<dyn std::error::Error> {
+        format!("LIR优化失败: {}", errors.join(", ")).into()
+    })?;
+
+    if verbose > 0 {
+        eprintln!("AOT: LIR 优化完成, {} 个函数", lir_program.functions.len());
+    }
+
+    // DEBUG: dump optimized LIR
+    eprintln!("=== OPTIMIZED LIR ===");
+    for (name, func) in &lir_program.functions {
+        eprintln!("--- {} ---", name);
+        for (i, inst) in func.instructions.iter().enumerate() {
+            eprintln!("  [{}] {:?}", i, inst);
+        }
+    }
+    eprintln!("=== END LIR ===");
+
+    // 3. AOT 编译
+    let aot_compiler = karte_aot::AotCompiler::new(verbose > 0).with_target(target);
+    let binary = aot_compiler.compile_to_bytes(&lir_program)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+
+    // 4. 写入输出文件
+    fs::write(output_path, &binary)?;
+    
+    // 5. 设置可执行权限
+    let perms = std::fs::Permissions::from_mode(0o755);
+    fs::set_permissions(output_path, perms)?;
+
+    println!("AOT: 已生成可执行文件: {} ({} 字节)", output_path, binary.len());
 
     Ok(())
 }
@@ -678,13 +827,14 @@ pub fn process_file(
 pub fn process_expression(
     input: &str,
     optimization_level: OptimizationLevel,
-    verbose: bool,
+    verbose: u8,
     emit_lir: bool,
     output_file: Option<&str>,
     heap_stats: bool,
     mode: ParserMode,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut lir_program = compile_to_lir(input, "input", optimization_level, verbose, mode)?;
+    emit_asm: bool,
+) -> Result<i64, Box<dyn std::error::Error>> {
+    let mut lir_program = compile_to_lir(input, "input", optimization_level, verbose > 0, mode)?;
     let before_stats = heap_stats.then_some(capture_heap_stats());
 
     if let Some(output_path) = output_file {
@@ -693,27 +843,31 @@ pub fn process_expression(
         println!("LIR代码已输出到: {}", output_path);
     }
 
-    if emit_lir {
+    // 先运行优化 pipeline，再输出/执行
+    let mut pipeline = karte_lir::OptimizationPipeline::new(optimization_level);
+    pipeline
+        .optimize(&mut lir_program)
+        .map_err(|errors| -> Box<dyn std::error::Error> {
+            format!("LIR优化失败: {}", errors.join(", ")).into()
+        })?;
+
+    let exit_code = if emit_lir {
+        // 在 pipeline 之后输出优化过的 LIR
         println!("{}", lir_program.to_ir_string());
+        0
     } else {
-        let mut pipeline = karte_lir::OptimizationPipeline::new(optimization_level);
-        pipeline
-            .optimize(&mut lir_program)
-            .map_err(|errors| -> Box<dyn std::error::Error> {
-                format!("LIR优化失败: {}", errors.join(", ")).into()
-            })?;
-        execute_lir(&lir_program, verbose)?;
-    }
+        execute_lir(&lir_program, verbose, emit_asm)?
+    };
 
     if let Some(before) = before_stats {
         let after = capture_heap_stats();
         print_heap_stats("expression", "input", before, after);
     }
 
-    Ok(())
+    Ok(exit_code)
 }
 
-pub fn run_repl(optimization_level: OptimizationLevel, verbose: bool) {
+pub fn run_repl(optimization_level: OptimizationLevel, verbose: u8) {
     println!("Karte REPL (JIT 执行)");
     println!("当前优化级别: {:?}", optimization_level);
     println!();
@@ -762,6 +916,7 @@ pub fn run_repl(optimization_level: OptimizationLevel, verbose: bool) {
                         false,
                         ParserMode::Script,
                         true,
+                        false,
                     ) {
                         error!("Error reading file '{}': {}", filename, err);
                     }
@@ -776,6 +931,7 @@ pub fn run_repl(optimization_level: OptimizationLevel, verbose: bool) {
                     None,
                     false,
                     ParserMode::Script,
+                    false,
                 ) {
                     error!("Error: {}", err);
                 }
@@ -792,7 +948,7 @@ pub fn build_project(
     entry_path: &str,
     output_dir: &str,
     optimization_level: OptimizationLevel,
-    verbose: bool,
+    verbose: u8,
     emit_mir: bool,
     progress: bool,
 ) -> Result<(), String> {
@@ -824,7 +980,7 @@ pub fn optimize_with_pipeline(
     pipeline: &str,
     output: Option<&str>,
     debug: bool,
-    verbose: bool,
+    verbose: u8,
 ) -> Result<(), String> {
     use karte_ir_codec::{IrDisplay, IrParse};
     use karte_lir::{LirProgram, OptimizationPipeline};
@@ -837,7 +993,7 @@ pub fn optimize_with_pipeline(
     let mut program =
         LirProgram::parse_ir(&content).map_err(|e| format!("解析LIR失败: {:?}", e))?;
 
-    if verbose {
+    if verbose > 0 {
         println!("输入文件: {}", input);
         println!("Pass管线: {}", pipeline);
     }
@@ -847,7 +1003,7 @@ pub fn optimize_with_pipeline(
         .map_err(|errors| format!("优化失败: {}", errors.join(", ")))?;
 
     // 打印统计信息
-    if verbose || debug {
+    if verbose > 0 || debug {
         println!("\n=== 优化统计 ===");
         println!("优化前指令数: {}", stats.instructions_before);
         println!("优化后指令数: {}", stats.instructions_after);

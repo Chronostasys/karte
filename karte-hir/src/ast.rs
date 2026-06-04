@@ -9,9 +9,10 @@ fn format_pattern(pattern: &Pattern) -> String {
     match pattern {
         Pattern::Wildcard { .. } => "_".to_string(),
         Pattern::Variable { name, .. } => name.clone(),
-        Pattern::Constructor { name, arg, .. } => {
-            if let Some(arg) = arg {
-                format!("{}({})", name, format_pattern(arg))
+        Pattern::Constructor { name, args, .. } => {
+            if !args.is_empty() {
+                let args_str = args.iter().map(|a| format_pattern(a)).collect::<Vec<_>>().join(", ");
+                format!("{}({})", name, args_str)
             } else {
                 name.clone()
             }
@@ -19,15 +20,16 @@ fn format_pattern(pattern: &Pattern) -> String {
         Pattern::QualifiedConstructor {
             type_name,
             constructor_name,
-            arg,
+            args,
             ..
         } => {
-            if let Some(arg) = arg {
+            if !args.is_empty() {
+                let args_str = args.iter().map(|a| format_pattern(a)).collect::<Vec<_>>().join(", ");
                 format!(
                     "{}::{}({})",
                     type_name,
                     constructor_name,
-                    format_pattern(arg)
+                    args_str
                 )
             } else {
                 format!("{}::{}", type_name, constructor_name)
@@ -44,6 +46,11 @@ pub enum Expr {
     // 基础值
     Number {
         value: i64,
+        span: Span,
+    },
+    /// 字符串字面量
+    StringLiteral {
+        value: String,
         span: Span,
     },
     Unit {
@@ -103,7 +110,7 @@ pub enum Expr {
     /// 构造器调用 (例如: Some(42), None, Left(value))
     Constructor {
         name: String,
-        arg: Option<Box<Expr>>, // Some constructors don't take arguments
+        args: Vec<Expr>,
         span: Span,
     },
 
@@ -111,7 +118,7 @@ pub enum Expr {
     QualifiedConstructor {
         type_name: String,
         constructor_name: String,
-        arg: Option<Box<Expr>>,
+        args: Vec<Expr>,
         span: Span,
     },
 
@@ -143,6 +150,40 @@ pub enum Expr {
         span: Span,
     },
 
+    /// ForIn表达式 - 范围循环 for ident in start..end { body } 或 for ident in start..=end { body }
+    ForIn {
+        var: String,
+        start: Box<Expr>,
+        end: Box<Expr>,
+        body: Box<Expr>,
+        inclusive: bool, // true 表示 ..= (inclusive), false 表示 .. (exclusive)
+        span: Span,
+    },
+
+    /// ForArray表达式 - 数组遍历 for ident in array_expr { body }
+    ForArray {
+        var: String,
+        array: Box<Expr>,
+        body: Box<Expr>,
+        span: Span,
+    },
+
+    /// Break表达式 - 跳出当前循环
+    Break {
+        span: Span,
+    },
+
+    /// Continue表达式 - 跳到当前循环的条件检查
+    Continue {
+        span: Span,
+    },
+
+    /// Return表达式 - 从当前函数返回
+    Return {
+        value: Option<Box<Expr>>,
+        span: Span,
+    },
+
     /// 结构体字面量 - 创建结构体实例
     StructLiteral {
         name: String,
@@ -170,6 +211,82 @@ pub enum Expr {
     /// 数组长度
     ArrayLen {
         array: Box<Expr>,
+        span: Span,
+    },
+    /// 绝对值 abs(x)
+    Abs {
+        value: Box<Expr>,
+        span: Span,
+    },
+    /// 最小值 min(a, b)
+    Min {
+        left: Box<Expr>,
+        right: Box<Expr>,
+        span: Span,
+    },
+    /// 最大值 max(a, b)
+    Max {
+        left: Box<Expr>,
+        right: Box<Expr>,
+        span: Span,
+    },
+    /// 限制值范围 clamp(value, min_val, max_val)
+    Clamp {
+        value: Box<Expr>,
+        min_val: Box<Expr>,
+        max_val: Box<Expr>,
+        span: Span,
+    },
+    /// 字符串索引 str_index(s, i) — 返回第 i 个字节的 ASCII 值
+    StrIndex {
+        string: Box<Expr>,
+        index: Box<Expr>,
+        span: Span,
+    },
+    /// 字符取值 char_at(s, i) — 返回第 i 个字节位置的单字节字符串
+    CharAt {
+        string: Box<Expr>,
+        index: Box<Expr>,
+        span: Span,
+    },
+    /// 子字符串截取 substring(s, start, len)
+    Substring {
+        string: Box<Expr>,
+        start: Box<Expr>,
+        length: Box<Expr>,
+        span: Span,
+    },
+    /// 字符串包含检测 str_contains(s, ch) — ch 为 ASCII 字节值，返回 0 或 1
+    StrContains {
+        string: Box<Expr>,
+        char_code: Box<Expr>,
+        span: Span,
+    },
+    /// 字符串分割计数 split_count(s, sep) — 返回按分隔符分割后的字段数量
+    SplitCount {
+        string: Box<Expr>,
+        separator: Box<Expr>,
+        span: Span,
+    },
+    /// 去除字符串首尾空格 trim(s)
+    Trim {
+        string: Box<Expr>,
+        span: Span,
+    },
+    /// 数字转字符串 to_string(expr) — 将 number 转换为字符串
+    ToString {
+        expr: Box<Expr>,
+        span: Span,
+    },
+    /// 元组字面量
+    TupleLiteral {
+        elements: Vec<Expr>,
+        span: Span,
+    },
+    /// 元组字段访问 (t.0, t.1)
+    TupleAccess {
+        object: Box<Expr>,
+        index: usize,
         span: Span,
     },
 
@@ -208,6 +325,32 @@ pub enum Expr {
         span: Span,
     },
 
+    /// unsafe 内存读取 - 从任意地址读取指定字节数的值
+    UnsafeLoad {
+        addr: Box<Expr>,
+        byte_size: u8, // 1, 4, or 8
+        span: Span,
+    },
+    /// unsafe 内存写入 - 向任意地址写入指定字节数的值
+    UnsafeStore {
+        addr: Box<Expr>,
+        value: Box<Expr>,
+        byte_size: u8, // 1, 4, or 8
+        span: Span,
+    },
+
+    /// runtime 内建函数 - 读取 runtime 全局变量
+    RuntimeGlobal {
+        name: String, // "heap_start", "heap_limit", "vstack_bottom" 等
+        span: Span,
+    },
+
+    /// GC 寄存器保存/恢复内建函数
+    GcRegOp {
+        is_push: bool, // true = gc_push_regs, false = gc_pop_regs
+        span: Span,
+    },
+
     /// 赋值表达式 - 为变量或字段赋值
     Assignment {
         target: Box<Expr>,
@@ -238,6 +381,14 @@ pub enum Expr {
         body: Box<Expr>,
         span: Span,
     },
+
+    // ===== 类型转换 (as 表达式) =====
+    /// 显式类型转换: expr as TargetType
+    TypeCast {
+        expr: Box<Expr>,
+        target_type: Type,
+        span: Span,
+    },
 }
 
 /// 语句类型
@@ -258,6 +409,7 @@ pub enum Statement {
     TypeDef {
         name: String,
         variants: Vec<TypeVariant>,
+        is_pub: bool,
         span: Span,
     },
 
@@ -265,6 +417,7 @@ pub enum Statement {
     StructDef {
         name: String,
         fields: Vec<FieldDef>,
+        is_pub: bool,
         span: Span,
     },
 
@@ -279,8 +432,9 @@ pub enum Statement {
     FunctionDef {
         name: String,
         params: Vec<Parameter>,
-        return_type: Option<String>,
+        return_type: Option<Type>,
         body: Expr,
+        is_pub: bool,
         span: Span,
     },
 }
@@ -303,7 +457,7 @@ pub enum Pattern {
     /// 构造器模式 (例如: Some(x), None)
     Constructor {
         name: String,
-        arg: Option<Box<Pattern>>,
+        args: Vec<Pattern>,
         span: Span,
     },
     /// 数字字面量模式
@@ -314,7 +468,7 @@ pub enum Pattern {
     QualifiedConstructor {
         type_name: String,
         constructor_name: String,
-        arg: Option<Box<Pattern>>,
+        args: Vec<Pattern>,
         span: Span,
     },
 }
@@ -323,7 +477,7 @@ pub enum Pattern {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeVariant {
     pub name: String,
-    pub data_type: Option<String>, // 简化版本，只支持类型名字符串
+    pub data_types: Vec<Type>,
     pub span: Span,
 }
 
@@ -339,7 +493,7 @@ pub struct FieldInit {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldDef {
     pub name: String,
-    pub field_type: String, // 简化版本，只支持类型名字符串
+    pub field_type: Type, // 结构化类型
     pub span: Span,
 }
 
@@ -347,7 +501,7 @@ pub struct FieldDef {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Parameter {
     pub name: String,
-    pub type_annotation: Option<String>, // 可选的类型注解
+    pub type_annotation: Option<Type>, // 结构化类型注解
     pub span: Span,
 }
 
@@ -362,7 +516,7 @@ impl Parameter {
     }
 
     /// 创建一个带类型注解的参数
-    pub fn typed(name: String, type_annotation: String) -> Self {
+    pub fn typed(name: String, type_annotation: Type) -> Self {
         Self {
             name,
             type_annotation: Some(type_annotation),
@@ -377,7 +531,9 @@ pub enum BinaryOperator {
     Subtract,
     Multiply,
     Divide,
+    Modulo,
     Equal,
+    NotEqual,
     GreaterEqual,
     LessEqual,
     Greater,
@@ -385,6 +541,12 @@ pub enum BinaryOperator {
     // 逻辑运算符
     LogicalAnd,
     LogicalOr,
+    // 位运算符
+    BitAnd,
+    BitOr,
+    BitXor,
+    ShiftLeft,
+    ShiftRight,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -393,6 +555,8 @@ pub enum UnaryOperator {
     Minus,
     // 逻辑非运算符
     LogicalNot,
+    // 位非运算符
+    BitNot,
 }
 
 impl fmt::Display for BinaryOperator {
@@ -402,13 +566,20 @@ impl fmt::Display for BinaryOperator {
             BinaryOperator::Subtract => write!(f, "-"),
             BinaryOperator::Multiply => write!(f, "*"),
             BinaryOperator::Divide => write!(f, "/"),
+            BinaryOperator::Modulo => write!(f, "%"),
             BinaryOperator::Equal => write!(f, "=="),
+            BinaryOperator::NotEqual => write!(f, "!="),
             BinaryOperator::GreaterEqual => write!(f, ">="),
             BinaryOperator::LessEqual => write!(f, "<="),
             BinaryOperator::Greater => write!(f, ">"),
             BinaryOperator::Less => write!(f, "<"),
             BinaryOperator::LogicalAnd => write!(f, "&&"),
             BinaryOperator::LogicalOr => write!(f, "||"),
+            BinaryOperator::BitAnd => write!(f, "&"),
+            BinaryOperator::BitOr => write!(f, "|"),
+            BinaryOperator::BitXor => write!(f, "^"),
+            BinaryOperator::ShiftLeft => write!(f, "<<"),
+            BinaryOperator::ShiftRight => write!(f, ">>"),
         }
     }
 }
@@ -419,6 +590,7 @@ impl fmt::Display for UnaryOperator {
             UnaryOperator::Plus => write!(f, "+"),
             UnaryOperator::Minus => write!(f, "-"),
             UnaryOperator::LogicalNot => write!(f, "!"),
+            UnaryOperator::BitNot => write!(f, "~"),
         }
     }
 }
@@ -428,27 +600,30 @@ impl fmt::Display for Statement {
         match self {
             Statement::Let { name, value, .. } => write!(f, "let {} = {};", name, value),
             Statement::Expression { expr, .. } => write!(f, "{};", expr),
-            Statement::TypeDef { name, variants, .. } => {
+            Statement::TypeDef { name, variants, is_pub, .. } => {
+                let pub_str = if *is_pub { "pub " } else { "" };
                 let variants_str = variants
                     .iter()
                     .map(|v| {
-                        if let Some(data_type) = &v.data_type {
-                            format!("{}({})", v.name, data_type)
+                        if !v.data_types.is_empty() {
+                            let types_str = v.data_types.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", ");
+                            format!("{}({})", v.name, types_str)
                         } else {
                             v.name.clone()
                         }
                     })
                     .collect::<Vec<_>>()
                     .join(" | ");
-                write!(f, "enum {} = {};", name, variants_str)
+                write!(f, "{}enum {} = {};", pub_str, name, variants_str)
             }
-            Statement::StructDef { name, fields, .. } => {
+            Statement::StructDef { name, fields, is_pub, .. } => {
+                let pub_str = if *is_pub { "pub " } else { "" };
                 let fields_str = fields
                     .iter()
                     .map(|f| format!("{}: {}", f.name, f.field_type))
                     .collect::<Vec<_>>()
                     .join(", ");
-                write!(f, "struct {} = {{ {} }};", name, fields_str)
+                write!(f, "{}struct {} = {{ {} }};", pub_str, name, fields_str)
             }
             Statement::Assignment { target, value, .. } => {
                 write!(f, "{} = {};", target, value)
@@ -458,8 +633,10 @@ impl fmt::Display for Statement {
                 params,
                 return_type,
                 body,
+                is_pub,
                 ..
             } => {
+                let pub_str = if *is_pub { "pub " } else { "" };
                 let params_str = params
                     .iter()
                     .map(|p| {
@@ -476,7 +653,7 @@ impl fmt::Display for Statement {
                 } else {
                     "".to_string()
                 };
-                write!(f, "fn {}({}){} {}", name, params_str, ret_str, body)
+                write!(f, "{}fn {}({}){} {}", pub_str, name, params_str, ret_str, body)
             }
         }
     }
@@ -486,6 +663,7 @@ impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Expr::Number { value, .. } => write!(f, "{}", value),
+            Expr::StringLiteral { value, .. } => write!(f, "\"{}\"", value),
             Expr::Unit { .. } => write!(f, "()"),
             Expr::Identifier { name, .. } => write!(f, "{}", name),
             Expr::ModuleSymbolAccess {
@@ -552,9 +730,10 @@ impl fmt::Display for Expr {
                 }
                 write!(f, "}}")
             }
-            Expr::Constructor { name, arg, .. } => {
-                if let Some(arg) = arg {
-                    write!(f, "{}({})", name, arg)
+            Expr::Constructor { name, args, .. } => {
+                if !args.is_empty() {
+                    let args_str = args.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", ");
+                    write!(f, "{}({})", name, args_str)
                 } else {
                     write!(f, "{}", name)
                 }
@@ -562,11 +741,12 @@ impl fmt::Display for Expr {
             Expr::QualifiedConstructor {
                 type_name,
                 constructor_name,
-                arg,
+                args,
                 ..
             } => {
-                if let Some(arg) = arg {
-                    write!(f, "{}::{}({})", type_name, constructor_name, arg)
+                if !args.is_empty() {
+                    let args_str = args.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", ");
+                    write!(f, "{}::{}({})", type_name, constructor_name, args_str)
                 } else {
                     write!(f, "{}::{}", type_name, constructor_name)
                 }
@@ -595,6 +775,24 @@ impl fmt::Display for Expr {
             } => {
                 write!(f, "while {} do {}", condition, body)
             }
+            Expr::ForIn {
+                var, start, end, body, inclusive, ..
+            } => {
+                let range_op = if *inclusive { "..=" } else { ".." };
+                write!(f, "for {} in {}{}{} {{ {} }}", var, start, range_op, end, body)
+            }
+            Expr::ForArray { var, array, body, .. } => {
+                write!(f, "for {} in {} {{ {} }}", var, array, body)
+            }
+            Expr::Break { .. } => write!(f, "break"),
+            Expr::Continue { .. } => write!(f, "continue"),
+            Expr::Return { value, .. } => {
+                if let Some(v) = value {
+                    write!(f, "return {}", v)
+                } else {
+                    write!(f, "return")
+                }
+            }
             Expr::StructLiteral { name, fields, .. } => {
                 let fields_str = fields
                     .iter()
@@ -620,6 +818,50 @@ impl fmt::Display for Expr {
             Expr::ArrayLen { array, .. } => {
                 write!(f, "len {}", array)
             }
+            Expr::Abs { value, .. } => {
+                write!(f, "abs {}", value)
+            }
+            Expr::Min { left, right, .. } => {
+                write!(f, "min({}, {})", left, right)
+            }
+            Expr::Max { left, right, .. } => {
+                write!(f, "max({}, {})", left, right)
+            }
+            Expr::Clamp { value, min_val, max_val, .. } => {
+                write!(f, "clamp({}, {}, {})", value, min_val, max_val)
+            }
+            Expr::StrIndex { string, index, .. } => {
+                write!(f, "str_index({}, {})", string, index)
+            }
+            Expr::CharAt { string, index, .. } => {
+                write!(f, "char_at({}, {})", string, index)
+            }
+            Expr::Substring { string, start, length, .. } => {
+                write!(f, "substring({}, {}, {})", string, start, length)
+            }
+            Expr::StrContains { string, char_code, .. } => {
+                write!(f, "str_contains({}, {})", string, char_code)
+            }
+            Expr::SplitCount { string, separator, .. } => {
+                write!(f, "split_count({}, {})", string, separator)
+            }
+            Expr::Trim { string, .. } => {
+                write!(f, "trim({})", string)
+            }
+            Expr::ToString { expr, .. } => {
+                write!(f, "to_string({})", expr)
+            }
+            Expr::TupleLiteral { elements, .. } => {
+                let elems = elements
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "({})", elems)
+            }
+            Expr::TupleAccess { object, index, .. } => {
+                write!(f, "{}.{}", object, index)
+            }
             Expr::Reference { expr, .. } => {
                 write!(f, "&{}", expr)
             }
@@ -637,6 +879,22 @@ impl fmt::Display for Expr {
             }
             Expr::Release { pointer, .. } => {
                 write!(f, "release {}", pointer)
+            }
+            Expr::UnsafeLoad { addr, byte_size, .. } => {
+                write!(f, "unsafe_load{}({})", byte_size, addr)
+            }
+            Expr::UnsafeStore { addr, value, byte_size, .. } => {
+                write!(f, "unsafe_store{}({}, {})", byte_size, addr, value)
+            }
+            Expr::RuntimeGlobal { name, .. } => {
+                write!(f, "runtime_{}()", name)
+            }
+            Expr::GcRegOp { is_push, .. } => {
+                if *is_push {
+                    write!(f, "gc_push_regs()")
+                } else {
+                    write!(f, "gc_pop_regs()")
+                }
             }
             Expr::Assignment { target, value, .. } => {
                 write!(f, "{} = {}", target, value)
@@ -656,6 +914,9 @@ impl fmt::Display for Expr {
             } => {
                 write!(f, "handle {}({}) {{ {} }} in {}", tag, param, handler, body)
             }
+            Expr::TypeCast { expr, target_type, .. } => {
+                write!(f, "({} as {})", expr, target_type)
+            }
         }
     }
 }
@@ -664,6 +925,7 @@ impl Expr {
     pub fn span(&self) -> Span {
         match self {
             Expr::Number { span, .. } => *span,
+            Expr::StringLiteral { span, .. } => *span,
             Expr::Unit { span, .. } => *span,
             Expr::Identifier { span, .. } => *span,
             Expr::ModuleSymbolAccess { span, .. } => *span,
@@ -679,21 +941,44 @@ impl Expr {
             Expr::Boolean { span, .. } => *span,
             Expr::If { span, .. } => *span,
             Expr::While { span, .. } => *span,
+            Expr::ForIn { span, .. } => *span,
+            Expr::ForArray { span, .. } => *span,
+            Expr::Break { span, .. } => *span,
+            Expr::Continue { span, .. } => *span,
+            Expr::Return { span, .. } => *span,
             Expr::StructLiteral { span, .. } => *span,
             Expr::FieldAccess { span, .. } => *span,
             Expr::ArrayLiteral { span, .. } => *span,
             Expr::Index { span, .. } => *span,
             Expr::ArrayLen { span, .. } => *span,
+            Expr::Abs { span, .. } => *span,
+            Expr::Min { span, .. } => *span,
+            Expr::Max { span, .. } => *span,
+            Expr::Clamp { span, .. } => *span,
+            Expr::StrIndex { span, .. } => *span,
+            Expr::CharAt { span, .. } => *span,
+            Expr::Substring { span, .. } => *span,
+            Expr::StrContains { span, .. } => *span,
+            Expr::SplitCount { span, .. } => *span,
+            Expr::Trim { span, .. } => *span,
+            Expr::ToString { span, .. } => *span,
+            Expr::TupleLiteral { span, .. } => *span,
+            Expr::TupleAccess { span, .. } => *span,
             Expr::Reference { span, .. } => *span,
             Expr::Dereference { span, .. } => *span,
             Expr::HeapAllocate { span, .. } => *span,
             Expr::HeapFree { span, .. } => *span,
             Expr::Retain { span, .. } => *span,
             Expr::Release { span, .. } => *span,
+            Expr::UnsafeLoad { span, .. } => *span,
+            Expr::UnsafeStore { span, .. } => *span,
+            Expr::RuntimeGlobal { span, .. } => *span,
+            Expr::GcRegOp { span, .. } => *span,
             Expr::Assignment { span, .. } => *span,
             Expr::EffectPerform { span, .. } => *span,
             Expr::EffectResume { span, .. } => *span,
             Expr::EffectHandle { span, .. } => *span,
+            Expr::TypeCast { span, .. } => *span,
         }
     }
 }

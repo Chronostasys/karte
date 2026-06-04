@@ -34,6 +34,17 @@ impl CallsiteLiveRegisterPass {
                 | Instruction::Free { .. }
                 | Instruction::Retain { .. }
                 | Instruction::Release { .. }
+                | Instruction::StringConcat { .. }
+                | Instruction::StringEqual { .. }
+                | Instruction::StringCharAt { .. }
+                | Instruction::StringSubstring { .. }
+                | Instruction::StringContains { .. }
+                | Instruction::SplitCount { .. }
+                | Instruction::Trim { .. }
+                | Instruction::ToString { .. }
+                | Instruction::PrintString { .. }
+                | Instruction::PrintNumber { .. }
+                | Instruction::PrintBool { .. }
         )
     }
 
