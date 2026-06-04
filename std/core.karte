@@ -131,3 +131,7 @@ fn fibonacci(n: number) -> number {
 fn sum_to(n: number) -> number {
     n * (n + 1) / 2
 }
+
+fn number_to_string(n: number) -> string {
+    to_string(n)
+}

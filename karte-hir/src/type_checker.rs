@@ -1075,15 +1075,23 @@ impl TypeChecker {
                 // 根据操作符类型添加不同的类型约束
                 match op {
                     BinaryOperator::Add => {
-                        // Add 支持数字加法和字符串拼接：任一操作数为 String 时两边都约束为 String
+                        // Add 支持数字加法和字符串拼接
+                        // String + String: 两侧都约束为 String
+                        // String + Number / Number + String: 仅 String 侧约束，Number 侧保持 Number（由 MIR lowering 自动插入 to_string）
                         match (&left_type, &right_type) {
-                            (Type::String, _) | (_, Type::String) => {
+                            (Type::String, Type::String) => {
                                 self.add_constraint(left_type.clone(), Type::String, left.span());
+                                self.add_constraint(right_type.clone(), Type::String, right.span());
+                            }
+                            (Type::String, _) => {
+                                self.add_constraint(left_type.clone(), Type::String, left.span());
+                            }
+                            (_, Type::String) => {
                                 self.add_constraint(right_type.clone(), Type::String, right.span());
                             }
                             _ => {
                                 self.add_constraint(left_type.clone(), Type::Number, left.span());
-                                self.add_constraint(right_type.clone(), Type::Number, right.span());
+                                self.add_constraint(right_type.clone(), Type::Number, left.span());
                             }
                         }
                     }

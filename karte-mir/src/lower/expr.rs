@@ -295,9 +295,43 @@ pub(crate) fn lower_expression(
                     .unwrap_or(false);
 
             if is_string_concat {
-                // 字符串连接：调用运行时 string_concat 函数
-                let left_val = lower_expression_to_temp(ctx, left)?;
-                let right_val = lower_expression_to_temp(ctx, right)?;
+                // 字符串连接：Number 侧自动调用 to_string 转换为 string 再拼接
+                let right_ptr = right.as_ref() as *const Expr as usize;
+
+                let left_val = if ctx.expr_types.get(&left_ptr).map(|t| matches!(t, Type::Number)).unwrap_or(false) {
+                    let num_val = lower_expression_to_temp(ctx, left)?;
+                    let str_val = ctx.new_temp();
+                    ctx.add_statement(Statement::Call {
+                        target: Some(str_val.clone()),
+                        function: Value::Function {
+                            name: "__runtime_to_string".to_string(),
+                            ty: None,
+                        },
+                        args: vec![num_val],
+                        span,
+                    });
+                    str_val
+                } else {
+                    lower_expression_to_temp(ctx, left)?
+                };
+
+                let right_val = if ctx.expr_types.get(&right_ptr).map(|t| matches!(t, Type::Number)).unwrap_or(false) {
+                    let num_val = lower_expression_to_temp(ctx, right)?;
+                    let str_val = ctx.new_temp();
+                    ctx.add_statement(Statement::Call {
+                        target: Some(str_val.clone()),
+                        function: Value::Function {
+                            name: "__runtime_to_string".to_string(),
+                            ty: None,
+                        },
+                        args: vec![num_val],
+                        span,
+                    });
+                    str_val
+                } else {
+                    lower_expression_to_temp(ctx, right)?
+                };
+
                 ctx.add_statement(Statement::Call {
                     target: Some(destination.clone()),
                     function: Value::Function {
