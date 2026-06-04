@@ -1,0 +1,19 @@
+enum Option {
+    Some(number),
+    None
+}
+
+fn bind(o: Option, f: number -> Option) -> Option {
+    match o {
+        Some(x) => f(x),
+        None => None
+    }
+}
+
+fn main() -> number {
+    let result = bind(Some(5), |x| -> Option { Some(x * 2) });
+    match result {
+        Some(v) => v,
+        None => 0
+    }
+}

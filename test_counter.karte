@@ -1,0 +1,23 @@
+struct Counter {
+    count: number
+}
+
+fn make_counter() -> Counter {
+    Counter { count: 0 }
+}
+
+fn increment(c: Counter) -> Counter {
+    Counter { count: c.count + 1 }
+}
+
+fn get_count(c: Counter) -> number {
+    c.count
+}
+
+fn main() -> number {
+    let c = make_counter();
+    let c = increment(c);
+    let c = increment(c);
+    let c = increment(c);
+    get_count(c)
+}

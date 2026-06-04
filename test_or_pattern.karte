@@ -1,0 +1,16 @@
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+fn color_to_number(c: Color) -> number {
+    match c {
+        Red => 1,
+        Green | Blue => 2
+    }
+}
+
+fn main() -> number {
+    color_to_number(Red) + color_to_number(Green) + color_to_number(Blue)
+}

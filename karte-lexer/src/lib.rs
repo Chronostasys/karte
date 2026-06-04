@@ -5,6 +5,10 @@ use std::fmt;
 /// Token 类型定义
 #[derive(Logos, Debug, Clone, PartialEq)]
 pub enum Token {
+    // 浮点数字面量（不支持，提前捕获给出友好错误；必须在 Number 和 Dot 之前定义）
+    #[regex(r"[0-9]+\.[0-9]+")]
+    FloatLiteral,
+
     // 数字（十六进制和二进制必须在十进制之前，Logos 最长匹配）
     #[regex(r"0x[0-9a-fA-F]+", |lex| i64::from_str_radix(&lex.slice()[2..], 16).ok())]
     #[regex(r"0b[01]+", |lex| i64::from_str_radix(&lex.slice()[2..], 2).ok())]
@@ -344,6 +348,7 @@ impl fmt::Display for Token {
             Token::KwBreak => write!(f, "break"),
             Token::KwContinue => write!(f, "continue"),
             Token::KwReturn => write!(f, "return"),
+            Token::FloatLiteral => write!(f, "<float literal>"),
             Token::Error => write!(f, "<error>"),
         }
     }
@@ -384,7 +389,14 @@ impl<'a> Lexer<'a> {
 
             match result {
                 Ok(token) => {
-                    tokens.push(TokenWithSpan::new(token, span));
+                    if matches!(token, Token::FloatLiteral) {
+                        self.diagnostics.add_error(
+                            "不支持浮点数字面量".to_string(),
+                            span,
+                        );
+                    } else {
+                        tokens.push(TokenWithSpan::new(token, span));
+                    }
                 }
                 Err(_) => {
                     self.diagnostics.add_error(
