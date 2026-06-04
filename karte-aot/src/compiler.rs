@@ -741,12 +741,15 @@ impl AotCompiler {
                         }
                         AdrPatchType::Adrp { dst_register: rd } => {
                             // ADRP Rd, page_offset: 页对齐的 33-bit 偏移
+                            // ADRP 编码: bit[31]=1, bit[30:29]=immlo[1:0], bit[28:24]=10000
+                            // 注意：之前错误地使用了 0b10000<<24 = 0x10000000（ADR），
+                            // 正确应该是 bit[31]=1: (1u32<<31) | (immlo<<29) | (0b10000u32<<24) | ...
                             let pc_page = (patch_abs as usize) & !0xFFF;
                             let target_page = (target_addr as usize) & !0xFFF;
                             let page_off = target_page as i64 - pc_page as i64;
                             let immhi = ((page_off as u64) >> 12) as u32;
                             let immlo = ((page_off as u64) >> 2) as u32 & 0x3;
-                            let instr = (0b10000u32 << 24) | (immlo << 29) | ((immhi & 0x7FFFF) << 5) | (*rd as u32);
+                            let instr = (1u32 << 31) | (immlo << 29) | (0b10000u32 << 24) | ((immhi & 0x7FFFF) << 5) | (*rd as u32);
                             karte_code[patch_pos..patch_pos + 4].copy_from_slice(&instr.to_le_bytes());
                         }
                         AdrPatchType::AddLabel { dst_register: _ } => {
@@ -763,6 +766,8 @@ impl AotCompiler {
                             // 暂时不处理
                         }
                     }
+                } else {
+                    // 标签未找到 - 可能在其他编译单元中
                 }
             }
         }
