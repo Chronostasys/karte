@@ -492,6 +492,69 @@ impl Collector {
         }
     }
 
+    /// 检查指针是否指向已 forwarded 的对象，如果是则修正根指针。
+    ///
+    /// 返回 Some(new_ptr) 如果指针被修正，返回 None 如果不是 forwarded 对象。
+    /// 调用者应使用返回的新指针继续处理。
+    ///
+    /// 处理以下场景：
+    /// - block bitmap 被清除导致 in_heap() 返回 false
+    /// - block.free = true 导致提前返回
+    /// - block 被重用后 cursor 已推进导致提前返回
+    unsafe fn try_correct_forwarded(&self, father: *mut u8, ptr: *mut u8) -> Option<*mut u8> {
+        // 使用 mmap heap range 检查而非 in_heap()（in_heap 依赖 bitmap）
+        let global = self.thread_local_allocator().global_allocator();
+        if !global.in_heap_range(ptr) {
+            return None;
+        }
+        // 基本对齐检查
+        if ptr as usize % 8 != 0 || ptr as usize % BLOCK_SIZE <= LINE_SIZE * 3 {
+            return None;
+        }
+
+        let obj = ImmixObject::from_unaligned_ptr(ptr);
+        let Some(obj) = obj else {
+            return None;
+        };
+        let obj_ref = obj.as_ref().unwrap_unchecked();
+
+        // 检查对象是否已 forwarded
+        if !obj_ref.byte_header.get_forwarded() {
+            return None;
+        }
+
+        // 读取 forward pointer 并修正根指针
+        let body = obj_ref.get_body();
+        let forward_ptr = *(body as *const *mut u8);
+        if forward_ptr.is_null() {
+            return None;
+        }
+        // 验证 forward pointer 的有效性（可能被新分配覆盖导致读取了垃圾数据）
+        if forward_ptr as usize % 8 != 0 {
+            return None;
+        }
+        if !global.in_heap_range(forward_ptr) {
+            return None;
+        }
+        let offset = ptr.offset_from(body);
+        if offset < 0 {
+            return None;
+        }
+        let new_ptr = forward_ptr.offset(offset);
+
+        // 直接写入新指针到根槽位
+        *(father as *mut *mut u8) = new_ptr;
+        log::trace!(
+            "gc {}: try_correct_forwarded: father={:p}, {:p} -> {:p} (offset={})",
+            self.id,
+            father,
+            ptr,
+            new_ptr,
+            offset
+        );
+        Some(new_ptr)
+    }
+
     /// precise mark a pointer
     unsafe extern "C" fn mark_ptr(&self, ptr: *mut u8) {
         let father = ptr;
@@ -505,11 +568,20 @@ impl Collector {
 
         let ptr = *(ptr as *mut *mut u8);
         log::trace!(
-            "gc {}: mark_ptr called: father={:p} -> ptr={:p}",
-            self.id,
-            father,
-            ptr
+          "gc {}: mark_ptr called: father={:p} -> ptr={:p}",
+          self.id,
+          father,
+          ptr
         );
+
+        // 在所有提前返回之前，检查指针是否指向已 forwarded 的对象。
+        // 处理以下场景：
+        // 1. block bitmap 被 return_prev_free_blocks 清除，in_heap() 返回 false
+        // 2. block.free = true（block 被标记为释放）
+        // 3. block 被重用后 cursor 已推进，cursor check 导致提前返回
+        // 这些情况下正常的 mark_ptr 逻辑会跳过 forwarded 对象，导致根指针未更新。
+        let ptr = self.try_correct_forwarded(father, ptr).unwrap_or(ptr);
+
         // mark it if it is in heap
         // if (ptr as usize) % 8 != 0 {
         //     return;
@@ -564,11 +636,19 @@ impl Collector {
                 let block = &mut *block_p;
                 block.marked = true;
 
+                if obj_ref.byte_header.get_forwarded() {
+                    let _ = self.correct_ptr(father, offset_from_head, ptr);
+                    return;
+                }
+
                 if obj_ref.is_marked() {
                     return;
                 }
                 obj_ref.mark();
             } else {
+                if obj_ref.is_marked() {
+                    return;
+                }
                 // evacuation logic
                 let (forward, h) = obj_ref.byte_header.get_forward_start();
                 let old_h = h;

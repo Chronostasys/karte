@@ -366,6 +366,12 @@ impl GlobalAllocator {
             && self.get_ptr_bitmap(ptr)
     }
 
+    /// 判断指针是否在 mmap 的 heap 地址范围内（不依赖 bitmap）
+    pub fn in_heap_range(&self, ptr: *mut u8) -> bool {
+        (ptr as usize) > (self.heap_start as usize)
+            && (ptr as usize) < (self.heap_end as usize)
+    }
+
     /// # in_big_heap
     /// 判断一个指针是否是一个大对象
     pub fn in_big_heap(&self, ptr: *mut u8) -> bool {
