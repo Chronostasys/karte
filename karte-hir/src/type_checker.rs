@@ -1040,7 +1040,7 @@ impl TypeChecker {
                 // 内建函数
                 if name == "print" {
                     let alpha = self.fresh_type_var();
-                    return Type::function(vec![Type::Var(alpha)], Type::Unit);
+                    return Type::function(vec![Type::Var(alpha)], Type::Number);
                 }
                 // 优先检查泛型函数，若匹配则实例化
                 if let Some(scheme) = self.function_schemes.get(name).cloned() {
