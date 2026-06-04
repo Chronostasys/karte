@@ -300,6 +300,16 @@ pub fn parse_with_type_check(
             diagnostics.add_error(error.message.clone(), error.span);
         }
 
+        match &result_type {
+            Type::Number | Type::Int(_) | Type::Bool | Type::Unit | Type::Var(_) | Type::Unknown => {}
+            _ => {
+                diagnostics.add_error(
+                    format!("main 函数的返回类型不能是 `{}`，该类型无法作为退出码返回", result_type),
+                    Span::dummy(),
+                );
+            }
+        }
+
         (
             Some(ParseResult {
                 program,

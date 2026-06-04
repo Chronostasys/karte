@@ -88,6 +88,10 @@ pub enum TypeCheckError {
         message: String,
         span: Span,
     },
+    InvalidMainReturnType {
+        found: Type,
+        span: Span,
+    },
 }
 
 impl fmt::Display for TypeCheckError {
@@ -175,6 +179,9 @@ impl fmt::Display for TypeCheckError {
             TypeCheckError::BuiltinFunctionError { function, message, .. } => {
                 write!(f, "Builtin function `{}`: {}", function, message)
             }
+            TypeCheckError::InvalidMainReturnType { found, .. } => {
+                write!(f, "main 函数的返回类型不能是 `{}`，该类型无法作为退出码返回", found)
+            }
         }
     }
 }
@@ -200,7 +207,8 @@ impl TypeCheckError {
             | TypeCheckError::UndefinedModuleSymbol { span, .. }
             | TypeCheckError::DuplicateFunctionDefinition { span, .. }
             | TypeCheckError::IndexOutOfBounds { span, .. }
-            | TypeCheckError::BuiltinFunctionError { span, .. } => *span,
+            | TypeCheckError::BuiltinFunctionError { span, .. }
+            | TypeCheckError::InvalidMainReturnType { span, .. } => *span,
         }
     }
 }

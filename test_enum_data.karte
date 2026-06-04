@@ -1,0 +1,17 @@
+enum Shape {
+    Rect(number, number),
+    Circle(number)
+}
+
+fn area(s: Shape) -> number {
+    match s {
+        Rect(w, h) => w * h,
+        Circle(r) => r * r * 3
+    }
+}
+
+fn main() -> number {
+    let r = Rect(3, 4);
+    let c = Circle(5);
+    area(r) + area(c)
+}

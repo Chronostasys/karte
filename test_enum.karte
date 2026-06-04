@@ -1,0 +1,17 @@
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+fn color_value(c: Color) -> number {
+    match c {
+        Color::Red -> 1,
+        Color::Green -> 2,
+        Color::Blue -> 3
+    }
+}
+
+fn main() -> number {
+    color_value(Color::Red) + color_value(Color::Green) + color_value(Color::Blue)
+}

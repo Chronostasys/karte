@@ -576,6 +576,19 @@ impl TypeChecker {
         // 应用统一化结果
         let final_type = self.apply_substitution(result_type);
 
+        if let Some(main_sig) = self.function_signatures.get("main") {
+            let resolved_ret = self.apply_substitution(main_sig.return_type.clone());
+            match &resolved_ret {
+                Type::Number | Type::Int(_) | Type::Bool | Type::Unit | Type::Var(_) => {}
+                _ => {
+                    self.add_error(TypeCheckError::InvalidMainReturnType {
+                        found: resolved_ret,
+                        span: karte_diagnostics::Span::dummy(),
+                    });
+                }
+            }
+        }
+
         // 如果有错误且类型仍然是变量，返回 Unknown
         if self.diagnostics.has_errors() && matches!(final_type, Type::Var(_)) {
             Type::Unknown

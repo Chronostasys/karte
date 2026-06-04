@@ -7143,5 +7143,21 @@ fn main() -> number {
         let exit_code = executor.execute_with_jit(&lir).expect("JIT execution failed");
         assert_eq!(exit_code, 42, "Expected Option::None to match and return 42");
     }
+
+    #[test]
+    fn test_main_returns_string_error_script_mode() {
+        let code = r#"let x = "hello"; x"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Expected type check error for string return type, but got none");
+    }
+
+    #[test]
+    fn test_main_returns_string_error_project_mode() {
+        let code = r#"fn main() -> string { "hello" }"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(diagnostics.has_errors(), "Expected type check error for string return type, but got none");
+    }
 }
 

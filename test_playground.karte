@@ -1,0 +1,12 @@
+fn apply(f: number -> number, x: number) -> number {
+    f(x)
+}
+
+fn add_one(n: number) -> number {
+    n + 1
+}
+
+fn main() -> number {
+    let result = apply(add_one, 5);
+    result
+}

@@ -1,0 +1,6 @@
+fn id(x) { x }
+
+fn main() -> number {
+    let a = id(42);
+    a
+}
