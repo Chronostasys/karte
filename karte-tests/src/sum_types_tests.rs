@@ -273,4 +273,47 @@ mod type_check_tests {
         assert_eq!(result, Type::Number);
     }
 
+
+    #[test]
+    fn test_if_let_basic() {
+        let result = test_evaluate("if let Some(v) = Some(42) { v + 1 } else { 0 }").unwrap();
+        assert_eq!(result, 43);
+
+        let result = test_evaluate("if let Some(v) = None { v + 1 } else { 0 }").unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_if_let_with_wildcard() {
+        let result = test_evaluate("if let Some(_) = Some(99) { 1 } else { 0 }").unwrap();
+        assert_eq!(result, 1);
+
+        let result = test_evaluate("if let Some(_) = None { 1 } else { 0 }").unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_if_let_with_number_pattern() {
+        let result = test_evaluate("if let 42 = 42 { 1 } else { 0 }").unwrap();
+        assert_eq!(result, 1);
+
+        let result = test_evaluate("if let 42 = 99 { 1 } else { 0 }").unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_if_let_with_boolean_pattern() {
+        let result = test_evaluate("if let true = true { 1 } else { 0 }").unwrap();
+        assert_eq!(result, 1);
+
+        let result = test_evaluate("if let true = false { 1 } else { 0 }").unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_if_let_type_check() {
+        let result = test_type_check("if let Some(v) = Some(42) { v } else { 0 }").unwrap();
+        assert_eq!(result, Type::Number);
+    }
+
 }

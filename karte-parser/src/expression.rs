@@ -2299,6 +2299,7 @@ impl<'a> Parser<'a> {
     }
 
     /// 解析if表达式: if condition then branch else branch
+    /// 也处理 if let 模式匹配: if let pattern = expr then branch else branch
     pub(crate) fn parse_if(&mut self) -> Result<Expr, ParseError> {
         let start_span = self.peek().unwrap().span;
 
@@ -2327,6 +2328,16 @@ impl<'a> Parser<'a> {
             });
         }
 
+        // 检测 if let 语法
+        if let Some(token) = self.peek() {
+            if let Token::Identifier(name) = &token.token {
+                if name == "let" {
+                    return self.parse_if_let(start_span);
+                }
+            }
+        }
+
+        // 普通条件 if
         // 解析条件表达式
         let condition = self.parse_expression()?;
 
@@ -2389,6 +2400,121 @@ impl<'a> Parser<'a> {
             condition: Box::new(condition),
             then_branch: Box::new(then_branch),
             else_branch,
+            span,
+        })
+    }
+
+    /// 解析 if let 模式匹配: if let pattern = expr then branch else branch
+    /// 降糖为 match expr { pattern => branch, _ => else_branch }
+    fn parse_if_let(&mut self, start_span: karte_diagnostics::Span) -> Result<Expr, ParseError> {
+        self.advance(); // consume 'let'
+
+        // 解析模式
+        let pattern = self.parse_pattern()?;
+
+        // 期望 '='
+        if let Some(token) = self.peek() {
+            if matches!(token.token, Token::Equal) {
+                self.advance(); // consume '='
+            } else {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "'='".to_string(),
+                    found: token.token.clone(),
+                    span: token.span,
+                });
+            }
+        } else {
+            return Err(ParseError::UnexpectedEof {
+                expected: "'='".to_string(),
+            });
+        }
+
+        // 解析被匹配的表达式
+        let scrutinee = self.parse_expression()?;
+
+        // 期望 'then' 或 '{'
+        if let Some(token) = self.peek() {
+            if let Token::Identifier(name) = &token.token {
+                if name == "then" {
+                    self.advance(); // consume 'then'
+                } else if matches!(token.token, Token::LeftBrace) {
+                    // 允许 if let ... { ... } 语法
+                } else {
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "'then' or '{'".to_string(),
+                        found: token.token.clone(),
+                        span: token.span,
+                    });
+                }
+            } else if matches!(token.token, Token::LeftBrace) {
+                // 允许 if let ... { ... } 语法
+            } else {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "'then' or '{'".to_string(),
+                    found: token.token.clone(),
+                    span: token.span,
+                });
+            }
+        } else {
+            return Err(ParseError::UnexpectedEof {
+                expected: "'then' or '{'".to_string(),
+            });
+        }
+
+        // 解析 then 分支
+        let then_branch = self.parse_expression()?;
+
+        // 检查是否有 else 分支
+        let else_branch = if let Some(token) = self.peek() {
+            if let Token::Identifier(name) = &token.token {
+                if name == "else" {
+                    self.advance(); // consume 'else'
+                    Some(self.parse_expression()?)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // 降糖为 match 表达式
+        let then_span = then_branch.span();
+        let match_arms = if let Some(else_expr) = else_branch {
+            let else_span = else_expr.span();
+            vec![
+                karte_hir::MatchArm {
+                    pattern,
+                    body: then_branch,
+                    guard: None,
+                    span: then_span,
+                },
+                karte_hir::MatchArm {
+                    pattern: karte_hir::Pattern::Wildcard { span: else_span },
+                    body: else_expr,
+                    guard: None,
+                    span: then_span,
+                },
+            ]
+        } else {
+            vec![
+                karte_hir::MatchArm {
+                    pattern,
+                    body: then_branch,
+                    guard: None,
+                    span: then_span,
+                },
+            ]
+        };
+
+        let end_span = match_arms.last().map(|a| a.span).unwrap_or(start_span);
+        let span = Span::new(start_span.start, end_span.end);
+
+        Ok(Expr::Match {
+            expr: Box::new(scrutinee),
+            arms: match_arms,
             span,
         })
     }
