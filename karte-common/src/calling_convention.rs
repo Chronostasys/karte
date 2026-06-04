@@ -524,14 +524,15 @@ impl CallingConvention {
             self.effect_tag_register,
         ];
 
-        // 额外排除：x86_64 硬件特殊寄存器
-        // RSP(4) 和 RBP(5) 是 x86 硬件栈指针和帧指针，不能用于通用分配
-        // 仅当目标是 x86_64 时需要排除
+        // 额外排除：
+        // x86_64: RSP(4) 和 RBP(5) 是 x86 硬件栈指针和帧指针，不能用于通用分配
+        // AArch64: X16(IP0) 和 X17(IP1) 被 codegen 用作临时寄存器
+        //   （大偏移 load/store、ADRP+ADD 标签地址计算），不能被 reg alloc 分配
         let extra_reserved: &[PhysicalRegister] =
             if self.argument_registers == vec![7u8, 6, 2, 1, 8, 9] {
                 &[4, 5] // x86_64 的 RSP, RBP
             } else {
-                &[]
+                &[16, 17] // AArch64 的 X16(IP0), X17(IP1) — codegen 临时寄存器
             };
 
         // 确定最大的寄存器编号：从 callee_saved + caller_saved + temp_registers 中取最大值
