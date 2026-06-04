@@ -1298,7 +1298,7 @@ impl JitCompiler for RiscvCompiler {
         let return_rv = self.map_register(0); // a0 = x10
 
         // 使用统一的 exclude 计算
-        let exclude: Vec<u8> = self.compute_exclude_for_runtime_call(&call, result, return_rv);
+        let exclude: Vec<u8> = compute_exclude_return_reg(&call, result, return_rv);
 
         // 保存 caller-saved 寄存器到虚拟栈
         let (saved_regs, stack_space) = self.save_call_clobbered_registers_ex(cb, &exclude);

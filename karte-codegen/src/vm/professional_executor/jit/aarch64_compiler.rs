@@ -2536,7 +2536,8 @@ impl JitCompiler for AArch64Compiler {
         let instruction_index = instruction_index.unwrap_or(0);
 
         // 使用统一的 exclude 计算
-        let exclude: Vec<u8> = self.compute_exclude_for_runtime_call(&call, result, return_reg);
+        let dst_phys = result.and_then(|r| self.get_physical_register(r).ok());
+        let exclude: Vec<u8> = compute_exclude_dst_reg(&call, result, dst_phys);
 
         // 从 metadata 中获取调用位置活跃寄存器信息
         let live_register_info = function

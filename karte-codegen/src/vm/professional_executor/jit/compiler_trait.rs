@@ -313,27 +313,40 @@ pub trait JitCompiler: std::fmt::Debug {
 
     // ==================== 共享工具方法 ====================
 
-    /// 计算运行时调用的 exclude 列表
-    ///
-    /// 当有返回值且调用确实返回结果时，排除返回值目标寄存器，
-    /// 避免 save/restore 破坏返回值。
-    ///
-    /// 此方法包含统一逻辑，避免各平台各自实现导致不一致。
-    fn compute_exclude_for_runtime_call(
-        &self,
-        call: &RuntimeCall,
-        result: Option<&Register>,
-        return_reg: u8,
-    ) -> Vec<u8> {
-        if result.is_some() && call.expects_result() {
-            if let Some(dst) = result {
-                vec![return_reg]
-            } else {
-                vec![]
-            }
-        } else {
-            vec![]
-        }
+}
+
+/// 计算运行时调用的 exclude 列表（用于 x86/RISC-V 风格：restore 之后移动返回值）
+///
+/// 对于在 restore **之后**移动返回值的平台（x86_64、RISC-V），
+/// 需要排除返回值寄存器（RAX/a0），否则 restore 会覆盖返回值。
+///
+/// 对于在 restore **之前**移动返回值的平台（AArch64），
+/// 应排除结果目标寄存器，由平台自行计算。
+pub fn compute_exclude_return_reg(
+    call: &RuntimeCall,
+    result: Option<&Register>,
+    return_reg: u8,
+) -> Vec<u8> {
+    if result.is_some() && call.expects_result() {
+        vec![return_reg]
+    } else {
+        vec![]
+    }
+}
+
+/// 计算运行时调用的 exclude 列表（用于 AArch64 风格：restore 之前移动返回值）
+///
+/// 对于在 restore **之前**移动返回值的平台（AArch64），
+/// 需要排除结果目标物理寄存器，否则 restore 会覆盖已经移动好的返回值。
+pub fn compute_exclude_dst_reg(
+    call: &RuntimeCall,
+    result: Option<&Register>,
+    dst_phys_reg: Option<u8>,
+) -> Vec<u8> {
+    if result.is_some() && call.expects_result() {
+        dst_phys_reg.map(|r| vec![r]).unwrap_or_default()
+    } else {
+        vec![]
     }
 }
 

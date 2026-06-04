@@ -2032,7 +2032,7 @@ impl JitCompiler for X86Compiler {
         _ctx: Option<super::compiler_trait::RuntimeCallContext<'_>>,
     ) -> crate::Result<()> {
         let return_reg: u8 = 0; // RAX
-        let exclude: Vec<u8> = self.compute_exclude_for_runtime_call(&call, result, return_reg);
+        let exclude: Vec<u8> = compute_exclude_return_reg(&call, result, return_reg);
         let (saved_regs, stack_space) =
             self.save_call_clobbered_registers(code_builder, &exclude);
 
