@@ -239,8 +239,136 @@ pub(super) fn lower_terminator(
                         });
                         return Ok(());
                     }
-                    karte_mir::Pattern::Struct { .. } => {
-                        return Err(vec!["struct pattern in match is not yet supported".to_string()]);
+                    karte_mir::Pattern::Struct {
+                        name: _struct_name,
+                        fields,
+                    } => {
+                        // 结构体模式匹配：使用 JumpEqual 链式检查
+                        // 每个 literal field 必须匹配，任一不匹配则跳到 fail
+                        let struct_slot = ctx.lower_to_lvalue(value);
+                        let struct_slot_reg = match struct_slot {
+                            Operand::Register { id } => id,
+                            _ => {
+                                ctx.errors.push(
+                                    "Struct pattern requires struct base as a register"
+                                        .to_string(),
+                                );
+                                continue;
+                            }
+                        };
+
+                        // 从栈slot中加载结构体指针
+                        let struct_ptr_reg = ctx.current_function_mut().new_register();
+                        ctx.add_instruction(Instruction::Load64 {
+                            dst: struct_ptr_reg,
+                            addr: struct_slot_reg,
+                            offset: 0,
+                            span: *span,
+                        });
+
+                        // 收集所有 literal 字段
+                        let literal_fields: Vec<_> = fields.iter().filter_map(|f| {
+                            match &f.pattern {
+                                karte_mir::Pattern::Number { value, .. } => {
+                                    Some((f.field.clone(), *value as i64))
+                                }
+                                karte_mir::Pattern::Boolean { value, .. } => {
+                                    Some((f.field.clone(), if *value { 1i64 } else { 0 }))
+                                }
+                                _ => None,
+                            }
+                        }).collect();
+
+                        if literal_fields.is_empty() {
+                            // 没有字面量字段，总是匹配
+                            ctx.add_instruction(Instruction::Jump {
+                                target: target_label,
+                                span: *span,
+                            });
+                        } else {
+                            // 链式检查：每个字段用 JumpEqual 跳到下一个检查点
+                            let fail_label = ctx.current_function_mut().new_label();
+                            let check_labels: Vec<_> = (0..literal_fields.len())
+                                .map(|_| ctx.current_function_mut().new_label())
+                                .collect();
+
+                            for (idx, (field_name, expected_value)) in literal_fields.iter().enumerate() {
+                                // 如果不是第一个字段，先绑定前一个字段的 check label
+                                if idx > 0 {
+                                    ctx.add_instruction(Instruction::Label {
+                                        id: check_labels[idx - 1],
+                                        span: *span,
+                                    });
+                                }
+
+                                let field_offset = ctx
+                                    .get_field_offset_from_struct_layout(
+                                        value,
+                                        field_name,
+                                    )
+                                    .unwrap_or_else(|e| {
+                                        ctx.errors.push(e);
+                                        0
+                                    });
+
+                                // field_addr = struct_ptr + field_offset
+                                let field_addr_reg =
+                                    ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Add {
+                                    dst: field_addr_reg,
+                                    src1: Operand::Register { id: struct_ptr_reg },
+                                    src2: Operand::Immediate {
+                                        value: field_offset as i64,
+                                    },
+                                    span: *span,
+                                });
+
+                                // field_value = *(field_addr)
+                                let field_value_reg =
+                                    ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Load64 {
+                                    dst: field_value_reg,
+                                    addr: field_addr_reg,
+                                    offset: 0,
+                                    span: *span,
+                                });
+
+                                // compare
+                                ctx.add_instruction(Instruction::Compare {
+                                    src1: Operand::Register {
+                                        id: field_value_reg,
+                                    },
+                                    src2: Operand::Immediate { value: *expected_value },
+                                    span: *span,
+                                });
+
+                                if idx < literal_fields.len() - 1 {
+                                    // 中间字段：匹配则跳到下一个字段检查
+                                    ctx.add_instruction(Instruction::JumpEqual {
+                                        target: check_labels[idx],
+                                        span: *span,
+                                    });
+                                } else {
+                                    // 最后一个字段：匹配则跳到 arm body
+                                    ctx.add_instruction(Instruction::JumpEqual {
+                                        target: target_label,
+                                        span: *span,
+                                    });
+                                }
+
+                                // 不匹配 → 跳到 fail
+                                ctx.add_instruction(Instruction::Jump {
+                                    target: fail_label,
+                                    span: *span,
+                                });
+                            }
+
+                            // fail label
+                            ctx.add_instruction(Instruction::Label {
+                                id: fail_label,
+                                span: *span,
+                            });
+                        }
                     }
                 }
             }

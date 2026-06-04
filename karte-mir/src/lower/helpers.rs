@@ -624,6 +624,19 @@ pub(crate) fn handle_pattern_bindings(
                 }
             }
         }
+        karte_hir::Pattern::Struct { fields, .. } => {
+            for field_pattern in fields {
+                let field_temp = ctx.new_temp();
+                ctx.add_statement(Statement::FieldAccess {
+                    target: field_temp.clone(),
+                    object: match_value.clone(),
+                    field: field_pattern.field.clone(),
+                    span: Span::new(0, 0),
+                });
+                let resolved = ctx.resolve_value(&field_temp);
+                handle_pattern_bindings(ctx, field_pattern.pattern.as_ref(), &resolved)?;
+            }
+        }
         _ => {
             // 其他模式不需要绑定
         }
