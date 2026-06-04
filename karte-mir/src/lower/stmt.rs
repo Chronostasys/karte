@@ -287,6 +287,7 @@ pub(crate) fn handle_assignment(
                 left: index_value,
                 op: crate::BinaryOperator::Multiply,
                 right: Value::Number { value: 8, ty: None },
+                operand_type: None,
                 span,
             });
 
@@ -297,6 +298,7 @@ pub(crate) fn handle_assignment(
                 left: array_value,
                 op: crate::BinaryOperator::Add,
                 right: Value::Number { value: 8, ty: None },
+                operand_type: None,
                 span,
             });
 
@@ -307,6 +309,7 @@ pub(crate) fn handle_assignment(
                 left: data_base,
                 op: crate::BinaryOperator::Add,
                 right: scaled_index,
+                operand_type: None,
                 span,
             });
 

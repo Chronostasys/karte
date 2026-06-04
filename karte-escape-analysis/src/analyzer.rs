@@ -1163,6 +1163,7 @@ mod tests {
             },
             op: karte_mir::BinaryOperator::Add,
             right: Value::Number { value: 1, ty: None },
+            operand_type: None,
             span: Span::default(),
         });
 

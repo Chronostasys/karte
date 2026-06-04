@@ -22,8 +22,8 @@ use super::helpers::{
 use super::stmt::{handle_assignment, lower_statement};
 use super::types::LoweringContext;
 use crate::{
-    BasicBlockId, BinaryOperator as MirBinaryOp, EscapeState, HeapLayout, MatchArm, MirFunction, Statement,
-    TempId, Terminator, Value,
+    BasicBlockId, BinaryOperator as MirBinaryOp, EscapeState, HeapLayout, MatchArm, MirFunction, OperandType,
+    Statement, TempId, Terminator, Value,
 };
 use karte_common::memory::OwnershipKind;
 use karte_hir::types::Type;
@@ -90,6 +90,7 @@ pub(crate) fn lower_expression(
                         value: byte_offset as i64,
                         ty: None,
                     },
+                    operand_type: None,
                     span: *span,
                 });
                 ctx.add_statement(Statement::UnsafeStore {
@@ -294,6 +295,20 @@ pub(crate) fn lower_expression(
                     .map(|t| matches!(t, karte_hir::Type::String))
                     .unwrap_or(false);
 
+            let struct_or_enum_type = ctx
+                .expr_types
+                .get(&left_ptr)
+                .and_then(|t| match t {
+                    karte_hir::Type::Struct { name, fields } => {
+                        Some(OperandType::Struct {
+                            name: name.clone(),
+                            field_count: fields.len(),
+                        })
+                    }
+                    karte_hir::Type::Sum { .. } => Some(OperandType::TaggedUnion),
+                    _ => None,
+                });
+
             if is_string_concat {
                 // 字符串连接：Number 侧自动调用 to_string 转换为 string 再拼接
                 let right_ptr = right.as_ref() as *const Expr as usize;
@@ -365,6 +380,7 @@ pub(crate) fn lower_expression(
                         left: eq_result,
                         op: MirBinaryOp::BitXor,
                         right: Value::Number { value: 0, ty: None },
+                        operand_type: None,
                         span,
                     });
                 } else {
@@ -374,6 +390,7 @@ pub(crate) fn lower_expression(
                         left: eq_result,
                         op: MirBinaryOp::BitXor,
                         right: Value::Number { value: 1, ty: None },
+                        operand_type: None,
                         span,
                     });
                 }
@@ -382,13 +399,46 @@ pub(crate) fn lower_expression(
                 let left_val = lower_expression_to_temp(ctx, left)?;
                 let right_val = lower_expression_to_temp(ctx, right)?;
 
-                ctx.add_statement(Statement::BinaryOp {
-                    target: destination.clone(),
-                    left: left_val,
-                    op: convert_binary_op(op),
-                    right: right_val,
-                    span,
-                });
+                match (&struct_or_enum_type, &op) {
+                    (Some(_), karte_hir::BinaryOperator::NotEqual) => {
+                        // struct/enum 的 != 拆解为 == 再 BitXor 1
+                        // 这样 LIR 层面只需处理 Equal 的 struct/enum 值比较（不含 BitXor）
+                        // BitXor 走普通数字运算路径，避免 LIR 中复杂的寄存器冲突
+                        ctx.add_statement(Statement::BinaryOp {
+                            target: destination.clone(),
+                            left: left_val,
+                            op: convert_binary_op(&karte_hir::BinaryOperator::Equal),
+                            right: right_val,
+                            operand_type: struct_or_enum_type.clone(),
+                            span,
+                        });
+                        // result = equal_result ^ 1 (取反)
+                        let xor_temp = ctx.new_temp();
+                        ctx.add_statement(Statement::BinaryOp {
+                            target: xor_temp.clone(),
+                            left: destination.clone(),
+                            op: MirBinaryOp::BitXor,
+                            right: Value::Number { value: 1, ty: None },
+                            operand_type: None,
+                            span,
+                        });
+                        ctx.add_statement(Statement::Assign {
+                            target: destination.clone(),
+                            source: xor_temp,
+                            span,
+                        });
+                    }
+                    _ => {
+                        ctx.add_statement(Statement::BinaryOp {
+                            target: destination.clone(),
+                            left: left_val,
+                            op: convert_binary_op(op),
+                            right: right_val,
+                            operand_type: struct_or_enum_type.clone(),
+                            span,
+                        });
+                    }
+                }
             }
         }
 
@@ -1272,6 +1322,7 @@ pub(crate) fn lower_expression(
                 left: for_var_phi_val,
                 right: end_val_in_header,
                 target: cond_temp.clone(),
+                operand_type: None,
                 span: *span,
             });
 
@@ -1779,6 +1830,7 @@ pub(crate) fn lower_expression(
                 left: for_idx_phi_val,
                 right: arr_len.clone(),
                 target: cond_temp.clone(),
+                operand_type: None,
                 span: *span,
             });
 
@@ -1809,6 +1861,7 @@ pub(crate) fn lower_expression(
                 left: current_idx,
                 op: MirBinaryOp::Multiply,
                 right: Value::Number { value: element_size as i64, ty: None },
+                operand_type: None,
                 span: *span,
             });
 
@@ -1819,6 +1872,7 @@ pub(crate) fn lower_expression(
                 left: array_value.clone(),
                 op: MirBinaryOp::Add,
                 right: Value::Number { value: 8, ty: None },
+                operand_type: None,
                 span: *span,
             });
 
@@ -1829,6 +1883,7 @@ pub(crate) fn lower_expression(
                 left: data_base,
                 op: MirBinaryOp::Add,
                 right: scaled_index,
+                operand_type: None,
                 span: *span,
             });
 
@@ -2654,6 +2709,7 @@ pub(crate) fn lower_expression(
                         value: (8 + idx * element_size) as i64,
                         ty: None,
                     },
+                    operand_type: None,
                     span: *span,
                 });
                 ctx.add_statement(Statement::Store {
@@ -2688,6 +2744,7 @@ pub(crate) fn lower_expression(
                 left: index_value,
                 op: MirBinaryOp::Multiply,
                 right: Value::Number { value: element_size as i64, ty: None },
+                operand_type: None,
                 span: *span,
             });
 
@@ -2697,6 +2754,7 @@ pub(crate) fn lower_expression(
                 left: array_value.clone(),
                 op: MirBinaryOp::Add,
                 right: Value::Number { value: 8, ty: None },
+                operand_type: None,
                 span: *span,
             });
 
@@ -2706,6 +2764,7 @@ pub(crate) fn lower_expression(
                 left: data_base,
                 op: MirBinaryOp::Add,
                 right: scaled_index,
+                operand_type: None,
                 span: *span,
             });
 
@@ -2760,6 +2819,7 @@ pub(crate) fn lower_expression(
                 left: value_temp.clone(),
                 op: MirBinaryOp::LessThan,
                 right: Value::Number { value: 0, ty: None },
+                operand_type: None,
                 span: *span,
             });
             
@@ -2821,6 +2881,7 @@ pub(crate) fn lower_expression(
                 left: left_temp.clone(),
                 op: MirBinaryOp::LessThan,
                 right: right_temp.clone(),
+                operand_type: None,
                 span: *span,
             });
             
@@ -2875,6 +2936,7 @@ pub(crate) fn lower_expression(
                 left: left_temp.clone(),
                 op: MirBinaryOp::GreaterThan,
                 right: right_temp.clone(),
+                operand_type: None,
                 span: *span,
             });
             
@@ -2933,6 +2995,7 @@ pub(crate) fn lower_expression(
                 left: value_temp.clone(),
                 op: MirBinaryOp::LessThan,
                 right: min_temp.clone(),
+                operand_type: None,
                 span: *span,
             });
             ctx.set_terminator(Terminator::Branch {
@@ -2962,6 +3025,7 @@ pub(crate) fn lower_expression(
                 left: value_temp.clone(),
                 op: MirBinaryOp::GreaterThan,
                 right: max_temp.clone(),
+                operand_type: None,
                 span: *span,
             });
             ctx.set_terminator(Terminator::Branch {
@@ -3012,6 +3076,7 @@ pub(crate) fn lower_expression(
                 left: Value::Number { value: 8, ty: None },
                 op: MirBinaryOp::Add,
                 right: idx_temp,
+                operand_type: None,
                 span: *span,
             });
 
@@ -3022,6 +3087,7 @@ pub(crate) fn lower_expression(
                 left: str_temp,
                 op: MirBinaryOp::Add,
                 right: data_offset,
+                operand_type: None,
                 span: *span,
             });
 
@@ -3578,6 +3644,7 @@ fn lower_lambda_expression(
                     value: (i * 8) as i64,
                     ty: None,
                 },
+                operand_type: None,
                 span,
             });
             ctx.add_statement(Statement::Store {
@@ -3659,6 +3726,7 @@ fn lower_lambda_expression(
                         value: (index * 8) as i64,
                         ty: None,
                     },
+                    operand_type: None,
                     span,
                 });
 

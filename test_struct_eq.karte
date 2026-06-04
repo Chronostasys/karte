@@ -1,0 +1,22 @@
+struct Point {
+    x: number,
+    y: number
+}
+
+fn distance_sq(p1: Point, p2: Point) -> number {
+    let dx = p1.x - p2.x;
+    let dy = p1.y - p2.y;
+    dx * dx + dy * dy
+}
+
+fn main() -> number {
+    let p1 = Point { x: 0, y: 0 };
+    let p2 = Point { x: 3, y: 4 };
+    let p3 = Point { x: 0, y: 0 };
+    let d = distance_sq(p1, p2);
+    if p1 == p3 {
+        d
+    } else {
+        0 - 1
+    }
+}

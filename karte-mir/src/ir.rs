@@ -210,6 +210,15 @@ pub enum GcRootKind {
     Custom { label: String },
 }
 
+/// 操作数的类型信息，用于 struct/enum 的值比较
+#[derive(Debug, Clone, PartialEq)]
+pub enum OperandType {
+    /// 结构体类型：逐字段比较
+    Struct { name: String, field_count: usize },
+    /// 标签联合体类型（枚举）：先比较 tag，再比较 data
+    TaggedUnion,
+}
+
 /// MIR语句 - 低级操作
 #[derive(Debug, Clone, PartialEq, IrCodec)]
 pub enum Statement {
@@ -234,6 +243,8 @@ pub enum Statement {
         op: BinaryOperator,
         #[ir_codec(args, right)]
         right: Value,
+        #[ir_codec(skip)]
+        operand_type: Option<OperandType>,
         #[ir_codec(skip)]
         span: Span,
     },

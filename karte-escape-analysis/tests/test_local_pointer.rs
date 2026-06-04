@@ -100,6 +100,7 @@ fn test_local_pointer_no_escape() {
             value: 10,
             ty: None,
         },
+        operand_type: None,
         span: Default::default(),
     });
 
@@ -316,6 +317,7 @@ fn test_multiple_local_pointers() {
             name: "temp2".to_string(),
             ty: None,
         },
+        operand_type: None,
         span: Default::default(),
     });
 

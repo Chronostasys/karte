@@ -7159,5 +7159,309 @@ fn main() -> number {
         let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
         assert!(diagnostics.has_errors(), "Expected type check error for string return type, but got none");
     }
+
+    #[test]
+    fn test_struct_value_equality() {
+        let code = r#"
+struct Point { x: number, y: number }
+
+fn main() -> number {
+    let p1 = Point { x: 1, y: 2 };
+    let p2 = Point { x: 1, y: 2 };
+    if p1 == p2 { 1 } else { 0 }
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Parsing failed: {:?}", diagnostics);
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false).expect("Escape analysis failed");
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor = ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor.execute_with_jit(&lir).expect("JIT execution failed");
+
+        assert_eq!(exit_code, 1, "Expected 1 (equal), got {}", exit_code);
+    }
+
+    #[test]
+    fn test_struct_value_inequality() {
+        let code = r#"
+struct Point { x: number, y: number }
+
+fn main() -> number {
+    let p1 = Point { x: 1, y: 2 };
+    let p2 = Point { x: 1, y: 3 };
+    if p1 == p2 { 1 } else { 0 }
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Parsing failed: {:?}", diagnostics);
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false).expect("Escape analysis failed");
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor = ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor.execute_with_jit(&lir).expect("JIT execution failed");
+
+        assert_eq!(exit_code, 0, "Expected 0 (not equal), got {}", exit_code);
+    }
+
+    #[test]
+    #[test]
+    fn test_struct_not_equal() {
+        let code = r#"
+struct Point { x: number, y: number }
+
+fn main() -> number {
+    let p1 = Point { x: 1, y: 2 };
+    let p2 = Point { x: 1, y: 3 };
+    if p1 != p2 { 1 } else { 0 }
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Parsing failed: {:?}", diagnostics);
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false).expect("Escape analysis failed");
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor = ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor.execute_with_jit(&lir).expect("JIT execution failed");
+
+        assert_eq!(exit_code, 1, "Expected 1 (not equal), got {}", exit_code);
+    }
+
+    #[test]
+    fn test_enum_value_equality() {
+        let code = r#"
+enum Choice { A, B }
+
+fn main() -> number {
+    let c1 = A;
+    let c2 = A;
+    if c1 == c2 { 1 } else { 0 }
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Parsing failed: {:?}", diagnostics);
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false).expect("Escape analysis failed");
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor = ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor.execute_with_jit(&lir).expect("JIT execution failed");
+
+        assert_eq!(exit_code, 1, "Expected 1 (equal), got {}", exit_code);
+    }
+
+    #[test]
+    fn test_enum_value_inequality() {
+        let code = r#"
+enum Choice { A, B }
+
+fn main() -> number {
+    let c1 = A;
+    let c2 = B;
+    if c1 == c2 { 1 } else { 0 }
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Parsing failed: {:?}", diagnostics);
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false).expect("Escape analysis failed");
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor = ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor.execute_with_jit(&lir).expect("JIT execution failed");
+
+        assert_eq!(exit_code, 0, "Expected 0 (not equal), got {}", exit_code);
+    }
+
+    #[test]
+    fn test_enum_tag_inequality() {
+        let code = r#"
+enum Choice { A, B }
+
+fn main() -> number {
+    let c1 = A;
+    let c2 = B;
+    if c1 != c2 { 1 } else { 0 }
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Parsing failed: {:?}", diagnostics);
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false).expect("Escape analysis failed");
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor = ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor.execute_with_jit(&lir).expect("JIT execution failed");
+
+        assert_eq!(exit_code, 1, "Expected 1 (not equal), got {}", exit_code);
+    }
+
+    #[test]
+    fn test_enum_none_equality() {
+        let code = r#"
+enum Choice { A, B }
+
+fn main() -> number {
+    let c1 = A;
+    let c2 = A;
+    if c1 == c2 { 1 } else { 0 }
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Parsing failed: {:?}", diagnostics);
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false).expect("Escape analysis failed");
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor = ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor.execute_with_jit(&lir).expect("JIT execution failed");
+
+        assert_eq!(exit_code, 1, "Expected 1 (equal), got {}", exit_code);
+    }
+
+    #[test]
+    fn test_number_equality_unaffected() {
+        let code = r#"
+fn main() -> number {
+    let a = 42;
+    let b = 42;
+    let c = 43;
+    if a == b { 1 } else { 0 }
+}
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Parsing failed: {:?}", diagnostics);
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false).expect("Escape analysis failed");
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let mut executor = ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor.execute_with_jit(&lir).expect("JIT execution failed");
+
+        assert_eq!(exit_code, 1, "Expected 1 (42 == 42), got {}", exit_code);
+    }
 }
 

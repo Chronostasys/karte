@@ -72,6 +72,7 @@ fn build_sample_function() -> MirFunction {
             id: TempId(3),
             ty: None,
         },
+        operand_type: None,
         span: Span::default(),
     });
     block.terminator = Some(Terminator::Return {

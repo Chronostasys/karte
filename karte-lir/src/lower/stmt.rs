@@ -5,7 +5,7 @@
 use super::helpers::value_to_key;
 use super::types::LirLoweringContext;
 use crate::{AllocationType, ComparisonCondition, Instruction, Operand};
-use karte_mir::{BinaryOperator, Statement, UnaryOperator, Value};
+use karte_mir::{BinaryOperator, OperandType, Statement, UnaryOperator, Value};
 
 pub(super) fn lower_statement(
     ctx: &mut LirLoweringContext,
@@ -130,6 +130,7 @@ pub(super) fn lower_statement(
             left,
             op,
             right,
+            operand_type,
             span,
         } => {
             // Stack-First策略：创建临时寄存器来存储计算结果
@@ -247,25 +248,251 @@ pub(super) fn lower_statement(
                 | BinaryOperator::LessEqual
                 | BinaryOperator::GreaterThan
                 | BinaryOperator::GreaterEqual => {
-                    // 使用 CompareSet 指令：直接从比较条件产生 0/1 值，不产生分支
-                    // x86: cmp src1, src2; setcc dst; movzbq dst, dst
-                    // AArch64: cmp src1, src2; cset dst, condition
-                    let condition = match op {
-                        BinaryOperator::Equal => ComparisonCondition::Equal,
-                        BinaryOperator::NotEqual => ComparisonCondition::NotEqual,
-                        BinaryOperator::LessThan => ComparisonCondition::LessThan,
-                        BinaryOperator::LessEqual => ComparisonCondition::LessEqual,
-                        BinaryOperator::GreaterThan => ComparisonCondition::GreaterThan,
-                        BinaryOperator::GreaterEqual => ComparisonCondition::GreaterEqual,
-                        _ => unreachable!(),
-                    };
-                    ctx.add_instruction(Instruction::CompareSet {
-                        dst: temp_register,
-                        condition,
-                        src1: src1_clone,
-                        src2: src2_clone,
-                        span: *span,
-                    });
+                    match operand_type {
+                        Some(OperandType::Struct { name: _, field_count }) => {
+                            // Struct 值比较：逐字段比较
+                            // 对于 struct 类型的 Value，stack_allocations 中存储的是 8 字节 slot，
+                            // 其中包含 struct 的基地址（通过 handle_struct_value 分配的 Alloc 寄存器 ID）
+                            // 需要从 stack slot 加载 struct 的基地址，然后用它来加载字段
+
+                            // 方案：直接用 lower_to_rvalue 获取值，然后作为地址使用
+                            // 对于 struct 的 Value::Temp，lower_to_rvalue 返回的是从 stack slot
+                            // 加载的值（即 struct 的基地址寄存器 ID），这正好是我们需要的
+                            let struct_base1 = src1_clone.clone();
+                            let struct_base2 = src2_clone.clone();
+
+                            let base_reg1 = match &struct_base1 {
+                                Operand::Register { id } => *id,
+                                other => {
+                                    let tmp = ctx.current_function_mut().new_register();
+                                    ctx.add_instruction(Instruction::Move {
+                                        dst: tmp,
+                                        src: other.clone(),
+                                        span: *span,
+                                    });
+                                    tmp
+                                }
+                            };
+                            let base_reg2 = match &struct_base2 {
+                                Operand::Register { id } => *id,
+                                other => {
+                                    let tmp = ctx.current_function_mut().new_register();
+                                    ctx.add_instruction(Instruction::Move {
+                                        dst: tmp,
+                                        src: other.clone(),
+                                        span: *span,
+                                    });
+                                    tmp
+                                }
+                            };
+
+                            // 获取 struct 布局信息，通过 struct 名称查找
+                            let field_offsets: Vec<i64> = if let Some(OperandType::Struct { name, .. }) = operand_type {
+                                ctx.global_struct_types
+                                    .get(name)
+                                    .map(|layout| {
+                                        layout.fields.iter().map(|f| f.offset as i64).collect()
+                                    })
+                                    .unwrap_or_else(|| {
+                                        (0..*field_count).map(|i| (i * 8) as i64).collect()
+                                    })
+                            } else {
+                                (0..*field_count).map(|i| (i * 8) as i64).collect()
+                            };
+
+                            // 使用新的结果寄存器，避免与第一个 match 的占位 Move 冲突
+                            let result_reg = ctx.current_function_mut().new_register();
+                            // 初始 result = 1
+                            ctx.add_instruction(Instruction::Move {
+                                dst: result_reg,
+                                src: Operand::Immediate { value: 1 },
+                                span: *span,
+                            });
+
+                            // 对每个字段：加载 -> 比较 -> BitAnd
+                            for field_idx in 0..*field_count {
+                                let field_offset = field_offsets
+                                    .get(field_idx)
+                                    .copied()
+                                    .unwrap_or((field_idx * 8) as i64);
+
+                                let field_l = ctx.current_function_mut().new_register();
+                                let field_r = ctx.current_function_mut().new_register();
+                                let field_eq = ctx.current_function_mut().new_register();
+
+                                ctx.add_instruction(Instruction::Load64 {
+                                    dst: field_l,
+                                    addr: base_reg1,
+                                    offset: field_offset,
+                                    span: *span,
+                                });
+                                ctx.add_instruction(Instruction::Load64 {
+                                    dst: field_r,
+                                    addr: base_reg2,
+                                    offset: field_offset,
+                                    span: *span,
+                                });
+                                ctx.add_instruction(Instruction::CompareSet {
+                                    dst: field_eq,
+                                    condition: ComparisonCondition::Equal,
+                                    src1: Operand::Register { id: field_l },
+                                    src2: Operand::Register { id: field_r },
+                                    span: *span,
+                                });
+                                ctx.add_instruction(Instruction::BitAnd {
+                                    dst: result_reg,
+                                    src1: Operand::Register { id: result_reg },
+                                    src2: Operand::Register { id: field_eq },
+                                    span: *span,
+                                });
+                            }
+
+                            // 如果是 NotEqual，Xor 1 取反
+                            if *op == BinaryOperator::NotEqual {
+                                ctx.add_instruction(Instruction::BitXor {
+                                    dst: result_reg,
+                                    src1: Operand::Register { id: result_reg },
+                                    src2: Operand::Immediate { value: 1 },
+                                    span: *span,
+                                });
+                            }
+
+                            // 将结果复制到 temp_register（后续 store_value_to_stack 使用）
+                            ctx.add_instruction(Instruction::Move {
+                                dst: temp_register,
+                                src: Operand::Register { id: result_reg },
+                                span: *span,
+                            });
+                        }
+                        Some(OperandType::TaggedUnion) => {
+                            // TaggedUnion 值比较：先比较 tag，再比较 data
+                            // 对于 enum 类型的 Value，lower_to_rvalue 返回的是 enum 的基地址值
+                            // 这正好是我们需要的
+                            let enum_base1 = src1_clone.clone();
+                            let enum_base2 = src2_clone.clone();
+
+                            let base_reg1 = match &enum_base1 {
+                                Operand::Register { id } => *id,
+                                other => {
+                                    let tmp = ctx.current_function_mut().new_register();
+                                    ctx.add_instruction(Instruction::Move {
+                                        dst: tmp,
+                                        src: other.clone(),
+                                        span: *span,
+                                    });
+                                    tmp
+                                }
+                            };
+                            let base_reg2 = match &enum_base2 {
+                                Operand::Register { id } => *id,
+                                other => {
+                                    let tmp = ctx.current_function_mut().new_register();
+                                    ctx.add_instruction(Instruction::Move {
+                                        dst: tmp,
+                                        src: other.clone(),
+                                        span: *span,
+                                    });
+                                    tmp
+                                }
+                            };
+
+                            // 使用新的结果寄存器
+                            let result_reg = ctx.current_function_mut().new_register();
+
+                            // TaggedUnion 布局：offset 0 是 tag，offset 8 是 data
+                            let tag_l = ctx.current_function_mut().new_register();
+                            let tag_r = ctx.current_function_mut().new_register();
+                            let tag_eq = ctx.current_function_mut().new_register();
+
+                            ctx.add_instruction(Instruction::Load64 {
+                                dst: tag_l,
+                                addr: base_reg1,
+                                offset: 0,
+                                span: *span,
+                            });
+                            ctx.add_instruction(Instruction::Load64 {
+                                dst: tag_r,
+                                addr: base_reg2,
+                                offset: 0,
+                                span: *span,
+                            });
+                            ctx.add_instruction(Instruction::CompareSet {
+                                dst: tag_eq,
+                                condition: ComparisonCondition::Equal,
+                                src1: Operand::Register { id: tag_l },
+                                src2: Operand::Register { id: tag_r },
+                                span: *span,
+                            });
+
+                            let data_l = ctx.current_function_mut().new_register();
+                            let data_r = ctx.current_function_mut().new_register();
+                            let data_eq = ctx.current_function_mut().new_register();
+
+                            ctx.add_instruction(Instruction::Load64 {
+                                dst: data_l,
+                                addr: base_reg1,
+                                offset: 8,
+                                span: *span,
+                            });
+                            ctx.add_instruction(Instruction::Load64 {
+                                dst: data_r,
+                                addr: base_reg2,
+                                offset: 8,
+                                span: *span,
+                            });
+                            ctx.add_instruction(Instruction::CompareSet {
+                                dst: data_eq,
+                                condition: ComparisonCondition::Equal,
+                                src1: Operand::Register { id: data_l },
+                                src2: Operand::Register { id: data_r },
+                                span: *span,
+                            });
+
+                            // result = tag_eq AND data_eq
+                            ctx.add_instruction(Instruction::BitAnd {
+                                dst: result_reg,
+                                src1: Operand::Register { id: tag_eq },
+                                src2: Operand::Register { id: data_eq },
+                                span: *span,
+                            });
+
+                            // 如果是 NotEqual，Xor 1 取反
+                            if *op == BinaryOperator::NotEqual {
+                                ctx.add_instruction(Instruction::BitXor {
+                                    dst: result_reg,
+                                    src1: Operand::Register { id: result_reg },
+                                    src2: Operand::Immediate { value: 1 },
+                                    span: *span,
+                                });
+                            }
+
+                            // 将结果复制到 temp_register（后续 store_value_to_stack 使用）
+                            ctx.add_instruction(Instruction::Move {
+                                dst: temp_register,
+                                src: Operand::Register { id: result_reg },
+                                span: *span,
+                            });
+                        }
+                        None => {
+                            // 原有指针/数值比较逻辑
+                            let condition = match op {
+                                BinaryOperator::Equal => ComparisonCondition::Equal,
+                                BinaryOperator::NotEqual => ComparisonCondition::NotEqual,
+                                BinaryOperator::LessThan => ComparisonCondition::LessThan,
+                                BinaryOperator::LessEqual => ComparisonCondition::LessEqual,
+                                BinaryOperator::GreaterThan => ComparisonCondition::GreaterThan,
+                                BinaryOperator::GreaterEqual => ComparisonCondition::GreaterEqual,
+                                _ => unreachable!(),
+                            };
+                            ctx.add_instruction(Instruction::CompareSet {
+                                dst: temp_register,
+                                condition,
+                                src1: src1_clone,
+                                src2: src2_clone,
+                                span: *span,
+                            });
+                        }
+                    }
                 }
                 BinaryOperator::And => {
                     // Logical AND: if src1 == 0, result = 0; else result = src2
