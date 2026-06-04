@@ -2146,6 +2146,18 @@ impl<'a> Parser<'a> {
         let start_span = self.peek().unwrap().span;
         self.advance(); // consume '||'
 
+        // 检查是否有返回类型标注
+        let return_type = if let Some(token) = self.peek() {
+            if matches!(token.token, Token::Arrow) {
+                self.advance(); // consume '->'
+                Some(self.parse_field_type_name()?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // 解析lambda体
         let body = self.parse_expression()?;
         let end_span = body.span();
@@ -2154,6 +2166,7 @@ impl<'a> Parser<'a> {
         Ok(Expr::Lambda {
             params: Vec::new(), // 空参数列表
             body: Box::new(body),
+            return_type,
             inferred_type: None,
             span,
         })
@@ -2242,6 +2255,18 @@ impl<'a> Parser<'a> {
             });
         }
 
+        // 检查是否有返回类型标注
+        let return_type = if let Some(token) = self.peek() {
+            if matches!(token.token, Token::Arrow) {
+                self.advance(); // consume '->'
+                Some(self.parse_field_type_name()?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // 解析lambda体
         let body = self.parse_expression()?;
         let end_span = body.span();
@@ -2250,6 +2275,7 @@ impl<'a> Parser<'a> {
         Ok(Expr::Lambda {
             params,
             body: Box::new(body),
+            return_type,
             inferred_type: None,
             span,
         })

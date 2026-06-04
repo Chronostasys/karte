@@ -1164,6 +1164,7 @@ impl TypeChecker {
             Expr::Lambda {
                 params,
                 body,
+                return_type,
                 inferred_type: _,
                 span: _,
             } => {
@@ -1183,10 +1184,16 @@ impl TypeChecker {
                     })
                     .collect();
 
-                let return_type = self.infer_expr(body, &new_env);
+                let body_type = self.infer_expr(body, &new_env);
+
+                // 如果有返回类型标注，统一约束
+                if let Some(ref ret_annotation) = return_type {
+                    let resolved_ret_type = self.resolve_struct_field_from_parsed(ret_annotation);
+                    self.add_constraint(body_type.clone(), resolved_ret_type, body.span());
+                }
 
                 // 存储Lambda类型到映射中
-                let lambda_type = Type::closure(param_types.clone(), return_type.clone());
+                let lambda_type = Type::closure(param_types.clone(), body_type.clone());
                 self.lambda_types
                     .insert(expr as *const Expr, lambda_type.clone());
 

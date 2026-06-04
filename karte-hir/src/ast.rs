@@ -84,6 +84,7 @@ pub enum Expr {
     Lambda {
         params: Vec<Parameter>,
         body: Box<Expr>,
+        return_type: Option<Type>,
         inferred_type: Option<Type>,
         span: Span,
     },
@@ -689,7 +690,7 @@ impl fmt::Display for Expr {
                 left, op, right, ..
             } => write!(f, "({} {} {})", left, op, right),
             Expr::UnaryOp { op, operand, .. } => write!(f, "({} {})", op, operand),
-            Expr::Lambda { params, body, .. } => {
+            Expr::Lambda { params, body, return_type, .. } => {
                 let params_str = params
                     .iter()
                     .map(|p| {
@@ -701,7 +702,11 @@ impl fmt::Display for Expr {
                     })
                     .collect::<Vec<_>>()
                     .join(", ");
-                write!(f, "|{}| {}", params_str, body)
+                if let Some(ref ret) = return_type {
+                    write!(f, "|{}| -> {} {}", params_str, ret, body)
+                } else {
+                    write!(f, "|{}| {}", params_str, body)
+                }
             }
             Expr::FunctionCall { function, args, .. } => {
                 write!(f, "{}(", function)?;

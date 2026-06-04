@@ -18,6 +18,7 @@ fn main() {
             right: Box::new(Expr::Number { value: 1, span }),
             span,
         }),
+        return_type: None,
         inferred_type: None,
         span,
     };
@@ -41,6 +42,7 @@ fn main() {
             args: vec![Expr::Number { value: 42, span }],
             span,
         }),
+        return_type: None,
         inferred_type: None,
         span,
     };
@@ -70,9 +72,11 @@ fn main() {
                 }),
                 span,
             }),
+            return_type: None,
             inferred_type: None,
             span,
         }),
+        return_type: None,
         inferred_type: None,
         span,
     };
