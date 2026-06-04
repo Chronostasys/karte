@@ -180,6 +180,7 @@ mod tests {
         let expr = Expr::Block {
             statements: vec![Statement::Let {
                 name: "x".to_string(),
+                type_annotation: None,
                 value: Expr::Number {
                     value: 42,
                     span: dummy_span(),

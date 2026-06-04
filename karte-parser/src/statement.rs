@@ -266,6 +266,18 @@ impl<'a> Parser<'a> {
             });
         };
 
+        // 解析可选的类型标注
+        let type_annotation = if let Some(token) = self.peek() {
+            if matches!(token.token, Token::Colon) {
+                self.advance(); // consume ':'
+                Some(self.parse_field_type_name()?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // 期望 '='
         if let Some(token) = self.peek() {
             if matches!(token.token, Token::Equal) {
@@ -306,7 +318,7 @@ impl<'a> Parser<'a> {
         let end_span = value.span();
         let span = Span::new(start_span.start, end_span.end);
 
-        Ok(Statement::Let { name, value, span })
+        Ok(Statement::Let { name, type_annotation, value, span })
     }
 
     /// 解析enum语句

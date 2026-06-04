@@ -1,0 +1,25 @@
+enum List {
+    Nil,
+    Cons(number, List)
+}
+
+fn length(l: List) -> number {
+    match l {
+        Nil => 0,
+        Cons(_, tail) => 1 + length(tail)
+    }
+}
+
+fn append(l1: List, l2: List) -> List {
+    match l1 {
+        Nil => l2,
+        Cons(h, t) => Cons(h, append(t, l2))
+    }
+}
+
+fn main() -> number {
+    let l1 = Cons(1, Cons(2, Nil));
+    let l2 = Cons(3, Cons(4, Nil));
+    let l3 = append(l1, l2);
+    length(l3)
+}

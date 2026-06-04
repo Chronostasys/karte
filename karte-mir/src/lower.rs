@@ -125,6 +125,7 @@ mod assignment_lowering_tests {
             statements: vec![
                 HirStatement::Let {
                     name: "x".to_string(),
+                    type_annotation: None,
                     value: Expr::Number {
                         value: 5,
                         span: make_span(),
@@ -399,6 +400,7 @@ mod closure_struct_tests {
         let expr = Expr::Block {
             statements: vec![HirStatement::Let {
                 name: "y".to_string(),
+                type_annotation: None,
                 value: Expr::Number {
                     value: 42,
                     span: make_span(),
@@ -530,6 +532,7 @@ mod closure_struct_tests {
         let expr = Expr::Block {
             statements: vec![HirStatement::Let {
                 name: "captured".to_string(),
+                type_annotation: None,
                 value: Expr::Number {
                     value: 100,
                     span: make_span(),

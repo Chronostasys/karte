@@ -1,0 +1,6 @@
+fn main() -> number {
+    let x = 10;
+    let r = &x;
+    let val = *r;
+    val + 5
+}

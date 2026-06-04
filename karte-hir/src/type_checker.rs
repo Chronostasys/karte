@@ -2293,7 +2293,7 @@ impl TypeChecker {
     /// 推断语句并更新环境
     fn infer_statement(&mut self, stmt: &Statement, env: &mut TypeEnvironment) {
         match stmt {
-            Statement::Let { name, value, span, .. } => {
+            Statement::Let { name, value, type_annotation, span, .. } => {
                 // 检查是否为递归闭包（let f = |...| { ... f ... }）
                 // 如果 value 是 Lambda，先绑定一个类型变量到 env 中，
                 // 这样 lambda 体内可以引用自身名称
@@ -2314,9 +2314,32 @@ impl TypeChecker {
                         &value_type,
                     );
 
+                    // 如果有类型标注，将标注类型与推断类型统一
+                    if let Some(annotated_type) = type_annotation {
+                        let _ = self.unify(
+                            annotated_type,
+                            &value_type,
+                            *span,
+                            annotated_type,
+                            &value_type,
+                        );
+                    }
+
                     env.insert(name.clone(), value_type);
                 } else {
                     let value_type = self.infer_expr(value, env);
+
+                    // 如果有类型标注，将标注类型与推断类型统一
+                    if let Some(annotated_type) = type_annotation {
+                        let _ = self.unify(
+                            annotated_type,
+                            &value_type,
+                            *span,
+                            annotated_type,
+                            &value_type,
+                        );
+                    }
+
                     env.insert(name.clone(), value_type);
                 }
             }

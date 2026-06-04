@@ -67,6 +67,7 @@ fn main() {
         statements: vec![
             Statement::Let {
                 name: "add_one".to_string(),
+                type_annotation: None,
                 value: Expr::Lambda {
                     params: vec![Parameter::simple("n".to_string())],
                     body: Box::new(Expr::BinaryOp {
@@ -85,6 +86,7 @@ fn main() {
             },
             Statement::Let {
                 name: "double".to_string(),
+                type_annotation: None,
                 value: Expr::Lambda {
                     params: vec![Parameter::simple("x".to_string())],
                     body: Box::new(Expr::BinaryOp {

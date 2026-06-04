@@ -187,6 +187,7 @@ mod tests {
             statements: vec![
                 Statement::Let {
                     name: "ptr".to_string(),
+                    type_annotation: None,
                     value: Expr::HeapAllocate {
                         value: Box::new(Expr::Number { value: 7, span }),
                         ownership: OwnershipKind::Manual,
@@ -196,6 +197,7 @@ mod tests {
                 },
                 Statement::Let {
                     name: "val".to_string(),
+                    type_annotation: None,
                     value: Expr::Dereference {
                         expr: Box::new(Expr::Identifier {
                             name: "ptr".to_string(),
@@ -260,16 +262,19 @@ mod tests {
             statements: vec![
                 Statement::Let {
                     name: "arr".to_string(),
+                    type_annotation: None,
                     value: array_expr,
                     span,
                 },
                 Statement::Let {
                     name: "first".to_string(),
+                    type_annotation: None,
                     value: first,
                     span,
                 },
                 Statement::Let {
                     name: "third".to_string(),
+                    type_annotation: None,
                     value: third,
                     span,
                 },
@@ -299,6 +304,7 @@ mod tests {
             statements: vec![
                 Statement::Let {
                     name: "arr".to_string(),
+                    type_annotation: None,
                     value: Expr::ArrayLiteral {
                         elements: vec![
                             Expr::Number { value: 1, span },
@@ -311,6 +317,7 @@ mod tests {
                 },
                 Statement::Let {
                     name: "len".to_string(),
+                    type_annotation: None,
                     value: Expr::ArrayLen {
                         array: Box::new(Expr::Identifier {
                             name: "arr".to_string(),
@@ -340,6 +347,7 @@ mod tests {
             statements: vec![
                 Statement::Let {
                     name: "ptr".to_string(),
+                    type_annotation: None,
                     value: Expr::HeapAllocate {
                         value: Box::new(Expr::Number { value: 99, span }),
                         ownership: OwnershipKind::Manual,
@@ -349,6 +357,7 @@ mod tests {
                 },
                 Statement::Let {
                     name: "val".to_string(),
+                    type_annotation: None,
                     value: Expr::Dereference {
                         expr: Box::new(Expr::Identifier {
                             name: "ptr".to_string(),
@@ -535,6 +544,7 @@ mod tests {
         let expr = Expr::Block {
             statements: vec![Statement::Let {
                 name: "x".to_string(),
+                type_annotation: None,
                 value: Expr::Number {
                     value: 5,
                     span: dummy_span(),
@@ -565,6 +575,7 @@ mod tests {
         let expr = Expr::Block {
             statements: vec![Statement::Let {
                 name: "f".to_string(),
+                type_annotation: None,
                 value: Expr::Lambda {
                     params: vec![Parameter::simple("x".to_string())],
                     body: Box::new(Expr::BinaryOp {
@@ -608,6 +619,7 @@ mod tests {
             statements: vec![
                 Statement::Let {
                     name: "x".to_string(),
+                    type_annotation: None,
                     value: Expr::Number {
                         value: 3,
                         span: dummy_span(),
@@ -616,6 +628,7 @@ mod tests {
                 },
                 Statement::Let {
                     name: "y".to_string(),
+                    type_annotation: None,
                     value: Expr::Number {
                         value: 4,
                         span: dummy_span(),
@@ -649,6 +662,7 @@ mod tests {
             statements: vec![
                 Statement::Let {
                     name: "x".to_string(),
+                    type_annotation: None,
                     value: Expr::Number {
                         value: 5,
                         span: dummy_span(),
@@ -657,6 +671,7 @@ mod tests {
                 },
                 Statement::Let {
                     name: "f".to_string(),
+                    type_annotation: None,
                     value: Expr::Lambda {
                         params: vec![Parameter::simple("y".to_string())],
                         body: Box::new(Expr::BinaryOp {

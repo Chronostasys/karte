@@ -397,6 +397,7 @@ pub enum Statement {
     // let语句
     Let {
         name: String,
+        type_annotation: Option<Type>,
         value: Expr,
         span: Span,
     },
@@ -598,7 +599,13 @@ impl fmt::Display for UnaryOperator {
 impl fmt::Display for Statement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Statement::Let { name, value, .. } => write!(f, "let {} = {};", name, value),
+            Statement::Let { name, type_annotation, value, .. } => {
+                if let Some(annot) = type_annotation {
+                    write!(f, "let {}: {} = {};", name, annot, value)
+                } else {
+                    write!(f, "let {} = {};", name, value)
+                }
+            }
             Statement::Expression { expr, .. } => write!(f, "{};", expr),
             Statement::TypeDef { name, variants, is_pub, .. } => {
                 let pub_str = if *is_pub { "pub " } else { "" };

@@ -1,0 +1,25 @@
+enum Option {
+    Some(number),
+    None
+}
+
+struct Point {
+    x: number,
+    y: number
+}
+
+fn maybe_distance(p1: Point, p2: Option) -> Option {
+    match p2 {
+        Some(x) => Some(p1.x + x),
+        None => None
+    }
+}
+
+fn main() -> number {
+    let p = Point { x: 10, y: 20 };
+    let result = maybe_distance(p, Some(5));
+    match result {
+        Some(v) => v,
+        None => 0
+    }
+}
