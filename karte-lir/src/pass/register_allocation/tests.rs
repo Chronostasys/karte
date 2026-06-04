@@ -1,7 +1,7 @@
 use super::*;
 use crate::pass::stack_frame_layout::StackFrameLayoutPass;
 use crate::{AllocationType, Instruction, LirFunction, Operand, Register};
-use karte_common::calling_convention::{CallingConvention, REG_ARG0, REG_EFFECT_PAYLOAD};
+use karte_common::calling_convention::{CallingConvention, REG_EFFECT_PAYLOAD};
 use karte_diagnostics::Span;
 
 #[test]
@@ -303,7 +303,10 @@ fn test_parameter_return_conflict() {
 
     // Check allocation
     // param0 应该在第一个参数寄存器中
-    // AArch64: ARG0 = x0, x86_64: ARG0 = rdi
+    // 注意：AArch64 的 REG_ARG0=X0(返回值)，但 argument_registers[0]=X1(第一个参数)
+    // 应该检查 calling_convention 的实际第一个参数寄存器
+    let cc = analysis_manager.get_calling_convention();
+    let expected_arg0 = cc.argument_registers[0];
 
     if let Instruction::Return {
         value: Some(reg), ..
@@ -312,7 +315,7 @@ fn test_parameter_return_conflict() {
         match reg {
             Register::Physical(p) => {
                 assert_eq!(
-                    *p, REG_ARG0,
+                    *p, expected_arg0,
                     "Parameter should be in the first argument register (ARG0)"
                 );
             }

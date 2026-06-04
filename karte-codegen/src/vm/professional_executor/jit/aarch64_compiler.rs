@@ -1824,20 +1824,22 @@ impl AArch64Compiler {
     ) -> crate::Result<()> {
         let return_reg = AArch64Register::X0 as u8;
 
-        // 🔧 修复：正确处理 return_register(X0) 的保存
-        let mut exclude: Vec<u8> = vec![];
-
-        if let Some(dst) = result {
-            if let Ok(dst_reg) = self.get_physical_register(dst) {
-                if dst_reg == return_reg {
-                    exclude.push(return_reg);
+        // 🔧 修复：与 x86_64 保持一致的 exclude 逻辑
+        // 只在有返回值且调用确实返回结果时，exclude 返回值寄存器
+        // 对于 safepoint/alloc/free 等无返回值的调用，不 exclude 任何寄存器
+        let exclude: Vec<u8> = if result.is_some() && call.expects_result() {
+            if let Some(dst) = result {
+                if let Ok(dst_reg) = self.get_physical_register(dst) {
+                    vec![dst_reg]
                 } else {
-                    exclude.push(dst_reg);
+                    vec![]
                 }
+            } else {
+                vec![]
             }
         } else {
-            exclude.push(return_reg);
-        }
+            vec![]
+        };
 
         // 🔧 从 metadata 中获取调用位置活跃寄存器信息
         // metadata 包含预先计算的活跃寄存器列表
