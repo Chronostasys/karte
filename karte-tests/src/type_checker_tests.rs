@@ -182,6 +182,7 @@ mod tests {
     fn test_type_check_let_statement() {
         let expr = Expr::Block {
             statements: vec![Statement::Let {
+            pattern: None,
                 name: "x".to_string(),
                 type_annotation: None,
                 value: Expr::Number {

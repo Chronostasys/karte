@@ -7,7 +7,7 @@
 /// - TypeDef：类型定义
 /// - StructDef：结构体定义
 /// - FunctionDef：函数定义
-use super::helpers::{infer_expr_ownership, lower_expression_to_temp, maybe_retain_for_expr};
+use super::helpers::{handle_destruct_pattern, infer_expr_ownership, lower_expression_to_temp, maybe_retain_for_expr};
 use super::types::LoweringContext;
 use crate::{MirStructField, MirStructType, Statement, Terminator, Value};
 use karte_common::memory::OwnershipKind;
@@ -20,7 +20,13 @@ pub(crate) fn lower_statement(
     stmt: &karte_hir::Statement,
 ) -> Result<(), Vec<String>> {
     match stmt {
-        karte_hir::Statement::Let { name, value, span, .. } => {
+        karte_hir::Statement::Let { name, pattern, value, span, .. } => {
+            // 检查是否为解构模式绑定（如 let Point { x, y } = p）
+            if let Some(pat) = pattern {
+                let temp_value = lower_expression_to_temp(ctx, value)?;
+                let var_value = ctx.resolve_value(&temp_value);
+                handle_destruct_pattern(ctx, pat.as_ref(), &var_value)?;
+            } else {
             // 检查是否为递归闭包（let f = |...| { ... f ... }）
             // 如果 value 是 Lambda，先预绑定一个占位值，使 lambda 体中可以引用自身名称
             let is_recursive_lambda = matches!(value, karte_hir::Expr::Lambda { .. });
@@ -80,6 +86,7 @@ pub(crate) fn lower_statement(
                 }
                 ctx.bind_variable_with_struct_name(name.clone(), var_value, ownership, struct_name);
             }
+            } // end else for pattern check
         }
         karte_hir::Statement::Expression { expr, .. } => {
             // 结果被丢弃

@@ -472,6 +472,44 @@ pub(crate) fn unknown_heap_layout() -> HeapLayout {
         ownership: OwnershipKind::Manual,
     }
 }
+/// 处理 let 解构模式绑定
+/// 从结构体值中逐字段提取，并绑定到子模式指定的变量名
+pub(crate) fn handle_destruct_pattern(
+    ctx: &mut LoweringContext,
+    pattern: &karte_hir::Pattern,
+    value: &Value,
+) -> Result<(), Vec<String>> {
+    match pattern {
+        karte_hir::Pattern::Variable { name, .. } => {
+            ctx.bind_variable(name.clone(), value.clone(), None);
+        }
+        karte_hir::Pattern::Struct { fields, .. } => {
+            for field_pattern in fields {
+                let field_temp = ctx.new_temp();
+                ctx.add_statement(Statement::FieldAccess {
+                    target: field_temp.clone(),
+                    object: value.clone(),
+                    field: field_pattern.field.clone(),
+                    span: karte_diagnostics::Span::new(0, 0),
+                });
+                let resolved = ctx.resolve_value(&field_temp);
+                handle_destruct_pattern(ctx, field_pattern.pattern.as_ref(), &resolved)?;
+            }
+        }
+        karte_hir::Pattern::Wildcard { .. } => {
+            // 不绑定
+        }
+        karte_hir::Pattern::Number { .. } | karte_hir::Pattern::Boolean { .. } => {
+            // 在 let 解构中，字面量模式不绑定变量
+        }
+        _ => {
+            return Err(vec![format!(
+                "Unsupported pattern in let destructuring"
+            )]);
+        }
+    }
+    Ok(())
+}
 
 /// 转换HIR模式到MIR模式
 pub(crate) fn convert_pattern(pattern: &karte_hir::Pattern) -> Result<Pattern, Vec<String>> {
@@ -503,6 +541,21 @@ pub(crate) fn convert_pattern(pattern: &karte_hir::Pattern) -> Result<Pattern, V
             Ok(Pattern::Constructor {
                 name: format!("{}::{}", type_name, constructor_name),
                 args: mir_args,
+            })
+        }
+        karte_hir::Pattern::Struct { name, fields, .. } => {
+            let mir_fields: Vec<crate::StructFieldPattern> = fields
+                .iter()
+                .map(|f| {
+                    convert_pattern(&f.pattern).map(|p| crate::StructFieldPattern {
+                        field: f.field.clone(),
+                        pattern: p,
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Pattern::Struct {
+                name: name.clone(),
+                fields: mir_fields,
             })
         }
     }

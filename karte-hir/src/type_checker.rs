@@ -2316,11 +2316,14 @@ impl TypeChecker {
     /// 推断语句并更新环境
     fn infer_statement(&mut self, stmt: &Statement, env: &mut TypeEnvironment) {
         match stmt {
-            Statement::Let { name, value, type_annotation, span, .. } => {
-                // 检查是否为递归闭包（let f = |...| { ... f ... }）
-                // 如果 value 是 Lambda，先绑定一个类型变量到 env 中，
-                // 这样 lambda 体内可以引用自身名称
-                if let Expr::Lambda { .. } = value {
+            Statement::Let { name, pattern, value, type_annotation, span, .. } => {
+                // 检查是否为解构模式绑定（如 let Point { x, y } = p）
+                if let Some(pat) = pattern {
+                    let value_type = self.infer_expr(value, env);
+                    // 对解构模式进行类型检查，并绑定变量到 env
+                    self.check_pattern(pat.as_ref(), &value_type, env);
+                } else if let Expr::Lambda { .. } = value {
+                    // 检查是否为递归闭包（let f = |...| { ... f ... }）
                     let rec_type_var = self.fresh_type_var();
                     let mut rec_env = env.clone();
                     rec_env.insert(name.clone(), Type::Var(rec_type_var));
@@ -2716,6 +2719,45 @@ impl TypeChecker {
                     });
                 }
             }
+        crate::ast::Pattern::Struct { name, fields, span } => {
+            // 结构体解构模式类型检查
+            let struct_type = self.custom_types.get(name).cloned();
+            match struct_type {
+                Some(Type::Struct { name: _, fields: struct_fields }) => {
+                    // 约束 expected_type 必须是此结构体类型
+                    let full_type = Type::Struct { name: name.clone(), fields: struct_fields.clone() };
+                    self.add_constraint(expected_type.clone(), full_type, *span);
+                    // 对每个字段模式进行类型检查
+                    for field_pattern in fields {
+                        if let Some(field_def) = struct_fields.iter().find(|f| f.name == field_pattern.field) {
+                            let field_type = field_def.field_type.clone();
+                            self.check_pattern(
+                                field_pattern.pattern.as_ref(),
+                                &field_type,
+                                env,
+                            );
+                        } else {
+                            self.add_error(TypeCheckError::InvalidPattern {
+                                message: format!("Struct {} has no field {}", name, field_pattern.field),
+                                span: field_pattern.span,
+                            });
+                        }
+                    }
+                }
+                Some(_) => {
+                    self.add_error(TypeCheckError::InvalidPattern {
+                        message: format!("{} is not a struct type", name),
+                        span: *span,
+                    });
+                }
+                None => {
+                    self.add_error(TypeCheckError::InvalidPattern {
+                        message: format!("Unknown struct type: {}", name),
+                        span: *span,
+                    });
+                }
+            }
+        }
         }
     }
 

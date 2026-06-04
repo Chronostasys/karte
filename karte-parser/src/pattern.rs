@@ -55,6 +55,17 @@ impl<'a> Parser<'a> {
                                 self.parse_qualified_constructor_pattern(name, span)
                             } else if matches!(next_token.token, Token::LeftParen) {
                                 self.parse_constructor_pattern(name, span)
+                            } else if matches!(next_token.token, Token::LeftBrace) {
+                                // 大写字母开头 + { → 结构体解构模式
+                                if name.chars().next().map_or(false, |c| c.is_uppercase()) {
+                                    self.parse_struct_pattern(name, span)
+                                } else {
+                                    Err(ParseError::UnexpectedToken {
+                                        expected: "identifier".to_string(),
+                                        found: next_token.token.clone(),
+                                        span: next_token.span,
+                                    })
+                                }
                             } else {
                                 // 大写字母开头的标识符视为零参数构造器模式
                                 // （枚举变体如 Red、Green、Blue），小写字母开头视为变量绑定
@@ -230,6 +241,108 @@ impl<'a> Parser<'a> {
             Err(ParseError::UnexpectedEof {
                 expected: "')'".to_string(),
             })
+        }
+    }
+
+    /// 解析结构体解构模式（如 `Point { x, y }` 或 `Point { x: a, y: 0 }`）
+    pub(crate) fn parse_struct_pattern(
+        &mut self,
+        name: String,
+        start_span: Span,
+    ) -> Result<karte_hir::Pattern, ParseError> {
+        // consume {
+        if let Some(token) = self.peek() {
+            if matches!(token.token, Token::LeftBrace) {
+                self.advance();
+            } else {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "'{'".to_string(),
+                    found: token.token.clone(),
+                    span: token.span,
+                });
+            }
+        } else {
+            return Err(ParseError::UnexpectedEof {
+                expected: "'{'".to_string(),
+            });
+        }
+
+        let mut fields = Vec::new();
+        loop {
+            // 检查是否到达 }
+            if let Some(token) = self.peek() {
+                if matches!(token.token, Token::RightBrace) {
+                    let end_span = token.span;
+                    self.advance();
+                    let span = Span::new(start_span.start, end_span.end);
+                    return Ok(karte_hir::Pattern::Struct {
+                        name,
+                        fields,
+                        span,
+                    });
+                }
+            } else {
+                return Err(ParseError::UnexpectedEof {
+                    expected: "'}'".to_string(),
+                });
+            }
+
+            // 解析字段名
+            if let Some(token) = self.peek() {
+                if let Token::Identifier(id) = &token.token {
+                    let id = id.clone();
+                    let field_span = token.span;
+                    self.advance();
+
+                    // 检查后面是否是 : （字段重命名或字面量模式）
+                    if let Some(next) = self.peek() {
+                        if matches!(next.token, Token::Colon) {
+                            self.advance(); // consume :
+                            let pattern = self.parse_pattern()?;
+                            fields.push(karte_hir::StructFieldPattern {
+                                field: id,
+                                pattern: Box::new(pattern),
+                                span: field_span,
+                            });
+                        } else {
+                            // shorthand: 字段名同时也是绑定变量名
+                            let bind_name = id.clone();
+                            fields.push(karte_hir::StructFieldPattern {
+                                field: id,
+                                pattern: Box::new(karte_hir::Pattern::Variable {
+                                    name: bind_name,
+                                    span: field_span,
+                                }),
+                                span: field_span,
+                            });
+                        }
+                    } else {
+                        return Err(ParseError::UnexpectedEof {
+                            expected: "':' or ',' or '}'".to_string(),
+                        });
+                    }
+                } else {
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "field name".to_string(),
+                        found: token.token.clone(),
+                        span: token.span,
+                    });
+                }
+            } else {
+                return Err(ParseError::UnexpectedEof {
+                    expected: "field name".to_string(),
+                });
+            }
+
+            // 检查逗号分隔符
+            if let Some(token) = self.peek() {
+                if matches!(token.token, Token::Comma) {
+                    self.advance(); // consume ,
+                    // 尾随逗号后可以是 }
+                    continue;
+                }
+                // 不是逗号也没关系，可能是 }
+            }
         }
     }
 }

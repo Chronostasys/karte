@@ -550,6 +550,13 @@ pub struct MatchArm {
     pub target: BasicBlockId,
 }
 
+/// 结构体字段模式（MIR 层）
+#[derive(Debug, Clone, PartialEq, IrCodec)]
+pub struct StructFieldPattern {
+    pub field: String,
+    pub pattern: Pattern,
+}
+
 /// 模式（简化版）
 #[derive(Debug, Clone, PartialEq, IrCodec)]
 pub enum Pattern {
@@ -563,6 +570,11 @@ pub enum Pattern {
     Number { value: i64 },
     /// 布尔模式
     Boolean { value: bool },
+    /// 结构体解构模式
+    Struct {
+        name: String,
+        fields: Vec<StructFieldPattern>,
+    },
 }
 
 /// SSA 形式的值定义信息

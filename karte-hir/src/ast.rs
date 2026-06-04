@@ -37,6 +37,21 @@ fn format_pattern(pattern: &Pattern) -> String {
         }
         Pattern::Number { value, .. } => value.to_string(),
         Pattern::Boolean { value, .. } => value.to_string(),
+        Pattern::Struct { name, fields, .. } => {
+            let fields_str = fields
+                .iter()
+                .map(|f| {
+                    let pat_str = format_pattern(&f.pattern);
+                    if f.field == pat_str {
+                        f.field.clone()
+                    } else {
+                        format!("{}: {}", f.field, pat_str)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{} {{ {} }}", name, fields_str)
+        }
     }
 }
 
@@ -398,6 +413,7 @@ pub enum Statement {
     // let语句
     Let {
         name: String,
+        pattern: Option<Box<Pattern>>,
         type_annotation: Option<Type>,
         value: Expr,
         span: Span,
@@ -450,6 +466,17 @@ pub struct MatchArm {
     pub span: Span,
 }
 
+
+/// 结构体字段模式 (用于 struct 解构)
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructFieldPattern {
+    /// 字段名（struct 定义中的名称）
+    pub field: String,
+    /// 绑定的模式（可以是 Variable、Wildcard、Number、Struct 等）
+    pub pattern: Box<Pattern>,
+    pub span: Span,
+}
+
 /// 模式
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
@@ -472,6 +499,12 @@ pub enum Pattern {
         type_name: String,
         constructor_name: String,
         args: Vec<Pattern>,
+        span: Span,
+    },
+    /// 结构体解构模式 (例如: Point { x, y }, Point { x: a, y: 0 })
+    Struct {
+        name: String,
+        fields: Vec<StructFieldPattern>,
         span: Span,
     },
 }
@@ -601,11 +634,18 @@ impl fmt::Display for UnaryOperator {
 impl fmt::Display for Statement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Statement::Let { name, type_annotation, value, .. } => {
-                if let Some(annot) = type_annotation {
-                    write!(f, "let {}: {} = {};", name, annot, value)
-                } else {
-                    write!(f, "let {} = {};", name, value)
+            Statement::Let { name, pattern, type_annotation, value, .. } => {
+                match pattern {
+                    Some(pat) => {
+                        write!(f, "let {} = {};", format_pattern(pat), value)
+                    }
+                    None => {
+                        if let Some(annot) = type_annotation {
+                            write!(f, "let {}: {} = {};", name, annot, value)
+                        } else {
+                            write!(f, "let {} = {};", name, value)
+                        }
+                    }
                 }
             }
             Statement::Expression { expr, .. } => write!(f, "{};", expr),
@@ -1019,6 +1059,7 @@ impl Pattern {
             Pattern::Number { span, .. } => *span,
             Pattern::Boolean { span, .. } => *span,
             Pattern::QualifiedConstructor { span, .. } => *span,
+            Pattern::Struct { span, .. } => *span,
         }
     }
 }

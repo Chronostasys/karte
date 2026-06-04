@@ -70,6 +70,7 @@ fn main() {
     let complex_block = Expr::Block {
         statements: vec![
             Statement::Let {
+                pattern: None,
                 name: "add_one".to_string(),
                 type_annotation: None,
                 value: Expr::Lambda {
@@ -90,6 +91,7 @@ fn main() {
                 span,
             },
             Statement::Let {
+                pattern: None,
                 name: "double".to_string(),
                 type_annotation: None,
                 value: Expr::Lambda {

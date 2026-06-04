@@ -1,0 +1,40 @@
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+fn color_name(c: Color) -> string {
+    match c {
+        Red => "Red",
+        Green => "Green",
+        Blue => "Blue"
+    }
+}
+
+fn color_mix(a: Color, b: Color) -> Color {
+    match a {
+        Red => match b {
+            Red => Red,
+            Green => Blue,
+            Blue => Green
+        },
+        Green => match b {
+            Red => Blue,
+            Green => Green,
+            Blue => Red
+        },
+        Blue => match b {
+            Red => Green,
+            Green => Red,
+            Blue => Blue
+        }
+    }
+}
+
+fn main() -> number {
+    let mixed = color_mix(Red, Green);
+    let name = color_name(mixed);
+    print("Red + Green = " + name + "\n");
+    if mixed == Blue { 1 } else { 0 }
+}

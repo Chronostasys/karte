@@ -239,6 +239,9 @@ pub(super) fn lower_terminator(
                         });
                         return Ok(());
                     }
+                    karte_mir::Pattern::Struct { .. } => {
+                        return Err(vec!["struct pattern in match is not yet supported".to_string()]);
+                    }
                 }
             }
 

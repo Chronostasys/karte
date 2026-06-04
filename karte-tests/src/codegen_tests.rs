@@ -170,6 +170,7 @@ mod tests {
         let block = Expr::Block {
             statements: vec![
                 Statement::Let {
+            pattern: None,
                     name: "ptr".to_string(),
                     type_annotation: None,
                     value: Expr::HeapAllocate {
@@ -180,6 +181,7 @@ mod tests {
                     span,
                 },
                 Statement::Let {
+            pattern: None,
                     name: "val".to_string(),
                     type_annotation: None,
                     value: Expr::Dereference {
@@ -245,18 +247,21 @@ mod tests {
         let block = Expr::Block {
             statements: vec![
                 Statement::Let {
+            pattern: None,
                     name: "arr".to_string(),
                     type_annotation: None,
                     value: array_expr,
                     span,
                 },
                 Statement::Let {
+            pattern: None,
                     name: "first".to_string(),
                     type_annotation: None,
                     value: first,
                     span,
                 },
                 Statement::Let {
+            pattern: None,
                     name: "third".to_string(),
                     type_annotation: None,
                     value: third,
@@ -287,6 +292,7 @@ mod tests {
         let block = Expr::Block {
             statements: vec![
                 Statement::Let {
+            pattern: None,
                     name: "arr".to_string(),
                     type_annotation: None,
                     value: Expr::ArrayLiteral {
@@ -300,6 +306,7 @@ mod tests {
                     span,
                 },
                 Statement::Let {
+            pattern: None,
                     name: "len".to_string(),
                     type_annotation: None,
                     value: Expr::ArrayLen {
@@ -330,6 +337,7 @@ mod tests {
         let block = Expr::Block {
             statements: vec![
                 Statement::Let {
+            pattern: None,
                     name: "ptr".to_string(),
                     type_annotation: None,
                     value: Expr::HeapAllocate {
@@ -340,6 +348,7 @@ mod tests {
                     span,
                 },
                 Statement::Let {
+            pattern: None,
                     name: "val".to_string(),
                     type_annotation: None,
                     value: Expr::Dereference {
@@ -531,6 +540,7 @@ mod tests {
         // 测试 let x = 5; x + 10 应该返回 15
         let expr = Expr::Block {
             statements: vec![Statement::Let {
+            pattern: None,
                 name: "x".to_string(),
                 type_annotation: None,
                 value: Expr::Number {
@@ -562,6 +572,7 @@ mod tests {
         // 测试 let f = |x| x * 2; f(7) 应该返回 14
         let expr = Expr::Block {
             statements: vec![Statement::Let {
+            pattern: None,
                 name: "f".to_string(),
                 type_annotation: None,
                 value: Expr::Lambda {
@@ -607,6 +618,7 @@ mod tests {
         let expr = Expr::Block {
             statements: vec![
                 Statement::Let {
+            pattern: None,
                     name: "x".to_string(),
                     type_annotation: None,
                     value: Expr::Number {
@@ -616,6 +628,7 @@ mod tests {
                     span: dummy_span(),
                 },
                 Statement::Let {
+            pattern: None,
                     name: "y".to_string(),
                     type_annotation: None,
                     value: Expr::Number {
@@ -650,6 +663,7 @@ mod tests {
         let expr = Expr::Block {
             statements: vec![
                 Statement::Let {
+            pattern: None,
                     name: "x".to_string(),
                     type_annotation: None,
                     value: Expr::Number {
@@ -659,6 +673,7 @@ mod tests {
                     span: dummy_span(),
                 },
                 Statement::Let {
+            pattern: None,
                     name: "f".to_string(),
                     type_annotation: None,
                     value: Expr::Lambda {

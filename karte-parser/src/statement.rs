@@ -247,18 +247,35 @@ impl<'a> Parser<'a> {
         let start_span = self.peek().unwrap().span;
         self.advance(); // consume 'let'
 
-        // 解析变量名
-        let name = if let Some(token) = self.peek() {
-            if let Token::Identifier(name) = &token.token {
-                let name = name.clone();
-                self.advance();
-                name
-            } else {
-                return Err(ParseError::UnexpectedToken {
-                    expected: "identifier".to_string(),
-                    found: token.token.clone(),
-                    span: token.span,
-                });
+        // 解析左侧：简单变量名或结构体解构模式
+        // 先检查是否为 struct pattern（大写 Identifier + {）
+        let (name, pattern) = if let Some(token) = self.peek().cloned() {
+            match &token.token {
+                Token::Identifier(id) => {
+                    let id = id.clone();
+                    let token_span = token.span;
+                    self.advance();
+                    // 检查后面是否是 { （struct 解构模式）
+                    if let Some(next) = self.peek() {
+                        if matches!(next.token, Token::LeftBrace) && id.chars().next().map_or(false, |c| c.is_uppercase()) {
+                            // struct 解构模式
+                            let pat = self.parse_struct_pattern(id, token_span)?;
+                            (String::new(), Some(Box::new(pat)))
+                        } else {
+                            // 普通变量名（包括大写变量名）
+                            (id, None)
+                        }
+                    } else {
+                        (id, None)
+                    }
+                }
+                _ => {
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "identifier".to_string(),
+                        found: token.token.clone(),
+                        span: token.span,
+                    });
+                }
             }
         } else {
             return Err(ParseError::UnexpectedEof {
@@ -266,11 +283,15 @@ impl<'a> Parser<'a> {
             });
         };
 
-        // 解析可选的类型标注
-        let type_annotation = if let Some(token) = self.peek() {
-            if matches!(token.token, Token::Colon) {
-                self.advance(); // consume ':'
-                Some(self.parse_field_type_name()?)
+        // 解析可选的类型标注（仅简单变量绑定支持）
+        let type_annotation = if pattern.is_none() {
+            if let Some(token) = self.peek() {
+                if matches!(token.token, Token::Colon) {
+                    self.advance(); // consume ':'
+                    Some(self.parse_field_type_name()?)
+                } else {
+                    None
+                }
             } else {
                 None
             }
@@ -318,7 +339,7 @@ impl<'a> Parser<'a> {
         let end_span = value.span();
         let span = Span::new(start_span.start, end_span.end);
 
-        Ok(Statement::Let { name, type_annotation, value, span })
+        Ok(Statement::Let { name, pattern, type_annotation, value, span })
     }
 
     /// 解析enum语句
