@@ -2,6 +2,32 @@ use karte_diagnostics::{DiagnosticBag, Span};
 use logos::Logos;
 use std::fmt;
 
+/// 处理字符串字面量中的转义序列
+/// 支持: \n, \t, \r, \\, \", \0
+/// 未知转义序列返回 Err，由 Logos 回退到 Error token
+fn process_string_escapes(s: &str) -> Result<String, String> {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            match chars.next() {
+                Some('n') => result.push('\n'),
+                Some('t') => result.push('\t'),
+                Some('r') => result.push('\r'),
+                Some('\\') => result.push('\\'),
+                Some('"') => result.push('"'),
+                Some('0') => result.push('\0'),
+                Some(c) => return Err(format!("unknown escape: \\{}", c)),
+                None => return Err("trailing backslash in string".to_string()),
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    Ok(result)
+}
+
 /// Token 类型定义
 #[derive(Logos, Debug, Clone, PartialEq)]
 pub enum Token {
@@ -113,10 +139,11 @@ pub enum Token {
     #[token("->")]
     Arrow,
 
-    // 字符串字面量（简单版，不支持转义）
-    #[regex(r#""[^"]*""#, |lex| {
+    // 字符串字面量（支持转义字符）
+    #[regex(r#""(?:[^"\\]|\\.)*""#, |lex| {
         let s = lex.slice();
-        s[1..s.len()-1].to_string()
+        let inner = &s[1..s.len()-1];
+        process_string_escapes(inner).ok()
     })]
     StringLiteral(String),
 
@@ -438,4 +465,112 @@ pub fn tokenize(input: &str) -> (Vec<TokenWithSpan>, DiagnosticBag) {
     let mut lexer = Lexer::new(input);
     let tokens = lexer.tokenize();
     (tokens, lexer.into_diagnostics())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simple_string() {
+        let (tokens, diag) = tokenize(r#""hello""#);
+        assert!(!diag.has_errors());
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].token, Token::StringLiteral("hello".to_string()));
+    }
+
+    #[test]
+    fn test_escape_newline_tab() {
+        let (tokens, diag) = tokenize(r#""\n\t""#);
+        assert!(!diag.has_errors());
+        assert_eq!(tokens.len(), 1);
+        assert!(matches!(&tokens[0].token, Token::StringLiteral(s) if s == "\n\t"));
+    }
+
+    #[test]
+    fn test_escape_carriage_return() {
+        let (tokens, diag) = tokenize(r#""\r""#);
+        assert!(!diag.has_errors());
+        assert_eq!(tokens.len(), 1);
+        assert!(matches!(&tokens[0].token, Token::StringLiteral(s) if s == "\r"));
+    }
+
+    #[test]
+    fn test_escape_backslash() {
+        let (tokens, diag) = tokenize(r#""\\""#);
+        assert!(!diag.has_errors());
+        assert_eq!(tokens.len(), 1);
+        assert!(matches!(&tokens[0].token, Token::StringLiteral(s) if s == "\\"));
+    }
+
+    #[test]
+    fn test_escape_double_quote() {
+        let (tokens, diag) = tokenize(r#""say \"hello\"""#);
+        assert!(!diag.has_errors());
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].token, Token::StringLiteral("say \"hello\"".to_string()));
+    }
+
+    #[test]
+    fn test_escape_null() {
+        let (tokens, diag) = tokenize(r#""\0""#);
+        assert!(!diag.has_errors());
+        assert_eq!(tokens.len(), 1);
+        assert!(matches!(&tokens[0].token, Token::StringLiteral(s) if s == "\0"));
+    }
+
+    #[test]
+    fn test_all_escapes_combined() {
+        let (tokens, diag) = tokenize(r#""\n\t\r\\\"\0""#);
+        assert!(!diag.has_errors());
+        assert_eq!(tokens.len(), 1);
+        assert!(matches!(&tokens[0].token, Token::StringLiteral(s) if s == "\n\t\r\\\"\0"));
+    }
+
+    #[test]
+    fn test_empty_string() {
+        let (tokens, diag) = tokenize(r#""""#);
+        assert!(!diag.has_errors());
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].token, Token::StringLiteral("".to_string()));
+    }
+
+    #[test]
+    fn test_mixed_content_with_escapes() {
+        let (tokens, diag) = tokenize(r#""line1\nline2\ttab""#);
+        assert!(!diag.has_errors());
+        assert_eq!(tokens.len(), 1);
+        assert!(matches!(&tokens[0].token, Token::StringLiteral(s) if s == "line1\nline2\ttab"));
+    }
+
+    #[test]
+    fn test_invalid_escape_reports_error() {
+        let (tokens, diag) = tokenize(r#""\x""#);
+        assert!(diag.has_errors());
+    }
+
+    #[test]
+    fn test_string_in_expression_context() {
+        let (tokens, diag) = tokenize(r#"let s = "hello\nworld""#);
+        assert!(!diag.has_errors());
+        let string_tokens: Vec<_> = tokens.iter()
+            .filter(|t| matches!(&t.token, Token::StringLiteral(_)))
+            .collect();
+        assert_eq!(string_tokens.len(), 1);
+        assert!(matches!(&string_tokens[0].token, Token::StringLiteral(s) if s == "hello\nworld"));
+    }
+
+    #[test]
+    fn test_escaped_backslash_at_end() {
+        let (tokens, diag) = tokenize(r#""abc\\""#);
+        assert!(!diag.has_errors());
+        assert_eq!(tokens.len(), 1);
+        assert!(matches!(&tokens[0].token, Token::StringLiteral(s) if s == "abc\\"));
+    }
+
+    #[test]
+    fn test_unterminated_with_escape() {
+        let (tokens, diag) = tokenize(r#""abc\"#);
+        assert!(diag.has_errors());
+    }
 }
