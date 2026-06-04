@@ -183,7 +183,7 @@ pub(super) fn lower_terminator(
                             span: *span,
                         });
                     }
-                    karte_mir::Pattern::Constructor { name, args } => {
+                    karte_mir::Pattern::Constructor { name, args: _args } => {
                         // Tagged Union构造器模式处理：检查标签并提取数据
                         let constructor_reg = match &match_operand {
                             Operand::Register { id } => *id,

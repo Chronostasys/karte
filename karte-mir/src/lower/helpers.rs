@@ -479,15 +479,9 @@ pub(crate) fn convert_pattern(pattern: &karte_hir::Pattern) -> Result<Pattern, V
         karte_hir::Pattern::Wildcard { .. } => Ok(Pattern::Wildcard),
         karte_hir::Pattern::Variable { name, .. } => Ok(Pattern::Variable { name: name.clone() }),
         karte_hir::Pattern::Constructor { name, args, .. } => {
-            let mir_args: Vec<String> = args
+            let mir_args: Vec<Pattern> = args
                 .iter()
-                .map(|arg| match arg {
-                    karte_hir::Pattern::Variable { name, .. } => Ok(name.clone()),
-                    _ => Err(vec![
-                        "Only variable patterns are supported in constructor arguments"
-                            .to_string(),
-                    ]),
-                })
+                .map(|arg| convert_pattern(arg))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Pattern::Constructor {
                 name: name.clone(),
@@ -502,17 +496,10 @@ pub(crate) fn convert_pattern(pattern: &karte_hir::Pattern) -> Result<Pattern, V
             args,
             ..
         } => {
-            let mir_args: Vec<String> = args
+            let mir_args: Vec<Pattern> = args
                 .iter()
-                .map(|arg| match arg {
-                    karte_hir::Pattern::Variable { name, .. } => Ok(name.clone()),
-                    _ => Err(vec![
-                        "Only variable patterns are supported in qualified constructor arguments"
-                            .to_string(),
-                    ]),
-                })
+                .map(|arg| convert_pattern(arg))
                 .collect::<Result<Vec<_>, _>>()?;
-            // 保留完整限定名（如 "ABC::B"），确保构造和匹配使用相同的 TaggedUnion tag
             Ok(Pattern::Constructor {
                 name: format!("{}::{}", type_name, constructor_name),
                 args: mir_args,
@@ -536,17 +523,25 @@ pub(crate) fn handle_pattern_bindings(
             args,
             ..
         } => {
-            // 构造器模式带参数：逐个提取参数
             for (i, arg_pattern) in args.iter().enumerate() {
-                if let karte_hir::Pattern::Variable { name, .. } = arg_pattern {
-                    let arg_temp = ctx.new_temp();
-                    ctx.add_statement(Statement::ConstructorArgExtract {
-                        target: arg_temp.clone(),
-                        constructor: match_value.clone(),
-                        arg_index: i,
-                        span: Span::new(0, 0),
-                    });
-                    ctx.bind_variable(name.clone(), arg_temp, None);
+                match arg_pattern {
+                    karte_hir::Pattern::Variable { name, .. } => {
+                        let arg_temp = ctx.new_temp();
+                        ctx.add_statement(Statement::ConstructorArgExtract {
+                            target: arg_temp.clone(),
+                            constructor: match_value.clone(),
+                            arg_index: i,
+                            span: Span::new(0, 0),
+                        });
+                        ctx.bind_variable(name.clone(), arg_temp, None);
+                    }
+                    karte_hir::Pattern::Wildcard { .. } => {
+                    }
+                    _ => {
+                        return Err(vec![
+                            format!("Unsupported nested pattern in constructor argument at position {}", i)
+                        ]);
+                    }
                 }
             }
         }
@@ -554,17 +549,25 @@ pub(crate) fn handle_pattern_bindings(
             args,
             ..
         } => {
-            // 限定构造器模式带参数
             for (i, arg_pattern) in args.iter().enumerate() {
-                if let karte_hir::Pattern::Variable { name, .. } = arg_pattern {
-                    let arg_temp = ctx.new_temp();
-                    ctx.add_statement(Statement::ConstructorArgExtract {
-                        target: arg_temp.clone(),
-                        constructor: match_value.clone(),
-                        arg_index: i,
-                        span: Span::new(0, 0),
-                    });
-                    ctx.bind_variable(name.clone(), arg_temp, None);
+                match arg_pattern {
+                    karte_hir::Pattern::Variable { name, .. } => {
+                        let arg_temp = ctx.new_temp();
+                        ctx.add_statement(Statement::ConstructorArgExtract {
+                            target: arg_temp.clone(),
+                            constructor: match_value.clone(),
+                            arg_index: i,
+                            span: Span::new(0, 0),
+                        });
+                        ctx.bind_variable(name.clone(), arg_temp, None);
+                    }
+                    karte_hir::Pattern::Wildcard { .. } => {
+                    }
+                    _ => {
+                        return Err(vec![
+                            format!("Unsupported nested pattern in qualified constructor argument at position {}", i)
+                        ]);
+                    }
                 }
             }
         }
