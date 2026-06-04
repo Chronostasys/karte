@@ -1487,12 +1487,20 @@ impl TypeChecker {
                 let first_arm = &arms[0];
                 let mut result_env = env.clone();
                 self.check_pattern(&first_arm.pattern, &expr_type, &mut result_env);
+                if let Some(ref guard) = first_arm.guard {
+                    let guard_type = self.infer_expr(guard, &result_env);
+                    self.add_constraint(guard_type, Type::bool(), guard.span());
+                }
                 let result_type = self.infer_expr(&first_arm.body, &result_env);
 
                 // 检查所有其他分支的类型是否兼容
                 for arm in &arms[1..] {
                     let mut arm_env = env.clone();
                     self.check_pattern(&arm.pattern, &expr_type, &mut arm_env);
+                    if let Some(ref guard) = arm.guard {
+                        let guard_type = self.infer_expr(guard, &arm_env);
+                        self.add_constraint(guard_type, Type::bool(), guard.span());
+                    }
                     let arm_type = self.infer_expr(&arm.body, &arm_env);
 
                     // 约束：所有分支的类型必须兼容

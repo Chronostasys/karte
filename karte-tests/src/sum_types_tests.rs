@@ -227,4 +227,50 @@ mod type_check_tests {
         let result = test_evaluate("match Some(42) { Some(x) -> x + 1, None -> 0 }").unwrap();
         assert_eq!(result, 43);
     }
+
+    #[test]
+    fn test_match_guard_basic() {
+        let result = test_evaluate("match Some(5) { Some(v) if v > 3 -> 1, Some(v) -> 2, None -> 0 }").unwrap();
+        assert_eq!(result, 1);
+
+        let result = test_evaluate("match Some(1) { Some(v) if v > 3 -> 1, Some(v) -> 2, None -> 0 }").unwrap();
+        assert_eq!(result, 2);
+
+        let result = test_evaluate("match None { Some(v) if v > 3 -> 1, Some(v) -> 2, None -> 0 }").unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_match_guard_with_variable_binding() {
+        let result = test_evaluate("match Some(10) { Some(x) if x > 5 -> x * 2, Some(x) -> x, None -> 0 }").unwrap();
+        assert_eq!(result, 20);
+
+        let result = test_evaluate("match Some(3) { Some(x) if x > 5 -> x * 2, Some(x) -> x, None -> 0 }").unwrap();
+        assert_eq!(result, 3);
+    }
+
+    #[test]
+    fn test_match_guard_with_boolean_pattern() {
+        let result = test_evaluate("match true { true if false -> 1, true -> 2, false -> 3 }").unwrap();
+        assert_eq!(result, 2);
+
+        let result = test_evaluate("match true { true if true -> 1, true -> 2, false -> 3 }").unwrap();
+        assert_eq!(result, 1);
+    }
+
+    #[test]
+    fn test_match_guard_wildcard_fallback() {
+        let result = test_evaluate("match Some(5) { Some(v) if v > 10 -> 100, _ -> 42 }").unwrap();
+        assert_eq!(result, 42);
+
+        let result = test_evaluate("match Some(20) { Some(v) if v > 10 -> 100, _ -> 42 }").unwrap();
+        assert_eq!(result, 100);
+    }
+
+    #[test]
+    fn test_match_guard_type_check() {
+        let result = test_type_check("match Some(5) { Some(v) if v > 3 -> 1, Some(v) -> 2, None -> 0 }").unwrap();
+        assert_eq!(result, Type::Number);
+    }
+
 }

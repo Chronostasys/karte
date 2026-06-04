@@ -2460,63 +2460,123 @@ pub(crate) fn lower_expression(
                 ctx.enter_scope();
                 handle_pattern_bindings(ctx, &arm.pattern, &match_value)?;
 
-                // 生成分支体的代码
-                lower_expression(ctx, &arm.body, destination)?;
-                ctx.exit_scope(arm.span);
+                if let Some(ref guard_expr) = arm.guard {
+                    // 带 guard 的 arm：arm_block 作为 guard 检查块
+                    // 结构: arm_block(guard check) -> body_block(执行体) -> merge_block
+                    //                            -> guard_fail_block -> 下一个 arm 的块
+                    let body_block = ctx.new_block();
 
-                // 检测 arm 体是否提前终止（continue/break/return 创建了 dead_block）
-                // 判断方式：如果当前块不是 arm_block，且 arm_block 已有终结器（不是 Goto merge），
-                // 说明 arm 体中的 continue/break/return 已经设置了终结器并创建了死块
-                let actual_block = ctx.current_block();
-                let terminated_early = if actual_block != arm_block {
-                    // 当前块与初始 arm_block 不同，检查 arm_block 的终结器
-                    // 先提取终结器信息（释放对 ctx 的可变借用），再检查 loop_stack
-                    let terminator_info = {
-                        let func = ctx.current_function_mut();
-                        func.basic_blocks.get(&arm_block)
-                            .and_then(|b| b.terminator.clone())
+                    ctx.set_current_block(arm_block);
+
+                    // 在 guard 检查块中求值 guard 表达式
+                    let guard_value = lower_expression_to_temp(ctx, guard_expr)?;
+
+                    // guard 失败时跳转到下一个 arm 的块（或 merge_block）
+                    let guard_fail_target = if i + 1 < arms.len() {
+                        arm_blocks[i + 1]
+                    } else {
+                        merge_block
                     };
-                    match terminator_info {
-                        // Return 是真正的提前终止
-                        Some(Terminator::Return { .. }) => true,
-                        // Goto 需要区分：如果目标是外层循环的 break/continue 目标，
-                        // 则是提前终止；如果是内部 while/for 的 loop_head，
-                        // 则是嵌套控制流，不是提前终止
-                        Some(Terminator::Goto { target, .. }) => {
-                            ctx.loop_stack.iter().any(|lc| {
-                                lc.continue_target == target || lc.break_target == target
-                            })
-                        }
-                        // Match、Branch 等是嵌套控制流，不是提前终止
-                        Some(_) => false,
-                        None => false,
-                    }
-                } else {
-                    false
-                };
-                arm_terminated_early.push(terminated_early);
 
-                if !terminated_early {
-                    // 正常 arm：捕获实际跳转到 merge 的块
-                    arm_actual_blocks.push(actual_block);
-                    ctx.set_terminator(Terminator::Goto {
-                        target: merge_block,
+                    ctx.set_terminator(Terminator::Branch {
+                        condition: guard_value,
+                        then_block: body_block,
+                        else_block: guard_fail_target,
                         span: arm.span,
                     });
 
-                    // 记录此 arm 后的变量绑定
-                    let arm_bindings: std::collections::HashMap<String, Value> = ctx
-                        .scopes
-                        .iter()
-                        .rev()
-                        .flat_map(|scope| {
-                            scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone()))
-                        })
-                        .collect();
-                    arm_bindings_list.push(arm_bindings);
+                    // 在 body 块中生成分支体的代码
+                    ctx.set_current_block(body_block);
+                    lower_expression(ctx, &arm.body, destination)?;
+
+                    // 检测提前终止（检查 body_block 的终结器）
+                    let actual_block = ctx.current_block();
+                    let terminated_early = if actual_block != body_block {
+                        let terminator_info = {
+                            let func = ctx.current_function_mut();
+                            func.basic_blocks.get(&body_block)
+                                .and_then(|b| b.terminator.clone())
+                        };
+                        match terminator_info {
+                            Some(Terminator::Return { .. }) => true,
+                            Some(Terminator::Goto { target, .. }) => {
+                                ctx.loop_stack.iter().any(|lc| {
+                                    lc.continue_target == target || lc.break_target == target
+                                })
+                            }
+                            Some(_) => false,
+                            None => false,
+                        }
+                    } else {
+                        false
+                    };
+                    arm_terminated_early.push(terminated_early);
+
+                    if !terminated_early {
+                        arm_actual_blocks.push(actual_block);
+                        ctx.set_terminator(Terminator::Goto {
+                            target: merge_block,
+                            span: arm.span,
+                        });
+
+                        let arm_bindings: std::collections::HashMap<String, Value> = ctx
+                            .scopes
+                            .iter()
+                            .rev()
+                            .flat_map(|scope| {
+                                scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone()))
+                            })
+                            .collect();
+                        arm_bindings_list.push(arm_bindings);
+                    }
+                } else {
+                    // 无 guard 的 arm：原有逻辑
+                    ctx.set_current_block(arm_block);
+
+                    lower_expression(ctx, &arm.body, destination)?;
+
+                    let actual_block = ctx.current_block();
+                    let terminated_early = if actual_block != arm_block {
+                        let terminator_info = {
+                            let func = ctx.current_function_mut();
+                            func.basic_blocks.get(&arm_block)
+                                .and_then(|b| b.terminator.clone())
+                        };
+                        match terminator_info {
+                            Some(Terminator::Return { .. }) => true,
+                            Some(Terminator::Goto { target, .. }) => {
+                                ctx.loop_stack.iter().any(|lc| {
+                                    lc.continue_target == target || lc.break_target == target
+                                })
+                            }
+                            Some(_) => false,
+                            None => false,
+                        }
+                    } else {
+                        false
+                    };
+                    arm_terminated_early.push(terminated_early);
+
+                    if !terminated_early {
+                        arm_actual_blocks.push(actual_block);
+                        ctx.set_terminator(Terminator::Goto {
+                            target: merge_block,
+                            span: arm.span,
+                        });
+
+                        let arm_bindings: std::collections::HashMap<String, Value> = ctx
+                            .scopes
+                            .iter()
+                            .rev()
+                            .flat_map(|scope| {
+                                scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone()))
+                            })
+                            .collect();
+                        arm_bindings_list.push(arm_bindings);
+                    }
                 }
-                // 提前终止的 arm（continue/break/return）不会到达 merge_block，
-                // 不参与 Phi，也不设置 Goto merge（死块不应有到达 merge 的边）
+
+                ctx.exit_scope(arm.span);
 
                 // 恢复绑定到 match 之前的状态（下一个 arm 需从原始状态开始）
                 for scope in ctx.scopes.iter_mut() {

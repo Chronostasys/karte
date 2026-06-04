@@ -2073,6 +2073,22 @@ impl<'a> Parser<'a> {
                 }
             }
 
+            // 解析可选的 if 守卫表达式: Pattern if guard_expr => body
+            let guard = if let Some(token) = self.peek() {
+                if let Token::Identifier(name) = &token.token {
+                    if name == "if" {
+                        self.advance(); // consume 'if'
+                        Some(Box::new(self.parse_expression()?))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             // 期望 '->' 或 '=>'（match arm 分隔符，向后兼容两种语法）
             if let Some(token) = self.peek() {
                 if matches!(token.token, Token::Arrow | Token::FatArrow) {
@@ -2095,11 +2111,12 @@ impl<'a> Parser<'a> {
             let arm_span_start = patterns[0].span().start;
             let arm_span_end = body.span().end;
 
-            // 为每个 pattern 创建一个 arm（共享 body）
+            // 为每个 pattern 创建一个 arm（共享 body 和 guard）
             for pattern in patterns {
                 arms.push(karte_hir::MatchArm {
                     pattern,
                     body: body.clone(),
+                    guard: guard.clone(),
                     span: Span::new(arm_span_start, arm_span_end),
                 });
             }

@@ -1,0 +1,15 @@
+struct Student {
+    name: string,
+    score: number
+}
+
+fn get_name(s: Student) -> string {
+    s.name
+}
+
+fn main() -> number {
+    let s = Student { name: "Alice", score: 95 };
+    let n = get_name(s);
+    print(n);
+    0
+}

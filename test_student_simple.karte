@@ -1,0 +1,14 @@
+struct Student {
+    name: string,
+    score: number
+}
+
+fn make_student(name: string, score: number) -> Student {
+    Student { name: name, score: score }
+}
+
+fn main() -> number {
+    let s = make_student("Alice", 95);
+    print(s.name);
+    0
+}

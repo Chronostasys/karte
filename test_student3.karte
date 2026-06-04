@@ -1,0 +1,13 @@
+struct Student {
+    name: string,
+    score: number
+}
+
+fn get_score(s: Student) -> number {
+    s.score
+}
+
+fn main() -> number {
+    let s = Student { name: "Alice", score: 95 };
+    get_score(s)
+}

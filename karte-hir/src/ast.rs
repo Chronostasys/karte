@@ -445,6 +445,7 @@ pub enum Statement {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {
     pub pattern: Pattern,
+    pub guard: Option<Box<Expr>>,
     pub body: Expr,
     pub span: Span,
 }
@@ -738,7 +739,8 @@ impl fmt::Display for Expr {
             Expr::Match { expr, arms, .. } => {
                 write!(f, "match {} {{ ", expr)?;
                 for arm in arms {
-                    write!(f, "{} -> {}, ", format_pattern(&arm.pattern), arm.body)?;
+                    let guard_str = if let Some(ref g) = arm.guard { format!(" if {}", g) } else { String::new() };
+                    write!(f, "{}{} -> {}, ", format_pattern(&arm.pattern), guard_str, arm.body)?;
                 }
                 write!(f, "}}")
             }
