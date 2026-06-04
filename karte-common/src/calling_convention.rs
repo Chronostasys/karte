@@ -527,7 +527,8 @@ impl CallingConvention {
         // 额外排除：
         // x86_64: RSP(4) 和 RBP(5) 是 x86 硬件栈指针和帧指针，不能用于通用分配
         // AArch64: X16(IP0) 和 X17(IP1) 被 codegen 用作临时寄存器
-        //   （大偏移 load/store、ADRP+ADD 标签地址计算），不能被 reg alloc 分配
+        //   （大偏移 load/store、立即数 store、ADRP+ADD 标签地址计算），
+        //   不能被寄存器分配器分配
         let extra_reserved: &[PhysicalRegister] =
             if self.argument_registers == vec![7u8, 6, 2, 1, 8, 9] {
                 &[4, 5] // x86_64 的 RSP, RBP
