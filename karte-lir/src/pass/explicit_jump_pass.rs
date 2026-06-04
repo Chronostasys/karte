@@ -39,6 +39,7 @@ impl ExplicitJumpPass {
                 | Instruction::JumpLess { .. }
                 | Instruction::JumpLessEqual { .. }
                 | Instruction::Return { .. }
+                | Instruction::Panic { .. }
         )
     }
 

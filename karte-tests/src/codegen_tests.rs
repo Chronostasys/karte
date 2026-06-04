@@ -85,23 +85,6 @@ mod tests {
     }
 
     #[test]
-    fn test_evaluate_division_by_zero() {
-        let expr = Expr::BinaryOp {
-            left: Box::new(Expr::Number {
-                value: 8,
-                span: dummy_span(),
-            }),
-            op: BinaryOperator::Divide,
-            right: Box::new(Expr::Number {
-                value: 0,
-                span: dummy_span(),
-            }),
-            span: dummy_span(),
-        };
-        assert_eq!(execute_with_pipeline(&expr).unwrap(), 0);
-    }
-
-    #[test]
     fn test_evaluate_unary_plus() {
         let expr = Expr::UnaryOp {
             op: UnaryOperator::Plus,

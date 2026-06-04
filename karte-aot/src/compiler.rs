@@ -206,6 +206,11 @@ impl AotCompiler {
             global_labels.insert("karte_jit_runtime_print_bool".to_string(), addr);
             global_labels.insert("__runtime_karte_jit_runtime_print_bool".to_string(), addr);
         }
+        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::PANIC) {
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_panic".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_panic".to_string(), addr);
+        }
 
         // Karte 函数地址
         // 同时收集所有函数内部 labels → 绝对地址的映射
@@ -273,6 +278,7 @@ impl AotCompiler {
             let print_string_ptr = RuntimeIntrinsic::PrintString.symbol_ptr() as u64;
             let print_number_ptr = RuntimeIntrinsic::PrintNumber.symbol_ptr() as u64;
             let print_bool_ptr = RuntimeIntrinsic::PrintBool.symbol_ptr() as u64;
+            let panic_ptr = RuntimeIntrinsic::Panic.symbol_ptr() as u64;
 
             if let Some(&new) = global_labels.get("karte_jit_runtime_string_equal") {
                 runtime_ptr_map.insert(string_equal_ptr, new);
@@ -303,6 +309,9 @@ impl AotCompiler {
             }
             if let Some(&new) = global_labels.get("karte_jit_runtime_print_bool") {
                 runtime_ptr_map.insert(print_bool_ptr, new);
+            }
+            if let Some(&new) = global_labels.get("karte_jit_runtime_panic") {
+                runtime_ptr_map.insert(panic_ptr, new);
             }
         }
 
@@ -610,8 +619,8 @@ impl AotCompiler {
             (RuntimeIntrinsic::PrintString, "karte_jit_runtime_print_string"),
             (RuntimeIntrinsic::PrintNumber, "karte_jit_runtime_print_number"),
             (RuntimeIntrinsic::PrintBool, "karte_jit_runtime_print_bool"),
-        ];
-        for (intrinsic, label) in &string_intrinsics {
+            (RuntimeIntrinsic::Panic, "karte_jit_runtime_panic"),
+        ];        for (intrinsic, label) in &string_intrinsics {
             let ptr = intrinsic.symbol_ptr() as u64;
             if let Some(&new) = global_labels.get(*label) {
                 runtime_ptr_map.insert(ptr, new);
@@ -965,6 +974,11 @@ impl AotCompiler {
             let addr = code_base + off as u64;
             global_labels.insert("karte_jit_runtime_print_bool".to_string(), addr);
             global_labels.insert("__runtime_karte_jit_runtime_print_bool".to_string(), addr);
+        }
+        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::PANIC) {
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_panic".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_panic".to_string(), addr);
         }
 
         for (func_name, compiled) in &compiled_functions {

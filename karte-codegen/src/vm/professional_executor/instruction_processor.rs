@@ -128,6 +128,8 @@ impl InstructionProcessor {
 
             // 统一使用 JumpIndirect
 
+            Instruction::Panic { .. } => Err("runtime error: division by zero".into()),
+
             // 其他指令暂时返回错误
             _ => Err(format!("Unsupported instruction: {:?}", instruction).into()),
         }

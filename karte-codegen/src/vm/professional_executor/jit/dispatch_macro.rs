@@ -181,6 +181,10 @@ macro_rules! dispatch_compile_instruction {
                 $self.compile_print_bool(value, $cb, $ctx_expr)
             }
 
+            Instruction::Panic { .. } => {
+                $self.compile_panic($cb, $ctx_expr)
+            }
+
             // ==================== 其他指令 ====================
             Instruction::StructAlloc { .. } => {
                 Err("StructAlloc 应该已经被降级为 Alloc".into())

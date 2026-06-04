@@ -20,6 +20,7 @@ pub enum RuntimeIntrinsic {
     PrintString,
     PrintNumber,
     PrintBool,
+    Panic,
 }
 
 impl RuntimeIntrinsic {
@@ -63,6 +64,7 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::PrintBool => {
                 runtime::karte_jit_runtime_print_bool as *const ()
             }
+            RuntimeIntrinsic::Panic => runtime::karte_jit_runtime_panic as *const (),
         }
     }
 
@@ -84,6 +86,7 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::PrintString => "karte_jit_runtime_print_string",
             RuntimeIntrinsic::PrintNumber => "karte_jit_runtime_print_number",
             RuntimeIntrinsic::PrintBool => "karte_jit_runtime_print_bool",
+            RuntimeIntrinsic::Panic => "karte_jit_runtime_panic",
         }
     }
 
@@ -222,6 +225,13 @@ impl RuntimeCall {
         Self {
             intrinsic: RuntimeIntrinsic::PrintBool,
             args: vec![RuntimeArg::Register(value)],
+        }
+    }
+
+    pub fn panic() -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::Panic,
+            args: vec![],
         }
     }
 

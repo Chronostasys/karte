@@ -205,7 +205,8 @@ impl ControlFlowAnalysis {
                     }
                 }
                 // 返回指令的下一条指令是基本块开始
-                Instruction::Return { .. } => {
+                Instruction::Return { .. }
+                | Instruction::Panic { .. } => {
                     if i + 1 < function.instructions.len() {
                         is_leader[i + 1] = true;
                     }
@@ -274,7 +275,8 @@ impl ControlFlowAnalysis {
                     }
                 }
                 // 返回指令没有后继
-                Instruction::Return { .. } => {
+                Instruction::Return { .. }
+                | Instruction::Panic { .. } => {
                     // 没有后继
                 }
                 // 其他指令：顺序执行到下一个基本块
@@ -312,7 +314,7 @@ impl ControlFlowAnalysis {
                 let (start, end) = node.instruction_range;
                 for i in start..end {
                     if i < function.instructions.len()
-                        && matches!(function.instructions[i], Instruction::Return { .. })
+                        && matches!(function.instructions[i], Instruction::Return { .. } | Instruction::Panic { .. })
                     {
                         exit_blocks.push(block_id);
                         break;

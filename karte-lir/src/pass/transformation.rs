@@ -184,6 +184,7 @@ impl DeadCodeElimination {
             Instruction::PrintString { .. } => true,
             Instruction::PrintNumber { .. } => true,
             Instruction::PrintBool { .. } => true,
+            Instruction::Panic { .. } => true,
         }
     }
 

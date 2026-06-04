@@ -513,3 +513,9 @@ pub extern "C" fn karte_jit_runtime_print_bool(value: i64) -> u64 {
     }
     0
 }
+
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_panic() {
+    eprintln!("runtime error: division by zero");
+    std::process::exit(134);
+}

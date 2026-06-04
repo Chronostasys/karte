@@ -1,0 +1,9 @@
+module main
+
+fn id(x) { x }
+
+fn main() -> number {
+    let a = id(5);
+    let b = id(10);
+    a + b
+}

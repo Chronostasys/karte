@@ -1,0 +1,15 @@
+struct Vec2 {
+    x: number,
+    y: number
+}
+
+fn vec_add(a: Vec2, b: Vec2) -> Vec2 {
+    Vec2 { x: a.x + b.x, y: a.y + b.y }
+}
+
+fn main() -> number {
+    let a = Vec2 { x: 3, y: 4 };
+    let b = Vec2 { x: 1, y: 2 };
+    let c = vec_add(a, b);
+    c.x + c.y
+}

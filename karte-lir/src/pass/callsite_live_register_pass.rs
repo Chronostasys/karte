@@ -45,6 +45,7 @@ impl CallsiteLiveRegisterPass {
                 | Instruction::PrintString { .. }
                 | Instruction::PrintNumber { .. }
                 | Instruction::PrintBool { .. }
+                | Instruction::Panic { .. }
         )
     }
 

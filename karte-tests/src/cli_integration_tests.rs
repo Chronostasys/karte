@@ -1505,6 +1505,86 @@ fn main() -> number {
         let _ = std::fs::remove_file(&binary_path);
     }
 
+    /// AOT 测试辅助函数: 编译代码 → AOT 二进制 → 执行 → 验证进程以指定退出码终止
+    ///
+    /// 用于测试除零 panic 等会导致进程退出的场景。通过子进程运行 AOT binary 来隔离退出行为。
+    fn compile_and_run_aot_panic(code: &str, test_name: &str) {
+        // AOT 生成 ELF 二进制，macOS 不支持执行 ELF
+        if cfg!(target_os = "macos") {
+            eprintln!("跳过 {} - AOT (ELF) 不支持 macOS", test_name);
+            return;
+        }
+        // AOT 编译当前仅支持 x86_64，其他架构跳过
+        if !cfg!(target_arch = "x86_64") {
+            eprintln!("跳过 {} - AOT 编译当前仅支持 x86_64", test_name);
+            return;
+        }
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "{}: Parsing failed: {:?}",
+            test_name,
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+
+        // 应用逃逸分析优化 (与 JIT 测试一致)
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false)
+            .expect("Escape analysis failed");
+
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        // AOT 编译
+        let aot_compiler = karte_aot::AotCompiler::new(false);
+        let binary = aot_compiler
+            .compile_to_bytes(&lir)
+            .expect("AOT compilation failed");
+
+        // 写入临时文件并执行
+        let temp_dir = std::env::temp_dir();
+        let binary_path = temp_dir.join(format!("karte_aot_test_{}.bin", test_name));
+        std::fs::write(&binary_path, &binary).expect("Failed to write binary");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&binary_path, std::fs::Permissions::from_mode(0o755))
+                .expect("Failed to set permissions");
+        }
+
+        let output = std::process::Command::new(&binary_path)
+            .output()
+            .expect("Failed to execute binary");
+
+        let exit_code = output.status.code().unwrap_or(-1);
+        assert_eq!(
+            exit_code, 134,
+            "{}: Expected exit code 134 (SIGABRT / division by zero), got {}. stderr: {}",
+            test_name,
+            exit_code,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        // 清理
+        let _ = std::fs::remove_file(&binary_path);
+    }
+
     /// RISC-V AOT 编译并运行（通过 qemu-riscv64）
     fn compile_and_run_aot_riscv64(code: &str, expected_exit_code: i64, test_name: &str) {
         // 检查 qemu-riscv64 是否可用
@@ -4020,91 +4100,43 @@ fn main() -> number {
     }
 
     #[test]
-    fn test_divide_by_zero_returns_zero() {
+    fn test_divide_by_zero_panics() {
         let code = r#"
 fn main() -> number {
     10 / 0
 }
 "#;
-        let (tokens, _) = tokenize(code);
-        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
-        assert!(!diagnostics.has_errors(), "Parsing failed: {:?}", diagnostics);
-        let parse_result = parse_result.expect("No parse result");
-        let ast = parse_result.expr();
-        let options = LoweringOptions {
-            known_functions: HashSet::new(),
-            module_context: None,
-            expr_types: parse_result.expr_types.clone(),
-        };
-        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
-        promote_project_entry(&mut mir);
-        mir.functions.remove(SCRIPT_ENTRY_POINT);
-        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
-        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
-        pipeline.optimize(&mut lir).expect("Optimization failed");
-        let mut executor = ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
-        let exit_code = executor.execute_with_jit(&lir).expect("JIT execution failed");
-        assert_eq!(exit_code, 0, "10 / 0 should return 0, got {}", exit_code);
+        // 除零触发 Panic 指令，进程以 exit code 134 终止
+        // 使用 AOT 子进程模式验证
+        compile_and_run_aot_panic(code, "test_divide_by_zero_panics");
     }
 
     #[test]
-    fn test_modulo_by_zero_returns_zero() {
+    fn test_modulo_by_zero_panics() {
         let code = r#"
 fn main() -> number {
     10 % 0
 }
 "#;
-        let (tokens, _) = tokenize(code);
-        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
-        assert!(!diagnostics.has_errors(), "Parsing failed: {:?}", diagnostics);
-        let parse_result = parse_result.expect("No parse result");
-        let ast = parse_result.expr();
-        let options = LoweringOptions {
-            known_functions: HashSet::new(),
-            module_context: None,
-            expr_types: parse_result.expr_types.clone(),
-        };
-        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
-        promote_project_entry(&mut mir);
-        mir.functions.remove(SCRIPT_ENTRY_POINT);
-        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
-        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
-        pipeline.optimize(&mut lir).expect("Optimization failed");
-        let mut executor = ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
-        let exit_code = executor.execute_with_jit(&lir).expect("JIT execution failed");
-        assert_eq!(exit_code, 0, "10 % 0 should return 0, got {}", exit_code);
+        // 取模除零触发 Panic 指令，进程以 exit code 134 终止
+        // 使用 AOT 子进程模式验证
+        compile_and_run_aot_panic(code, "test_modulo_by_zero_panics");
     }
 
     #[test]
-    fn test_zero_divide_by_zero() {
+    fn test_zero_div_zero_panics() {
         let code = r#"
 fn main() -> number {
     0 / 0
 }
 "#;
-        let (tokens, _) = tokenize(code);
-        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
-        assert!(!diagnostics.has_errors(), "Parsing failed: {:?}", diagnostics);
-        let parse_result = parse_result.expect("No parse result");
-        let ast = parse_result.expr();
-        let options = LoweringOptions {
-            known_functions: HashSet::new(),
-            module_context: None,
-            expr_types: parse_result.expr_types.clone(),
-        };
-        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
-        promote_project_entry(&mut mir);
-        mir.functions.remove(SCRIPT_ENTRY_POINT);
-        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
-        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
-        pipeline.optimize(&mut lir).expect("Optimization failed");
-        let mut executor = ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
-        let exit_code = executor.execute_with_jit(&lir).expect("JIT execution failed");
-        assert_eq!(exit_code, 0, "0 / 0 should return 0, got {}", exit_code);
+        // 0/0 触发 Panic 指令，进程以 exit code 134 终止
+        // 使用 AOT 子进程模式验证
+        compile_and_run_aot_panic(code, "test_zero_div_zero_panics");
     }
 
     #[test]
-    fn test_div_zero_in_loop() {
+    fn test_div_zero_in_loop_panics() {
         let code = r#"
 fn main() -> number {
     let x = 0;
@@ -4117,25 +4149,9 @@ fn main() -> number {
     result
 }
 "#;
-        let (tokens, _) = tokenize(code);
-        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
-        assert!(!diagnostics.has_errors(), "Parsing failed: {:?}", diagnostics);
-        let parse_result = parse_result.expect("No parse result");
-        let ast = parse_result.expr();
-        let options = LoweringOptions {
-            known_functions: HashSet::new(),
-            module_context: None,
-            expr_types: parse_result.expr_types.clone(),
-        };
-        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
-        promote_project_entry(&mut mir);
-        mir.functions.remove(SCRIPT_ENTRY_POINT);
-        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
-        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
-        pipeline.optimize(&mut lir).expect("Optimization failed");
-        let mut executor = ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
-        let exit_code = executor.execute_with_jit(&lir).expect("JIT execution failed");
-        assert_eq!(exit_code, 0, "loop with div by zero should return 0, got {}", exit_code);
+        // 循环中的除零触发 Panic 指令，进程以 exit code 134 终止
+        // 使用 AOT 子进程模式验证
+        compile_and_run_aot_panic(code, "test_div_zero_in_loop_panics");
     }
 
     #[test]
@@ -4211,7 +4227,7 @@ fn main() -> number {
     }
 
     #[test]
-    fn test_nested_div_zero() {
+    fn test_nested_div_zero_panics() {
         let code = r#"
 fn main() -> number {
     let a = 10;
@@ -4220,25 +4236,9 @@ fn main() -> number {
     a / (b / c)
 }
 "#;
-        let (tokens, _) = tokenize(code);
-        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
-        assert!(!diagnostics.has_errors(), "Parsing failed: {:?}", diagnostics);
-        let parse_result = parse_result.expect("No parse result");
-        let ast = parse_result.expr();
-        let options = LoweringOptions {
-            known_functions: HashSet::new(),
-            module_context: None,
-            expr_types: parse_result.expr_types.clone(),
-        };
-        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
-        promote_project_entry(&mut mir);
-        mir.functions.remove(SCRIPT_ENTRY_POINT);
-        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
-        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
-        pipeline.optimize(&mut lir).expect("Optimization failed");
-        let mut executor = ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
-        let exit_code = executor.execute_with_jit(&lir).expect("JIT execution failed");
-        assert_eq!(exit_code, 0, "nested div by zero should return 0, got {}", exit_code);
+        // 嵌套除零触发 Panic 指令，进程以 exit code 134 终止
+        // 使用 AOT 子进程模式验证
+        compile_and_run_aot_panic(code, "test_nested_div_zero_panics");
     }
 
     #[test]

@@ -641,6 +641,14 @@ pub enum Instruction {
         span: Span,
     },
 
+    /// 运行时 panic：终止程序执行
+    /// 用于除零等不可恢复的运行时错误
+    #[ir_codec(token = "panic")]
+    Panic {
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
     /// 加载内存值（8字节）
     #[ir_codec(token = "load64")]
     Load64 {

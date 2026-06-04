@@ -360,7 +360,7 @@ pub(super) fn lower_statement(
                     });
                 }
                 BinaryOperator::Divide => {
-                    // 除零检查：如果 src2 == 0，结果为 0；否则执行除法
+                    // 除零检查：如果 src2 == 0，触发 panic；否则执行除法
                     let zero_label = ctx.next_internal_label("div_zero");
                     let end_label = ctx.next_internal_label("div_end");
 
@@ -391,25 +391,21 @@ pub(super) fn lower_statement(
                         span: *span,
                     });
 
-                    // 零路径：结果为 0
+                    // 零路径：触发 panic
                     ctx.add_instruction(Instruction::Label {
                         id: zero_label,
                         span: *span,
                     });
-                    ctx.add_instruction(Instruction::Move {
-                        dst: temp_register,
-                        src: Operand::Immediate { value: 0 },
-                        span: *span,
-                    });
+                    ctx.add_instruction(Instruction::Panic { span: *span });
 
-                    // End
+                    // End (Panic 是 terminator，此处不可达)
                     ctx.add_instruction(Instruction::Label {
                         id: end_label,
                         span: *span,
                     });
                 }
                 BinaryOperator::Modulo => {
-                    // 除零检查：如果 src2 == 0，结果为 0；否则执行取模
+                    // 除零检查：如果 src2 == 0，触发 panic；否则执行取模
                     let zero_label = ctx.next_internal_label("mod_zero");
                     let end_label = ctx.next_internal_label("mod_end");
 
@@ -440,18 +436,14 @@ pub(super) fn lower_statement(
                         span: *span,
                     });
 
-                    // 零路径：结果为 0
+                    // 零路径：触发 panic
                     ctx.add_instruction(Instruction::Label {
                         id: zero_label,
                         span: *span,
                     });
-                    ctx.add_instruction(Instruction::Move {
-                        dst: temp_register,
-                        src: Operand::Immediate { value: 0 },
-                        span: *span,
-                    });
+                    ctx.add_instruction(Instruction::Panic { span: *span });
 
-                    // End
+                    // End (Panic 是 terminator，此处不可达)
                     ctx.add_instruction(Instruction::Label {
                         id: end_label,
                         span: *span,

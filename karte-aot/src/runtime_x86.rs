@@ -25,6 +25,7 @@ pub mod runtime_names {
     pub const PRINT_STRING: &str = "__karte_print_string";
     pub const PRINT_NUMBER: &str = "__karte_print_number";
     pub const PRINT_BOOL: &str = "__karte_print_bool";
+    pub const PANIC: &str = "__karte_panic";
 }
 
 /// 运行时函数描述
@@ -85,6 +86,7 @@ impl X86Runtime {
         self.emit_print_string();
         self.emit_print_number();
         self.emit_print_bool();
+        self.emit_panic();
         self
     }
 
@@ -2476,6 +2478,44 @@ impl X86Runtime {
         // done_patch (JMP) → done_label
         let rel = done_label as i32 - (done_patch as i32 + 4);
         self.code[done_patch..done_patch + 4].copy_from_slice(&rel.to_le_bytes());
+    }
+
+    /// __karte_panic() → !
+    ///
+    /// 输出 "runtime error: division by zero\n" 到 stderr，然后以 exit code 134 (SIGABRT) 退出。
+    fn emit_panic(&mut self) {
+        self.fn_start(runtime_names::PANIC);
+        self.push(5);  // RBP
+
+        // 将错误信息写入栈（34 字节 + 6 字节对齐 = 40 字节）
+        let msg = b"runtime error: division by zero\n";
+        let msg_len = msg.len();
+        let aligned_len = ((msg_len + 7) & !7); // 40
+        self.sub_ri8(4, aligned_len as u8);  // RSP -= 40
+
+        // 逐字节写入栈
+        for (i, &byte) in msg.iter().enumerate() {
+            self.mov_byte_mem_imm(4, i as i32, byte); // MOV byte [RSP+i], byte
+        }
+
+        // sys_write(2, RSP, msg_len)
+        self.mov_ri(0, 1);           // RAX = syscall 1 (write)
+        self.mov_ri(7, 2);           // RDI = fd 2 (stderr)
+        self.mov_rr(6, 4);           // RSI = RSP
+        self.mov_ri(2, msg_len as u64); // RDX = length
+        self.syscall();
+
+        // 恢复栈（虽然不会到达这里，但保持完整性）
+        self.add_ri8(4, aligned_len as u8);
+
+        // sys_exit_group(134)
+        self.mov_ri(0, 231); // RAX = syscall 231 (exit_group)
+        self.mov_ri(7, 134);  // RDI = exit code 134 (SIGABRT)
+        self.syscall();
+
+        self.pop(5);
+        self.ret();
+        self.fn_end();
     }
 
     /// 修补内部函数调用 (gc_alloc → gc_collect, safepoint → gc_collect, string_concat → gc_alloc)

@@ -311,6 +311,16 @@ pub trait JitCompiler: std::fmt::Debug {
         self.emit_runtime_call(code_builder, call, None, ctx)
     }
 
+    /// 编译 panic 指令
+    fn compile_panic(
+        &mut self,
+        code_builder: &mut CodeBuilder,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::panic();
+        self.emit_runtime_call(code_builder, call, None, ctx)
+    }
+
     // ==================== 共享工具方法 ====================
 
 }
