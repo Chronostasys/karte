@@ -600,7 +600,7 @@ impl X86Runtime {
         let not_min_special = self.code.len(); // JNE 指令开头
         self.jne_rel32(0); // 不是 MIN → 正常取反路径
 
-        // i64::MIN 特殊路径: 直接输出 "-9223372036854775808\n" (20 字节)
+        // i64::MIN 特殊路径: 直接输出 "-9223372036854775808\n" (21 字节)
         // 用 3 个 push 分配 24 字节栈空间 (3 × 8), 用 mov_byte_mem_imm 逐字节写入
         self.push(0); self.push(0); self.push(0); // 分配 24 字节
         self.mov_byte_mem_imm(4, 0, b'-');  // [RSP+0]  = '-'
@@ -621,13 +621,14 @@ impl X86Runtime {
         self.mov_byte_mem_imm(4, 15, b'7'); // [RSP+15] = '7'
         self.mov_byte_mem_imm(4, 16, b'5'); // [RSP+16] = '5'
         self.mov_byte_mem_imm(4, 17, b'8'); // [RSP+17] = '8'
-        self.mov_byte_mem_imm(4, 18, b'0'); // [RSP+18] = '8'
-        self.mov_byte_mem_imm(4, 19, 0x0A); // [RSP+19] = '\n'
-        // sys_write(1, RSP, 20)
+        self.mov_byte_mem_imm(4, 18, b'0'); // [RSP+18] = '0'
+        self.mov_byte_mem_imm(4, 19, b'8'); // [RSP+19] = '8'
+        self.mov_byte_mem_imm(4, 20, 0x0A); // [RSP+20] = '\n'
+        // sys_write(1, RSP, 21)
         self.mov_ri(0, 1);  // syscall 号: sys_write
         self.mov_ri(7, 1);  // fd = stdout
         self.mov_rr(6, 4);  // buf = RSP
-        self.mov_ri(2, 20); // count = 20
+        self.mov_ri(2, 21); // count = 21
         self.syscall();
         // 恢复栈: pop 3 次 (对应 3 个 push)
         self.pop(0); self.pop(0); self.pop(0);
@@ -2889,7 +2890,7 @@ impl X86Runtime {
         self.jne_rel32(0); // 不是 MIN → 正常取反路径
         let not_min_special = self.code.len() - 4;
 
-        // i64::MIN 特殊路径: 直接输出 "-9223372036854775808\n" (20 字节)
+        // i64::MIN 特殊路径: 直接输出 "-9223372036854775808\n" (21 字节)
         self.push(0); self.push(0); self.push(0); // 分配 24 字节
         self.mov_byte_mem_imm(4, 0, b'-');
         self.mov_byte_mem_imm(4, 1, b'9');
@@ -2909,13 +2910,14 @@ impl X86Runtime {
         self.mov_byte_mem_imm(4, 15, b'7');
         self.mov_byte_mem_imm(4, 16, b'5');
         self.mov_byte_mem_imm(4, 17, b'8');
-        self.mov_byte_mem_imm(4, 18, b'8');
-        self.mov_byte_mem_imm(4, 19, 0x0A); // '\n'
-        // sys_write(1, RSP, 20)
+        self.mov_byte_mem_imm(4, 18, b'0');
+        self.mov_byte_mem_imm(4, 19, b'8');
+        self.mov_byte_mem_imm(4, 20, 0x0A); // '\n'
+        // sys_write(1, RSP, 21)
         self.mov_ri(0, 1);   // syscall: write
         self.mov_ri(7, 1);   // fd: stdout
         self.mov_rr(6, 4);   // buf: RSP
-        self.mov_ri(2, 20);  // count: 20
+        self.mov_ri(2, 21);  // count: 21
         self.syscall();
         // 恢复栈
         self.pop(0); self.pop(0); self.pop(0);
