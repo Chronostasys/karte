@@ -29,4 +29,4 @@ path = "io.karte"
 [[modules]]
 id = "std.prelude"
 path = "prelude.karte"
-deps = ["std.core", "std.string", "std.io"]
+deps = ["std.core", "std.math", "std.string", "std.io"]

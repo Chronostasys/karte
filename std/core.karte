@@ -48,6 +48,14 @@ fn sign(x: number) -> number {
     }
 }
 
+fn is_even(n: number) -> bool {
+    n % 2 == 0
+}
+
+fn is_odd(n: number) -> bool {
+    n % 2 != 0
+}
+
 fn floor_div(a: number, b: number) -> number {
     let q = a / b;
     let r = a - q * b;
