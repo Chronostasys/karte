@@ -11,3 +11,19 @@ fn print_number(n: number) -> number {
 fn println_number(n: number) -> number {
     print(to_string(n) + "\n")
 }
+
+fn print_bool(b: bool) -> number {
+    if b { print("true") } else { print("false") }
+}
+
+fn println_bool(b: bool) -> number {
+    if b { print("true\n") } else { print("false\n") }
+}
+
+fn debug(label: string, value: number) -> number {
+    print(label + ": " + to_string(value) + "\n")
+}
+
+fn debug_string(label: string, value: string) -> number {
+    print(label + ": " + value + "\n")
+}

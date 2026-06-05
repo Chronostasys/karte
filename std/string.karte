@@ -12,6 +12,45 @@ fn contains(s: string, ch: number) -> number {
     str_contains(s, ch)
 }
 
-fn trim_whitespace(s: string) -> string {
-    trim(s)
+fn count_splits(s: string, delimiter: number) -> number {
+    split_count(s, delimiter)
+}
+
+fn char_code(s: string, index: number) -> number {
+    str_index(s, index)
+}
+
+fn from_number(n: number) -> string {
+    to_string(n)
+}
+
+fn is_empty(s: string) -> bool {
+    len(s) == 0
+}
+
+fn starts_with(s: string, ch: number) -> bool {
+    if len(s) > 0 {
+        str_index(s, 0) == ch
+    } else {
+        false
+    }
+}
+
+fn ends_with(s: string, ch: number) -> bool {
+    let n = len(s);
+    if n > 0 {
+        str_index(s, n - 1) == ch
+    } else {
+        false
+    }
+}
+
+fn repeat(s: string, count: number) -> string {
+    let result = "";
+    let i = 0;
+    while i < count {
+        result = result + s;
+        i += 1
+    };
+    result
 }
