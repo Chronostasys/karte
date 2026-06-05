@@ -2042,7 +2042,7 @@ impl X86Runtime {
         let zero_patch = self.code.len() - 4;
 
         // value == 0: 写入 '0' 到 buffer end - 1
-        self.bs(&[0x49, 0x83, 0xEE, 0x01]); // SUB R12, 1
+        self.bs(&[0x49, 0x83, 0xEC, 0x01]); // SUB R12, 1
         // MOV byte [R12], '0' (0x30)
         // MOV [R12], 0x30 → 使用 RAX 作为临时
         self.push(0); // 保存 RAX
@@ -2083,7 +2083,7 @@ impl X86Runtime {
         self.add_ri8(2, 0x30); // RDX += '0'
 
         // buffer[--R12] = digit
-        self.bs(&[0x49, 0x83, 0xEE, 0x01]); // SUB R12, 1
+        self.bs(&[0x49, 0x83, 0xEC, 0x01]); // SUB R12, 1
         // MOV [R12], DL → DL 是 RDX 的低 8 位
         // REX.B + MOV [R12], DL = 41 88 14 24
         self.bs(&[0x41, 0x88, 0x14, 0x24]); // MOV [R12], DL
@@ -2107,9 +2107,9 @@ impl X86Runtime {
 
         // 如果 is_negative (R13 == 1), 在前面加 '-'
         self.test_rr(13, 13);
-        self.bs(&[0x74, 0x0B]); // JZ skip_sign (+11 bytes)
+        self.bs(&[0x74, 0x18]); // JZ skip_sign (+24 bytes)
         // buffer[--R12] = '-'
-        self.bs(&[0x49, 0x83, 0xEE, 0x01]); // SUB R12, 1
+        self.bs(&[0x49, 0x83, 0xEC, 0x01]); // SUB R12, 1
         self.push(0); // save RAX
         self.mov_ri(0, 0x2D); // RAX = '-'
         self.bs(&[0x41, 0x88, 0x04, 0x24]); // MOV [R12], AL
@@ -2154,6 +2154,7 @@ impl X86Runtime {
         // RSI = R12 (src)
         self.mov_rr(6, 12); // RSI = R12 (src)
         // RDI = RAX + 8 (dst)
+        self.mov_rr(7, 0); // RDI = RAX (alloc result)
         self.add_ri8(7, 8); // RDI = RAX + 8
         // RCX = RBX (count)
         self.mov_rr(1, 3); // RCX = RBX
