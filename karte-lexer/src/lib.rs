@@ -36,9 +36,37 @@ pub enum Token {
     FloatLiteral,
 
     // 数字（十六进制和二进制必须在十进制之前，Logos 最长匹配）
-    #[regex(r"0x[0-9a-fA-F]+", |lex| i64::from_str_radix(&lex.slice()[2..], 16).ok())]
-    #[regex(r"0b[01]+", |lex| i64::from_str_radix(&lex.slice()[2..], 2).ok())]
-    #[regex(r"[0-9]+", |lex| lex.slice().parse::<i64>().ok())]
+    // 两步解析：先尝试 i64，失败后尝试 u64，仅接受 u64::MAX/2+1 (= i64::MIN 的位模式)
+    #[regex(r"0x[0-9a-fA-F]+", |lex| {
+        let digits = &lex.slice()[2..];
+        if let Ok(n) = i64::from_str_radix(digits, 16) {
+            Some(n)
+        } else if let Ok(u) = u64::from_str_radix(digits, 16) {
+            if u == 0x8000_0000_0000_0000 { Some(i64::MIN) } else { None }
+        } else {
+            None
+        }
+    })]
+    #[regex(r"0b[01]+", |lex| {
+        let digits = &lex.slice()[2..];
+        if let Ok(n) = i64::from_str_radix(digits, 2) {
+            Some(n)
+        } else if let Ok(u) = u64::from_str_radix(digits, 2) {
+            if u == 0x8000_0000_0000_0000 { Some(i64::MIN) } else { None }
+        } else {
+            None
+        }
+    })]
+    #[regex(r"[0-9]+", |lex| {
+        let s = lex.slice();
+        if let Ok(n) = s.parse::<i64>() {
+            Some(n)
+        } else if let Ok(u) = s.parse::<u64>() {
+            if u == 0x8000_0000_0000_0000 { Some(i64::MIN) } else { None }
+        } else {
+            None
+        }
+    })]
     Number(i64),
 
     // 复合赋值运算符（必须在对应单字符运算符之前，Logos 最长匹配）
