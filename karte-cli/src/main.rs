@@ -481,6 +481,7 @@ fn main() {
             }
         }
         Some(Commands::Aot { input, output, mode, target, gc }) => {
+            let aot_mode_is_explicit = mode.is_some();
             let mode = mode.map(|m| m.into()).unwrap_or_else(|| {
                 if default_mode_is_explicit { default_mode } else { ParserMode::Script }
             });
@@ -494,7 +495,7 @@ fn main() {
                     std::process::exit(1);
                 }
             };
-            if let Err(e) = runner::aot_compile(&input, &output_path, optimization_level, mode, cli.verbose, aot_target, gc.as_str()) {
+            if let Err(e) = runner::aot_compile(&input, &output_path, optimization_level, mode, aot_mode_is_explicit, cli.verbose, aot_target, gc.as_str()) {
                 error!("AOT 编译失败: {}", e);
                 std::process::exit(1);
             }

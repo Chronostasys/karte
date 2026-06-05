@@ -760,24 +760,68 @@ pub fn aot_compile(
     output_path: &str,
     optimization_level: OptimizationLevel,
     mode: ParserMode,
+    mode_is_explicit: bool,
     verbose: u8,
     target: karte_aot::AotTarget,
     gc_mode: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::os::unix::fs::PermissionsExt;
 
-    // 1. 读取源码 (input 可能是文件路径或内联表达式)
-    let source = if std::path::Path::new(input).exists() {
-        fs::read_to_string(input)?
+    let entry_path = Path::new(input);
+
+    // 检测是否为项目文件：如果输入是文件且位于 Karte 项目中，走模块系统编译路径
+    let mut lir_program = if entry_path.exists() && entry_path.is_file() {
+        let project_context = ProjectBuildContext::try_new(entry_path)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+        if let Some(context) = project_context {
+            // 项目模式：走模块系统编译（与 process_file 相同路径）
+            if mode != ParserMode::Project {
+                if mode_is_explicit {
+                    return Err(format!(
+                        "检测到 `{}` 位于 Karte 项目中，但指定了 --mode script；请改用 --mode project",
+                        input
+                    ).into());
+                } else {
+                    println!(
+                        "\u{2139}\u{fe0f}  检测到项目结构，自动切换到 project 模式编译 `{}`",
+                        input
+                    );
+                }
+            }
+
+            let build_product = build_product_for_entry(
+                entry_path,
+                BuildInput::Project(context),
+                optimization_level,
+                verbose,
+                false,
+                false,
+            ).map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+
+            build_product.into_lir_program()
+        } else {
+            // 非项目文件：走单文件编译路径
+            if mode == ParserMode::Project {
+                if mode_is_explicit {
+                    return Err(format!(
+                        "`{}` 看起来是独立脚本，无法使用 --mode project；请省略该参数或使用 --mode script",
+                        input
+                    ).into());
+                } else {
+                    println!("\u{2139}\u{fe0f}  `{}` 不在项目中，自动切换到 script 模式", input);
+                }
+            }
+
+            let source = fs::read_to_string(input)?;
+            let source = inject_gc_functions(&source, gc_mode);
+            compile_to_lir(&source, "aot", optimization_level, verbose > 0, mode)?
+        }
     } else {
-        input.to_string()
+        // 内联表达式：走单文件编译路径
+        let source = inject_gc_functions(input, gc_mode);
+        compile_to_lir(&source, "aot", optimization_level, verbose > 0, mode)?
     };
-
-    // 1.5 自动引入 GC 函数 (从 karte-stdlib/gc.karte 中提取非 main 函数)
-    let source = inject_gc_functions(&source, gc_mode);
-
-    // 1. 编译到 LIR
-    let mut lir_program = compile_to_lir(&source, "aot", optimization_level, verbose > 0, mode)?;
 
     // 设置目标架构（让 LIR pipeline 使用正确的调用约定）
     let target_str = match target {
@@ -787,7 +831,7 @@ pub fn aot_compile(
     };
     lir_program.set_target(target_str.to_string());
 
-    // 2. 优化
+    // 优化
     let mut pipeline = karte_lir::OptimizationPipeline::new(optimization_level);
     pipeline.optimize(&mut lir_program).map_err(|errors| -> Box<dyn std::error::Error> {
         format!("LIR优化失败: {}", errors.join(", ")).into()
@@ -797,25 +841,15 @@ pub fn aot_compile(
         eprintln!("AOT: LIR 优化完成, {} 个函数", lir_program.functions.len());
     }
 
-    // DEBUG: dump optimized LIR
-    eprintln!("=== OPTIMIZED LIR ===");
-    for (name, func) in &lir_program.functions {
-        eprintln!("--- {} ---", name);
-        for (i, inst) in func.instructions.iter().enumerate() {
-            eprintln!("  [{}] {:?}", i, inst);
-        }
-    }
-    eprintln!("=== END LIR ===");
-
-    // 3. AOT 编译
+    // AOT 编译
     let aot_compiler = karte_aot::AotCompiler::new(verbose > 0).with_target(target);
     let binary = aot_compiler.compile_to_bytes(&lir_program)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
-    // 4. 写入输出文件
+    // 写入输出文件
     fs::write(output_path, &binary)?;
-    
-    // 5. 设置可执行权限
+
+    // 设置可执行权限
     let perms = std::fs::Permissions::from_mode(0o755);
     fs::set_permissions(output_path, perms)?;
 
@@ -823,6 +857,7 @@ pub fn aot_compile(
 
     Ok(())
 }
+
 
 pub fn process_expression(
     input: &str,
