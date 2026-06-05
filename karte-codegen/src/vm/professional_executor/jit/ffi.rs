@@ -56,7 +56,7 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::CharToString => {
                 runtime::karte_jit_runtime_char_to_string as *const ()
             }
-            RuntimeIntrinsic::CharToString | RuntimeIntrinsic::ToString => {
+            RuntimeIntrinsic::ToString => {
                 runtime::karte_jit_runtime_to_string as *const ()
             }
             RuntimeIntrinsic::PrintString => {
@@ -87,7 +87,7 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::SplitCount => "karte_jit_runtime_split_count",
             RuntimeIntrinsic::Trim => "karte_jit_runtime_trim",
             RuntimeIntrinsic::CharToString => "karte_jit_runtime_char_to_string",
-            RuntimeIntrinsic::CharToString | RuntimeIntrinsic::ToString => "karte_jit_runtime_to_string",
+            RuntimeIntrinsic::ToString => "karte_jit_runtime_to_string",
             RuntimeIntrinsic::PrintString => "karte_jit_runtime_print_string",
             RuntimeIntrinsic::PrintNumber => "karte_jit_runtime_print_number",
             RuntimeIntrinsic::PrintBool => "karte_jit_runtime_print_bool",
