@@ -353,7 +353,7 @@ impl AArch64Runtime {
 
         // mmap 虚拟栈 64KB
         self.mov_imm64(X0, 0);
-        self.mov_imm64(X1, 65536);
+        self.mov_imm64(X1, 524288);
         self.mov_imm64(X2, 3);
         self.mov_imm64(X3, 0x22);
         self.mov_imm64(X4, -1i64 as u64 as i64);
@@ -363,7 +363,7 @@ impl AArch64Runtime {
         self.mov_reg(X20, X0); // X20 = vstack_base
 
         // 初始化 vm_sp
-        self.mov_imm64(X9, 65520);
+        self.mov_imm64(X9, 524272);
         self.add(X10, X20, X9); // X10 = vm_sp
         self.str_offset(XZR, X10, 0);
         self.mov_reg(X11, X10); // X11 = vm_fp
@@ -386,7 +386,7 @@ impl AArch64Runtime {
         self.store_global(X24, G_HEAP_START);
         self.store_global(X25, G_HEAP_LIMIT);
         self.store_global(X20, G_VSTACK_BOTTOM);
-        self.mov_imm64(X9, 65520);
+        self.mov_imm64(X9, 524272);
         self.add(X9, X20, X9);
         self.store_global(X9, G_VSTACK_TOP);
         self.mov_imm64(X0, 0);
@@ -402,7 +402,7 @@ impl AArch64Runtime {
         self.str_offset(X9, X24, 16);
 
         // 调用 main
-        self.mov_imm64(X9, 65520);
+        self.mov_imm64(X9, 524272);
         self.add(X0, X20, X9);
         self.mov_reg(X1, X20);
         self.call_main_offset = self.code.len();

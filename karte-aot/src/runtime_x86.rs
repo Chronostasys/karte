@@ -476,15 +476,15 @@ impl X86Runtime {
         self.fn_start(runtime_names::START);
         self.push(5); self.push(3); self.push(12); self.push(13); self.push(14); self.push(15);
 
-        // ---- mmap 虚拟栈 64KB ----
-        self.mov_ri(0, 9); self.mov_ri(7, 0); self.mov_ri(6, 65536);
+        // ---- mmap 虚拟栈 512KB ----
+        self.mov_ri(0, 9); self.mov_ri(7, 0); self.mov_ri(6, 524288);
         self.mov_ri(2, 3); self.mov_ri(10, 0x22); self.mov_ri(8, !0u64); self.mov_ri(9, 0);
         self.syscall();
         self.mov_rr(12, 0); // R12 = vstack_base
 
-        // R10 = vm_sp = vstack_base + 65520
+        // R10 = vm_sp = vstack_base + 524272
         self.mov_rr(10, 0);
-        self.mov_ri(0, 65520);
+        self.mov_ri(0, 524272);
         self.add_rr(10, 0);
         // sentinel
         self.mov_ri(0, 0);
@@ -518,9 +518,9 @@ impl X86Runtime {
         let vstack_bottom_store = self.code.len();
         self.mov_rip_store(0, 0);
 
-        // vstack_top = R12 + 65520 (虚拟栈顶部，用于 GC 扫描)
+        // vstack_top = R12 + 524272 (虚拟栈顶部，用于 GC 扫描)
         self.mov_rr(0, 12);
-        self.mov_ri(1, 65520);
+        self.mov_ri(1, 524272);
         self.add_rr(0, 1);
         let vstack_top_store = self.code.len();
         self.mov_rip_store(0, 0);

@@ -261,7 +261,7 @@ impl RiscvRuntime {
 
         // ---- mmap 虚拟栈 64KB ----
         self.li(A0, 0);
-        self.li(A1, 65536);
+        self.li(A1, 524288);
         self.li(A2, 3);            // PROT_READ | PROT_WRITE
         self.li(A3, 0x22);         // MAP_PRIVATE | MAP_ANON
         self.li(A4, -1i64 as u64 as i64);
@@ -272,8 +272,8 @@ impl RiscvRuntime {
         self.mv(S2, A0);           // S2 = vstack_base
 
         // 初始化虚拟栈顶（不修改 SP，保持 SP 为系统栈）
-        self.li(T0, 65520);
-        self.add(A0, S2, T0);      // A0 = vstack_base + 65520 = vm_sp
+        self.li(T0, 524272);
+        self.add(A0, S2, T0);      // A0 = vstack_base + 524272 = vm_sp
         self.sd(ZERO, A0, 0);      // sentinel
         self.mv(S0_FP, A0);        // vm_fp = vm_sp
 
@@ -296,8 +296,8 @@ impl RiscvRuntime {
         self.store_global(S4, G_HEAP_START);       // heap_start
         self.store_global(S5, G_HEAP_LIMIT);       // heap_limit
         self.store_global(S2, G_VSTACK_BOTTOM);    // vstack_bottom
-        // vstack_top = vstack_bottom + 65520
-        self.li(T0, 65520);
+        // vstack_top = vstack_bottom + 524272
+        self.li(T0, 524272);
         self.add(T0, S2, T0);
         self.store_global(T0, G_VSTACK_TOP);       // vstack_top
         self.li(A0, 0);
@@ -319,8 +319,8 @@ impl RiscvRuntime {
         // ---- 调用 main ----
         // a0 = vm_sp (虚拟栈顶), a1 = vstack_bottom
         // 注意：SP(x2) 保持为系统栈，main 函数的 prologue 负责保存 callee-saved 到系统栈
-        self.li(T0, 65520);
-        self.add(A0, S2, T0);      // a0 = vm_sp = vstack_base + 65520
+        self.li(T0, 524272);
+        self.add(A0, S2, T0);      // a0 = vm_sp = vstack_base + 524272
         self.mv(A1, S2);           // a1 = vstack_bottom
         self.call_main_offset = self.code.len();
         self.jal(RA, 0);           // 占位

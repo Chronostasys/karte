@@ -65,7 +65,7 @@ impl ExecutionEngine {
         }
 
         // 创建虚拟栈
-        let virtual_stack = vec![0; 8192]; // 64KB虚拟栈空间 (8192 * 8字节)
+        let virtual_stack = vec![0; 65536]; // 512KB虚拟栈空间 (65536 * 8字节)
 
         // 🔧 注册虚拟栈区间作为GC根
         // Karte使用自分配的虚拟栈（Vec<i64>），需要将其注册为GC根
