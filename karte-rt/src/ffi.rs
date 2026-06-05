@@ -178,7 +178,7 @@ pub extern "C" fn karte_jit_runtime_string_concat(left_ptr: u64, right_ptr: u64)
         right_buf.set_len(right_len);
 
         // 现在安全地分配新内存（GC 可能移动 left/right 对象，但我们已经复制了数据）
-        let new_ptr = gc_alloc(total_size, ObjectType::Conservative);
+        let new_ptr = gc_alloc(total_size, ObjectType::Atomic);
         if new_ptr.is_null() {
             return 0;
         }
@@ -211,7 +211,7 @@ pub extern "C" fn karte_jit_runtime_string_char_at(str_ptr: u64, index: u64) -> 
         let byte_val = *data_ptr.add(index as usize);
 
         // 分配新字符串对象：16 字节（8字节 header + 8字节对齐数据区）
-        let new_ptr = gc_alloc(16, ObjectType::Conservative);
+        let new_ptr = gc_alloc(16, ObjectType::Atomic);
         if new_ptr.is_null() {
             return 0;
         }
@@ -247,7 +247,7 @@ pub extern "C" fn karte_jit_runtime_string_substring(str_ptr: u64, start: u64, l
         // 边界检查
         let actual_start = if start >= src_len {
             // start 超出源字符串长度，返回空字符串
-            let new_ptr = gc_alloc(16, ObjectType::Conservative);
+            let new_ptr = gc_alloc(16, ObjectType::Atomic);
             if new_ptr.is_null() {
                 return 0;
             }
@@ -272,7 +272,7 @@ pub extern "C" fn karte_jit_runtime_string_substring(str_ptr: u64, start: u64, l
 
         // 分配新字符串：8 字节 header + 数据对齐到 8 字节
         let total_size = 8 + ((actual_length + 7) & !7);
-        let new_ptr = gc_alloc(total_size, ObjectType::Conservative);
+        let new_ptr = gc_alloc(total_size, ObjectType::Atomic);
         if new_ptr.is_null() {
             return 0;
         }
@@ -373,7 +373,7 @@ pub extern "C" fn karte_jit_runtime_trim(str_ptr: u64) -> u64 {
         let trimmed_len = end - start;
         if trimmed_len == 0 {
             // 全是空格，返回空字符串
-            let new_ptr = gc_alloc(16, ObjectType::Conservative);
+            let new_ptr = gc_alloc(16, ObjectType::Atomic);
             if new_ptr.is_null() {
                 return 0;
             }
@@ -388,7 +388,7 @@ pub extern "C" fn karte_jit_runtime_trim(str_ptr: u64) -> u64 {
 
         // 分配新字符串
         let total_size = 8 + ((trimmed_len + 7) & !7);
-        let new_ptr = gc_alloc(total_size, ObjectType::Conservative);
+        let new_ptr = gc_alloc(total_size, ObjectType::Atomic);
         if new_ptr.is_null() {
             return 0;
         }
@@ -422,7 +422,7 @@ pub extern "C" fn karte_jit_runtime_to_string(value: i64) -> u64 {
     let byte_len = s.len();
     let total_size = ((byte_len + 7) / 8) * 8 + 8;
     unsafe {
-        let ptr = gc_alloc(total_size, ObjectType::Conservative);
+        let ptr = gc_alloc(total_size, ObjectType::Atomic);
         if ptr.is_null() {
             return 0;
         }
@@ -442,7 +442,7 @@ pub extern "C" fn karte_jit_runtime_to_string(value: i64) -> u64 {
 pub extern "C" fn karte_jit_runtime_char_to_string(ascii_code: i64) -> u64 {
     unsafe {
         // 分配新字符串对象：16 字节（8字节 header + 8字节对齐数据区）
-        let new_ptr = gc_alloc(16, ObjectType::Conservative);
+        let new_ptr = gc_alloc(16, ObjectType::Atomic);
         if new_ptr.is_null() {
             return 0;
         }

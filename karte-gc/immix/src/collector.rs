@@ -436,6 +436,13 @@ impl Collector {
                 let body_size = obj_ref.body_size();
                 let is_forwarded = obj_ref.byte_header.get_forwarded();
                 let body_ptr = obj_ref.get_body();
+                
+                // 修復 GC 數據損壞：Atomic 對象不包含任何指針，不需要保守掃描。
+                // 如果掃描 Atomic 對象（如字符串），body 中的數據可能被誤認為指針，
+                // 導致 correct_ptr 修改字符串 body 中的數據，造成字符串損壞。
+                if obj_ref.obj_type == ObjectType::Atomic {
+                    return;
+                }
 
                 log::debug!(
                     "gc {} [Cycle {}]: mark_conservative - scanning object: body={:p}, size={}, fields={}, forwarded={}",
