@@ -1,8 +1,8 @@
 module std.prelude
 
-import std.core::{abs, min, max, clamp, sign, gcd, factorial, pow}
-import std.io::{println, println_number, debug}
-import std.string::{length, from_number}
+import std.core::{abs, min, max, clamp, sign, floor_div, factorial, gcd, lcm, pow, fibonacci, sum_to, number_to_string}
+import std.io::{println, print_number, println_number, print_bool, println_bool, debug, debug_string}
+import std.string::{length, concat, contains, count_splits, char_code, from_number, is_empty, starts_with, ends_with, repeat}
 
 fn __prelude_init() -> number {
     0
