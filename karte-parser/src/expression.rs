@@ -2170,6 +2170,7 @@ impl<'a> Parser<'a> {
                 let end_span = token.span;
                 self.advance(); // consume '}'
                 let span = Span::new(start_span.start, end_span.end);
+                let arms = Self::desugar_nested_match_patterns(arms);
                 Ok(Expr::Match { expr, arms, span })
             } else {
                 Err(ParseError::UnexpectedToken {
@@ -2763,6 +2764,260 @@ impl<'a> Parser<'a> {
             Err(ParseError::UnexpectedEof {
                 expected: "'..' or '..=' or '{'".to_string(),
             })
+        }
+    }
+
+    /// 将嵌套构造器模式转换为一组嵌套的 match 表达式。
+    /// 例如：
+    ///   Result::Ok(Color::Red) -> 1
+    ///   Result::Ok(Color::Green) -> 2
+    ///   Result::Err -> 0
+    /// 转换为：
+    ///   Result::Ok(__karte__0) -> match __karte__0 {
+    ///       Color::Red -> 1,
+    ///       Color::Green -> 2,
+    ///   },
+    ///   Result::Err -> 0
+    fn desugar_nested_match_patterns(
+        arms: Vec<karte_hir::MatchArm>,
+    ) -> Vec<karte_hir::MatchArm> {
+        use karte_hir::{Expr, MatchArm, Pattern};
+
+        let has_nested = arms
+            .iter()
+            .any(|arm| Self::pattern_has_nested_constructor(&arm.pattern));
+        if !has_nested {
+            return arms;
+        }
+
+        let mut result: Vec<MatchArm> = Vec::new();
+        let mut counter: u64 = 0;
+        let mut processed: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
+
+        for i in 0..arms.len() {
+            if processed.contains(&i) {
+                continue;
+            }
+
+            let arm = &arms[i];
+            let outer_key = Self::outer_constructor_key(&arm.pattern);
+
+            if outer_key.is_none() {
+                result.push(arm.clone());
+                processed.insert(i);
+                continue;
+            }
+
+            let key = outer_key.unwrap();
+
+            let args = Self::get_pattern_args(&arm.pattern);
+            let has_nested = args.iter().any(|a| Self::is_constructor_pattern(a));
+
+            if !has_nested {
+                result.push(arm.clone());
+                processed.insert(i);
+                continue;
+            }
+
+            let has_non_ctor_arg = args.iter().any(|a| {
+                !Self::is_constructor_pattern(a) && !matches!(a, Pattern::Wildcard { .. })
+            });
+            if has_non_ctor_arg {
+                result.push(arm.clone());
+                processed.insert(i);
+                continue;
+            }
+
+            let mut indices = vec![i];
+            for j in (i + 1)..arms.len() {
+                if processed.contains(&j) {
+                    continue;
+                }
+                if let Some(other_key) = Self::outer_constructor_key(&arms[j].pattern) {
+                    if other_key == key {
+                        indices.push(j);
+                    }
+                }
+            }
+
+            if indices.len() <= 1 {
+                for &idx in &indices {
+                    result.push(arms[idx].clone());
+                    processed.insert(idx);
+                }
+                continue;
+            }
+
+            let first_pattern = &arms[indices[0]].pattern;
+            let nested_arg_index = Self::find_first_nested_arg_index(first_pattern);
+
+            if nested_arg_index.is_none() {
+                for &idx in &indices {
+                    result.push(arms[idx].clone());
+                    processed.insert(idx);
+                }
+                continue;
+            }
+            let arg_idx = nested_arg_index.unwrap();
+
+            let all_same = indices.iter().all(|&idx| {
+                Self::find_first_nested_arg_index(&arms[idx].pattern) == Some(arg_idx)
+            });
+
+            if !all_same {
+                for &idx in &indices {
+                    result.push(arms[idx].clone());
+                    processed.insert(idx);
+                }
+                continue;
+            }
+
+            let all_covered = indices.iter().all(|&idx| {
+                let inner = Self::extract_nested_pattern(&arms[idx].pattern, arg_idx);
+                matches!(inner, Pattern::Constructor { .. } | Pattern::QualifiedConstructor { .. })
+            });
+
+            if !all_covered {
+                for &idx in &indices {
+                    result.push(arms[idx].clone());
+                    processed.insert(idx);
+                }
+                continue;
+            }
+
+            let temp_name = format!("__karte__{}", counter);
+            counter += 1;
+
+            let new_outer_pattern =
+                Self::replace_nested_arg_with_variable(first_pattern, arg_idx, &temp_name);
+
+            let mut inner_arms: Vec<MatchArm> = Vec::new();
+            for &idx in &indices {
+                let inner_pattern =
+                    Self::extract_nested_pattern(&arms[idx].pattern, arg_idx);
+                let mut inner_arm = arms[idx].clone();
+                inner_arm.pattern = inner_pattern;
+                inner_arms.push(inner_arm);
+            }
+
+            let inner_match = Expr::Match {
+                expr: Box::new(Expr::Identifier {
+                    name: temp_name.clone(),
+                    span: Span::new(0, 0),
+                }),
+                arms: inner_arms,
+                span: Span::new(0, 0),
+            };
+
+            let first_arm_span = arms[indices[0]].span;
+
+            result.push(MatchArm {
+                pattern: new_outer_pattern,
+                body: inner_match,
+                guard: None,
+                span: first_arm_span,
+            });
+
+            for &idx in &indices {
+                processed.insert(idx);
+            }
+        }
+
+        result
+    }
+
+    fn is_constructor_pattern(pattern: &karte_hir::Pattern) -> bool {
+        matches!(
+            pattern,
+            karte_hir::Pattern::Constructor { .. } | karte_hir::Pattern::QualifiedConstructor { .. }
+        )
+    }
+
+    fn pattern_has_nested_constructor(pattern: &karte_hir::Pattern) -> bool {
+        let args = Self::get_pattern_args(pattern);
+        args.iter().any(|a| Self::is_constructor_pattern(a))
+    }
+
+    fn outer_constructor_key(pattern: &karte_hir::Pattern) -> Option<String> {
+        match pattern {
+            karte_hir::Pattern::Constructor { name, .. } => Some(name.clone()),
+            karte_hir::Pattern::QualifiedConstructor {
+                type_name,
+                constructor_name,
+                ..
+            } => Some(format!("{}::{}", type_name, constructor_name)),
+            _ => None,
+        }
+    }
+
+    fn get_pattern_args(pattern: &karte_hir::Pattern) -> &[karte_hir::Pattern] {
+        match pattern {
+            karte_hir::Pattern::Constructor { args, .. }
+            | karte_hir::Pattern::QualifiedConstructor { args, .. } => args,
+            _ => &[],
+        }
+    }
+
+    fn find_first_nested_arg_index(pattern: &karte_hir::Pattern) -> Option<usize> {
+        let args = Self::get_pattern_args(pattern);
+        args.iter().position(|a| Self::is_constructor_pattern(a))
+    }
+
+    fn replace_nested_arg_with_variable(
+        pattern: &karte_hir::Pattern,
+        arg_idx: usize,
+        var_name: &str,
+    ) -> karte_hir::Pattern {
+        let new_var = karte_hir::Pattern::Variable {
+            name: var_name.to_string(),
+            span: Span::new(0, 0),
+        };
+
+        match pattern {
+            karte_hir::Pattern::Constructor { name, args, span } => {
+                let mut new_args = args.clone();
+                if arg_idx < new_args.len() {
+                    new_args[arg_idx] = new_var;
+                }
+                karte_hir::Pattern::Constructor {
+                    name: name.clone(),
+                    args: new_args,
+                    span: *span,
+                }
+            }
+            karte_hir::Pattern::QualifiedConstructor {
+                type_name,
+                constructor_name,
+                args,
+                span,
+            } => {
+                let mut new_args = args.clone();
+                if arg_idx < new_args.len() {
+                    new_args[arg_idx] = new_var;
+                }
+                karte_hir::Pattern::QualifiedConstructor {
+                    type_name: type_name.clone(),
+                    constructor_name: constructor_name.clone(),
+                    args: new_args,
+                    span: *span,
+                }
+            }
+            _ => pattern.clone(),
+        }
+    }
+
+    fn extract_nested_pattern(
+        pattern: &karte_hir::Pattern,
+        arg_idx: usize,
+    ) -> karte_hir::Pattern {
+        let args = Self::get_pattern_args(pattern);
+        if arg_idx < args.len() {
+            args[arg_idx].clone()
+        } else {
+            karte_hir::Pattern::Wildcard {
+                span: Span::new(0, 0),
+            }
         }
     }
 }
