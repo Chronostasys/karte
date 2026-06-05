@@ -2855,9 +2855,9 @@ impl X86Runtime {
         // nonzero (JNE) → digit_loop
         let rel = digit_loop as i32 - (nonzero as i32 + 4);
         self.code[nonzero..nonzero + 4].copy_from_slice(&rel.to_le_bytes());
-        // zero_done (JMP) → no_neg_sign_label
-        let rel = no_neg_sign_label as i32 - (zero_done as i32 + 4);
-        self.code[zero_done..zero_done + 4].copy_from_slice(&rel.to_le_bytes());
+        // zero_done (JMP rel32, E9 + 4字节 = 5字节) → no_neg_sign_label
+        let rel = no_neg_sign_label as i32 - (zero_done as i32 + 5);
+        self.code[zero_done + 1..zero_done + 5].copy_from_slice(&rel.to_le_bytes());
         // digit_done (JZ) → digit_done_label
         let rel = digit_done_label as i32 - (digit_done as i32 + 4);
         self.code[digit_done..digit_done + 4].copy_from_slice(&rel.to_le_bytes());
