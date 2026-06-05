@@ -372,12 +372,22 @@ let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering
 Recent work includes:
 - **Generic functions / let-polymorphism (2025-05-30)**: Added `TypeScheme` for generic function support. Parser allows optional parameter type annotations; TypeChecker generalizes functions with free type variables into type schemes and instantiates them per call site. Added 3 integration tests (identity, first, apply). Current limitation: monomorphic use only; polymorphic calls require future MIR monomorphization pass.
 - **Function-as-parameter fix (2025-12-02)**: Implemented unified representation for functions and closures with wrapper functions to handle calling convention differences
+- **Language Polish Round (2025-06-05)** — Major improvements across the entire compiler:
+  - **Nested enum pattern matching**: HIR desugar approach. Nested patterns like `Result::Ok(Color::Red)` are desugared to nested `match` expressions at parser time. No MIR/LIR changes needed. Supports three-level nesting with recursive desugaring and wildcard fallback. See `docs/agent/nested-enum-desugaring.md`.
+  - **Negative number pattern matching**: Parser now handles `-5`, `-3` etc. in match patterns. `parse_pattern_inner` checks for `Minus` token and creates `Pattern::Number`.
+  - **Deep recursion fix**: Virtual stack increased from 64KB to 512KB (8192→65536 entries). JIT and AOT both updated. Supports 3000+ levels of recursion.
+  - **Prelude auto-injection**: `std.prelude` functions (gcd, factorial, println, etc.) are auto-injected into the module scope when `std.prelude` is a dependency. Works in AOT mode. JIT cross-module linking still pending.
+  - **`char_to_string` runtime primitive**: Converts a character code (number) to a single-character string. Used by std.string functions.
+  - **Short-circuit `&&` and `||`**: MIR lowering now generates proper short-circuit evaluation for logical operators.
+  - **i64::MIN lexer fix**: Lexer now correctly parses `9223372036854775808` and `0x8000000000000000`.
+  - **Multiple AOT fixes**: print_number for i64::MIN, JMP rel32 offset patching, label recording.
+  - **gc_alloc fix**: Fixed gc_alloc not allocating after sweep.
+  - **Struct field nested constructor pattern**: `handle_pattern_bindings` recursively handles nested Constructor/QualifiedConstructor/Struct patterns in struct fields.
 - Refactored module system to support project mode
 - Moved cache implementation from CLI to `karte-module-system`
 - Added LIR parsing and roundtrip testing infrastructure
-- Enhanced integration tests for module system (now 222 tests)
+- Enhanced integration tests for module system
 - Runner module extracted from main CLI for better organization
-- Added 4 regression tests for higher-order function parameter passing
 
 ## Debugging Best Practices and Common Mistakes
 
@@ -671,6 +681,9 @@ Store { target = %10000, value = %2 }
 - **ENUM REGISTRATION ORDER GOTCHA**: `collect_function_definitions` 在解析函数签名中的类型标注（如 `fn f(e: Expr)`）时调用 `resolve_struct_field_from_parsed`。如果枚举 TypeDef 尚未通过 `collect_enum_definitions` 注册到 `custom_types`，会被解析为空的 Struct 骨架 `Type::Struct { name, fields: [] }`，导致后续所有类型检查看到空枚举。**解决方案**: `check_program_with_context` 中必须在 `collect_function_definitions` 之前调用 `collect_enum_definitions`。
 - **DUPLICATE FUNCTION GOTCHA**: `collect_function_definitions` 在同一次类型检查中可能被多次调用（多层作用域），需要用 `primary_function_spans` 区分"同一函数定义的二次遍历"与"真正的重复定义"，否则会在 `infer_stmt` 阶段误报 E006 错误。
 - **NESTED ENUM DESUGAR GOTCHA**: 三层及以上嵌套 enum pattern matching 时，`desugar_nested_match_patterns` 中连续的非穷尽内层 match 会导致 MIR lowering 生成错误代码（SIGSEGV 或垃圾值）。**根因**: 内层 match 缺少 wildcard 回退 arm，非穷尽 match 的 fallthrough 破坏控制流，导致 MIR 生成错误的 basic block 跳转。**修复三要素**: (1) 移除 `indices.len()<=1` 守卫以支持单 arm 递归（`karte-parser/src/expression.rs:2844`）；(2) 为内层 match 自动复制原始 wildcard 回退 arm 防止非穷尽（`expression.rs:2899-2906`）；(3) 递归调用 `desugar_nested_match_patterns` 处理内层 arms 确保多层嵌套都能正确降级（`expression.rs:2907`）。**⚠️ MIR 层也需配合**: `handle_pattern_bindings`（`karte-mir/src/lower/helpers.rs:569`）在匹配 Struct 字段中的嵌套 Constructor/QualifiedConstructor/Struct 模式时，必须递归调用自身处理子模式，否则会报 "Unsupported nested pattern" 错误。Parser desugar 将嵌套 enum 展开为多层 match → 每层 match arm 的 struct 字段仍可能含嵌套构造器模式 → MIR lowering 必须能递归处理。详见 `docs/agent/nested-enum-desugaring.md`。
+- **NEGATIVE PATTERN GOTCHA**: Parser 的 `parse_pattern` 需要处理 `-` 前置的负数模式。调用 `parse_pattern` 后需要检查是否为负数并创建 `Pattern::Number` 或保持为变量绑定。在 `karte-parser/src/pattern.rs` 中，`parse_pattern_inner` 遇到 `Minus` token 时，必须解析为 `Number` 模式而非视为前缀表达式。
+- **VIRTUAL STACK SIZE GOTCHA**: JIT 虚拟栈和 AOT 虚拟栈大小必须保持一致。当前值为 65536 条目 (512KB)。JIT 侧在 `execution_engine.rs` 中定义：`vec![0; 65536]`。AOT 侧在三个 runtime 文件（`runtime_x86.rs`、`runtime_aarch64.rs`、`runtime_riscv.rs`）中通过 `mmap` 参数定义：`mmap_len = 524288, vm_sp_init = vstack_base + 524272`。修改时必须在所有四个位置同步更新，否则 JIT/AOT 行为不一致。
+- **PRELUDE SYNC GOTCHA**: `std.prelude` 自动注入的模块列表在 `karte-hir/src/type_checker.rs`（`apply_module_context`）和 `karte-module-system/src/project.rs`（`LoweringOptions` 构建）两处硬编码为 `["std.core", "std.math", "std.io", "std.string"]`。向 std 添加新模块时必须在两处同步更新，否则 type checker 能看到函数但 MIR lowering 不知道它们是 known functions。
 - **🔴 绝对禁止 HACKS：永远禁止任何 hack、workaround、取巧绕过、治标不治本的修复。必须找到并修复问题的根因。翻转 bool / unwrap_or 改默认值 / 加条件跳过分析 等绕过手段 = 不可接受。** 🔴
 - **🔴 绝对禁止 HACKS：永远禁止任何 hack、workaround、取巧绕过、治标不治本的修复。必须找到并修复问题的根因。翻转 bool / unwrap_or 改默认值 / 加条件跳过分析 等绕过手段 = 不可接受。** 🔴
 - **🔴 绝对禁止 HACKS：永远禁止任何 hack、workaround、取巧绕过、治标不治本的修复。必须找到并修复问题的根因。翻转 bool / unwrap_or 改默认值 / 加条件跳过分析 等绕过手段 = 不可接受。** 🔴
