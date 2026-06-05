@@ -6966,6 +6966,68 @@ fn main() -> number {
     }
 
 
+    // ================ AOT trim 回归测试 ================
+
+    #[test]
+    fn test_aot_trim_both_sides() {
+        let code = r#"fn main() -> number {
+    let s = "  hello world  ";
+    let t = trim(s);
+    len(t)
+}"#;
+        compile_and_run_aot(code, 11, "trim_both_sides");
+    }
+
+    #[test]
+    fn test_aot_trim_no_spaces() {
+        let code = r#"fn main() -> number {
+    let s = "hello";
+    let t = trim(s);
+    len(t)
+}"#;
+        compile_and_run_aot(code, 5, "trim_no_spaces");
+    }
+
+    #[test]
+    fn test_aot_trim_all_spaces() {
+        let code = r#"fn main() -> number {
+    let s = "   ";
+    let t = trim(s);
+    len(t)
+}"#;
+        compile_and_run_aot(code, 0, "trim_all_spaces");
+    }
+
+    #[test]
+    fn test_aot_trim_trailing_spaces() {
+        let code = r#"fn main() -> number {
+    let s = "hi  ";
+    let t = trim(s);
+    len(t)
+}"#;
+        compile_and_run_aot(code, 2, "trim_trailing_spaces");
+    }
+
+    #[test]
+    fn test_aot_trim_leading_spaces() {
+        let code = r#"fn main() -> number {
+    let s = "  hi";
+    let t = trim(s);
+    len(t)
+}"#;
+        compile_and_run_aot(code, 2, "trim_leading_spaces");
+    }
+
+    #[test]
+    fn test_aot_trim_single_space() {
+        let code = r#"fn main() -> number {
+    let s = " ";
+    let t = trim(s);
+    len(t)
+}"#;
+        compile_and_run_aot(code, 0, "trim_single_space");
+    }
+
     #[test]
     fn test_wildcard_in_constructor_pattern() {
         let code = r#"enum Option { Some(number), None }; fn main() -> number { let opt = Option::Some(100); match opt { Option::Some(_) => 1, Option::None => 0 } }"#;
