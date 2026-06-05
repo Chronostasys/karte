@@ -7463,5 +7463,105 @@ fn main() -> number {
 
         assert_eq!(exit_code, 1, "Expected 1 (42 == 42), got {}", exit_code);
     }
+
+    // ==================== 字符串操作缺失测试 ====================
+
+    #[test]
+    fn test_char_to_string_basic() {
+        let source = r#"fn main() -> number { let s = char_to_string(65); if s == "A" { 1 } else { 0 } }"#;
+        let exit_code = compile_project_mode_code(source);
+        assert_eq!(exit_code, 1, "char_to_string(65) should return \"A\", got exit code {}", exit_code);
+    }
+
+    #[test]
+    fn test_char_to_string_digit() {
+        let source = r#"fn main() -> number { let s = char_to_string(48); if s == "0" { 1 } else { 0 } }"#;
+        let exit_code = compile_project_mode_code(source);
+        assert_eq!(exit_code, 1, "char_to_string(48) should return \"0\", got exit code {}", exit_code);
+    }
+
+    #[test]
+    fn test_substring_basic() {
+        let source = r#"fn main() -> number { let s = substring("hello world", 0, 5); if s == "hello" { 1 } else { 0 } }"#;
+        let exit_code = compile_project_mode_code(source);
+        assert_eq!(exit_code, 1, "substring(\"hello world\", 0, 5) should return \"hello\", got exit code {}", exit_code);
+    }
+
+    #[test]
+    fn test_substring_middle() {
+        let source = r#"fn main() -> number { let s = substring("hello world", 6, 5); if s == "world" { 1 } else { 0 } }"#;
+        let exit_code = compile_project_mode_code(source);
+        assert_eq!(exit_code, 1, "substring(\"hello world\", 6, 5) should return \"world\", got exit code {}", exit_code);
+    }
+
+    #[test]
+    fn test_str_contains_found() {
+        let source = r#"fn main() -> number { if str_contains("hello", 101) == 1 { 1 } else { 0 } }"#;
+        let exit_code = compile_project_mode_code(source);
+        assert_eq!(exit_code, 1, "str_contains(\"hello\", 101) should return 1, got exit code {}", exit_code);
+    }
+
+    #[test]
+    fn test_str_contains_not_found() {
+        let source = r#"fn main() -> number { if str_contains("hello", 122) == 0 { 1 } else { 0 } }"#;
+        let exit_code = compile_project_mode_code(source);
+        assert_eq!(exit_code, 1, "str_contains(\"hello\", 122) should return 0, got exit code {}", exit_code);
+    }
+
+    #[test]
+    fn test_split_count() {
+        let source = r#"fn main() -> number { if split_count("a,b,c", 44) == 3 { 1 } else { 0 } }"#;
+        let exit_code = compile_project_mode_code(source);
+        assert_eq!(exit_code, 1, "split_count(\"a,b,c\", 44) should return 3, got exit code {}", exit_code);
+    }
+
+    #[test]
+    fn test_print_number_negative() {
+        let code = r#"
+fn main() -> number {
+    print(-42);
+    0
 }
+"#;
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Parsing failed: {:?}", diagnostics);
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+        karte_module_system::optimize_mir_with_escape_analysis(&mut mir, false).expect("Escape analysis failed");
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+
+        let has_print_number = lir.functions.values().any(|f| {
+            f.instructions.iter().any(|inst| {
+                matches!(inst, Instruction::PrintNumber { .. })
+            })
+        });
+        assert!(has_print_number, "LIR should contain PrintNumber instruction for print(-42)");
+
+        let mut executor = ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor.execute_with_jit(&lir).expect("JIT execution failed");
+        assert_eq!(exit_code, 0, "Expected exit code 0, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_string_number_concat() {
+        let source = r#"fn main() -> number { let s = "age: " + 25; if s == "age: 25" { 1 } else { 0 } }"#;
+        let exit_code = compile_project_mode_code(source);
+        assert_eq!(exit_code, 1, "\"age: \" + 25 should equal \"age: 25\", got exit code {}", exit_code);
+    }
+}
+
 
