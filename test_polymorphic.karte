@@ -1,0 +1,7 @@
+fn id(x) { x }
+
+fn main() -> number {
+    let a = id(5);
+    let b = id(true);
+    if b { a } else { 0 }
+}

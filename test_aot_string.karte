@@ -1,0 +1,8 @@
+fn main() -> number {
+    let s = "hello world";
+    let n = len(s);
+    print("length: " + to_string(n) + "\n");
+    let sub = substring(s, 0, 5);
+    print("substring: " + sub + "\n");
+    0
+}

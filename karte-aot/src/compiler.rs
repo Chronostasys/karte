@@ -181,6 +181,21 @@ impl AotCompiler {
             global_labels.insert("karte_jit_runtime_string_char_at".to_string(), addr);
             global_labels.insert("__runtime_karte_jit_runtime_string_char_at".to_string(), addr);
         }
+        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::STRING_SUBSTRING) {
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_string_substring".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_string_substring".to_string(), addr);
+        }
+        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::STRING_CONTAINS) {
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_string_contains".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_string_contains".to_string(), addr);
+        }
+        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::SPLIT_COUNT) {
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_split_count".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_split_count".to_string(), addr);
+        }
         if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::TRIM) {
             let addr = code_base + off as u64;
             global_labels.insert("karte_jit_runtime_trim".to_string(), addr);
@@ -272,6 +287,7 @@ impl AotCompiler {
             let string_concat_ptr = RuntimeIntrinsic::StringConcat.symbol_ptr() as u64;
             let string_char_at_ptr = RuntimeIntrinsic::StringCharAt.symbol_ptr() as u64;
             let string_contains_ptr = RuntimeIntrinsic::StringContains.symbol_ptr() as u64;
+            let string_substring_ptr = RuntimeIntrinsic::StringSubstring.symbol_ptr() as u64;
             let split_count_ptr = RuntimeIntrinsic::SplitCount.symbol_ptr() as u64;
             let trim_ptr = RuntimeIntrinsic::Trim.symbol_ptr() as u64;
             let to_string_ptr = RuntimeIntrinsic::ToString.symbol_ptr() as u64;
@@ -288,6 +304,9 @@ impl AotCompiler {
             }
             if let Some(&new) = global_labels.get("karte_jit_runtime_string_char_at") {
                 runtime_ptr_map.insert(string_char_at_ptr, new);
+            }
+            if let Some(&new) = global_labels.get("karte_jit_runtime_string_substring") {
+                runtime_ptr_map.insert(string_substring_ptr, new);
             }
             if let Some(&new) = global_labels.get("karte_jit_runtime_string_contains") {
                 runtime_ptr_map.insert(string_contains_ptr, new);

@@ -1,0 +1,3 @@
+fn main() -> number {
+    3 + 4
+}
