@@ -594,6 +594,19 @@ pub(crate) fn handle_pattern_bindings(
                     }
                     karte_hir::Pattern::Wildcard { .. } => {
                     }
+                    karte_hir::Pattern::Constructor { .. }
+                    | karte_hir::Pattern::QualifiedConstructor { .. }
+                    | karte_hir::Pattern::Struct { .. } => {
+                        let arg_temp = ctx.new_temp();
+                        ctx.add_statement(Statement::ConstructorArgExtract {
+                            target: arg_temp.clone(),
+                            constructor: match_value.clone(),
+                            arg_index: i,
+                            span: Span::new(0, 0),
+                        });
+                        let resolved = ctx.resolve_value(&arg_temp);
+                        handle_pattern_bindings(ctx, arg_pattern, &resolved)?;
+                    }
                     _ => {
                         return Err(vec![
                             format!("Unsupported nested pattern in constructor argument at position {}", i)
@@ -619,6 +632,19 @@ pub(crate) fn handle_pattern_bindings(
                         ctx.bind_variable(name.clone(), arg_temp, None);
                     }
                     karte_hir::Pattern::Wildcard { .. } => {
+                    }
+                    karte_hir::Pattern::Constructor { .. }
+                    | karte_hir::Pattern::QualifiedConstructor { .. }
+                    | karte_hir::Pattern::Struct { .. } => {
+                        let arg_temp = ctx.new_temp();
+                        ctx.add_statement(Statement::ConstructorArgExtract {
+                            target: arg_temp.clone(),
+                            constructor: match_value.clone(),
+                            arg_index: i,
+                            span: Span::new(0, 0),
+                        });
+                        let resolved = ctx.resolve_value(&arg_temp);
+                        handle_pattern_bindings(ctx, arg_pattern, &resolved)?;
                     }
                     _ => {
                         return Err(vec![
