@@ -1,0 +1,13 @@
+module std.io
+
+fn println(s: string) -> number {
+    print(s + "\n")
+}
+
+fn print_number(n: number) -> number {
+    print(to_string(n))
+}
+
+fn println_number(n: number) -> number {
+    print(to_string(n) + "\n")
+}

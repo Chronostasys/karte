@@ -1,0 +1,17 @@
+module std.string
+
+fn length(s: string) -> number {
+    len(s)
+}
+
+fn concat(a: string, b: string) -> string {
+    a + b
+}
+
+fn contains(s: string, ch: number) -> number {
+    str_contains(s, ch)
+}
+
+fn trim_whitespace(s: string) -> string {
+    trim(s)
+}
