@@ -1,9 +1,17 @@
 module main
 
-fn id(x) { x }
+import std.core::{gcd, factorial, fibonacci, pow, max}
 
 fn main() -> number {
-    let a = id(5);
-    let b = id(10);
-    a + b
+    let g = gcd(48, 36);
+    let f = factorial(10);
+    let fib = fibonacci(15);
+    let p = pow(2, 10);
+    let m = max(f, p);
+    print("gcd(48,36) = " + to_string(g) + "\n");
+    print("10! = " + to_string(f) + "\n");
+    print("fib(15) = " + to_string(fib) + "\n");
+    print("2^10 = " + to_string(p) + "\n");
+    print("max = " + to_string(m) + "\n");
+    g + fib
 }

@@ -27,7 +27,7 @@
 | --- | --- | --- | --- |
 | **数组/切片 (Array/Slice)** | ✅ `[]` 字面量、`arr[idx]`、`len arr` 均已落地（2025-11-18） | 尚缺变长数组 API、写操作、越界检查 | 1) MIR/LIR 补充 bounds check；2) JIT/Runtime 提供 memcpy/memset；3) CLI/Stdlib 暴露 `len`/`push` 等安全 API；4) 与 ARC/Retain 规则打通。 |
 | **可变绑定/借用** | `let` 默认为不可变，缺乏 `let mut` 与借用语义 | 编译器生命周期分析不足 | 与 ARC/线性区域联动：记录 `mutable` 标志，扩展 `EscapeState`；提供 `borrow`/`deref` 语法糖。 |
-| **标准库基元** | 字符串/向量分散于测试代码 | 无统一模块 | 搭建 `std/prelude` 树，示例：`std/array.karte`、`std/rc.karte`。 |
+| **标准库基元** | ✅ `std/prelude` 树已搭建（2025-06-05），含 `core`、`math`、`list`、`algorithm`、`euler`、`string`、`io` 等模块 | 字符串/I/O 模块（`std.string`/`std.io`）已从测试代码提取为独立模块；仍缺变长字符串、格式化输出、文件 I/O 等高级 API | 1) 扩展 `std.string`：子串、查找替换、格式化；2) 扩展 `std.io`：文件读写、错误处理；3) 逐步补齐 `std/array`、`std/rc` 等模块。 |
 
 > 优先次序：数组（支撑大部分测试与示例）→ 变量可变性 → Prelude。具体 Issue 与负责人请登记到 `TODOS.md`。
 
@@ -90,25 +90,38 @@
    - `ModuleGraph` 产出的拓扑顺序驱动每个模块独立的 IR pipeline，verbose 模式会打印 source fingerprint 以及新加入的 interface hash。
    - 针对每个模块的公共接口（函数签名、结构体字段、依赖接口哈希）生成稳定摘要，保证实现层面的修改不会导致下游误重编；接口变化时会级联触发缓存失效。
    - 缓存 key 现包含 `(module_id + source_fingerprint + deps_interface_hash + opt_level)`，命中后可直接 reuse MIR/LIR；入口模块的 interface hash 会写入 `interface_hashes` 映射供依赖查询。
-   - 在标准库拆分前（如 `std/array`），仍要求模块暴露显式接口描述，CLI `describe()` 输出现已包含文件列表与 interface 指纹，足以在调试/回归时进行比对。
+   - 标准库已拆分为多个子模块（`std.core`、`std.math`、`std.list`、`std.algorithm`、`std.euler`、`std.string`、`std.io`），通过 `std/prelude.karte` 统一导出；仍要求模块暴露显式接口描述，CLI `describe()` 输出现已包含文件列表与 interface 指纹，足以在调试/回归时进行比对。
    - 2025-11-26：Parser/HIR/MIR 已完整携带 `ModuleContext`，Type Checker 会加载 `target/.karte-cache/<module>.interface.json` 并根据 import alias / `module::symbol` / 选择性导入进行解析；LIR 降级阶段与 JIT 执行器都改为使用 canonical `module::symbol` 名称（`main::main` 等），CLI 集成测试可直接验证跨模块调用。
 
    ```toml
      [[modules]]
-     id = "runtime"
-     path = "std/runtime.karte"
+     id = "std.core"
+     path = "core.karte"
+
+     [[modules]]
+     id = "std.math"
+     path = "math.karte"
+
+     [[modules]]
+     id = "std.string"
+     path = "string.karte"
+
+     [[modules]]
+     id = "std.io"
+     path = "io.karte"
+
+     [[modules]]
+     id = "std.prelude"
+     path = "prelude.karte"
+     deps = ["std.core", "std.string", "std.io"]
 
      [[modules]]
      id = "main"
      sources = ["examples/app_part1.karte", "examples/app_part2.karte"]
-     deps = ["runtime"]
-
-     [[modules]]
-     id = "std"
-     dir = "std"
+     deps = ["std.prelude"]
    ```
 
-     解析后生成拓扑序列（含模块内文件列表），依次编译 `runtime -> main(part1 -> part2)`，并在 verbose 模式输出 `[module]` 描述与 fingerprint，便于调试。
+     解析后生成拓扑序列（含模块内文件列表），依次编译 `std.core -> std.math -> std.string -> std.io -> std.prelude -> main(part1 -> part2)`，并在 verbose 模式输出 `[module]` 描述与 fingerprint，便于调试。
 4. **实施路线（更新）**：
    1. ✅ 2025-11-19：`module.karte.toml` 模式落地，示例 manifest 已收录在 `examples/`。
    2. ✅ 2025-11-19：CLI 解析 manifest 构建 `ModuleGraph`，生成拓扑序并为每个模块维护 source fingerprint + interface hash。

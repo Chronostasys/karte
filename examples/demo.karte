@@ -16,6 +16,14 @@ fn sum_loop(n: number) -> number {
     total
 }
 
+fn sum_for(n: number) -> number {
+    let total = 0;
+    for i in 1..=n {
+        total += i
+    };
+    total
+}
+
 fn bitwise_demo(a: number, b: number) -> number {
     let or_val = a bitor b;
     let and_val = a bitand b;
@@ -32,13 +40,36 @@ fn point_sum(p: Point) -> number {
     p.x + p.y
 }
 
+enum Option {
+    Some(number),
+    None
+}
+
+fn safe_div(a: number, b: number) -> number {
+    if b == 0 {
+        0
+    } else {
+        a / b
+    }
+}
+
 fn main() -> number {
     let fib_val = fib(10);
     let loop_val = sum_loop(20);
+    let for_val = sum_for(20);
     let bw_val = bitwise_demo(12, 10);
-    let double = |x| { x * 2 };
+    let double = |x| -> number { x * 2 };
     let lambda_val = double(15);
     let p = Point { x: 3, y: 7 };
-    let struct_val = point_sum(p);
-    fib_val + loop_val + bw_val + lambda_val + struct_val
+    let Point { x, y } = p;
+    let struct_val = x + y;
+    let div_val = safe_div(42, 6);
+    print("fib(10) = " + to_string(fib_val) + "\n");
+    print("sum(1..20) = " + to_string(loop_val) + "\n");
+    print("for_sum(1..20) = " + to_string(for_val) + "\n");
+    print("bitwise(12,10) = " + to_string(bw_val) + "\n");
+    print("double(15) = " + to_string(lambda_val) + "\n");
+    print("struct = " + to_string(struct_val) + "\n");
+    print("42/6 = " + to_string(div_val) + "\n");
+    fib_val + loop_val + for_val + bw_val + lambda_val + struct_val + div_val
 }

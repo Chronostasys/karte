@@ -1,4 +1,0 @@
-fn main() -> number {
-    let x: number = 5;
-    x + 1
-}
