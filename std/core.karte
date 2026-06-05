@@ -136,6 +136,18 @@ fn fibonacci(n: number) -> number {
     }
 }
 
+fn ceil_div(a: number, b: number) -> number {
+    let q = a / b;
+    let r = a % b;
+    if r == 0 { q } else {
+        if (a > 0) != (b > 0) {
+            q - 1
+        } else {
+            q + 1
+        }
+    }
+}
+
 fn sum_to(n: number) -> number {
     n * (n + 1) / 2
 }
