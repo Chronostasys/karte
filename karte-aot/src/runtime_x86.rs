@@ -594,6 +594,51 @@ impl X86Runtime {
         let neg_skip = self.code.len();
         self.jge_rel32(0); // >= 0 则跳过（有符号比较）
 
+        // 检测 i64::MIN: 值为 0x8000000000000000
+        self.mov_ri(1, 0x8000_0000_0000_0000u64); // RCX = i64::MIN
+        self.cmp_rr(0, 1); // CMP RAX, i64::MIN
+        let not_min_special = self.code.len(); // JNE 指令开头
+        self.jne_rel32(0); // 不是 MIN → 正常取反路径
+
+        // i64::MIN 特殊路径: 直接输出 "-9223372036854775808\n" (20 字节)
+        // 用 3 个 push 分配 24 字节栈空间 (3 × 8), 用 mov_byte_mem_imm 逐字节写入
+        self.push(0); self.push(0); self.push(0); // 分配 24 字节
+        self.mov_byte_mem_imm(4, 0, b'-');  // [RSP+0]  = '-'
+        self.mov_byte_mem_imm(4, 1, b'9');  // [RSP+1]  = '9'
+        self.mov_byte_mem_imm(4, 2, b'2');  // [RSP+2]  = '2'
+        self.mov_byte_mem_imm(4, 3, b'2');  // [RSP+3]  = '2'
+        self.mov_byte_mem_imm(4, 4, b'3');  // [RSP+4]  = '3'
+        self.mov_byte_mem_imm(4, 5, b'3');  // [RSP+5]  = '3'
+        self.mov_byte_mem_imm(4, 6, b'7');  // [RSP+6]  = '7'
+        self.mov_byte_mem_imm(4, 7, b'2');  // [RSP+7]  = '2'
+        self.mov_byte_mem_imm(4, 8, b'0');  // [RSP+8]  = '0'
+        self.mov_byte_mem_imm(4, 9, b'3');  // [RSP+9]  = '3'
+        self.mov_byte_mem_imm(4, 10, b'6');  // [RSP+10] = '6'
+        self.mov_byte_mem_imm(4, 11, b'8'); // [RSP+11] = '8'
+        self.mov_byte_mem_imm(4, 12, b'5'); // [RSP+12] = '5'
+        self.mov_byte_mem_imm(4, 13, b'4'); // [RSP+13] = '4'
+        self.mov_byte_mem_imm(4, 14, b'7'); // [RSP+14] = '7'
+        self.mov_byte_mem_imm(4, 15, b'7'); // [RSP+15] = '7'
+        self.mov_byte_mem_imm(4, 16, b'5'); // [RSP+16] = '5'
+        self.mov_byte_mem_imm(4, 17, b'8'); // [RSP+17] = '8'
+        self.mov_byte_mem_imm(4, 18, b'0'); // [RSP+18] = '8'
+        self.mov_byte_mem_imm(4, 19, 0x0A); // [RSP+19] = '\n'
+        // sys_write(1, RSP, 20)
+        self.mov_ri(0, 1);  // syscall 号: sys_write
+        self.mov_ri(7, 1);  // fd = stdout
+        self.mov_rr(6, 4);  // buf = RSP
+        self.mov_ri(2, 20); // count = 20
+        self.syscall();
+        // 恢复栈: pop 3 次 (对应 3 个 push)
+        self.pop(0); self.pop(0); self.pop(0);
+        // 跳到寄存器恢复 (在 no_neg_sign_label 之后, 即 RSP 已由 add_rr(4,8) 调整之后)
+        // 直接跳到 pop R9 / pop R8 / pop RBX 之前
+        let min_done = self.code.len();
+        self.jmp_rel32(0); // → min_done_target
+
+        // not_min_special: 不是 i64::MIN, 走原取绝对值逻辑
+        let not_min_special_label = self.code.len();
+
         // 负数: 标记符号, 取绝对值
         self.mov_ri(2, 1); // RDX = 1 (负数)
         // NEG RAX: 用 0 - RAX
@@ -682,6 +727,9 @@ impl X86Runtime {
         // 方案: 先用 RSP 加回字符数，再 pop
         self.add_rr(4, 8);  // RSP += R8 (恢复推入的字符空间)
 
+        // min_done_target: i64::MIN 特殊路径跳转目标 (RSP 已恢复)
+        let min_done_target = self.code.len();
+
         // 恢复保存的寄存器
         self.pop(9);  // 恢复 R9
         self.pop(8);  // 恢复 R8
@@ -749,6 +797,10 @@ impl X86Runtime {
 
         // neg_skip (JAE) → neg_skip_label
         patch_jmp(&mut self.code, neg_skip, neg_skip_label);
+        // not_min_special (JNE) → not_min_special_label (不是 i64::MIN → 正常取反)
+        patch_jmp(&mut self.code, not_min_special, not_min_special_label);
+        // min_done (JMP) → min_done_target (i64::MIN 输出完毕 → 恢复寄存器)
+        patch_jmp_5(&mut self.code, min_done, min_done_target);
         // nonzero (JNE) → nonzero_label (digit_loop)
         patch_jmp(&mut self.code, nonzero, nonzero_label);
         // zero_done (JMP) → no_neg_sign_label (跳过数字循环, 直接到输出前的负号检查)
@@ -2831,6 +2883,50 @@ impl X86Runtime {
         self.jge_rel32(0);
         let neg_skip = self.code.len() - 4;
 
+        // 检测 i64::MIN: 值为 0x8000000000000000
+        self.mov_ri(1, 0x8000_0000_0000_0000u64); // RCX = i64::MIN
+        self.cmp_rr(0, 1); // CMP RAX, i64::MIN
+        let not_min_special = self.code.len();
+        self.jne_rel32(0); // 不是 MIN → 正常取反路径
+
+        // i64::MIN 特殊路径: 直接输出 "-9223372036854775808\n" (20 字节)
+        self.push(0); self.push(0); self.push(0); // 分配 24 字节
+        self.mov_byte_mem_imm(4, 0, b'-');
+        self.mov_byte_mem_imm(4, 1, b'9');
+        self.mov_byte_mem_imm(4, 2, b'2');
+        self.mov_byte_mem_imm(4, 3, b'2');
+        self.mov_byte_mem_imm(4, 4, b'3');
+        self.mov_byte_mem_imm(4, 5, b'3');
+        self.mov_byte_mem_imm(4, 6, b'7');
+        self.mov_byte_mem_imm(4, 7, b'2');
+        self.mov_byte_mem_imm(4, 8, b'0');
+        self.mov_byte_mem_imm(4, 9, b'3');
+        self.mov_byte_mem_imm(4, 10, b'6');
+        self.mov_byte_mem_imm(4, 11, b'8');
+        self.mov_byte_mem_imm(4, 12, b'5');
+        self.mov_byte_mem_imm(4, 13, b'4');
+        self.mov_byte_mem_imm(4, 14, b'7');
+        self.mov_byte_mem_imm(4, 15, b'7');
+        self.mov_byte_mem_imm(4, 16, b'5');
+        self.mov_byte_mem_imm(4, 17, b'8');
+        self.mov_byte_mem_imm(4, 18, b'8');
+        self.mov_byte_mem_imm(4, 19, 0x0A); // '\n'
+        // sys_write(1, RSP, 20)
+        self.mov_ri(0, 1);   // syscall: write
+        self.mov_ri(7, 1);   // fd: stdout
+        self.mov_rr(6, 4);   // buf: RSP
+        self.mov_ri(2, 20);  // count: 20
+        self.syscall();
+        // 恢复栈
+        self.pop(0); self.pop(0); self.pop(0);
+        // RAX = 0 (Unit), 然后跳到恢复寄存器
+        self.xor_rr(0, 0);
+        let min_done = self.code.len();
+        self.jmp_rel32(0); // → min_done_target
+
+        // not_min_special: 不是 i64::MIN, 走原取绝对值逻辑
+        let not_min_special_label = self.code.len();
+
         // 负数: 标记符号, 取绝对值
         self.mov_ri(2, 1);    // RDX = 1 (负数)
         self.mov_rr(1, 0);    // RCX = RAX
@@ -2910,6 +3006,8 @@ impl X86Runtime {
         self.add_rr(4, 8);  // RSP += R8
 
         // 恢复寄存器
+        // min_done_target: i64::MIN 特殊路径跳转目标
+        let min_done_target = self.code.len();
         self.xor_rr(0, 0);   // RAX = 0 (Unit)
         self.pop(9);
         self.pop(8);
@@ -2922,6 +3020,12 @@ impl X86Runtime {
         // neg_skip (JGE) → neg_skip_label
         let rel = neg_skip_label as i32 - (neg_skip as i32 + 4);
         self.code[neg_skip..neg_skip + 4].copy_from_slice(&rel.to_le_bytes());
+        // not_min_special (JNE) → not_min_special_label
+        let rel = not_min_special_label as i32 - (not_min_special as i32 + 4);
+        self.code[not_min_special..not_min_special + 4].copy_from_slice(&rel.to_le_bytes());
+        // min_done (JMP rel32, E9 + 4字节 = 5字节) → min_done_target
+        let rel = min_done_target as i32 - (min_done as i32 + 5);
+        self.code[min_done + 1..min_done + 5].copy_from_slice(&rel.to_le_bytes());
         // nonzero (JNE) → digit_loop
         let rel = digit_loop as i32 - (nonzero as i32 + 4);
         self.code[nonzero..nonzero + 4].copy_from_slice(&rel.to_le_bytes());
