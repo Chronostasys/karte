@@ -2835,16 +2835,6 @@ impl X86Runtime {
         self.mov_rr(2, 3);           // RDX = length
         self.syscall();
 
-        // 输出换行符: sys_write(1, &"\n", 1)
-        self.sub_ri8(4, 1);          // RSP -= 1
-        self.bs(&[0xC6, 0x04, 0x24, 0x0A]); // MOV byte [RSP], '\n'
-        self.mov_ri(0, 1);           // syscall 1 (write)
-        self.mov_ri(7, 1);           // fd 1 (stdout)
-        self.mov_rr(6, 4);           // RSI = RSP
-        self.mov_ri(2, 1);           // RDX = 1
-        self.syscall();
-        self.add_ri8(4, 1);          // RSP += 1 (恢复)
-
         // done:
         let done_label = self.code.len();
         self.xor_rr(0, 0);           // RAX = 0 (Unit)

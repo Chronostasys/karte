@@ -507,7 +507,6 @@ pub extern "C" fn karte_jit_runtime_print_string(str_ptr: u64) -> u64 {
 
         if len > 0 {
             libc::write(1, data as *const libc::c_void, len);
-            libc::write(1, b"\n" as *const u8 as *const libc::c_void, 1);
         }
         0
     }

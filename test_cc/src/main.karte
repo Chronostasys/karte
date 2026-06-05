@@ -1,7 +1,7 @@
 module main
 
 fn main() -> number {
-    let src = "int main() { int a; a = 3; int b; b = 5; return a + b; }";
+    let src = "int main() { int a; a = 10; int b; b = 20; int c; if (a < b) { c = a; } else { c = b; }; return c; }";
     let out = cc(src);
     print(out);
     0
@@ -15,14 +15,35 @@ fn cc(src: string) -> string {
     r.1
 }
 
+fn skip_lbrace_inner(pos: number, tk: string) -> number {
+    let k = tk_kind(tk, pos);
+    if k == 4 { pos + 1 } else { pos }
+}
+
+fn skip_lbrace(pos: number, tk: string) -> number {
+    let i = pos;
+    let m = 1;
+    let n = count_tk(tk);
+    while m == 1 {
+        if i >= n { m = 0; 0 } else {
+            if tk_kind(tk, i) == 4 { m = 0; 0 } else { i += 1; 0 }
+        }
+    };
+    i + 1
+}
+
 fn compile_fn(pos: number, tk: string, tn: number, asm: string, lc: number) -> (number, string, number) {
     let name = tk_val(tk, pos);
     let a = asm + name + ":\n  push %rbp\n  mov %rsp, %rbp\n  sub $208, %rsp\n";
-    let s = (pos + 4, a, lc, "", 0);
+    let s = (skip_lbrace(pos, tk), a, lc, "", 0);
     let d = 0;
     while d == 0 {
         let k = tk_kind(tk, s.0);
-        if k == 8 { d = 1; 0 } else { s = do_stmt(s, tk, tn, k); 0 }
+        if k == 8 { d = 1; 0 } else {
+            if k == 5 { s = (s.0 + 1, s.1, s.2, s.3, s.4); 0 } else {
+                s = do_stmt(s, tk, tn, k); 0
+            }
+        }
     };
     (s.0 + 1, s.1 + "  leave\n  ret\n", s.2)
 }
@@ -44,17 +65,19 @@ fn do_stmt(s: (number, string, number, string, number), tk: string, tn: number, 
 }
 
 fn do_body(s: (number, string, number, string, number), tk: string, tn: number) -> (number, string, number, string, number) {
+    let r = (skip_lbrace_inner(s.0, tk), s.1, s.2, s.3, s.4);
     let d = 0;
-    let r = s;
     while d == 0 {
         let k = tk_kind(tk, r.0);
         if k == 8 { d = 1; 0 } else {
-            if k == 20 {
-                let e = expr((r.0 + 1, r.1, r.2, r.3, r.4), tk, tn);
-                r = (e.0 + 1, e.1 + "  pop %rax\n  leave\n  ret\n", e.2, e.3, e.4);
-                d = 1;
-                0
-            } else { r = do_stmt(r, tk, tn, k); 0 }
+            if k == 5 { r = (r.0 + 1, r.1, r.2, r.3, r.4); 0 } else {
+                if k == 20 {
+                    let e = expr((r.0 + 1, r.1, r.2, r.3, r.4), tk, tn);
+                    r = (e.0 + 1, e.1 + "  pop %rax\n  leave\n  ret\n", e.2, e.3, e.4);
+                    d = 1;
+                    0
+                } else { r = do_stmt(r, tk, tn, k); 0 }
+            }
         }
     };
     r
@@ -67,9 +90,9 @@ fn do_if(s: (number, string, number, string, number), tk: string, tn: number) ->
     let a = e.1 + "  pop %rax\n  cmp $0, %rax\n  je .L" + to_string(el) + "\n";
     let b = do_body((e.0 + 1, a, endl, e.3, e.4), tk, tn);
     a = b.1 + "  jmp .L" + to_string(endl) + "\n.L" + to_string(el) + ":\n";
-    let nk = tk_kind(tk, b.0);
+    let nk = tk_kind(tk, b.0 + 1);
     if nk == 22 {
-        let c = do_body((b.0 + 2, a, b.2, b.3, b.4), tk, tn);
+        let c = do_body((b.0 + 3, a, b.2, b.3, b.4), tk, tn);
         (c.0 + 1, c.1 + ".L" + to_string(endl) + ":\n", c.2, c.3, c.4)
     } else {
         (b.0 + 1, a + ".L" + to_string(endl) + ":\n", b.2, b.3, b.4)
