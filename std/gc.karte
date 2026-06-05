@@ -35,9 +35,8 @@ fn gc_alloc(size: number) -> number {
     let should_collect = alloc_count >= threshold;
     if should_collect {
         gc_collect()
-    } else {
-        gc_alloc_inner(total_size)
-    }
+    };
+    gc_alloc_inner(total_size)
 }
 
 fn gc_mark(obj: number, heap: number, heap_size: number) -> number {

@@ -26,7 +26,7 @@ The project uses a Rust workspace with 18 crates, implementing a complete compil
 
 ```bash
 # Build the entire workspace
-cargo build --release
+cargo build
 
 # Run the CLI (basic expression evaluation)
 cargo run -- "let x = 5; x + 10"
@@ -38,8 +38,8 @@ cargo run -p karte-cli -- run --mode project test_project/src/main.karte
 cargo run -- run --verbose <input>
 
 # Export IR at different stages
-cargo run -- export examples/demo.karte --output demo.lir
-cargo run -- export "let x = 2; x * 3" --stage mir
+cargo run -- run examples/demo.karte --emit-lir --output demo.lir
+cargo run -- run "let x = 2; x * 3" --emit-lir
 
 # Execute from IR files
 cargo run -- execute --stage mir demo.mir
@@ -55,44 +55,44 @@ cargo run -- aot input.karte -o output_binary
 
 ```bash
 # Run all tests in workspace
-cargo test
+cargo nextest run
 # With release mode (faster, recommended for full test suite)
-cargo test --workspace --release
+cargo nextest run --workspace
 
 # Run tests for a specific package
-cargo test -p karte-lexer
-cargo test -p karte-parser
-cargo test -p karte-hir
-cargo test -p karte-mir
-cargo test -p karte-lir
-cargo test -p karte-codegen
-cargo test -p karte-tests
+cargo nextest run -p karte-lexer
+cargo nextest run -p karte-parser
+cargo nextest run -p karte-hir
+cargo nextest run -p karte-mir
+cargo nextest run -p karte-lir
+cargo nextest run -p karte-codegen
+cargo nextest run -p karte-tests
 
 # Run specific test patterns
-cargo test test_type_check
-cargo test sum_types
-cargo test lir_parse
-cargo test lir_roundtrip
+cargo nextest run test_type_check
+cargo nextest run sum_types
+cargo nextest run lir_parse
+cargo nextest run lir_roundtrip
 
 # Run integration tests
-cargo test -p karte-tests
+cargo nextest run -p karte-tests
 
 # Run specific integration test
-cargo test -p karte-tests --lib cli_integration_tests::cli_tests::test_function_as_value
+cargo nextest run -p karte-tests --lib cli_integration_tests::cli_tests::test_function_as_value
 
 # Run tests matching a pattern
-cargo test -p karte-tests --lib higher_order
+cargo nextest run -p karte-tests --lib higher_order
 
 # Run module system tests
-cargo test -p karte-tests cli_integration
-cargo test -p karte-module-system
+cargo nextest run -p karte-tests cli_integration
+cargo nextest run -p karte-module-system
 
 # Run LIR-specific tests
-cargo test -p karte-lir lir_roundtrip
-cargo test -p karte-lir lir_parse_unit
+cargo nextest run -p karte-lir lir_roundtrip
+cargo nextest run -p karte-lir lir_parse_unit
 
 # Quiet mode (only show summary)
-cargo test --workspace --release --quiet
+cargo nextest run --workspace
 ```
 
 ## Architecture
@@ -617,8 +617,9 @@ Karte implements compile-time escape analysis to optimize memory allocation:
 
 **Enabling Escape Analysis**:
 ```bash
-KARTE_ENABLE_ESCAPE_ANALYSIS=1 ./target/release/karte run test.karte
-KARTE_ENABLE_ESCAPE_ANALYSIS=1 ./target/release/karte build --emit-mir test.karte
+# 逃逸分析在 project 模式下自动启用（无需环境变量）
+# ./target/debug/karte run test.karte
+# ./target/debug/karte build --emit-mir test.karte
 ```
 
 **Example**:
@@ -657,7 +658,7 @@ Store { target = %10000, value = %2 }
 - 任何测试的时候不要build --release之后测试，这样只会掩盖问题，而且大大延长编译时长
 - 任何情况，除非我要求否则禁止build --release，release只会掩盖问题
 - 不要在不是问题的行为上浪费时间，比如debug每次都gc就是设计好的行为，并不少它导致了错误，它只是拒绝掩盖错误。不要为了快速掩盖问题解决提出问题的人
-- 禁止运行 `cargo build --release`命令，必须去掉--release
+- 禁止运行 `cargo build`命令，必须去掉--release
 - 不允许cargo命令使用 --release flag除非我要求
 - karte目前不支持注释，任何测试代码不要加测试
 - 禁止任何时间对项目进行release编译，除非我要求

@@ -259,7 +259,7 @@ impl RiscvRuntime {
         // 保存 callee-saved 到系统栈
         self.mv(S3, SP);           // S3 = system_sp (callee-saved 之前)
 
-        // ---- mmap 虚拟栈 64KB ----
+        // ---- mmap 虚拟栈 512KB ----
         self.li(A0, 0);
         self.li(A1, 524288);
         self.li(A2, 3);            // PROT_READ | PROT_WRITE

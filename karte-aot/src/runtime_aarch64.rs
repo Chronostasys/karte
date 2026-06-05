@@ -351,7 +351,7 @@ impl AArch64Runtime {
 
         self.mov_reg(X23, SP_R); // X23 = system_sp
 
-        // mmap 虚拟栈 64KB
+        // mmap 虚拟栈 512KB
         self.mov_imm64(X0, 0);
         self.mov_imm64(X1, 524288);
         self.mov_imm64(X2, 3);
