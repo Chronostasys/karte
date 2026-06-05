@@ -518,11 +518,7 @@ pub extern "C" fn karte_jit_runtime_print_string(str_ptr: u64) -> u64 {
 /// 返回 0（Unit）
 #[no_mangle]
 pub extern "C" fn karte_jit_runtime_print_number(value: i64) -> u64 {
-    let s = if value < 0 {
-        format!("-{}\n", (-value) as u64)
-    } else {
-        format!("{}\n", value)
-    };
+    let s = format!("{}\n", value);
     unsafe {
         libc::write(1, s.as_ptr() as *const libc::c_void, s.len());
     }
