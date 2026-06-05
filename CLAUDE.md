@@ -247,7 +247,7 @@ The compiler implements a sophisticated memory management system combining refer
 Karte 使用**自定义调用约定**和**自分配虚拟栈**，这与传统的 C 语言系统栈有本质区别：
 
 **虚拟栈实现**：
-- `ExecutionEngine.virtual_stack`: `Vec<i64>` (64KB, 8192个8字节元素)
+- `ExecutionEngine.virtual_stack`: `Vec<i64>` (512KB, 65536个8字节元素)
 - 栈在**堆上分配**，不是系统栈
 - 通过 `StackManager` 管理栈帧、局部变量和调用链
 - 自定义的 `CallingConvention` 定义参数传递和寄存器保存规则
@@ -670,6 +670,7 @@ Store { target = %10000, value = %2 }
 - **IF-ELSE PHI GOTCHA**: if-else 变量变异需要在 merge_block 插入 Phi 节点。预分析（while 循环第一步）期间必须跳过 Phi 生成（analysis_mode=true），且分析完成后必须清理孤立的分析块。变量绑定必须遍历所有作用域（ctx.scopes），因为 if-else 的 phi 更新可能在嵌套作用域中。
 - **ENUM REGISTRATION ORDER GOTCHA**: `collect_function_definitions` 在解析函数签名中的类型标注（如 `fn f(e: Expr)`）时调用 `resolve_struct_field_from_parsed`。如果枚举 TypeDef 尚未通过 `collect_enum_definitions` 注册到 `custom_types`，会被解析为空的 Struct 骨架 `Type::Struct { name, fields: [] }`，导致后续所有类型检查看到空枚举。**解决方案**: `check_program_with_context` 中必须在 `collect_function_definitions` 之前调用 `collect_enum_definitions`。
 - **DUPLICATE FUNCTION GOTCHA**: `collect_function_definitions` 在同一次类型检查中可能被多次调用（多层作用域），需要用 `primary_function_spans` 区分"同一函数定义的二次遍历"与"真正的重复定义"，否则会在 `infer_stmt` 阶段误报 E006 错误。
+- **NESTED ENUM DESUGAR GOTCHA**: 三层及以上嵌套 enum pattern matching 时，`desugar_nested_match_patterns` 中连续的非穷尽内层 match 会导致 MIR lowering 生成错误代码（SIGSEGV 或垃圾值）。**根因**: 内层 match 缺少 wildcard 回退 arm，非穷尽 match 的 fallthrough 破坏控制流，导致 MIR 生成错误的 basic block 跳转。**修复三要素**: (1) 移除 `indices.len()<=1` 守卫以支持单 arm 递归（`karte-parser/src/expression.rs:2844`）；(2) 为内层 match 自动复制原始 wildcard 回退 arm 防止非穷尽（`expression.rs:2899-2906`）；(3) 递归调用 `desugar_nested_match_patterns` 处理内层 arms 确保多层嵌套都能正确降级（`expression.rs:2907`）。详见 `docs/agent/nested-enum-desugaring.md`。
 - **🔴 绝对禁止 HACKS：永远禁止任何 hack、workaround、取巧绕过、治标不治本的修复。必须找到并修复问题的根因。翻转 bool / unwrap_or 改默认值 / 加条件跳过分析 等绕过手段 = 不可接受。** 🔴
 - **🔴 绝对禁止 HACKS：永远禁止任何 hack、workaround、取巧绕过、治标不治本的修复。必须找到并修复问题的根因。翻转 bool / unwrap_or 改默认值 / 加条件跳过分析 等绕过手段 = 不可接受。** 🔴
 - **🔴 绝对禁止 HACKS：永远禁止任何 hack、workaround、取巧绕过、治标不治本的修复。必须找到并修复问题的根因。翻转 bool / unwrap_or 改默认值 / 加条件跳过分析 等绕过手段 = 不可接受。** 🔴
@@ -685,6 +686,7 @@ Store { target = %10000, value = %2 }
 - `docs/agent/x86-jit-codegen.md` — x86_64 JIT register conventions, save/restore, effect handler compilation
 - `docs/agent/ssa-construction.md` — SSA construction pass, dominator tree traversal
 - `docs/agent/aot-compilation.md` — AOT compilation architecture, ELF generation, runtime, syscall wrappers
+- `docs/agent/nested-enum-desugaring.md` — Nested enum pattern desugaring algorithm, wildcard fallback, recursive fix
 
 ## AOT Compilation Architecture
 
@@ -729,7 +731,7 @@ Raw syscall wrappers with **no libc dependency**:
 - `compiler.rs` — AOT compiler orchestration (compile LIR → machine code → patch → ELF)
 
 **Runtime Functions** (generated as raw machine code bytes):
-- `_start` — Entry point: mmaps virtual stack (64KB) + heap (4MB), sets R10=vm_sp/R11=vm_fp, calls main, exits
+- `_start` — Entry point: mmaps virtual stack (512KB) + heap (4MB), sets R10=vm_sp/R11=vm_fp, calls main, exits
 - `__karte_alloc_aligned(size, align)` — Bump allocator using pre-mapped heap
 - `__karte_free` — No-op (GC manages memory lifecycle)
 - `__karte_retain/release/gc_safepoint/update_stack_top` — No-ops

@@ -60,9 +60,9 @@ karte-cli (aot subcommand)
 The `_start` function is the first code executed when the binary starts:
 
 1. Save callee-saved registers (RBP, RBX, R12-R15)
-2. `mmap(NULL, 64KB, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0)` → Virtual stack
+2. `mmap(NULL, 512KB, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0)` → Virtual stack
 3. Set R12 = vstack_base
-4. Set R10 (vm_sp) = vstack_base + 65520 (top of stack)
+4. Set R10 (vm_sp) = vstack_base + 524272 (top of stack)
 5. Store sentinel at [R10]
 6. Set R11 (vm_fp) = R10
 7. Save R10/R11 to system stack (they get clobbered by next mmap)

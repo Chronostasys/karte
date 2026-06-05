@@ -1940,6 +1940,41 @@ fn main() -> number {
         let _ = std::fs::remove_file(&binary_path);
     }
 
+
+    #[test]
+    fn aot_test_three_level_nested_enum() {
+        let code = r#"
+            enum A { A1(number), A2 }
+            enum B { B1(A), B2 }
+            enum C { C1(B), C2 }
+            fn main() -> number {
+                let x = C::C1(B::B1(A::A1(99)));
+                match x {
+                    C::C1(B::B1(A::A1(n))) => n,
+                    _ => 0
+                }
+            }
+        "#;
+        compile_and_run_aot(code, 99, "three_level_nested_enum");
+    }
+
+    #[test]
+    fn aot_test_three_level_nested_enum_fallback() {
+        let code = r#"
+            enum A { A1(number), A2 }
+            enum B { B1(A), B2 }
+            enum C { C1(B), C2 }
+            fn main() -> number {
+                let x = C::C1(B::B2);
+                match x {
+                    C::C1(B::B1(A::A1(n))) => n,
+                    _ => 42
+                }
+            }
+        "#;
+        compile_and_run_aot(code, 42, "three_level_nested_enum_fallback");
+    }
+
     // === 新特性测试（JIT 路径）===
 
     #[test]

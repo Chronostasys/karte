@@ -522,4 +522,42 @@ mod nested_sum_types {
             assert_eq!(result.unwrap(), 2);
         }
     }
+
+    #[test]
+    fn test_three_level_nested_enum_pattern() {
+        let program = r#"
+            {
+                enum A { A1(number), A2 };
+                enum B { B1(A), B2 };
+                enum C { C1(B), C2 };
+                let x = C::C1(B::B1(A::A1(99)));
+                match x {
+                    C::C1(B::B1(A::A1(n))) => n,
+                    _ => 0
+                }
+            }
+        "#;
+        let result = test_evaluate(program);
+        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+        assert_eq!(result.unwrap(), 99);
+    }
+
+    #[test]
+    fn test_three_level_nested_enum_wildcard_fallback() {
+        let program = r#"
+            {
+                enum A { A1(number), A2 };
+                enum B { B1(A), B2 };
+                enum C { C1(B), C2 };
+                let x = C::C1(B::B2);
+                match x {
+                    C::C1(B::B1(A::A1(n))) => n,
+                    _ => 42
+                }
+            }
+        "#;
+        let result = test_evaluate(program);
+        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
+        assert_eq!(result.unwrap(), 42);
+    }
 }
