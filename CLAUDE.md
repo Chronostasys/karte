@@ -376,7 +376,7 @@ Recent work includes:
   - **Nested enum pattern matching**: HIR desugar approach. Nested patterns like `Result::Ok(Color::Red)` are desugared to nested `match` expressions at parser time. No MIR/LIR changes needed. Supports three-level nesting with recursive desugaring and wildcard fallback. See `docs/agent/nested-enum-desugaring.md`.
   - **Negative number pattern matching**: Parser now handles `-5`, `-3` etc. in match patterns. `parse_pattern_inner` checks for `Minus` token and creates `Pattern::Number`.
   - **Deep recursion fix**: Virtual stack increased from 64KB to 512KB (8192→65536 entries). JIT and AOT both updated. Supports 3000+ levels of recursion.
-  - **Prelude auto-injection**: `std.prelude` functions (gcd, factorial, println, etc.) are auto-injected into the module scope when `std.prelude` is a dependency. Works in AOT mode. JIT cross-module linking still pending.
+  - **Prelude auto-injection**: `std.prelude` functions (gcd, factorial, println, etc.) are auto-injected into the module scope when `std.prelude` is a dependency. Works in both JIT and AOT modes.
   - **`char_to_string` runtime primitive**: Converts a character code (number) to a single-character string. Used by std.string functions.
   - **Short-circuit `&&` and `||`**: MIR lowering now generates proper short-circuit evaluation for logical operators.
   - **i64::MIN lexer fix**: Lexer now correctly parses `9223372036854775808` and `0x8000000000000000`.
