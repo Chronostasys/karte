@@ -93,6 +93,36 @@ impl<'a> Parser<'a> {
                         }
                     }
                 }
+                Token::Minus => {
+                    let minus_span = token.span;
+                    self.advance();
+                    if let Some(next_token) = self.peek() {
+                        if let Token::Number(value) = &next_token.token {
+                            let value = *value;
+                            let end_span = next_token.span;
+                            self.advance();
+                            // 处理 i64::MIN 的特殊情况：lexer 将 9223372036854775808 解析为 i64::MIN
+                            // 此时 value 已经是负值，不应再取反
+                            let neg_value = if value == i64::MIN {
+                                value
+                            } else {
+                                -value
+                            };
+                            let span = Span::new(minus_span.start, end_span.end);
+                            Ok(karte_hir::Pattern::Number { value: neg_value, span })
+                        } else {
+                            Err(ParseError::UnexpectedToken {
+                                expected: "number after '-'".to_string(),
+                                found: next_token.token.clone(),
+                                span: next_token.span,
+                            })
+                        }
+                    } else {
+                        Err(ParseError::UnexpectedEof {
+                            expected: "number after '-'".to_string(),
+                        })
+                    }
+                }
                 _ => Err(ParseError::UnexpectedToken {
                     expected: "pattern".to_string(),
                     found: token.token.clone(),
