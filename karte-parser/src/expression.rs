@@ -35,7 +35,7 @@ impl<'a> Parser<'a> {
         self.parse_assignment()
     }
 
-    // assignment = logical_or (('=' | '+=' | '-=' | '*=' | '/=' | 'bitand=' | 'bitor=' | 'bitxor=' | 'shl=' | 'shr=') assignment)?
+    // assignment = logical_or (('=' | '+=' | '-=' | '*=' | '/=' | '%=' | 'bitand=' | 'bitor=' | 'bitxor=' | 'shl=' | 'shr=') assignment)?
     pub(crate) fn parse_assignment(&mut self) -> Result<Expr, ParseError> {
         let expr = self.parse_logical_or()?;
 
@@ -46,6 +46,7 @@ impl<'a> Parser<'a> {
                 Token::MinusEqual => Some(BinaryOperator::Subtract),
                 Token::StarEqual => Some(BinaryOperator::Multiply),
                 Token::SlashEqual => Some(BinaryOperator::Divide),
+                Token::PercentEqual => Some(BinaryOperator::Modulo),
                 Token::AmpersandEqual => Some(BinaryOperator::BitAnd),
                 Token::PipeEqual => Some(BinaryOperator::BitOr),
                 Token::CaretEqual => Some(BinaryOperator::BitXor),
@@ -86,6 +87,7 @@ impl<'a> Parser<'a> {
                         | Token::MinusEqual
                         | Token::StarEqual
                         | Token::SlashEqual
+                        | Token::PercentEqual
                         | Token::AmpersandEqual
                         | Token::PipeEqual
                         | Token::CaretEqual

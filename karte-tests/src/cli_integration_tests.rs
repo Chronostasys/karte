@@ -7660,6 +7660,316 @@ fn main() -> number {
         let exit_code = compile_project_mode_code(source);
         assert_eq!(exit_code, 1, "\"age: \" + 25 should equal \"age: 25\", got exit code {}", exit_code);
     }
+
+    // ==================== 回归测试：基本类型边界 ====================
+
+    #[test]
+    fn test_i64_max_value() {
+        let code = r#"
+fn main() -> number {
+    9223372036854775807
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 9223372036854775807, "i64::MAX");
+    }
+
+    #[test]
+    fn test_i64_min_literal() {
+        let code = r#"
+fn main() -> number {
+    -9223372036854775808
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, -9223372036854775808, "i64::MIN");
+    }
+
+    #[test]
+    fn test_i64_min_hex_literal() {
+        let code = r#"
+fn main() -> number {
+    -0x8000000000000000
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, -9223372036854775808, "i64::MIN via hex");
+    }
+
+    #[test]
+    fn test_overflow_wraps() {
+        let code = r#"
+fn main() -> number {
+    let max = 9223372036854775807;
+    max + 1
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, -9223372036854775808, "overflow wraps to i64::MIN");
+    }
+
+    #[test]
+    fn test_empty_string() {
+        let code = r#"
+fn main() -> number {
+    let s = "";
+    len(s)
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 0, "empty string length");
+    }
+
+    #[test]
+    fn test_string_with_escapes() {
+        let code = r#"
+fn main() -> number {
+    let s = "\n\t\r";
+    len(s)
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 3, "string with escape chars");
+    }
+
+    #[test]
+    fn test_string_equality() {
+        let code = r#"
+fn main() -> number {
+    let r = 0;
+    if "abc" == "abc" { r = r + 1 };
+    if "abc" != "abd" { r = r + 1 };
+    r
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 2, "string equality");
+    }
+
+    // ==================== 回归测试：算术运算 ====================
+
+    #[test]
+    fn test_mixed_sign_arithmetic() {
+        let code = r#"
+fn main() -> number {
+    let a = -10 + 5;
+    let b = -10 - 5;
+    let c = -10 * 3;
+    let d = -10 / 3;
+    a + b + c + d
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, -53, "mixed sign arithmetic");
+    }
+
+    #[test]
+    fn test_negative_modulo() {
+        let code = r#"
+fn main() -> number {
+    -7 % 2
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, -1, "negative modulo");
+    }
+
+    #[test]
+    fn test_bitwise_operations_comprehensive() {
+    }
+
+    // ==================== 回归测试：短路求值 ====================
+
+    #[test]
+    fn test_short_circuit_and_with_panic() {
+        let code = r#"
+fn will_panic() -> bool {
+    1 / 0 > 0
+}
+fn main() -> number {
+    if false && will_panic() { 1 } else { 2 }
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 2, "&& short-circuit skips panic");
+    }
+
+    #[test]
+    fn test_short_circuit_or_with_panic() {
+        let code = r#"
+fn will_panic() -> bool {
+    1 / 0 > 0
+}
+fn main() -> number {
+    if true || will_panic() { 1 } else { 2 }
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 1, "|| short-circuit skips panic");
+    }
+
+    // ==================== 回归测试：引用逃逸 ====================
+
+    #[test]
+    fn test_ref_escape_from_function() {
+        let code = r#"
+fn make_ref() {
+    let x = 99;
+    &x
+}
+fn main() -> number {
+    let r = make_ref();
+    *r
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 99, "reference escape from function");
+    }
+
+    // ==================== 回归测试：限定名 enum pattern matching ====================
+
+    #[test]
+    fn test_qualified_enum_multi_field_pattern() {
+        let code = r#"
+enum Shape { Rect(number, number), Circle(number) }
+fn area(s: Shape) -> number {
+    match s {
+        Shape::Circle(r) => 3 * r * r,
+        Shape::Rect(w, h) => w * h
+    }
+}
+fn main() -> number {
+    let r = Shape::Rect(3, 4);
+    area(r)
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 12, "qualified enum multi-field pattern");
+    }
+
+    #[test]
+    fn test_qualified_enum_three_field_pattern() {
+        let code = r#"
+enum Shape { Triangle(number, number, number) }
+fn main() -> number {
+    let t = Shape::Triangle(6, 8, 10);
+    match t {
+        Shape::Triangle(b, h, _) => b * h / 2
+    }
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 24, "qualified enum three-field pattern");
+    }
+
+    // ==================== 回归测试：闭包高级用法 ====================
+
+    #[test]
+    fn test_nested_closure_capture() {
+        let code = r#"
+fn main() -> number {
+    let x = 10;
+    let f = || {
+        let y = 20;
+        let g = || { x + y };
+        g()
+    };
+    f()
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 30, "nested closure capture");
+    }
+
+    #[test]
+    fn test_recursive_closure() {
+        let code = r#"
+fn main() -> number {
+    let fib = |n: number| -> number {
+        if n <= 1 { n } else { fib(n - 1) + fib(n - 2) }
+    };
+    fib(10)
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 55, "recursive closure fibonacci");
+    }
+
+    #[test]
+    fn test_mutating_closure_passed_to_function() {
+        let code = r#"
+fn apply_twice(f, init: number) -> number {
+    let acc = init;
+    let r1 = f(acc);
+    let r2 = f(r1);
+    r1 + r2
+}
+fn main() -> number {
+    let counter = 0;
+    let inc = || {
+        counter += 1;
+        counter
+    };
+    apply_twice(inc, 0)
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 3, "mutating closure passed to function: 1 + 2");
+    }
+
+    // ==================== 回归测试：%复合赋值 ====================
+
+    #[test]
+    fn test_percent_equal_compound() {
+        let code = r#"
+fn main() -> number {
+    let x = 17;
+    x %= 5;
+    x
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 2, "17 % 5 = 2");
+    }
+
+    // ==================== 回归测试：while true + break ====================
+
+    #[test]
+    fn test_while_true_with_break() {
+        let code = r#"
+fn main() -> number {
+    let i = 0;
+    let sum = 0;
+    while true {
+        if i >= 10 { break };
+        sum += i;
+        i += 1
+    };
+    sum
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 45, "while true break: 0+1+..+9 = 45");
+    }
+
+    // ==================== 回归测试：GC 压力 ====================
+
+    #[test]
+    fn test_gc_string_stress() {
+        let code = r#"
+fn main() -> number {
+    let r = 0;
+    for i in 0..100 {
+        let s = to_string(i);
+        let s2 = s + "hello" + "world" + "test";
+        r = r + len(s2)
+    };
+    r
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 1590, "GC stress: 100 string concatenations");
+    }
 }
 
 

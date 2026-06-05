@@ -82,6 +82,9 @@ pub enum Token {
     #[token("/=")]
     SlashEqual,
 
+    #[token("%=")]
+    PercentEqual,
+
     // 运算符
     #[token("+")]
     Plus,
@@ -329,6 +332,7 @@ impl fmt::Display for Token {
             Token::MinusEqual => write!(f, "-="),
             Token::StarEqual => write!(f, "*="),
             Token::SlashEqual => write!(f, "/="),
+            Token::PercentEqual => write!(f, "%="),
             Token::ShiftLeftEqual => write!(f, "<<="),
             Token::ShiftRightEqual => write!(f, ">>="),
             Token::PipeEqual => write!(f, "|="),

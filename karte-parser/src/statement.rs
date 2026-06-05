@@ -58,6 +58,7 @@ impl<'a> Parser<'a> {
                                 | Token::MinusEqual
                                 | Token::StarEqual
                                 | Token::SlashEqual
+                                | Token::PercentEqual
                         ) {
                             // 这是一个赋值语句
                             statements.push(self.parse_statement()?);
