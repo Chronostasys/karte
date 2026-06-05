@@ -1487,11 +1487,18 @@ impl<'a> Parser<'a> {
                                         if let Some(arg_token) = self.peek() {
                                             if matches!(arg_token.token, Token::LeftParen) {
                                                 self.advance(); // consume '('
-                                                let args = if let Some(peeked) = self.peek() {
-                                                    if matches!(peeked.token, Token::RightParen) {
-                                                        vec![]
-                                                    } else {
-                                                        vec![self.parse_expression()?]
+                                                let mut args = Vec::new();
+                                                if let Some(peeked) = self.peek() {
+                                                    if !matches!(peeked.token, Token::RightParen) {
+                                                        args.push(self.parse_expression()?);
+                                                        while let Some(next) = self.peek() {
+                                                            if matches!(next.token, Token::Comma) {
+                                                                self.advance();
+                                                                args.push(self.parse_expression()?);
+                                                            } else {
+                                                                break;
+                                                            }
+                                                        }
                                                     }
                                                 } else {
                                                     return Err(ParseError::UnexpectedEof {

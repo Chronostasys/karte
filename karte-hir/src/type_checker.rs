@@ -2685,29 +2685,23 @@ impl TypeChecker {
                             // 约束expected_type必须是这个sum type
                             self.add_constraint(expected_type.clone(), sum_type.clone(), *span);
 
-                            if let Some(arg_pattern) = args.get(0) {
-                                // 有参数的构造器模式
-                                if let Some(expected_arg_type) = variant.data_types.first() {
-                                    self.check_pattern(arg_pattern, expected_arg_type, env);
-                                } else {
-                                    self.add_error(TypeCheckError::InvalidPattern {
-                                        message: format!(
-                                            "{}::{} doesn't take arguments",
-                                            type_name, constructor_name
-                                        ),
-                                        span: *span,
-                                    });
-                                }
+                            // 检查参数数量
+                            if args.len() != variant.data_types.len() {
+                                self.add_error(TypeCheckError::InvalidPattern {
+                                    message: format!(
+                                        "{}::{} expects {} argument(s), but got {}",
+                                        type_name,
+                                        constructor_name,
+                                        variant.data_types.len(),
+                                        args.len()
+                                    ),
+                                    span: *span,
+                                });
                             } else {
-                                // 无参数的构造器模式
-                                if !variant.data_types.is_empty() {
-                                    self.add_error(TypeCheckError::InvalidPattern {
-                                        message: format!(
-                                            "{}::{} requires an argument",
-                                            type_name, constructor_name
-                                        ),
-                                        span: *span,
-                                    });
+                                for (i, arg_pattern) in args.iter().enumerate() {
+                                    if let Some(param_type) = variant.data_types.get(i) {
+                                        self.check_pattern(arg_pattern, param_type, env);
+                                    }
                                 }
                             }
                         } else {
