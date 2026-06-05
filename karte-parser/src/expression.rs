@@ -2841,11 +2841,7 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            if indices.len() <= 1 {
-                for &idx in &indices {
-                    result.push(arms[idx].clone());
-                    processed.insert(idx);
-                }
+            if indices.len() == 0 {
                 continue;
             }
 
@@ -2900,6 +2896,15 @@ impl<'a> Parser<'a> {
                 inner_arm.pattern = inner_pattern;
                 inner_arms.push(inner_arm);
             }
+            for j in 0..arms.len() {
+                if !indices.contains(&j) {
+                    let fallback_arm = &arms[j];
+                    if matches!(&fallback_arm.pattern, Pattern::Wildcard { .. }) {
+                        inner_arms.push(fallback_arm.clone());
+                    }
+                }
+            }
+            inner_arms = Self::desugar_nested_match_patterns(inner_arms);
 
             let inner_match = Expr::Match {
                 expr: Box::new(Expr::Identifier {
