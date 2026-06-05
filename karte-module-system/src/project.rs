@@ -11,6 +11,7 @@ use karte_hir::type_checker::{
     ExternalFunctionSignature, ExternalModuleInterface, ExternalStructField,
     ExternalStructSignature,
 };
+use karte_hir::ModuleContext;
 use karte_ir_codec::IrDisplay;
 use karte_lexer::tokenize;
 use karte_lir::lower::lower_mir_to_lir;
@@ -306,6 +307,10 @@ pub fn compile_source_to_artifacts(
         println!("Type: {}", result_type);
     }
 
+    // 🔧 关键修复：在 MIR lowering 前 clone module_context
+    // 以便在 lowering 后注册 prelude 函数的 external_function_symbols
+    let prelude_context = lowering_options.module_context.clone();
+
     if verbose {
         println!("\n--- Lowering to MIR ---");
     }
@@ -319,6 +324,24 @@ pub fn compile_source_to_artifacts(
                 return Err("MIR lowering failed".into());
             }
         };
+
+    // 🔧 关键修复：将 prelude 函数注册到 external_function_symbols
+    // 这样 LIR lowering 的标签预分配阶段会为短名称（如 "gcd"）生成与规范名称
+    // （如 "std.core::gcd"）相同的标签，从而 Cross-Module JIT 调用能正确解析
+    if let Some(module_context) = prelude_context {
+        let dependency_interfaces = module_context.dependency_interfaces();
+        if dependency_interfaces.contains_key("std.prelude") {
+            let prelude_modules = ["std.core", "std.math", "std.io", "std.string"];
+            for mod_key in &prelude_modules {
+                if let Some(iface) = dependency_interfaces.get(*mod_key) {
+                    for (func_name, _func_info) in &iface.functions {
+                        let canonical = format!("{}::{}", mod_key, func_name);
+                        mir_program.set_external_function_symbol(func_name, &canonical);
+                    }
+                }
+            }
+        }
+    }
 
     if let Some(script_entry) = mir_program.functions.get(SCRIPT_ENTRY_POINT) {
         let is_trivial =
@@ -337,12 +360,16 @@ pub fn compile_source_to_artifacts(
             };
 
         if is_trivial {
-            if mir_program.functions.contains_key("main") {
-                if verbose {
-                    println!("Project Mode detected: switching entry point to 'main'");
-                }
-                mir_program.set_main("main".to_string());
+            // skip
+        }
+    }
+
+    if let Some(script_entry) = mir_program.functions.get(SCRIPT_ENTRY_POINT) {
+        if mir_program.functions.contains_key("main") {
+            if verbose {
+                println!("Project Mode detected: switching entry point to 'main'");
             }
+            mir_program.set_main("main".to_string());
         }
     }
 
