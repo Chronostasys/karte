@@ -2485,7 +2485,105 @@ fn main() -> number {
         compile_and_run_aot(code, 1, "logical_or");
     }
 
-    // ==================== 回归测试：位操作 ====================
+    // ==================== 短路求值测试 ====================
+
+    #[test]
+    fn test_short_circuit_and_skip_right() {
+        // false && crash() → 不应执行 crash()，返回 2
+        let code = r#"
+fn crash() -> bool { 1 / 0 > 0 }
+fn main() -> number {
+    if false && crash() { 1 } else { 2 }
+}
+"#;
+        compile_and_run_aot(code, 2, "short_circuit_and_skip_right");
+    }
+
+    #[test]
+    fn test_short_circuit_or_skip_right() {
+        // true || crash() → 不应执行 crash()，返回 1
+        let code = r#"
+fn crash() -> bool { 1 / 0 > 0 }
+fn main() -> number {
+    if true || crash() { 1 } else { 2 }
+}
+"#;
+        compile_and_run_aot(code, 1, "short_circuit_or_skip_right");
+    }
+
+    #[test]
+    fn test_short_circuit_and_evaluates_right() {
+        // true && (3 > 2) → 应该求值右操作数，返回 1
+        let code = r#"
+fn main() -> number {
+    if true && (3 > 2) { 1 } else { 0 }
+}
+"#;
+        compile_and_run_aot(code, 1, "short_circuit_and_evaluates_right");
+    }
+
+    #[test]
+    fn test_short_circuit_or_evaluates_right() {
+        // false || (3 > 2) → 应该求值右操作数，返回 1
+        let code = r#"
+fn main() -> number {
+    if false || (3 > 2) { 1 } else { 0 }
+}
+"#;
+        compile_and_run_aot(code, 1, "short_circuit_or_evaluates_right");
+    }
+
+    #[test]
+    fn test_short_circuit_and_both_true() {
+        let code = r#"
+fn main() -> number {
+    if true && true { 1 } else { 0 }
+}
+"#;
+        compile_and_run_aot(code, 1, "short_circuit_and_both_true");
+    }
+
+    #[test]
+    fn test_short_circuit_and_left_false() {
+        let code = r#"
+fn main() -> number {
+    if false && true { 1 } else { 0 }
+}
+"#;
+        compile_and_run_aot(code, 0, "short_circuit_and_left_false");
+    }
+
+    #[test]
+    fn test_short_circuit_or_both_false() {
+        let code = r#"
+fn main() -> number {
+    if false || false { 1 } else { 0 }
+}
+"#;
+        compile_and_run_aot(code, 0, "short_circuit_or_both_false");
+    }
+
+    #[test]
+    fn test_short_circuit_or_left_true() {
+        let code = r#"
+fn main() -> number {
+    if true || false { 1 } else { 0 }
+}
+"#;
+        compile_and_run_aot(code, 1, "short_circuit_or_left_true");
+    }
+
+    #[test]
+    fn test_short_circuit_nested() {
+        // 嵌套短路：true || (false && crash()) → 不应执行 crash()
+        let code = r#"
+fn crash() -> bool { 1 / 0 > 0 }
+fn main() -> number {
+    if true || (false && crash()) { 1 } else { 2 }
+}
+"#;
+        compile_and_run_aot(code, 1, "short_circuit_nested");
+    }
 
     #[test]
     fn test_bitwise_xor_symbol() {

@@ -394,6 +394,187 @@ pub(crate) fn lower_expression(
                         span,
                     });
                 }
+            } else if matches!(op, karte_hir::BinaryOperator::LogicalAnd | karte_hir::BinaryOperator::LogicalOr) {
+                // 短路求值：LogicalAnd 和 LogicalOr 需要分支控制流
+                // 不能像普通二元操作那样先求值两侧再执行 op，
+                // 因为 MIR BinaryOp 是三地址码，两侧必定都被求值，无法跳过右操作数的副作用。
+                let left_val = lower_expression_to_temp(ctx, left)?;
+
+                let is_and = matches!(op, karte_hir::BinaryOperator::LogicalAnd);
+
+                // &&: left 为真 → 求值右，left 为假 → 短路为 false
+                // ||: left 为真 → 短路为 true，left 为假 → 求值右
+                let (right_block, shortcut_block) = if is_and {
+                    (ctx.new_block(), ctx.new_block())
+                } else {
+                    (ctx.new_block(), ctx.new_block())
+                };
+                let merge_block = ctx.new_block();
+
+                // Branch: && → then=right_block, else=shortcut(false)
+                //        || → then=shortcut(true), else=right_block
+                let (branch_then, branch_else) = if is_and {
+                    (right_block, shortcut_block)
+                } else {
+                    (shortcut_block, right_block)
+                };
+
+                ctx.set_terminator(Terminator::Branch {
+                    condition: left_val,
+                    then_block: branch_then,
+                    else_block: branch_else,
+                    span,
+                });
+
+                // 保存求值左操作数后的变量绑定快照（遍历所有作用域）
+                let pre_bindings: std::collections::HashMap<String, Value> = ctx
+                    .scopes
+                    .iter()
+                    .rev()
+                    .flat_map(|scope| {
+                        scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone()))
+                    })
+                    .collect();
+
+                // 右操作数求值分支
+                ctx.set_current_block(right_block);
+                let right_val = lower_expression_to_temp(ctx, right)?;
+                ctx.add_statement(Statement::Assign {
+                    target: destination.clone(),
+                    source: right_val,
+                    span,
+                });
+                let actual_right_block = ctx.current_block();
+                ctx.set_terminator(Terminator::Goto {
+                    target: merge_block,
+                    span,
+                });
+
+                // 记录右分支后的变量绑定
+                let right_bindings: std::collections::HashMap<String, Value> = ctx
+                    .scopes
+                    .iter()
+                    .rev()
+                    .flat_map(|scope| {
+                        scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone()))
+                    })
+                    .collect();
+
+                // 短路分支：恢复绑定到左操作数求值后的状态
+                for scope in ctx.scopes.iter_mut() {
+                    for (name, binding) in scope.bindings.iter_mut() {
+                        if let Some(pre_val) = pre_bindings.get(name) {
+                            binding.value = pre_val.clone();
+                        }
+                    }
+                }
+                ctx.set_current_block(shortcut_block);
+                let shortcut_val = if is_and {
+                    // && 短路：左为 false，结果 = 0
+                    Value::Number { value: 0, ty: None }
+                } else {
+                    // || 短路：左为 true，结果 = 1
+                    Value::Number { value: 1, ty: None }
+                };
+                ctx.add_statement(Statement::Assign {
+                    target: destination.clone(),
+                    source: shortcut_val,
+                    span,
+                });
+                ctx.set_terminator(Terminator::Goto {
+                    target: merge_block,
+                    span,
+                });
+
+                // merge 块：为在右分支中被修改的变量插入 phi 节点
+                // 短路分支不会修改变量（不执行右操作数），所以 phi 的一方是 pre_bindings
+                ctx.set_current_block(merge_block);
+                for (name, pre_value) in &pre_bindings {
+                    let right_value = right_bindings.get(name).cloned().unwrap_or_else(|| pre_value.clone());
+                    // shortcut 分支保持 pre_bindings 的值
+                    let shortcut_value = pre_value.clone();
+
+                    let right_changed = right_value != *pre_value;
+                    // shortcut 分支不修改变量，所以 shortcut_changed 始终为 false
+                    if right_changed {
+                        // R8-2 修复：检查 incoming 值是否混合了 Reference 和非 Reference
+                        let right_is_ref = matches!(&right_value, Value::Reference { .. });
+                        let shortcut_is_ref = matches!(&shortcut_value, Value::Reference { .. });
+
+                        if right_is_ref || shortcut_is_ref {
+                            let right_loc = if let Value::Reference { value: ref_inner, .. } = &right_value {
+                                ref_inner.as_ref().clone()
+                            } else {
+                                let loc = ctx.new_temp();
+                                if !ctx.analysis_mode {
+                                    ctx.add_statement(Statement::HeapAlloc {
+                                        target: loc.clone(),
+                                        size: 8,
+                                        object_type: "shared_var".to_string(),
+                                        span,
+                                    });
+                                    ctx.add_statement(Statement::Store {
+                                        target: loc.clone(),
+                                        value: right_value.clone(),
+                                        span,
+                                    });
+                                }
+                                loc
+                            };
+
+                            let shortcut_loc = if let Value::Reference { value: ref_inner, .. } = &shortcut_value {
+                                ref_inner.as_ref().clone()
+                            } else {
+                                let loc = ctx.new_temp();
+                                if !ctx.analysis_mode {
+                                    ctx.add_statement(Statement::HeapAlloc {
+                                        target: loc.clone(),
+                                        size: 8,
+                                        object_type: "shared_var".to_string(),
+                                        span,
+                                    });
+                                    ctx.add_statement(Statement::Store {
+                                        target: loc.clone(),
+                                        value: shortcut_value.clone(),
+                                        span,
+                                    });
+                                }
+                                loc
+                            };
+
+                            let phi_temp = ctx.new_temp();
+                            if !ctx.analysis_mode {
+                                ctx.add_statement(Statement::Phi {
+                                    target: phi_temp.clone(),
+                                    incoming: vec![
+                                        (actual_right_block, right_loc),
+                                        (shortcut_block, shortcut_loc),
+                                    ],
+                                    span,
+                                });
+                            }
+                            ctx.update_variable(name, Value::Reference {
+                                value: Box::new(phi_temp),
+                                ty: None,
+                            }, None);
+                        } else {
+                            // 正常情况：都不是 Reference
+                            let phi_temp = ctx.new_temp();
+                            if !ctx.analysis_mode {
+                                ctx.add_statement(Statement::Phi {
+                                    target: phi_temp.clone(),
+                                    incoming: vec![
+                                        (actual_right_block, right_value),
+                                        (shortcut_block, shortcut_value),
+                                    ],
+                                    span,
+                                });
+                            }
+                            ctx.update_variable(name, phi_temp, None);
+                        }
+                    }
+                }
+                return Ok(());
             } else {
                 // 原有数字运算逻辑
                 let left_val = lower_expression_to_temp(ctx, left)?;
