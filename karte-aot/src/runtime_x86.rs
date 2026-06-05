@@ -2886,8 +2886,8 @@ impl X86Runtime {
         // 检测 i64::MIN: 值为 0x8000000000000000
         self.mov_ri(1, 0x8000_0000_0000_0000u64); // RCX = i64::MIN
         self.cmp_rr(0, 1); // CMP RAX, i64::MIN
-        let not_min_special = self.code.len();
         self.jne_rel32(0); // 不是 MIN → 正常取反路径
+        let not_min_special = self.code.len() - 4;
 
         // i64::MIN 特殊路径: 直接输出 "-9223372036854775808\n" (20 字节)
         self.push(0); self.push(0); self.push(0); // 分配 24 字节
