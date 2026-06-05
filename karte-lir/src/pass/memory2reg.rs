@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet};
 pub struct StackSlot {
     /// 分配指令的位置
     pub alloc_instruction: usize,
-    /// 分配的寄存器（保存栈地址）
+    /// 分配的栈地址寄存器
     pub address_register: Register,
     /// 栈槽大小
     pub size: usize,
@@ -27,6 +27,10 @@ pub struct StackSlot {
     pub store_to_block: HashMap<usize, usize>, // 指令位置 -> 块ID
     /// 加载指令到基本块的映射
     pub load_to_block: HashMap<usize, usize>, // 指令位置 -> 块ID
+    /// 反向索引：哪些基本块包含对该栈槽的 load
+    pub load_blocks: HashSet<usize>,
+    /// 反向索引：哪些基本块包含对该栈槽的 store
+    pub store_blocks: HashSet<usize>,
 }
 
 /// 基本块信息（从CFG获取）
@@ -147,6 +151,8 @@ impl Memory2RegPass {
                     stores: Vec::new(),
                     store_to_block: HashMap::new(),
                     load_to_block: HashMap::new(),
+                    load_blocks: HashSet::new(),
+                    store_blocks: HashSet::new(),
                 };
                 info!("🔍 发现栈分配: 寄存器 {:?}, 大小 {}", dst, size);
                 stack_slots.insert(*dst, slot);
@@ -169,6 +175,7 @@ impl Memory2RegPass {
                             slot.loads.push(i);
                             if let Some(block_id) = current_block {
                                 slot.load_to_block.insert(i, block_id);
+                                slot.load_blocks.insert(block_id);
                                 debug!("🔍 记录load: 寄存器 {:?} 在块 {}", addr, block_id);
                             }
                         }
@@ -190,6 +197,7 @@ impl Memory2RegPass {
                         slot.loads.push(i);
                         if let Some(block_id) = current_block {
                             slot.load_to_block.insert(i, block_id);
+                            slot.load_blocks.insert(block_id);
                             info!(
                                 "🔍 记录StructFieldLoad: 结构体地址寄存器 {:?} 在块 {}",
                                 struct_addr, block_id
@@ -213,6 +221,7 @@ impl Memory2RegPass {
                             slot.stores.push(i);
                             if let Some(block_id) = current_block {
                                 slot.store_to_block.insert(i, block_id);
+                                slot.store_blocks.insert(block_id);
                                 debug!("🔍 记录store: 寄存器 {:?} 在块 {}", addr, block_id);
                             }
                         }
@@ -1587,7 +1596,7 @@ impl Memory2RegPass {
                 }
 
                 // 递归判断该块或其后继（不含自身）是否有load指令
-                // 🔧 修复：使用预计算的 load_to_block 映射，而不是检查指令范围
+                // 使用预计算的 load_blocks HashSet 做 O(1) 查找
                 fn block_or_successors_have_load(
                     block_id: usize,
                     basic_blocks: &HashMap<usize, BasicBlock>,
@@ -1597,12 +1606,8 @@ impl Memory2RegPass {
                     if !visited.insert(block_id) {
                         return false;
                     }
-                    // 使用 load_to_block 映射检查该块是否有 load
-                    let has_load = slot
-                        .load_to_block
-                        .values()
-                        .any(|&load_block| load_block == block_id);
-                    if has_load {
+                    // O(1) HashSet 查找替代 O(loads) 线性扫描
+                    if slot.load_blocks.contains(&block_id) {
                         return true;
                     }
                     if let Some(block) = basic_blocks.get(&block_id) {
@@ -1638,10 +1643,8 @@ impl Memory2RegPass {
                         let mut predecessors_with_stores = HashSet::new();
                         if let Some(block) = analysis.basic_blocks.get(&block_id) {
                             for &pred_id in &block.predecessors {
-                                let has_direct_store = slot
-                                    .store_to_block
-                                    .values()
-                                    .any(|&store_block| store_block == pred_id);
+                                // O(1) HashSet 查找替代 O(stores) 线性扫描
+                                let has_direct_store = slot.store_blocks.contains(&pred_id);
                                 let has_phi = phi_blocks.contains(&pred_id);
                                 if has_direct_store || has_phi {
                                     predecessors_with_stores.insert(pred_id);

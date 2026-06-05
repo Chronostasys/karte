@@ -439,6 +439,8 @@ fn test_phi_insertion_algorithm() {
         stores: Vec::new(),
         store_to_block: HashMap::new(),
         load_to_block: HashMap::new(),
+        load_blocks: HashSet::new(),
+        store_blocks: HashSet::new(),
     };
     // 反向映射：指令索引 -> 块id
     let mut inst_to_block = HashMap::new();
@@ -453,12 +455,14 @@ fn test_phi_insertion_algorithm() {
                 slot.stores.push(i);
                 if let Some(&block_id) = inst_to_block.get(&i) {
                     slot.store_to_block.insert(i, block_id);
+                    slot.store_blocks.insert(block_id);
                 }
             }
             Instruction::Load64 { addr, .. } if *addr == Register::Physical(0) => {
                 slot.loads.push(i);
                 if let Some(&block_id) = inst_to_block.get(&i) {
                     slot.load_to_block.insert(i, block_id);
+                    slot.load_blocks.insert(block_id);
                 }
             }
             _ => {}
@@ -744,6 +748,8 @@ fn test_phi_insertion_returns_1_bug() {
         stores: Vec::new(),
         store_to_block: HashMap::new(),
         load_to_block: HashMap::new(),
+        load_blocks: HashSet::new(),
+        store_blocks: HashSet::new(),
     };
 
     // 反向映射：指令索引 -> 块id
@@ -760,12 +766,14 @@ fn test_phi_insertion_returns_1_bug() {
                 slot.stores.push(i);
                 if let Some(&block_id) = inst_to_block.get(&i) {
                     slot.store_to_block.insert(i, block_id);
+                    slot.store_blocks.insert(block_id);
                 }
             }
             Instruction::Load64 { addr, .. } if *addr == Register::Physical(0) => {
                 slot.loads.push(i);
                 if let Some(&block_id) = inst_to_block.get(&i) {
                     slot.load_to_block.insert(i, block_id);
+                    slot.load_blocks.insert(block_id);
                 }
             }
             _ => {}

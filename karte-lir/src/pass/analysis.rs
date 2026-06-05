@@ -96,6 +96,25 @@ pub struct LivenessAnalysis {
     pub live_out: HashMap<usize, HashSet<Register>>,
     /// 每个指令位置的活跃变量
     pub live_at_instruction: HashMap<usize, HashSet<Register>>,
+    /// 反向索引：register → 该寄存器活跃的指令位置列表（已排序去重）
+    pub register_live_instructions: HashMap<Register, Vec<usize>>,
+}
+
+impl LivenessAnalysis {
+    /// 从反向索引重建指定指令位置的活跃寄存器集合
+    ///
+    /// 遍历 register_live_instructions，找出在该指令位置活跃的寄存器。
+    /// 由于 live_at_instruction 不再逐指令 clone 存储，测试代码应使用此方法。
+    pub fn get_live_at(&self, instr_idx: usize) -> HashSet<Register> {
+        let mut live = HashSet::new();
+        for (&reg, instrs) in &self.register_live_instructions {
+            // instrs 已排序，用二分查找
+            if instrs.binary_search(&instr_idx).is_ok() {
+                live.insert(reg);
+            }
+        }
+        live
+    }
 }
 
 impl AnalysisResult for LivenessAnalysis {
@@ -695,8 +714,8 @@ impl LivenessAnalysisPass {
         let (live_in, live_out) =
             self.compute_block_liveness(function, cfg, &block_use, &block_def)?;
 
-        // 第三阶段：计算指令级活跃度
-        let live_at_instruction =
+        // 第三阶段：计算指令级活跃度（同时构建反向索引）
+        let (live_at_instruction, register_live_instructions) =
             self.compute_instruction_liveness(function, cfg, def_use, &live_out)?;
 
         debug!("✅ 活跃度分析完成");
@@ -704,6 +723,7 @@ impl LivenessAnalysisPass {
             live_in,
             live_out,
             live_at_instruction,
+            register_live_instructions,
         })
     }
 
@@ -891,8 +911,11 @@ impl LivenessAnalysisPass {
         cfg: &ControlFlowGraph,
         def_use: &DefUseChains,
         live_out: &HashMap<usize, HashSet<Register>>,
-    ) -> crate::Result<HashMap<usize, HashSet<Register>>> {
-        let mut live_at_instruction = HashMap::new();
+    ) -> crate::Result<(HashMap<usize, HashSet<Register>>, HashMap<Register, Vec<usize>>)> {
+        // 不再逐指令 clone HashSet，只构建反向索引 register → 活跃指令列表
+        // live_at_instruction 留空（仅在测试中被引用）
+        let live_at_instruction = HashMap::new();
+        let mut register_live: HashMap<Register, Vec<usize>> = HashMap::new();
 
         for node in &cfg.nodes {
             let (start, end) = node.instruction_range;
@@ -904,16 +927,16 @@ impl LivenessAnalysisPass {
                     continue;
                 }
 
-                // 记录指令后的活跃集合
-                live_at_instruction.insert(instr_idx, current_live.clone());
+                // 同步更新反向索引（不 clone 整个 HashSet）
+                for &reg in &current_live {
+                    register_live.entry(reg).or_default().push(instr_idx);
+                }
 
                 let instruction = &function.instructions[instr_idx];
 
                 // Phi 指令的特殊处理
                 if let Instruction::Phi { dst, .. } = instruction {
-                    // Phi 的定义会使 dst 不再活跃
                     current_live.remove(dst);
-                    // Phi 的使用已在块级处理，这里不处理
                     continue;
                 }
 
@@ -933,7 +956,13 @@ impl LivenessAnalysisPass {
             }
         }
 
-        Ok(live_at_instruction)
+        // 排序去重
+        for instrs in register_live.values_mut() {
+            instrs.sort_unstable();
+            instrs.dedup();
+        }
+
+        Ok((live_at_instruction, register_live))
     }
 }
 

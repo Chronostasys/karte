@@ -441,6 +441,10 @@ impl LifetimeAnalyzer {
         let mut lifetimes = HashMap::new();
         let mut register_types = self.analyze_register_types(function);
 
+        // 使用 LivenessAnalysis 中预构建的反向索引
+        // register → 该寄存器活跃的指令位置列表（已在 liveness 分析中排序去重）
+        let register_live_instructions = &liveness.register_live_instructions;
+
         // 首先处理函数参数
         for (param_idx, &param_reg) in function.parameter_registers.iter().enumerate() {
             let lifetime = RegisterLifetime {
@@ -481,12 +485,12 @@ impl LifetimeAnalyzer {
             }
 
             // 🔧 新增：计算精确的活跃区间
-            let live_ranges = self.compute_live_ranges(
+            // 使用预计算的 register → 活跃指令列表，避免 O(registers × instructions) 遍历
+            let live_ranges = self.compute_live_ranges_fast(
                 register,
-                function.instructions.len(),
-                &liveness.live_at_instruction,
                 def_positions,
                 def_use.uses.get(&register),
+                register_live_instructions.get(&register),
             );
 
             // 如果有精确的 live_ranges，更新 start 和 end
@@ -544,6 +548,59 @@ impl LifetimeAnalyzer {
         let mut lifetime_list: Vec<_> = lifetimes.into_values().collect();
         lifetime_list.sort_by_key(|lt| (lt.register.id(), lt.start, lt.end));
         (lifetime_list, register_types)
+    }
+
+    /// 使用预计算的反向索引快速计算活跃区间
+    ///
+    /// 与 `compute_live_ranges` 不同，此方法使用 `register → 活跃指令列表` 的预计算索引，
+    /// 将复杂度从 O(registers × instructions) 降到 O(k)（k=该寄存器活跃的指令数）。
+    fn compute_live_ranges_fast(
+        &self,
+        register: Register,
+        def_positions: &[usize],
+        use_positions: Option<&Vec<usize>>,
+        live_instructions: Option<&Vec<usize>>,
+    ) -> Vec<(usize, usize)> {
+        let mut live_indices: Vec<usize> = Vec::new();
+
+        for &def_pos in def_positions {
+            live_indices.push(def_pos);
+        }
+
+        if let Some(uses) = use_positions {
+            for &use_pos in uses {
+                live_indices.push(use_pos);
+            }
+        }
+
+        if let Some(instrs) = live_instructions {
+            live_indices.extend_from_slice(instrs);
+        }
+
+        live_indices.sort_unstable();
+        live_indices.dedup();
+
+        if live_indices.is_empty() {
+            return vec![];
+        }
+
+        let mut ranges = Vec::new();
+        let mut range_start = live_indices[0];
+        let mut range_end = live_indices[0];
+
+        for &idx in live_indices.iter().skip(1) {
+            if idx == range_end + 1 {
+                range_end = idx;
+            } else {
+                ranges.push((range_start, range_end));
+                range_start = idx;
+                range_end = idx;
+            }
+        }
+        ranges.push((range_start, range_end));
+
+        let _ = register;
+        ranges
     }
 
     /// 计算寄存器的精确活跃区间

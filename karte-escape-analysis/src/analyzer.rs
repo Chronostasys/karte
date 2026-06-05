@@ -157,6 +157,12 @@ impl EscapeAnalyzer {
         let func_id = FunctionId(function.name.clone());
         self.context.enter_function(func_id);
 
+        // 每个函数独立分析：重置图和变量映射，避免跨函数累积导致 O(N²) 复杂度
+        // 注意：escape_info 保留，因为它是按 VariableId 存储的跨函数累积结果
+        self.graph = VariableGraph::new();
+        self.variable_name_to_id.clear();
+        self.next_variable_id = 1;
+
         // 1. 构建变量依赖图
         self.build_variable_graph(function)?;
 

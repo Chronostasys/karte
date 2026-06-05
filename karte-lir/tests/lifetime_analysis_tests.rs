@@ -840,16 +840,20 @@ mod lifetime_analysis_tests {
         let liveness = manager.get_result::<LivenessAnalysis>("liveness").unwrap();
 
         println!("=== 活跃度分析结果 ===");
-        for (instr_idx, live_set) in &liveness.live_at_instruction {
-            let regs: Vec<_> = live_set.iter().map(|r| format!("{:?}", r)).collect();
-            println!("  指令 {}: live = {:?}", instr_idx, regs);
+        // 使用 get_live_at 从反向索引重建活跃集合
+        for instr_idx in 0..function.instructions.len() {
+            let live_set = liveness.get_live_at(instr_idx);
+            if !live_set.is_empty() {
+                let regs: Vec<_> = live_set.iter().map(|r| format!("{:?}", r)).collect();
+                println!("  指令 {}: live = {:?}", instr_idx, regs);
+            }
         }
 
         // 验证活跃度分析：reg1 在 B 块中不应该活跃
         // B 块的指令是 8, 9, 10
-        let live_at_8 = liveness.live_at_instruction.get(&8).unwrap();
-        let live_at_9 = liveness.live_at_instruction.get(&9).unwrap();
-        let live_at_10 = liveness.live_at_instruction.get(&10).unwrap();
+        let live_at_8 = liveness.get_live_at(8);
+        let live_at_9 = liveness.get_live_at(9);
+        let live_at_10 = liveness.get_live_at(10);
 
         println!(
             "B块活跃度: 8={:?}, 9={:?}, 10={:?}",
@@ -861,13 +865,13 @@ mod lifetime_analysis_tests {
         assert!(!live_at_10.contains(&v(1)), "reg1 在 B 块指令10不应该活跃");
 
         // 验证 reg1 在 C 块中应该活跃（直到使用点）
-        let live_at_5 = liveness.live_at_instruction.get(&5).unwrap();
-        let live_at_6 = liveness.live_at_instruction.get(&6).unwrap();
+        let live_at_5 = liveness.get_live_at(5);
+        let live_at_6 = liveness.get_live_at(6);
 
         println!("C块活跃度: 5={:?}, 6={:?}", live_at_5, live_at_6);
 
         // 指令5是Label，指令6是使用reg1的Add，reg1在指令6之前应该活跃
-        // live_at_instruction 记录的是指令后的活跃集合
+        // register_live_instructions 记录了寄存器活跃的指令位置
         assert!(live_at_5.contains(&v(1)), "reg1 在 C 块指令5后应该活跃");
 
         // 生命周期分析

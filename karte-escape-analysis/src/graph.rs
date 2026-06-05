@@ -158,24 +158,18 @@ impl VariableGraph {
         self.escape_cache.remove(&from);
         self.escape_cache.remove(&to);
 
-        // 更新指针深度（如果元数据存在）
-        if let (Some(from_meta), Some(to_meta)) = (
-            self.node_metadata.get(&from).cloned(),
-            self.node_metadata.get_mut(&to),
-        ) {
-            // 根据边权重计算目标节点的指针深度
+        // 更新指针深度：避免 clone，直接读取后写入
+        let from_depth = self.node_metadata.get(&from).map(|m| m.pointer_depth).unwrap_or(0);
+        if let Some(to_meta) = self.node_metadata.get_mut(&to) {
             match edge.weight {
                 EdgeWeight::AddressOf => {
-                    // ptr = &value: ptr的深度 = value的深度 + 1
-                    to_meta.pointer_depth = from_meta.pointer_depth + 1;
+                    to_meta.pointer_depth = from_depth + 1;
                 }
                 EdgeWeight::Identity => {
-                    // y = x: y的深度 = x的深度
-                    to_meta.pointer_depth = from_meta.pointer_depth;
+                    to_meta.pointer_depth = from_depth;
                 }
                 EdgeWeight::Dereference => {
-                    // value = *ptr: value的深度 = ptr的深度 - 1
-                    to_meta.pointer_depth = from_meta.pointer_depth - 1;
+                    to_meta.pointer_depth = from_depth - 1;
                 }
             }
         }

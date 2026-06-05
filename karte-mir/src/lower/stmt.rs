@@ -283,17 +283,25 @@ pub(crate) fn handle_assignment(
             });
         }
         Expr::Index { array, index, .. } => {
-            // 数组下标赋值：计算 element_ptr = array_base + 8 + index * 8，然后 Store
+            // 数组下标赋值：计算 element_ptr = array_base + 8 + index * element_size
             let array_value = lower_expression_to_temp(ctx, array)?;
             let index_value = lower_expression_to_temp(ctx, index)?;
 
-            // scaled_index = index * 8
+            // 从数组类型获取元素类型，计算元素大小
+            let el_type = ctx.get_expr_type(array);
+            let element_size = if let karte_hir::Type::Array { element } = &el_type {
+                element.byte_size().max(8)
+            } else {
+                8
+            };
+
+            // scaled_index = index * element_size
             let scaled_index = ctx.new_temp();
             ctx.add_statement(Statement::BinaryOp {
                 target: scaled_index.clone(),
                 left: index_value,
                 op: crate::BinaryOperator::Multiply,
-                right: Value::Number { value: 8, ty: None },
+                right: Value::Number { value: element_size as i64, ty: None },
                 operand_type: None,
                 span,
             });

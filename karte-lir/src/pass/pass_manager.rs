@@ -128,6 +128,11 @@ impl PassManager {
         let cc = program.calling_convention();
         self.analysis_manager.store_calling_convention(cc);
 
+        // 统计总函数数和总指令数
+        let total_funcs = program.functions.len();
+        let total_instrs: usize = program.functions.values().map(|f| f.instructions.len()).sum();
+        eprintln!("[LIR PIPELINE] {} 个函数, 共 {} 条指令", total_funcs, total_instrs);
+
         if self.debug {
             info!("=== 专业Pass管理器: 开始执行Pass序列 ===");
             info!("程序信息: {} 个函数", program.functions.len());
@@ -146,6 +151,9 @@ impl PassManager {
         func_names.sort();
         for func_name in &func_names {
             let function = program.functions.get_mut(func_name).unwrap();
+            let instr_count = function.instructions.len();
+            let func_start = std::time::Instant::now();
+            eprintln!("[LIR FUNC] {}: {} 条指令", func_name, instr_count);
             if self.debug {
                 info!("处理函数: {}", func_name);
             }
@@ -166,6 +174,10 @@ impl PassManager {
             // 清理函数级分析结果（每个函数处理完后清理）
             if self.validate_invalidation {
                 self.cleanup_function_analyses();
+            }
+            let elapsed = func_start.elapsed();
+            if instr_count > 100 || elapsed.as_millis() > 100 {
+                eprintln!("[LIR FUNC] {} DONE: {} 条指令, {:.2}s", func_name, instr_count, elapsed.as_secs_f64());
             }
         }
 
