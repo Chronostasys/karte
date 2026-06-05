@@ -1,0 +1,3 @@
+[[modules]]
+id = "main"
+path = "src/main.karte"

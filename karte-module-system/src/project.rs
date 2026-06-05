@@ -275,13 +275,26 @@ pub fn compile_source_to_artifacts(
     let result_type = result.result_type.clone();
     let module_context = result.module_context().clone();
     let lowering_options = LoweringOptions {
-        known_functions: result
-            .module_context()
-            .imports
-            .iter()
-            .filter(|binding| binding.symbol != "*")
-            .map(|binding| binding.alias.clone())
-            .collect::<std::collections::HashSet<_>>(),
+        known_functions: {
+            let mut known = std::collections::HashSet::new();
+            for binding in &module_context.imports {
+                if binding.symbol != "*" {
+                    known.insert(binding.alias.clone());
+                }
+            }
+            let dependency_interfaces = module_context.dependency_interfaces();
+            if dependency_interfaces.contains_key("std.prelude") {
+                let prelude_modules = ["std.core", "std.math", "std.io", "std.string"];
+                for mod_key in &prelude_modules {
+                    if let Some(iface) = dependency_interfaces.get(*mod_key) {
+                        for func_name in iface.functions.keys() {
+                            known.insert(func_name.clone());
+                        }
+                    }
+                }
+            }
+            known
+        },
         module_context: Some(module_context.clone()),
         expr_types: result.expr_types.clone(),
     };

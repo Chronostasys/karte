@@ -1,0 +1,27 @@
+module main
+
+fn main() -> number {
+    let a = gcd(48, 18);
+    let b = factorial(10);
+    let c = fibonacci(15);
+    let d = abs(0 - 100);
+    let e = is_even(42);
+    let f = sqrt_floor(100);
+    let g = is_prime(17);
+    if a == 6 {
+        if b == 3628800 {
+            if c == 610 {
+                if d == 100 {
+                    if e {
+                        if f == 10 {
+                            if g {
+                                println("All std functions OK")
+                            } else { println("FAIL") }
+                        } else { println("FAIL") }
+                    } else { println("FAIL") }
+                } else { println("FAIL") }
+            } else { println("FAIL") }
+        } else { println("FAIL") }
+    } else { println("FAIL") };
+    0
+}

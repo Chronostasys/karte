@@ -605,6 +605,21 @@ impl TypeChecker {
                 .unwrap_or_else(|| Type::Var(self.fresh_type_var()));
             env.entry(binding.alias.clone()).or_insert(ty);
         }
+
+        let prelude_key = "std.prelude";
+        if context.dependency_interfaces().contains_key(prelude_key) {
+            let prelude_std_modules = ["std.core", "std.math", "std.io", "std.string"];
+            for module_key in &prelude_std_modules {
+                if let Some(iface) = context.dependency_interfaces().get(*module_key) {
+                    for (func_name, function) in &iface.functions {
+                        env.entry(func_name.clone()).or_insert_with(|| {
+                            let params = vec![Type::Unknown; function.params];
+                            Type::function(params, Type::Unknown)
+                        });
+                    }
+                }
+            }
+        }
     }
 
     fn resolve_import_binding(
