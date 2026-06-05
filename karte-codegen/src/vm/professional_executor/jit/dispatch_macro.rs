@@ -166,6 +166,9 @@ macro_rules! dispatch_compile_instruction {
             Instruction::Trim { dst, str_ptr, .. } => {
                 $self.compile_trim(dst, str_ptr, $cb, $ctx_expr)
             }
+            Instruction::CharToString { dst, value, .. } => {
+                $self.compile_char_to_string(dst, value, $cb, $ctx_expr)
+            }
             Instruction::ToString { dst, value, .. } => {
                 $self.compile_to_string(dst, value, $cb, $ctx_expr)
             }

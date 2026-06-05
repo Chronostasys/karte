@@ -41,6 +41,7 @@ impl CallsiteLiveRegisterPass {
                 | Instruction::StringContains { .. }
                 | Instruction::SplitCount { .. }
                 | Instruction::Trim { .. }
+                | Instruction::CharToString { .. }
                 | Instruction::ToString { .. }
                 | Instruction::PrintString { .. }
                 | Instruction::PrintNumber { .. }

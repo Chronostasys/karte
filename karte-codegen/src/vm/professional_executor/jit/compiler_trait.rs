@@ -266,6 +266,18 @@ pub trait JitCompiler: std::fmt::Debug {
         self.emit_runtime_call(code_builder, call, Some(dst), ctx)
     }
 
+    /// 编译 ASCII 码转字符串指令
+    fn compile_char_to_string(
+        &mut self,
+        dst: &Register,
+        value: &Register,
+        code_builder: &mut CodeBuilder,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::char_to_string(*value);
+        self.emit_runtime_call(code_builder, call, Some(dst), ctx)
+    }
+
     /// 编译值转字符串指令
     fn compile_to_string(
         &mut self,

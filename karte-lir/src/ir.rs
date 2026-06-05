@@ -599,6 +599,18 @@ pub enum Instruction {
         span: Span,
     },
 
+    /// ASCII 码转单字符字符串：dst = char_to_string(ascii_code) — 将 number 转换为单字符字符串
+    /// 调用运行时 karte_jit_runtime_char_to_string(ascii_code) -> str_ptr
+    #[ir_codec(token = "char_to_string")]
+    CharToString {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        value: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
     /// 数字转字符串：dst = to_string(value) — 将 number 转换为字符串
     /// 调用运行时 karte_jit_runtime_to_string(value) -> str_ptr
     #[ir_codec(token = "to_string")]
@@ -842,6 +854,7 @@ impl Instruction {
             | Instruction::StringContains { dst, .. }
             | Instruction::SplitCount { dst, .. }
             | Instruction::Trim { dst, .. }
+            | Instruction::CharToString { dst, .. } => Some(*dst),
             | Instruction::ToString { dst, .. } => Some(*dst),
             Instruction::LoadPair { dst1, .. } => Some(*dst1),
             Instruction::Call { result, .. } | Instruction::CallIndirect { result, .. } => *result,
@@ -885,6 +898,11 @@ impl Instruction {
             | Instruction::StringContains { dst, .. }
             | Instruction::SplitCount { dst, .. }
             | Instruction::Trim { dst, .. }
+            | Instruction::CharToString { dst, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+            }
             | Instruction::ToString { dst, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
@@ -1066,6 +1084,9 @@ impl Instruction {
             }
             Instruction::Trim { str_ptr, .. } => {
                 used.push(*str_ptr);
+            }
+            Instruction::CharToString { value, .. } => {
+                used.push(*value);
             }
             Instruction::ToString { value, .. } => {
                 used.push(*value);
@@ -1434,6 +1455,14 @@ impl Instruction {
                     *str_ptr = new_reg;
                 }
             }
+            Instruction::CharToString { dst, value, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                if *value == old_reg {
+                    *value = new_reg;
+                }
+            }
             Instruction::ToString { dst, value, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
@@ -1713,6 +1742,10 @@ impl Instruction {
             Instruction::Trim { dst, str_ptr, .. } => {
                 defined.push(*dst);
                 used.push(*str_ptr);
+            }
+            Instruction::CharToString { dst, value, .. } => {
+                defined.push(*dst);
+                used.push(*value);
             }
             Instruction::ToString { dst, value, .. } => {
                 defined.push(*dst);

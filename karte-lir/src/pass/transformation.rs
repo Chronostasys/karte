@@ -180,6 +180,7 @@ impl DeadCodeElimination {
             Instruction::StringContains { .. } => true,
             Instruction::SplitCount { .. } => true,
             Instruction::Trim { .. } => true,
+            Instruction::CharToString { .. } => true,
             Instruction::ToString { .. } => true,
             Instruction::PrintString { .. } => true,
             Instruction::PrintNumber { .. } => true,
@@ -347,6 +348,9 @@ impl DeadCodeElimination {
             Instruction::Trim { str_ptr, .. } => {
                 used.push(*str_ptr);
             }
+            Instruction::CharToString { value, .. } => {
+                used.push(*value);
+            }
             Instruction::ToString { value, .. } => {
                 used.push(*value);
             }
@@ -396,6 +400,7 @@ impl DeadCodeElimination {
             Instruction::StringContains { dst, .. } => Some(*dst),
             Instruction::SplitCount { dst, .. } => Some(*dst),
             Instruction::Trim { dst, .. } => Some(*dst),
+            Instruction::CharToString { dst, .. } => Some(*dst),
             Instruction::ToString { dst, .. } => Some(*dst),
             Instruction::LoadPair { dst1, .. } => Some(*dst1),
             Instruction::Call {

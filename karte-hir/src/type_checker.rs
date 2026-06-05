@@ -1942,6 +1942,19 @@ impl TypeChecker {
                     Type::String
                 }
             }
+            Expr::CharToString { expr, span } => {
+                let expr_type = self.infer_expr(expr, env);
+                let mut ok = true;
+                if expr_type != Type::Number && expr_type != Type::Unknown {
+                    self.add_error(TypeCheckError::TypeMismatch {
+                        expected: Type::Number,
+                        found: expr_type,
+                        span: expr.span(),
+                    });
+                    ok = false;
+                }
+                if ok { Type::String } else { Type::Unknown }
+            }
             Expr::ToString { expr, span } => {
                 let expr_type = self.infer_expr(expr, env);
                 let mut ok = true;

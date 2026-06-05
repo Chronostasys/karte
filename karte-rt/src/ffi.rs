@@ -435,6 +435,33 @@ pub extern "C" fn karte_jit_runtime_to_string(value: i64) -> u64 {
     }
 }
 
+/// ASCII 码转单字符字符串：将 ASCII 码转换为单字符字符串
+/// 字符串格式：[length: i64][bytes...]
+/// 固定 16 字节：8字节 header(length=1) + 8字节数据(1字节ASCII + 7字节零填充)
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_char_to_string(ascii_code: i64) -> u64 {
+    unsafe {
+        // 分配新字符串对象：16 字节（8字节 header + 8字节对齐数据区）
+        let new_ptr = gc_alloc(16, ObjectType::Conservative);
+        if new_ptr.is_null() {
+            return 0;
+        }
+
+        // 写入新字符串：[length: i64 = 1][ascii_byte][padding zeros]
+        let len_ptr = new_ptr as *mut i64;
+        *len_ptr = 1;
+        let data_start = new_ptr.add(8);
+        *data_start = ascii_code as u8;
+        // 清零剩余 7 字节
+        let remaining = data_start.add(1);
+        for i in 0..7 {
+            *remaining.add(i) = 0;
+        }
+
+        new_ptr as u64
+    }
+}
+
 /// 字符串内容比较：逐字节比较两个字符串的内容
 /// 字符串格式：[length: i64][bytes...]
 /// 返回 1（相等）或 0（不等）

@@ -16,6 +16,7 @@ pub enum RuntimeIntrinsic {
     StringContains,
     SplitCount,
     Trim,
+    CharToString,
     ToString,
     PrintString,
     PrintNumber,
@@ -52,7 +53,10 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::Trim => {
                 runtime::karte_jit_runtime_trim as *const ()
             }
-            RuntimeIntrinsic::ToString => {
+            RuntimeIntrinsic::CharToString => {
+                runtime::karte_jit_runtime_char_to_string as *const ()
+            }
+            RuntimeIntrinsic::CharToString | RuntimeIntrinsic::ToString => {
                 runtime::karte_jit_runtime_to_string as *const ()
             }
             RuntimeIntrinsic::PrintString => {
@@ -82,7 +86,8 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::StringContains => "karte_jit_runtime_string_contains",
             RuntimeIntrinsic::SplitCount => "karte_jit_runtime_split_count",
             RuntimeIntrinsic::Trim => "karte_jit_runtime_trim",
-            RuntimeIntrinsic::ToString => "karte_jit_runtime_to_string",
+            RuntimeIntrinsic::CharToString => "karte_jit_runtime_char_to_string",
+            RuntimeIntrinsic::CharToString | RuntimeIntrinsic::ToString => "karte_jit_runtime_to_string",
             RuntimeIntrinsic::PrintString => "karte_jit_runtime_print_string",
             RuntimeIntrinsic::PrintNumber => "karte_jit_runtime_print_number",
             RuntimeIntrinsic::PrintBool => "karte_jit_runtime_print_bool",
@@ -93,7 +98,7 @@ impl RuntimeIntrinsic {
     pub fn has_result(self) -> bool {
         matches!(
             self,
-            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual | RuntimeIntrinsic::StringCharAt | RuntimeIntrinsic::StringSubstring | RuntimeIntrinsic::StringContains | RuntimeIntrinsic::SplitCount | RuntimeIntrinsic::Trim | RuntimeIntrinsic::ToString
+            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual | RuntimeIntrinsic::StringCharAt | RuntimeIntrinsic::StringSubstring | RuntimeIntrinsic::StringContains | RuntimeIntrinsic::SplitCount | RuntimeIntrinsic::Trim | RuntimeIntrinsic::CharToString | RuntimeIntrinsic::ToString
         )
     }
 }
@@ -197,6 +202,13 @@ impl RuntimeCall {
         Self {
             intrinsic: RuntimeIntrinsic::Trim,
             args: vec![RuntimeArg::Register(str_reg)],
+        }
+    }
+
+    pub fn char_to_string(value: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::CharToString,
+            args: vec![RuntimeArg::Register(value)],
         }
     }
 

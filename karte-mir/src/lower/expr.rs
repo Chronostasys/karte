@@ -3240,6 +3240,21 @@ pub(crate) fn lower_expression(
             });
         }
 
+        // char_to_string(expr) — 将 ASCII 码(number) 转换为单字符字符串
+        // 调用运行时 __runtime_char_to_string(ascii_code) -> str_ptr
+        Expr::CharToString { expr, span } => {
+            let value = lower_expression_to_temp(ctx, expr)?;
+            ctx.add_statement(Statement::Call {
+                target: Some(destination.clone()),
+                function: Value::Function {
+                    name: "__runtime_char_to_string".to_string(),
+                    ty: None,
+                },
+                args: vec![value],
+                span: *span,
+            });
+        }
+
         // to_string(expr) — 将 number 转换为字符串
         // 调用运行时 __runtime_to_string(value) -> str_ptr
         Expr::ToString { expr, span } => {

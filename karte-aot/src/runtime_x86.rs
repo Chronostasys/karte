@@ -29,6 +29,7 @@ pub mod runtime_names {
     pub const STRING_SUBSTRING: &str = "__karte_string_substring";
     pub const STRING_CONTAINS: &str = "__karte_string_contains";
     pub const SPLIT_COUNT: &str = "__karte_split_count";
+    pub const CHAR_TO_STRING: &str = "__karte_char_to_string";
 }
 
 /// 运行时函数描述
@@ -84,6 +85,7 @@ impl X86Runtime {
         self.emit_string_equal();
         self.emit_string_concat();
         self.emit_string_char_at();
+        self.emit_char_to_string();
         self.emit_trim();
         self.emit_string_substring();
         self.emit_string_contains();
@@ -1651,6 +1653,74 @@ impl X86Runtime {
         self.code[oom_patch..oom_patch + 4].copy_from_slice(&rel.to_le_bytes());
     }
 
+    /// __karte_char_to_string(ascii_code) → 新字符串指针
+    ///
+    /// RDI(7) = ASCII 码 (number)
+    /// 返回 RAX = 新字符串指针（单字符）
+    ///
+    /// 字符串布局: [length: i64 = 1][ascii_byte][padding zeros]
+    fn emit_char_to_string(&mut self) {
+        self.fn_start(runtime_names::CHAR_TO_STRING);
+
+        // 保存 callee-saved 寄存器
+        self.push(5);  // RBP
+        self.push(3);  // RBX
+
+        // RDI(7) = ascii_code, 保存到 RBX
+        self.mov_rr(3, 7);   // RBX = RDI (ascii_code)
+
+        // 分配新字符串对象：16 字节（8字节 header + 8字节对齐数据区）
+        // RDI = 16 (size), RSI = 8 (align)
+        self.mov_ri(7, 16); // RDI = 16
+        self.mov_ri(6, 8);  // RSI = 8
+        let call_pos = self.code.len();
+        self.call_rel32(0); // 占位 CALL，稍后修补到 gc_alloc
+        self.functions.push(RuntimeFunction {
+            name: "__char_to_string_call_alloc".to_string(),
+            offset: call_pos,
+            size: 5,
+        });
+
+        // 检查 gc_alloc 返回值: RAX == 0?
+        self.test_rr(0, 0); // test RAX, RAX
+        self.jz_rel32(0);   // → OOM
+        let oom_patch = self.code.len() - 4;
+
+        // 写入 length = 1 到 [RAX + 0]
+        self.mov_ri(5, 1);  // RBP = 1
+        self.mov_mem_store(0, 0, 5); // MOV [RAX+0], RBP (length = 1)
+
+        // 写入 ascii_byte 到 [RAX + 8]
+        // RBX = ascii_code (低 8 位就是 ASCII 字节)
+        // MOV byte [RAX+8], BL = 88 58 (modrm: [RAX+disp8])
+        self.bs(&[0x88, 0x58, 8]); // MOV byte [RAX+8], BL
+
+        // 清零剩余 7 字节: [RAX+9]..[RAX+15] = 0
+        self.xor_rr(1, 1);  // XOR RCX, RCX = 0
+        for i in 9..16u8 {
+            // MOV byte [RAX+i], CL = 88 48+i (modrm: [RAX+disp8])
+            self.bs(&[0x88, 0x48, i]);
+        }
+
+        // done: 返回 RAX
+        self.pop(3);  // RBX
+        self.pop(5);  // RBP
+        self.ret();
+
+        // oom: gc_alloc 返回 0，返回 0
+        let oom_label = self.code.len();
+        self.xor_rr(0, 0); // RAX = 0
+        self.pop(3);  // RBX
+        self.pop(5);  // RBP
+        self.ret();
+
+        self.fn_end();
+
+        // 修补跳转
+        let rel = oom_label as i32 - (oom_patch as i32 + 4);
+        self.code[oom_patch..oom_patch + 4].copy_from_slice(&rel.to_le_bytes());
+    }
+
     /// __karte_string_trim(str_ptr) → 新字符串指针
     ///
     /// RDI(7) = str_ptr
@@ -2978,7 +3048,7 @@ impl X86Runtime {
             .map(|f| (f.offset, f.size, gc_collect as i64))
             .collect();
         let alloc_patches: Vec<(usize, usize, i64)> = self.functions.iter()
-            .filter(|f| f.name == "__string_concat_call_alloc" || f.name == "__string_char_at_call_alloc" || f.name == "__to_string_call_alloc" || f.name == "__trim_call_alloc" || f.name == "__string_substring_call_alloc")
+            .filter(|f| f.name == "__string_concat_call_alloc" || f.name == "__string_char_at_call_alloc" || f.name == "__to_string_call_alloc" || f.name == "__trim_call_alloc" || f.name == "__string_substring_call_alloc" || f.name == "__char_to_string_call_alloc")
             .map(|f| (f.offset, f.size, gc_alloc as i64))
             .collect();
 

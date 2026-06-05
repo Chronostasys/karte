@@ -517,6 +517,10 @@ impl DefUseAnalysis {
                 defs.push(*dst);
                 uses.push(*str_ptr);
             }
+            Instruction::CharToString { dst, value, .. } => {
+                defs.push(*dst);
+                uses.push(*value);
+            }
             Instruction::ToString { dst, value, .. } => {
                 defs.push(*dst);
                 uses.push(*value);

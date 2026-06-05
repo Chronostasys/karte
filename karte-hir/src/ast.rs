@@ -289,6 +289,11 @@ pub enum Expr {
         string: Box<Expr>,
         span: Span,
     },
+    /// ASCII 码转字符串 char_to_string(expr) — 将 number(ASCII码) 转换为单字符字符串
+    CharToString {
+        expr: Box<Expr>,
+        span: Span,
+    },
     /// 数字转字符串 to_string(expr) — 将 number 转换为字符串
     ToString {
         expr: Box<Expr>,
@@ -902,6 +907,9 @@ impl fmt::Display for Expr {
             Expr::Trim { string, .. } => {
                 write!(f, "trim({})", string)
             }
+            Expr::CharToString { expr, .. } => {
+                write!(f, "char_to_string({})", expr)
+            }
             Expr::ToString { expr, .. } => {
                 write!(f, "to_string({})", expr)
             }
@@ -1015,6 +1023,7 @@ impl Expr {
             Expr::StrContains { span, .. } => *span,
             Expr::SplitCount { span, .. } => *span,
             Expr::Trim { span, .. } => *span,
+            Expr::CharToString { span, .. } => *span,
             Expr::ToString { span, .. } => *span,
             Expr::TupleLiteral { span, .. } => *span,
             Expr::TupleAccess { span, .. } => *span,

@@ -865,6 +865,24 @@ impl<'a> Parser<'a> {
                         });
                     }
                 }
+                if name == "char_to_string" {
+                    let next_is_lparen = self
+                        .tokens
+                        .get(self.position + 1)
+                        .map_or(false, |t| matches!(t.token, Token::LeftParen));
+                    if next_is_lparen {
+                        let start_span = token.span;
+                        self.advance(); // consume 'char_to_string'
+                        self.advance(); // consume '('
+                        let expr = self.parse_expression()?;
+                        self.expect_token(Token::RightParen)?;
+                        let span = Span::new(start_span.start, self.current_span().end);
+                        return Ok(Expr::CharToString {
+                            expr: Box::new(expr),
+                            span,
+                        });
+                    }
+                }
                 if name == "trim" {
                     let next_is_lparen = self
                         .tokens
