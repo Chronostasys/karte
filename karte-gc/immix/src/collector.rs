@@ -234,10 +234,9 @@ impl Collector {
         {
             self.thread_local_allocator().check_block_cursor();
         }
-        // Debug 模式下不每次分配都触发 GC（会导致严重的性能问题）
-        // 依赖 collect_if_needed 自动 GC 和 OOM emergency GC 来管理内存
+        // Debug 模式下每次分配都触发 GC，尽可能早暴露 GC bug
         if gc_is_auto_collect_enabled() {
-            self.collect_if_needed_fast_unwind(sp);
+            self.collect_fast_unwind(sp);
         }
         let ptr = self.alloc_no_collect(size, obj_type);
         // crate::EP.fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
