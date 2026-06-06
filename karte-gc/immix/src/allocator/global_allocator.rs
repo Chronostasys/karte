@@ -142,9 +142,10 @@ impl GlobalAllocator {
     }
     /// 从big object mmap中分配一个大对象，大小为size
     pub fn get_big_obj(&mut self, size: usize) -> *mut BigObj {
-        // eprintln!("get big obj: {}", size);
         let obj = self.big_obj_allocator.get_chunk(size);
-        self.big_objs.write().push(obj);
+        if !obj.is_null() {
+            self.big_objs.write().push(obj);
+        }
         obj
     }
     pub fn big_obj_from_ptr(&self, ptr: *mut u8) -> Option<*mut BigObj> {
@@ -180,23 +181,18 @@ impl GlobalAllocator {
     }
 
     pub fn sweep_big_objs(&mut self) {
-        // eprintln!("sweep big objs");
         let _lock = self.lock.lock();
         let mut objs = self.big_objs.write();
         let mut big_objs = Vec::new();
         for obj in objs.iter() {
-            // eprintln!("sweep big obj: {:p} {} {}", *obj, unsafe { (*(*obj)).size }, unsafe { (*(*obj)).header.get_marked()});
             if unsafe { (*(*obj)).header.get_marked() } {
+                // live object: clear mark bit for next GC cycle
+                unsafe { (*(*obj)).header &= !0b10; }
                 big_objs.push(*obj);
             } else {
-                unsafe {
-                    (**obj).header = 0;
-                }
+                // dead object: clear header and return to allocator
+                unsafe { (**obj).header = 0; }
                 self.big_obj_allocator.return_chunk(*obj);
-            }
-            // big_objs.push(*obj);
-            unsafe {
-                (*(*obj)).header &= !0b10;
             }
         }
         *objs = big_objs;

@@ -355,6 +355,10 @@ impl ThreadLocalAllocator {
     /// * `*mut u8` - object pointer
     pub fn big_obj_alloc(&mut self, size: usize, obj_type: ObjectType) -> *mut u8 {
         let obj = unsafe { (*self.global_allocator).get_big_obj(size) };
+        if obj.is_null() {
+            // big obj heap 已满，返回 null 让上层触发 emergency GC
+            return std::ptr::null_mut();
+        }
         unsafe { (*obj).header.set_obj_type(obj_type) };
         unsafe { (*obj).header.set_used(true) };
         unsafe { (obj as *mut u8).add(16) }

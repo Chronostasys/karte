@@ -1,218 +1,219 @@
 module main
 
+fn emit(s: string) -> number { print(s + "\n"); 0 }
+
 fn main() -> number {
     let src = "int main() { int i; i = 0; int s; s = 0; while (i < 10) { s = s + i; i = i + 1; }; return s; }";
     let tk = tokenize(src);
     let tn = count_tk(tk);
-    let hdr = ".globl _start\n_start:\n  call main\n  mov %rax, %rdi\n  mov $60, %rax\n  syscall\n";
+    emit(".globl _start");
+    emit("_start:");
+    emit("  call main");
+    emit("  mov %rax, %rdi");
+    emit("  mov $60, %rax");
+    emit("  syscall");
     let pos = 0;
-    let asm = hdr;
-    let lc = 0;
     let vars = "";
     let vc = 0;
     let name = get_val(tk, pos, tn);
-    asm = asm + name + ":\n  push %rbp\n  mov %rsp, %rbp\n  sub $208, %rsp\n";
+    emit(name + ":");
+    emit("  push %rbp");
+    emit("  mov %rsp, %rbp");
+    emit("  sub $208, %rsp");
     pos = skip_to(tk, pos, tn, 4) + 1;
-    let done = 0;
-    while done == 0 {
-        let k = tk_kind(tk, pos, tn);
-        if k == 8 { done = 1; 0 } else {
-        if k == 5 { pos = pos + 1; 0 } else {
-        if k == 1 {
-            let nm = get_val(tk, pos, tn);
-            pos = pos + 3;
-            vars = vars + nm + ":" + to_string(vc) + ",";
-            vc = vc + 1;
-            0
-        } else {
-        if k == 20 {
-            pos = pos + 1;
-            let r = expr(pos, asm, lc, tk, tn, vars);
-            pos = r.0 + 1;
-            asm = r.1 + "  pop %rax\n  leave\n  ret\n";
-            lc = r.2;
-            0
-        } else {
-        if k == 21 {
-            let r = do_while(pos, asm, lc, tk, tn, vars);
-            pos = r.0;
-            asm = r.1;
-            lc = r.2;
-            0
-        } else {
-            let nm = get_val(tk, pos, tn);
-            let off = var_off(vars, nm);
-            pos = pos + 2;
-            let r = expr(pos, asm, lc, tk, tn, vars);
-            pos = r.0 + 1;
-            asm = r.1 + "  pop %rax\n  mov %rax, " + to_string(0 - (off + 1) * 8) + "(%rbp)\n";
-            lc = r.2;
-            0
-        }}}}}
-    };
-    pos = pos + 1;
-    asm = asm + "  leave\n  ret\n";
-    print(asm);
-    0
-}
-
-fn do_while(pos: number, asm: string, lc: number, tk: string, tn: number, vars: string) -> (number, string, number) {
-    let sl = lc;
-    let endl = sl + 1;
-    asm = asm + ".L" + to_string(sl) + ":\n";
-    lc = endl;
-    let r = expr(pos + 2, asm, lc, tk, tn, vars);
-    asm = r.1 + "  pop %rax\n  cmp $0, %rax\n  je .L" + to_string(endl) + "\n";
-    let b = do_body(r.0 + 1, asm, r.2, tk, tn, vars);
-    (b.0 + 1, b.1 + "  jmp .L" + to_string(sl) + "\n.L" + to_string(endl) + ":\n", b.2)
-}
-
-fn do_body(pos: number, asm: string, lc: number, tk: string, tn: number, vars: string) -> (number, string, number) {
-    let p = skip_to(tk, pos, tn, 4) + 1;
-    let a = asm;
-    let l = lc;
+    let p = pos;
     let v = vars;
+    let vc2 = vc;
     let done = 0;
-    while done == 0 {
+    while done == 0 && p < tn {
         let k = tk_kind(tk, p, tn);
-        if k == 8 { done = 1; 0 } else {
-        if k == 5 { p = p + 1; 0 } else {
+        if k == 8 { done = 1 } else {
+        if k == 5 { p = p + 1 } else {
         if k == 1 {
-            let nm = get_val(tk, p, tn);
+            let nm = get_val(tk, p + 1, tn);
             p = p + 3;
-            v = v + nm + ":" + to_string(vc_from(v)) + ",";
-            0
+            v = v + nm + ":" + to_string(vc2) + ",";
+            vc2 = vc2 + 1
         } else {
         if k == 20 {
             p = p + 1;
-            let r = expr(p, a, l, tk, tn, v);
-            p = r.0 + 1;
-            a = r.1 + "  pop %rax\n  leave\n  ret\n";
-            l = r.2;
-            done = 1;
-            0
+            let ep = expr(p, tk, tn, v);
+            emit("  pop %rax");
+            p = ep + 1;
+            done = 1
         } else {
         if k == 21 {
-            let r = do_while(p, a, l, tk, tn, v);
+            let r = do_while(p, tk, tn, v, vc2);
             p = r.0;
-            a = r.1;
-            l = r.2;
-            0
+            vc2 = r.1
         } else {
             let nm = get_val(tk, p, tn);
             let off = var_off(v, nm);
             p = p + 2;
-            let r = expr(p, a, l, tk, tn, v);
-            p = r.0 + 1;
-            a = r.1 + "  pop %rax\n  mov %rax, " + to_string(0 - (off + 1) * 8) + "(%rbp)\n";
-            l = r.2;
-            0
+            let ep = expr(p, tk, tn, v);
+            emit("  pop %rax");
+            emit("  mov %rax, " + to_string(0 - (off + 1) * 8) + "(%rbp)");
+            p = ep + 1
         }}}}}
     };
-    (p, a, l)
+    emit("  leave");
+    emit("  ret");
+    0
 }
 
-fn vc_from(vars: string) -> number {
-    let n = 0;
-    let i = 0;
-    while i < len(vars) {
-        if str_index(vars, i) == 58 { n = n + 1; 0 } else { 0 };
-        i = i + 1
+fn do_while(pos: number, tk: string, tn: number, vars: string, lc: number) -> (number, number) {
+    let sl = lc;
+    let endl = sl + 1;
+    emit(".L" + to_string(sl) + ":");
+    let ep = expr(pos + 2, tk, tn, vars);
+    emit("  pop %rax");
+    emit("  cmp $0, %rax");
+    emit("  je .L" + to_string(endl));
+    let b = do_block(ep + 1, tk, tn, vars, endl + 1);
+    emit("  jmp .L" + to_string(sl));
+    emit(".L" + to_string(endl) + ":");
+    (b.0 + 1, b.1)
+}
+
+fn do_block(pos: number, tk: string, tn: number, vars: string, lc: number) -> (number, number) {
+    let p = skip_to(tk, pos, tn, 4) + 1;
+    let v = vars;
+    let vc2 = lc;
+    let done = 0;
+    while done == 0 && p < tn {
+        let k = tk_kind(tk, p, tn);
+        if k == 8 { done = 1 } else {
+        if k == 5 { p = p + 1 } else {
+        if k == 1 {
+            let nm = get_val(tk, p + 1, tn);
+            p = p + 3;
+            v = v + nm + ":" + to_string(vc2) + ",";
+            vc2 = vc2 + 1
+        } else {
+        if k == 20 {
+            p = p + 1;
+            let ep = expr(p, tk, tn, v);
+            emit("  pop %rax");
+            p = ep + 1;
+            done = 1
+        } else {
+        if k == 21 {
+            let r = do_while(p, tk, tn, v, vc2);
+            p = r.0;
+            vc2 = r.1
+        } else {
+            let nm = get_val(tk, p, tn);
+            let off = var_off(v, nm);
+            p = p + 2;
+            let ep = expr(p, tk, tn, v);
+            emit("  pop %rax");
+            emit("  mov %rax, " + to_string(0 - (off + 1) * 8) + "(%rbp)");
+            p = ep + 1
+        }}}}}
     };
-    n
+    (p, vc2)
 }
 
-fn expr(pos: number, asm: string, lc: number, tk: string, tn: number, vars: string) -> (number, string, number) { p_add(pos, asm, lc, tk, tn, vars) }
+fn expr(pos: number, tk: string, tn: number, vars: string) -> number { p_add(pos, tk, tn, vars) }
 
-fn p_add(pos: number, asm: string, lc: number, tk: string, tn: number, vars: string) -> (number, string, number) {
-    let r = p_mul(pos, asm, lc, tk, tn, vars);
-    let p = r.0;
-    let a = r.1;
-    let l = r.2;
+fn p_add(pos: number, tk: string, tn: number, vars: string) -> number {
+    let p = p_mul(pos, tk, tn, vars);
     let running = 1;
     while running == 1 {
-        if p >= tn { running = 0; 0 } else {
-            let k = tk_kind(tk, p, tn);
-            if k == 15 {
-                let r2 = p_mul(p + 1, a, l, tk, tn, vars);
-                a = r2.1 + "  pop %rcx\n  pop %rax\n  add %rcx, %rax\n  push %rax\n";
-                p = r2.0;
-                l = r2.2;
-                0
-            } else {
-            if k == 16 {
-                let r2 = p_mul(p + 1, a, l, tk, tn, vars);
-                a = r2.1 + "  pop %rcx\n  pop %rax\n  sub %rcx, %rax\n  push %rax\n";
-                p = r2.0;
-                l = r2.2;
-                0
-            } else { running = 0; 0 }}
-        }
+        if p >= tn { running = 0 } else {
+        let k = tk_kind(tk, p, tn);
+        if k == 15 {
+            let p2 = p_mul(p + 1, tk, tn, vars);
+            emit("  pop %rcx");
+            emit("  pop %rax");
+            emit("  add %rcx, %rax");
+            emit("  push %rax");
+            p = p2
+        } else {
+        if k == 16 {
+            let p2 = p_mul(p + 1, tk, tn, vars);
+            emit("  pop %rcx");
+            emit("  pop %rax");
+            emit("  sub %rcx, %rax");
+            emit("  push %rax");
+            p = p2
+        } else { running = 0 }}}
     };
-    (p, a, l)
+    p
 }
 
-fn p_mul(pos: number, asm: string, lc: number, tk: string, tn: number, vars: string) -> (number, string, number) {
-    let r = p_cmp(pos, asm, lc, tk, tn, vars);
-    let p = r.0;
-    let a = r.1;
-    let l = r.2;
+fn p_mul(pos: number, tk: string, tn: number, vars: string) -> number {
+    let p = p_cmp(pos, tk, tn, vars);
     let running = 1;
     while running == 1 {
-        if p >= tn { running = 0; 0 } else {
-            let k = tk_kind(tk, p, tn);
-            if k == 17 {
-                let r2 = p_cmp(p + 1, a, l, tk, tn, vars);
-                a = r2.1 + "  pop %rcx\n  pop %rax\n  imul %rcx, %rax\n  push %rax\n";
-                p = r2.0;
-                l = r2.2;
-                0
-            } else { running = 0; 0 }
+        if p >= tn { running = 0 } else {
+        let k = tk_kind(tk, p, tn);
+        if k == 17 {
+            let p2 = p_cmp(p + 1, tk, tn, vars);
+            emit("  pop %rcx");
+            emit("  pop %rax");
+            emit("  imul %rcx, %rax");
+            emit("  push %rax");
+            p = p2
+        } else { running = 0 }
         }
     };
-    (p, a, l)
+    p
 }
 
-fn p_cmp(pos: number, asm: string, lc: number, tk: string, tn: number, vars: string) -> (number, string, number) {
-    let r = p_primary(pos, asm, lc, tk, tn, vars);
-    if r.0 >= tn { r } else {
-        let k = tk_kind(tk, r.0, tn);
-        if k == 11 { cmp_op(r, tk, tn, vars, "setl") } else { r }
-    }
+fn p_cmp(pos: number, tk: string, tn: number, vars: string) -> number {
+    let p = p_primary(pos, tk, tn, vars);
+    if p >= tn { p } else {
+    let k = tk_kind(tk, p, tn);
+    if k == 11 { cmp_op(p, tk, tn, vars, "setl") } else {
+    if k == 13 { cmp_op(p, tk, tn, vars, "setg") } else {
+    if k == 23 {
+        let p2 = p_primary(p + 1, tk, tn, vars);
+        emit("  pop %rcx");
+        emit("  pop %rax");
+        emit("  cmp %rcx, %rax");
+        emit("  sete %al");
+        emit("  movzx %al, %rax");
+        emit("  push %rax");
+        p2
+    } else { p }}}}
 }
 
-fn cmp_op(r: (number, string, number), tk: string, tn: number, vars: string, op: string) -> (number, string, number) {
-    let r2 = p_primary(r.0 + 1, r.1, r.2, tk, tn, vars);
-    (r2.0, r2.1 + "  pop %rcx\n  pop %rax\n  cmp %rcx, %rax\n  " + op + " %al\n  movzx %al, %rax\n  push %rax\n", r2.2)
+fn cmp_op(pos: number, tk: string, tn: number, vars: string, op: string) -> number {
+    let p2 = p_primary(pos + 1, tk, tn, vars);
+    emit("  pop %rcx");
+    emit("  pop %rax");
+    emit("  cmp %rcx, %rax");
+    emit("  " + op + " %al");
+    emit("  movzx %al, %rax");
+    emit("  push %rax");
+    p2
 }
 
-fn p_primary(pos: number, asm: string, lc: number, tk: string, tn: number, vars: string) -> (number, string, number) {
+fn p_primary(pos: number, tk: string, tn: number, vars: string) -> number {
     let k = tk_kind(tk, pos, tn);
     if k == 2 {
         let v = tk_num(tk, pos, tn);
-        (pos + 1, asm + "  push $" + to_string(v) + "\n", lc)
+        emit("  push $" + to_string(v));
+        pos + 1
     } else {
     if k == 3 {
         let nm = get_val(tk, pos, tn);
         let off = var_off(vars, nm);
-        (pos + 1, asm + "  mov " + to_string(0 - (off + 1) * 8) + "(%rbp), %rax\n  push %rax\n", lc)
+        emit("  mov " + to_string(0 - (off + 1) * 8) + "(%rbp), %rax");
+        emit("  push %rax");
+        pos + 1
     } else {
     if k == 6 {
-        let r = expr(pos + 1, asm, lc, tk, tn, vars);
-        (r.0 + 1, r.1, r.2)
+        let p = expr(pos + 1, tk, tn, vars);
+        p + 1
     } else {
-        (pos + 1, asm + "  push $0\n", lc)
+        emit("  push $0");
+        pos + 1
     }}}
 }
 
-fn skip_to(tk: string, pos: number, tn: number, target: number) -> number {
-    let i = pos;
-    while i < tn {
-        if tk_kind(tk, i, tn) == target { break } else { 0 };
-        i = i + 1
-    };
-    i
-}
+fn skip_to(tk: string, pos: number, tn: number, target: number) -> number { let i = pos; while i < tn { if tk_kind(tk, i, tn) == target { break } else { 0 }; i = i + 1 }; i }
 
 fn tokenize(src: string) -> string {
     let n = len(src);
@@ -221,35 +222,21 @@ fn tokenize(src: string) -> string {
     while i < n {
         let c = str_index(src, i);
         let adv = 0;
-        if c == 32 || c == 10 || c == 13 || c == 9 { i = i + 1; adv = 1; 0 } else { 0 };
+        if c == 32 || c == 10 || c == 13 || c == 9 { i = i + 1; adv = 1 } else { 0 };
         if adv == 0 {
             if is_d(c) == 1 {
                 let v = 0;
-                let run = 1;
-                while run == 1 {
-                    if i >= n { run = 0; 0 } else {
-                        let c2 = str_index(src, i);
-                        if is_d(c2) == 1 { v = v * 10 + (c2 - 48); i = i + 1; 0 } else { run = 0; 0 }
-                    }
-                };
-                out = out + "2:0:" + to_string(v) + ":" + to_string(v) + "|";
-                adv = 1;
-                0
+                while i < n && is_d(str_index(src, i)) == 1 { v = v * 10 + (str_index(src, i) - 48); i = i + 1 };
+                out = out + "2:0:0:" + to_string(v) + "|";
+                adv = 1
             } else { 0 }
         };
         if adv == 0 {
             if is_a(c) == 1 {
                 let w = "";
-                let run = 1;
-                while run == 1 {
-                    if i >= n { run = 0; 0 } else {
-                        let c2 = str_index(src, i);
-                        if is_an(c2) == 1 { w = w + char_to_string(c2); i = i + 1; 0 } else { run = 0; 0 }
-                    }
-                };
+                while i < n && is_an(str_index(src, i)) == 1 { w = w + char_to_string(str_index(src, i)); i = i + 1 };
                 out = out + to_string(keyword(w)) + ":0:0:" + w + "|";
-                adv = 1;
-                0
+                adv = 1
             } else { 0 }
         };
         if adv == 0 {
@@ -265,7 +252,7 @@ fn tokenize(src: string) -> string {
             if c == 45 { out = out + "16:0:0:-|"; i = i + 1 } else {
             if c == 42 { out = out + "17:0:0:*|"; i = i + 1 } else {
             if c == 47 { out = out + "18:0:0:/|"; i = i + 1 } else {
-                i = i + 1; 0
+                i = i + 1
             }}}}}}}}}}}}
         };
         0
@@ -279,9 +266,9 @@ fn is_an(c: number) -> number { let a = is_a(c); if a == 1 { 1 } else { is_d(c) 
 fn keyword(w: string) -> number { if eq(w, "int") { 1 } else { if eq(w, "return") { 20 } else { if eq(w, "while") { 21 } else { if eq(w, "if") { 19 } else { if eq(w, "else") { 22 } else { 3 } } } } } }
 fn eq(a: string, b: string) -> bool { if len(a) != len(b) { false } else { let i = 0; let r = true; while i < len(a) { if str_index(a, i) != str_index(b, i) { r = false; 0 } else { 0 }; i = i + 1 }; r } }
 fn count_tk(tk: string) -> number { let n = 0; let i = 0; while i < len(tk) { if str_index(tk, i) == 124 { n = n + 1; 0 } else { 0 }; i = i + 1 }; n }
-fn tk_kind(tk: string, i: number, tn: number) -> number { if i >= tn { 0 } else { pn(tk, find_c(tk, nth_pipe(tk, i) + 1), find_c(tk, find_c(tk, nth_pipe(tk, i) + 1) + 1)) } }
+fn tk_kind(tk: string, i: number, tn: number) -> number { if i >= tn { 0 } else { let p = nth_pipe(tk, i); pn(tk, p + 1, find_c(tk, p + 1)) } }
 fn get_val(tk: string, i: number, tn: number) -> string { if i >= tn { "" } else { let p = nth_pipe(tk, i); let c1 = find_c(tk, p + 1); let c2 = find_c(tk, c1 + 1); let c3 = find_c(tk, c2 + 1); sub_str(tk, c3 + 1, find_p(tk, c3 + 1)) } }
-fn tk_num(tk: string, i: number, tn: number) -> number { if i >= tn { 0 } else { let p = nth_pipe(tk, i); let c1 = find_c(tk, p + 1); let c2 = find_c(tk, c1 + 1); pn(tk, c2 + 1, find_c(tk, c2 + 1)) } }
+fn tk_num(tk: string, i: number, tn: number) -> number { if i >= tn { 0 } else { let p = nth_pipe(tk, i); let c1 = find_c(tk, p + 1); let c2 = find_c(tk, c1 + 1); let c3 = find_c(tk, c2 + 1); pn(tk, c3 + 1, find_p(tk, c3 + 1)) } }
 fn nth_pipe(s: string, n: number) -> number { let i = 0; let count = 0; while i < len(s) { if str_index(s, i) == 124 { if count == n { break } else { count = count + 1; 0 } } else { 0 }; i = i + 1 }; i }
 fn find_c(s: string, start: number) -> number { let i = start; while i < len(s) { if str_index(s, i) == 58 { break } else { 0 }; i = i + 1 }; i }
 fn find_p(s: string, start: number) -> number { let i = start; while i < len(s) { if str_index(s, i) == 124 { break } else { 0 }; i = i + 1 }; i }

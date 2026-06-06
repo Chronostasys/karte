@@ -24,7 +24,6 @@ impl BigObjAllocator {
             heap_end: mmap.end(),
             mmap,
             unused_chunks: Vec::new(),
-            // used_objs: Vec::new(),
             lock: ReentrantMutex::new(()),
         }
     }
@@ -40,14 +39,14 @@ impl BigObjAllocator {
     }
 
     pub fn alloc_chunk(&self, size: usize) -> Option<*mut BigObj> {
-        // let size = round_n_up!(size, ALIGN);
         let _lock = self.lock.lock();
         let current = self.current;
         let heap_end = self.heap_end;
         let next = unsafe { current.add(size) };
 
         if next >= heap_end {
-            panic!("big object mmap out of memory");
+            // heap 已满，返回 None 让上层触发 emergency GC
+            return None;
         }
         unsafe {
             let end = current.add(size);
@@ -55,14 +54,12 @@ impl BigObjAllocator {
             let dest = *self.commited_to.borrow();
 
             if end > dest && !self.mmap.commit(dest, size - offset) {
-                panic!("big object mmap out of memory");
+                return None;
             }
             self.commited_to.replace(end.add(end.align_offset(ALIGN)));
         }
 
-        // self.current = next;
         let obj = BigObj::new(current, size);
-
         Some(obj)
     }
 
@@ -76,63 +73,64 @@ impl BigObjAllocator {
                 std::cmp::Ordering::Less => {}
                 std::cmp::Ordering::Equal => {
                     self.unused_chunks.remove(i);
-                    // self.mmap.commit(unused_obj as *mut u8, size);
-                    // println!(
-                    //     "get_chunk: {:p}[reused {}/{}]",
-                    //     unused_obj, size, unused_size
-                    // );
                     return unused_obj;
                 }
                 std::cmp::Ordering::Greater => {
                     let ptr = unsafe { (unused_obj as *mut u8).add(unused_size - size) };
+                    debug_assert!(ptr as usize % BIG_OBJ_ALIGN == 0);
                     let new_obj = BigObj::new(ptr, size);
                     unsafe {
                         (*unused_obj).size -= size;
                     }
-                    // self.mmap.commit(new_obj as *mut BigObj as *mut u8, size);
-                    // println!("get_chunk: {:p}[reused {}/{}]", new_obj, size, unused_size);
                     return new_obj;
                 }
             };
         }
 
-        let chunk = self.alloc_chunk(size).unwrap();
-        unsafe { self.current = self.current.add(size) };
-        log::trace!("get_chunk: {:p}[new {}]", chunk, size);
-        chunk
+        // 没有合适的可复用 chunk，从 bump allocator 分配新的
+        match self.alloc_chunk(size) {
+            Some(chunk) => {
+                unsafe { self.current = self.current.add(size) };
+                log::trace!("get_chunk: {:p}[new {}]", chunk, size);
+                chunk
+            }
+            None => {
+                // 返回空指针，让上层触发 emergency GC
+                std::ptr::null_mut()
+            }
+        }
     }
 
     pub fn return_chunk(&mut self, obj: *mut BigObj) {
         let _lock = self.lock.lock();
         let size = unsafe { (*obj).size };
-        // eprintln!("ret_chunk: {:p}[size {}]", obj, size);
         log::trace!("ret_chunk: {:p}[size {}]", obj, size);
         let mut merged = false;
-        // 合并相邻free_obj
-        for i in 0..self.unused_chunks.len() {
+        // 合并相邻 free_obj
+        let mut i = 0;
+        while i < self.unused_chunks.len() {
             let unused_obj = self.unused_chunks[i];
             let unused_obj_ptr = unused_obj as *mut u8;
+            let unused_size = unsafe { (*unused_obj).size };
             if unsafe { unused_obj_ptr.sub(size) } == obj as *mut u8 {
                 // |    return_obj    |  unused_obj  |
-                // after
-                // |    return_obj                   |
                 unsafe {
-                    (*obj).size += (*unused_obj).size;
+                    (*obj).size += unused_size;
                 }
                 self.unused_chunks.remove(i);
                 self.unused_chunks.push(obj);
-                // eprintln!("merge_chunks: {:p} {:p}", obj, unused_obj);
                 merged = true;
-            } else if unsafe { unused_obj_ptr.add(size) } == obj as *mut u8 {
+                break;
+            } else if unsafe { unused_obj_ptr.add(unused_size) } == obj as *mut u8 {
                 // |  unused_obj  |    return_obj    |
-                // after
-                // |  unused_obj                     |
+                // 修复：使用 unused_obj 的 size 来判断邻接
                 unsafe {
                     (*unused_obj).size += size;
                 }
-                // eprintln!("merge_chunks: {:p} {:p}", unused_obj, obj);
                 merged = true;
+                break;
             }
+            i += 1;
         }
         if !merged {
             self.unused_chunks.push(obj);

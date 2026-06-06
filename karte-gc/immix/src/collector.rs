@@ -234,11 +234,8 @@ impl Collector {
         {
             self.thread_local_allocator().check_block_cursor();
         }
-        // let start = Instant::now();
-        #[cfg(debug_assertions)]
-        if !GC_SWEEPING.load(Ordering::Acquire) {
-            self.collect_fast_unwind(sp);
-        }
+        // Debug 模式下不每次分配都触发 GC（会导致严重的性能问题）
+        // 依赖 collect_if_needed 自动 GC 和 OOM emergency GC 来管理内存
         if gc_is_auto_collect_enabled() {
             self.collect_if_needed_fast_unwind(sp);
         }
@@ -483,12 +480,15 @@ impl Collector {
                 let big_obj = self.thread_local_allocator().big_obj_from_ptr(ptr);
                 if let Some(_big_obj) = big_obj {
                     // scan big obj from start to end and mark all pointers
-                    // | head(16byte) | data |
-                    // |<------- size ------>|
-                    // size % 128 == 0 always, so just scan it.
-                    let mut start = (_big_obj as *mut u8).add(16);
-                    let end = start.add((*_big_obj).size);
-                    while start < end {
+                    // | head(16byte) | data          |
+                    // |<------- size --------------->|
+                    // 数据区域从 offset 16 开始，长度为 size - 16
+                    // 修复：end 应该是 obj + size，而不是 start + size（后者会溢出 16 字节）
+                    let obj_start = _big_obj as *mut u8;
+                    let data_start = obj_start.add(16);
+                    let data_end = obj_start.add((*_big_obj).size);
+                    let mut start = data_start;
+                    while start < data_end {
                         self.queue
                             .push(SendableMarkJob::Object((start, ObjectType::Pointer)));
                         // self.mark_ptr(start);
