@@ -347,6 +347,30 @@ mod tests {
 mod runner;
 
 fn main() {
+    // 🔧 修复栈溢出：编译器处理大型源文件时递归深度可能很大（如类型检查、IR 遍历），
+    // 默认 8MB 栈不够。使用 16MB 栈大小的线程来运行实际编译逻辑。
+    let builder = std::thread::Builder::new()
+        .name("karte-compiler".to_string())
+        .stack_size(16 * 1024 * 1024); // 16MB
+
+    let handler = builder.spawn(|| -> i32 {
+        real_main()
+    }).expect("Failed to spawn compiler thread");
+
+    let exit_code = handler.join().expect("Compiler thread panicked");
+    if exit_code != 0 {
+        std::process::exit(exit_code);
+    }
+}
+
+fn real_main() -> i32 {
+    // 🔧 修复栈溢出：rayon 线程池用于并行编译模块，默认栈太小（8MB）。
+    // 设置为 16MB 以支持编译器处理大型递归 AST/IR 数据结构。
+    rayon::ThreadPoolBuilder::new()
+        .stack_size(16 * 1024 * 1024)
+        .build_global()
+        .ok(); // 如果已初始化则忽略错误
+
     env_logger::init();
     let cli = Cli::parse();
 
@@ -547,4 +571,5 @@ fn main() {
             }
         }
     }
+    0
 }
