@@ -370,6 +370,16 @@ let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering
 ## Notable Recent Changes
 
 Recent work includes:
+- **Language Polish Round 3 (2026-06-06)** — Major language features:
+  - **Result<T,E> 内置类型**: Ok/Err 构造器和模式匹配，与 Option<T> 同级的错误处理类型
+  - **用户自定义泛型 struct/enum**: `struct Pair<T> { first: T, second: T }`，`enum Maybe<T> { Just(T), Nothing }`，支持多类型参数
+  - **泛型类型推断**: 从构造器参数/字段值自动推断泛型参数，包含类型变量时延迟实例化
+  - **方法调用语法**: `obj.method(args)` 自动解糖为 `method(obj, args)`，支持内置函数 `len()`, `abs()`, `min()`, `max()`
+  - **函数类型标注**: `fn(number) -> number` 可作为参数类型标注，Parser 新增 `fn` 类型语法解析
+  - **std.result 模块**: is_ok, is_err, unwrap, unwrap_or 辅助函数
+  - **std.string.trim**: 纯 Karte 实现的 trim 函数
+  - **Type::Generic 变体**: 在 Parser 和类型检查器间传递泛型引用，支持延迟实例化
+  - **structural_eq 改进**: Type::Var 之间兼容，支持泛型类型统一化
 - **Language Polish Round 2 (2026-06-06)** — Multiple improvements:
   - **LIR pipeline 性能优化**: 82s→11.7s (7x提速)
   - **字符串有序比较**: `<`, `>`, `<=`, `>=` 支持 string 类型
