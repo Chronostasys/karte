@@ -400,7 +400,7 @@ Recent work includes:
   - **Dev profile `opt-level = 1`**: `[profile.dev]` 设 `opt-level = 1`, `overflow-checks = false`，编译性能从 8s→1.1s。**注意：边界检查已关闭**，调试奇怪问题时可临时恢复 `opt-level = 0`
   - **3 个内存原语 + `unsafe_cast`**: `gc_alloc`, `mem_load64`, `mem_store64`（Runtime）+ `unsafe_cast`（编译期 no-op）+ `str_equal`/`str_compare`（内置字符串比较）
   - **纯 Karte 数据结构**: `std/array.karte` 和 `std/hashmap.karte` 完全用 Karte 语言实现，不依赖 Rust Runtime 高级操作
-  - **test_cc**: 用 Karte 编写的 C 子集编译器，当前支持变量声明、赋值、while/if/else、基本算术表达式（+,-,*,<,>,==），输出 x86_64 汇编
+  - **test_cc**: 用 Karte 编写的 C 子集编译器，支持：函数定义/调用（含递归）、数组声明/访问/赋值、for/while/if-else、注释(//和/* */）、逻辑运算符(&&/||/!)、比较运算符(<>/<=/>=/==/!=)、算术运算符(+-*/%)、一元运算符(-/!)、复合赋值(+=/-=/*=/等），输出 x86_64 汇编。验证通过 fib(10)=55（递归）、fib 数组版、sum(1..10)=55
 - **Struct 值传递 + Phi 节点修复 (2026-06-06)** — 编译器核心 bug 修复：
   - **Struct 值传递语义**: 函数参数深拷贝（`lower_to_rvalue` 中 `Alloc` + `Load64`/`Store64`），防止函数内部修改影响调用者
   - **MIR `start_function` 传播参数类型**: 新增 `param_types` 参数，函数参数绑定时设置 `ty` 字段
