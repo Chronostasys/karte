@@ -559,10 +559,15 @@ impl TypeChecker {
         // 首先收集所有结构体定义
         self.collect_struct_definitions(expr);
 
-        // 🔧 修复：在收集函数定义之前，先收集所有枚举（TypeDef）定义
+        // 在收集函数定义之前，先收集所有枚举（TypeDef）定义
         // 否则函数签名中的枚举类型引用会被 resolve_struct_field_from_parsed
         // 解析为空的 Struct 骨架，导致类型检查器看到空枚举
         self.collect_enum_definitions(expr);
+
+        // 收集泛型类型定义模板（泛型 struct/enum）
+        // 在函数签名收集之前完成，这样 resolve_struct_field_from_parsed
+        // 能找到泛型类型并用 fresh type var 正确实例化
+        self.collect_generic_type_defs(expr);
 
         let mut env = TypeEnvironment::new();
 
@@ -913,19 +918,17 @@ impl TypeChecker {
         // 第二轮：将变体 data_types 中的骨架占位符替换为实际类型
         // 处理递归枚举（如 enum List { Nil, Cons(number, List) }）和互引用枚举
         for (name, variants) in &enum_defs {
-            let resolved_variants: Vec<crate::types::SumVariant> = variants
-                .iter()
-                .map(|(variant_name, data_types)| {
-                    let resolved_data_types: Vec<Type> = data_types
-                        .iter()
-                        .map(|dt| self.resolve_struct_field_from_parsed(dt))
-                        .collect();
-                    crate::types::SumVariant {
-                        name: variant_name.clone(),
-                        data_types: resolved_data_types,
-                    }
-                })
-                .collect();
+            let mut resolved_variants = Vec::new();
+            for (variant_name, data_types) in variants {
+                let mut resolved_data_types = Vec::new();
+                for dt in data_types {
+                    resolved_data_types.push(self.resolve_struct_field_from_parsed(dt));
+                }
+                resolved_variants.push(crate::types::SumVariant {
+                    name: variant_name.clone(),
+                    data_types: resolved_data_types,
+                });
+            }
 
             let sum_type = Type::sum(name.clone(), resolved_variants);
             self.custom_types.insert(name.clone(), sum_type);
@@ -951,6 +954,47 @@ impl TypeChecker {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// 收集泛型类型定义模板（泛型 struct/enum）
+    /// 必须在 collect_function_definitions 之前调用，
+    /// 以便 resolve_struct_field_from_parsed 能找到泛型类型并用 fresh type var 实例化
+    fn collect_generic_type_defs(&mut self, expr: &Expr) {
+        if let Expr::Block { statements, .. } = expr {
+            for stmt in statements {
+                match stmt {
+                    Statement::StructDef { name, fields, type_params, .. } if !type_params.is_empty() => {
+                        let struct_fields: Vec<crate::types::StructField> = fields
+                            .iter()
+                            .map(|field| crate::types::StructField {
+                                name: field.name.clone(),
+                                field_type: field.field_type.clone(),
+                            })
+                            .collect();
+                        let template = Type::struct_type(name.clone(), struct_fields);
+                        self.generic_type_defs.insert(name.clone(), GenericTypeDef {
+                            type_params: type_params.clone(),
+                            template,
+                        });
+                    }
+                    Statement::TypeDef { name, variants, type_params, .. } if !type_params.is_empty() => {
+                        let sum_variants: Vec<crate::types::SumVariant> = variants
+                            .iter()
+                            .map(|v| crate::types::SumVariant {
+                                name: v.name.clone(),
+                                data_types: v.data_types.clone(),
+                            })
+                            .collect();
+                        let template = Type::sum(name.clone(), sum_variants);
+                        self.generic_type_defs.insert(name.clone(), GenericTypeDef {
+                            type_params: type_params.clone(),
+                            template,
+                        });
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 
@@ -983,18 +1027,14 @@ impl TypeChecker {
         // 现在解析字段类型
         let struct_defs_copy = struct_defs.clone();
         for (name, fields) in struct_defs {
-            let struct_fields: Vec<crate::types::StructField> = fields
-                .iter()
-                .map(|field| {
-                    // field.field_type 已经是 Type（parser 解析的结构化类型）
-                    // 但自定义类型名在 parser 阶段是 Type::Unknown，需要在这里解析为实际类型
-                    let field_type = self.resolve_parsed_type(&field.field_type, &struct_defs_copy);
-                    crate::types::StructField {
-                        name: field.name.clone(),
-                        field_type,
-                    }
-                })
-                .collect();
+            let mut struct_fields = Vec::new();
+            for field in &fields {
+                let field_type = self.resolve_parsed_type(&field.field_type, &struct_defs_copy);
+                struct_fields.push(crate::types::StructField {
+                    name: field.name.clone(),
+                    field_type,
+                });
+            }
 
             // 检查是否有非法的递归（没有通过引用的递归）
             if Self::has_illegal_recursion(&name, &struct_fields, &mut vec![]) {
@@ -1227,20 +1267,16 @@ impl TypeChecker {
                 span: _,
             } => {
                 let mut new_env = env.clone();
-                let param_types: Vec<Type> = params
-                    .iter()
-                    .map(|param| {
-                        let param_type = if let Some(ref type_ann) = param.type_annotation {
-                            // 使用结构化类型注解，但需要解析其中的骨架占位符
-                            self.resolve_struct_field_from_parsed(type_ann)
-                        } else {
-                            // 否则创建类型变量进行推断
-                            Type::Var(self.fresh_type_var())
-                        };
-                        new_env.insert(param.name.clone(), param_type.clone());
-                        param_type
-                    })
-                    .collect();
+                let mut param_types = Vec::new();
+                for param in params {
+                    let param_type = if let Some(ref type_ann) = param.type_annotation {
+                        self.resolve_struct_field_from_parsed(type_ann)
+                    } else {
+                        Type::Var(self.fresh_type_var())
+                    };
+                    new_env.insert(param.name.clone(), param_type.clone());
+                    param_types.push(param_type);
+                }
 
                 let body_type = self.infer_expr(body, &new_env);
 
@@ -1514,13 +1550,6 @@ impl TypeChecker {
                             }).collect();
 
                             let instantiated = self.instantiate_generic_type(&enum_name, &concrete_args);
-                            
-                            if let Type::Sum { name: mono_name, .. } = &instantiated {
-                                let mono_name_str = mono_name.clone();
-                                if !self.custom_types.contains_key(&mono_name_str) {
-                                    self.custom_types.insert(mono_name_str, instantiated.clone());
-                                }
-                            }
 
                             return instantiated;
                         }
@@ -1590,8 +1619,21 @@ impl TypeChecker {
                 args,
                 span,
             } => {
-                // 检查类型是否存在
-                if let Some(sum_type) = self.custom_types.get(type_name).cloned() {
+                // 检查类型是否存在：先查 custom_types，再查 generic_type_defs
+                let sum_type = if let Some(sum_type) = self.custom_types.get(type_name).cloned() {
+                    Some(sum_type)
+                } else if self.generic_type_defs.contains_key(type_name) {
+                    // 泛型类型：用 fresh type var 实例化
+                    let param_count = self.generic_type_defs.get(type_name).unwrap().type_params.len();
+                    let fresh_args: Vec<Type> = (0..param_count)
+                        .map(|_| Type::Var(self.fresh_type_var()))
+                        .collect();
+                    Some(self.instantiate_generic_type(type_name, &fresh_args))
+                } else {
+                    None
+                };
+
+                if let Some(sum_type) = sum_type {
                     if let Type::Sum { name: _, variants } = &sum_type {
                         // 查找对应的构造器
                         if let Some(variant) = variants.iter().find(|v| v.name == *constructor_name)
@@ -1775,14 +1817,6 @@ impl TypeChecker {
 
                         // 实例化泛型类型
                         let instantiated = self.instantiate_generic_type(name, &concrete_args);
-                        
-                        // 生成单态化名称并注册到 custom_types
-                        if let Type::Struct { name: mono_name, fields: mono_fields } = &instantiated {
-                            let mono_name_str = mono_name.clone();
-                            if !self.custom_types.contains_key(&mono_name_str) {
-                                self.custom_types.insert(mono_name_str, instantiated.clone());
-                            }
-                        }
 
                         return instantiated;
                     }
@@ -2645,20 +2679,17 @@ impl TypeChecker {
                 }
 
                 // 解析变体 data_types 中的骨架占位符（递归枚举自引用等场景）
-                let sum_variants: Vec<crate::types::SumVariant> = variants
-                    .iter()
-                    .map(|variant| {
-                        let resolved_data_types: Vec<Type> = variant
-                            .data_types
-                            .iter()
-                            .map(|dt| self.resolve_struct_field_from_parsed(dt))
-                            .collect();
-                        crate::types::SumVariant {
-                            name: variant.name.clone(),
-                            data_types: resolved_data_types,
-                        }
-                    })
-                    .collect();
+                let mut sum_variants = Vec::new();
+                for variant in variants {
+                    let mut resolved_data_types = Vec::new();
+                    for dt in &variant.data_types {
+                        resolved_data_types.push(self.resolve_struct_field_from_parsed(dt));
+                    }
+                    sum_variants.push(crate::types::SumVariant {
+                        name: variant.name.clone(),
+                        data_types: resolved_data_types,
+                    });
+                }
 
                 let sum_type = Type::sum(name.clone(), sum_variants.clone());
 
@@ -2701,16 +2732,14 @@ impl TypeChecker {
                 // 构建结构体类型的字段
                 // field.field_type 已经是 parser 生成的结构化 Type，但自定义类型名可能是骨架占位符
                 // 需要用 process_struct_definitions 中创建的完整类型替换
-                let struct_fields: Vec<crate::types::StructField> = fields
-                    .iter()
-                    .map(|field| {
-                        let resolved_type = self.resolve_struct_field_from_parsed(&field.field_type);
-                        crate::types::StructField {
-                            name: field.name.clone(),
-                            field_type: resolved_type,
-                        }
-                    })
-                    .collect();
+                let mut struct_fields = Vec::new();
+                for field in fields {
+                    let resolved_type = self.resolve_struct_field_from_parsed(&field.field_type);
+                    struct_fields.push(crate::types::StructField {
+                        name: field.name.clone(),
+                        field_type: resolved_type,
+                    });
+                }
 
                 let struct_type = Type::struct_type(name.clone(), struct_fields);
 
@@ -3060,8 +3089,20 @@ impl TypeChecker {
                 args,
                 span,
             } => {
-                // 检查类型是否存在
-                if let Some(sum_type) = self.custom_types.get(type_name).cloned() {
+                // 检查类型是否存在：先查 custom_types，再查 generic_type_defs
+                let sum_type = if let Some(sum_type) = self.custom_types.get(type_name).cloned() {
+                    Some(sum_type)
+                } else if self.generic_type_defs.contains_key(type_name) {
+                    let param_count = self.generic_type_defs.get(type_name).unwrap().type_params.len();
+                    let fresh_args: Vec<Type> = (0..param_count)
+                        .map(|_| Type::Var(self.fresh_type_var()))
+                        .collect();
+                    Some(self.instantiate_generic_type(type_name, &fresh_args))
+                } else {
+                    None
+                };
+
+                if let Some(sum_type) = sum_type {
                     if let Type::Sum { name: _, variants } = &sum_type {
                         // 查找对应的构造器
                         if let Some(variant) = variants.iter().find(|v| v.name == *constructor_name)
@@ -3442,16 +3483,32 @@ impl TypeChecker {
     }
 
     /// 解析 parser 生成的结构化类型中的自定义类型引用
-    /// 在 infer_statement 阶段使用，此时 custom_types 已经完整建立
-    fn resolve_struct_field_from_parsed(&self, ty: &Type) -> Type {
+    /// 解析类型注解中的骨架占位符，替换为完整类型
+    /// 需要 &mut self 以便在遇到泛型类型时创建 fresh type variable
+    fn resolve_struct_field_from_parsed(&mut self, ty: &Type) -> Type {
         match ty {
             Type::Struct { name, fields } if fields.is_empty() => {
-                // Parser 创建的 Struct 骨架占位符，用 custom_types 中的完整类型替换
+                // Parser 创建的 Struct 骨架占位符
+                // 1. 先查找 custom_types（非泛型类型）
                 if let Some(struct_type) = self.custom_types.get(name) {
-                    struct_type.clone()
-                } else {
-                    ty.clone()
+                    return struct_type.clone();
                 }
+                // 2. 查找泛型类型定义，用 fresh type variable 实例化类型参数
+                let param_count = self.generic_type_defs.get(name)
+                    .map(|gen_def| gen_def.type_params.len());
+                if let Some(count) = param_count {
+                    let fresh_args: Vec<Type> = (0..count)
+                        .map(|_| Type::Var(self.fresh_type_var()))
+                        .collect();
+                    return self.instantiate_generic_type(name, &fresh_args);
+                }
+                // 3. 内置泛型类型
+                match name.as_str() {
+                    "Option" => return Type::option(Type::Var(self.fresh_type_var())),
+                    "Result" => return Type::result(Type::Var(self.fresh_type_var()), Type::Var(self.fresh_type_var())),
+                    _ => {}
+                }
+                ty.clone()
             }
             Type::Reference { inner } => {
                 let resolved_inner = self.resolve_struct_field_from_parsed(inner);
@@ -3461,19 +3518,19 @@ impl TypeChecker {
                 let resolved_element = self.resolve_struct_field_from_parsed(element);
                 Type::array(resolved_element)
             }
-            // Option 等泛型类型的内部参数也需要递归解析
+            // Sum 类型的内部参数也需要递归解析
             Type::Sum { name: sum_name, variants } => {
-                let resolved_variants = variants
-                    .iter()
-                    .map(|v| crate::types::SumVariant {
+                let mut resolved_variants = Vec::new();
+                for v in variants {
+                    let mut resolved_data = Vec::new();
+                    for dt in &v.data_types {
+                        resolved_data.push(self.resolve_struct_field_from_parsed(dt));
+                    }
+                    resolved_variants.push(crate::types::SumVariant {
                         name: v.name.clone(),
-                        data_types: v
-                            .data_types
-                            .iter()
-                            .map(|dt| self.resolve_struct_field_from_parsed(dt))
-                            .collect(),
-                    })
-                    .collect();
+                        data_types: resolved_data,
+                    });
+                }
                 Type::sum(sum_name.clone(), resolved_variants)
             }
             Type::Generic { name, args } => {
@@ -3485,7 +3542,7 @@ impl TypeChecker {
     }
 
     /// 实例化泛型类型：将泛型模板中的类型参数替换为具体参数
-    fn instantiate_generic_type(&self, name: &str, args: &[Type]) -> Type {
+    fn instantiate_generic_type(&mut self, name: &str, args: &[Type]) -> Type {
         // 内置泛型类型
         match name {
             "Option" => {
@@ -3504,16 +3561,18 @@ impl TypeChecker {
         }
 
         // 用户自定义泛型类型
-        if let Some(gen_def) = self.generic_type_defs.get(name) {
+        // 先克隆定义数据，避免借用冲突
+        let gen_def_clone = self.generic_type_defs.get(name).cloned();
+        if let Some(gen_def) = gen_def_clone {
             if gen_def.type_params.len() != args.len() {
                 return Type::Unknown;
             }
 
             // 解析泛型参数中的类型
-            let resolved_args: Vec<Type> = args
-                .iter()
-                .map(|t| self.resolve_struct_field_from_parsed(t))
-                .collect();
+            let mut resolved_args = Vec::new();
+            for t in args {
+                resolved_args.push(self.resolve_struct_field_from_parsed(t));
+            }
 
             // 构建替换映射：type_param -> 具体类型
             let subst: Vec<(String, Type)> = gen_def
@@ -3524,20 +3583,23 @@ impl TypeChecker {
                 .collect();
 
             // 在模板中替换类型参数为具体类型
+            // 注意：不调用 rename_type，保持 base name（如 "Wrapper" 而非 "Wrapper<number>"）
+            // 这样在 unify 时同名类型可以直接统一字段
             let instantiated = self.substitute_type_params(&gen_def.template, &subst);
 
             // 检查是否所有参数都是具体类型（非 Type::Var）
             let all_concrete = resolved_args.iter().all(|t| !matches!(t, Type::Var(_)));
 
-            // 生成单态化名称并缓存（仅当所有参数都是具体类型时）
+            // 当所有参数都是具体类型时，用单态化名称缓存到 custom_types
+            // 但 Type 本身保持 base name
             if all_concrete {
                 let mono_name = format!("{}<{}>", name, resolved_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", "));
-                let final_type = self.rename_type(instantiated, &mono_name);
-                final_type
-            } else {
-                // 包含类型变量，使用原始名称，允许统一化处理
-                instantiated
+                if !self.custom_types.contains_key(&mono_name) {
+                    self.custom_types.insert(mono_name, instantiated.clone());
+                }
             }
+
+            instantiated
         } else {
             Type::Unknown
         }
@@ -3641,7 +3703,7 @@ impl TypeChecker {
     /// 解析 parser 生成的结构化类型，将 Struct 骨架等占位替换为实际自定义类型
     /// 在 process_struct_definitions 阶段使用，此时 custom_types 可能只有骨架
     fn resolve_parsed_type(
-        &self,
+        &mut self,
         ty: &Type,
         struct_defs: &HashMap<String, Vec<FieldDef>>,
     ) -> Type {
@@ -3664,42 +3726,47 @@ impl TypeChecker {
                 let resolved_element = self.resolve_parsed_type(element, struct_defs);
                 Type::array(resolved_element)
             }
-            // Option 等泛型类型的内部参数也需要递归解析
+            // Sum 类型的内部参数也需要递归解析
             Type::Sum { name: sum_name, variants } => {
-                let resolved_variants = variants
-                    .iter()
-                    .map(|v| crate::types::SumVariant {
+                let mut resolved_variants = Vec::new();
+                for v in variants {
+                    let mut resolved_data = Vec::new();
+                    for dt in &v.data_types {
+                        resolved_data.push(self.resolve_parsed_type(dt, struct_defs));
+                    }
+                    resolved_variants.push(crate::types::SumVariant {
                         name: v.name.clone(),
-                        data_types: v
-                            .data_types
-                            .iter()
-                            .map(|dt| self.resolve_parsed_type(dt, struct_defs))
-                            .collect(),
-                    })
-                    .collect();
+                        data_types: resolved_data,
+                    });
+                }
                 Type::sum(sum_name.clone(), resolved_variants)
             }
             Type::Generic { name, args } => {
                 // 实例化泛型类型
-                let resolved_args: Vec<Type> = args
-                    .iter()
-                    .map(|t| self.resolve_parsed_type(t, struct_defs))
-                    .collect();
+                let mut resolved_args = Vec::new();
+                for t in args {
+                    resolved_args.push(self.resolve_parsed_type(t, struct_defs));
+                }
                 self.instantiate_generic_type(name, &resolved_args)
             }
             Type::Struct { name, fields } => {
                 // 完整的 struct 类型，递归解析字段
-                let resolved_fields = fields
-                    .iter()
-                    .map(|f| crate::types::StructField {
+                let mut resolved_fields = Vec::new();
+                for f in fields {
+                    let field_type = self.resolve_parsed_type(&f.field_type, struct_defs);
+                    resolved_fields.push(crate::types::StructField {
                         name: f.name.clone(),
-                        field_type: self.resolve_parsed_type(&f.field_type, struct_defs),
-                    })
-                    .collect();
+                        field_type,
+                    });
+                }
                 Type::struct_type(name.clone(), resolved_fields)
             }
             Type::Tuple(types) => {
-                Type::tuple(types.iter().map(|t| self.resolve_parsed_type(t, struct_defs)).collect())
+                let mut resolved = Vec::new();
+                for t in types {
+                    resolved.push(self.resolve_parsed_type(t, struct_defs));
+                }
+                Type::tuple(resolved)
             }
             _ => ty.clone(),
         }
