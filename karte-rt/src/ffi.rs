@@ -585,3 +585,113 @@ pub extern "C" fn karte_jit_runtime_panic() {
     eprintln!("runtime error: division by zero");
     std::process::exit(134);
 }
+
+// ==================== 数组操作 ====================
+// 数组内存布局：[length: i64][capacity: i64][elem0: i64][elem1: i64]...
+// 总大小 = 16 + capacity * 8 字节
+// 使用 Conservative 类型让 GC 保守扫描数组元素中的潜在指针
+
+/// 创建新数组，指定初始容量
+/// 返回数组句柄（u64）
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_array_new(capacity: i64) -> u64 {
+    let cap = if capacity < 4 { 4 } else { capacity };
+    let size = 16 + cap as usize * 8;
+    unsafe {
+        let ptr = gc_alloc(size, ObjectType::Conservative);
+        if ptr.is_null() {
+            return 0;
+        }
+        let p = ptr as *mut i64;
+        *p = 0;         // length = 0
+        *p.add(1) = cap; // capacity
+        ptr as u64
+    }
+}
+
+/// 获取数组长度
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_array_len(arr: u64) -> i64 {
+    if arr == 0 {
+        return 0;
+    }
+    unsafe { *(arr as *const i64) }
+}
+
+/// 获取数组指定位置的元素，越界返回 0
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_array_get(arr: u64, index: i64) -> u64 {
+    if arr == 0 {
+        return 0;
+    }
+    unsafe {
+        let p = arr as *const i64;
+        let len = *p;
+        if index < 0 || index >= len {
+            return 0;
+        }
+        *p.add(2 + index as usize) as u64
+    }
+}
+
+/// 设置数组指定位置的元素，越界不做操作
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_array_set(arr: u64, index: i64, value: u64) -> u64 {
+    if arr == 0 {
+        return 0;
+    }
+    unsafe {
+        let p = arr as *mut i64;
+        let len = *p;
+        if index >= 0 && index < len {
+            *p.add(2 + index as usize) = value as i64;
+        }
+    }
+    value
+}
+
+/// 向数组末尾追加元素，容量不足时自动扩容
+/// 返回数组句柄（扩容后会变）
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_array_push(arr: u64, value: i64) -> u64 {
+    if arr == 0 {
+        let new_arr = karte_jit_runtime_array_new(8);
+        if new_arr == 0 {
+            return 0;
+        }
+        return karte_jit_runtime_array_push(new_arr, value);
+    }
+    unsafe {
+        let p = arr as *mut i64;
+        let len = *p;
+        let cap = *p.add(1);
+        let mut current_ptr = p;
+        let mut current_arr = arr;
+
+        if len >= cap {
+            let new_cap = cap * 2;
+            let new_size = 16 + new_cap as usize * 8;
+            let new_raw = gc_alloc(new_size, ObjectType::Conservative);
+            if new_raw.is_null() {
+                return arr;
+            }
+            let np = new_raw as *mut i64;
+            *np = len;
+            *np.add(1) = new_cap;
+            let src = p.add(2);
+            let dst = np.add(2);
+            for i in 0..len as usize {
+                *dst.add(i) = *src.add(i);
+            }
+            for i in len as usize..new_cap as usize {
+                *dst.add(i) = 0;
+            }
+            current_ptr = np;
+            current_arr = new_raw as u64;
+        }
+
+        *current_ptr.add(2 + len as usize) = value;
+        *current_ptr = len + 1;
+        current_arr
+    }
+}

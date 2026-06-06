@@ -23,6 +23,11 @@ pub enum RuntimeIntrinsic {
     PrintNumber,
     PrintBool,
     Panic,
+    ArrayNew,
+    ArrayLen,
+    ArrayGet,
+    ArraySet,
+    ArrayPush,
 }
 
 impl RuntimeIntrinsic {
@@ -73,6 +78,21 @@ impl RuntimeIntrinsic {
                 runtime::karte_jit_runtime_print_bool as *const ()
             }
             RuntimeIntrinsic::Panic => runtime::karte_jit_runtime_panic as *const (),
+            RuntimeIntrinsic::ArrayNew => {
+                runtime::karte_jit_runtime_array_new as *const ()
+            }
+            RuntimeIntrinsic::ArrayLen => {
+                runtime::karte_jit_runtime_array_len as *const ()
+            }
+            RuntimeIntrinsic::ArrayGet => {
+                runtime::karte_jit_runtime_array_get as *const ()
+            }
+            RuntimeIntrinsic::ArraySet => {
+                runtime::karte_jit_runtime_array_set as *const ()
+            }
+            RuntimeIntrinsic::ArrayPush => {
+                runtime::karte_jit_runtime_array_push as *const ()
+            }
         }
     }
 
@@ -97,13 +117,18 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::PrintNumber => "karte_jit_runtime_print_number",
             RuntimeIntrinsic::PrintBool => "karte_jit_runtime_print_bool",
             RuntimeIntrinsic::Panic => "karte_jit_runtime_panic",
+            RuntimeIntrinsic::ArrayNew => "karte_jit_runtime_array_new",
+            RuntimeIntrinsic::ArrayLen => "karte_jit_runtime_array_len",
+            RuntimeIntrinsic::ArrayGet => "karte_jit_runtime_array_get",
+            RuntimeIntrinsic::ArraySet => "karte_jit_runtime_array_set",
+            RuntimeIntrinsic::ArrayPush => "karte_jit_runtime_array_push",
         }
     }
 
     pub fn has_result(self) -> bool {
         matches!(
             self,
-            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual | RuntimeIntrinsic::StringCompare | RuntimeIntrinsic::StringCharAt | RuntimeIntrinsic::StringSubstring | RuntimeIntrinsic::StringContains | RuntimeIntrinsic::SplitCount | RuntimeIntrinsic::Trim | RuntimeIntrinsic::CharToString | RuntimeIntrinsic::ToString
+            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual | RuntimeIntrinsic::StringCompare | RuntimeIntrinsic::StringCharAt | RuntimeIntrinsic::StringSubstring | RuntimeIntrinsic::StringContains | RuntimeIntrinsic::SplitCount | RuntimeIntrinsic::Trim | RuntimeIntrinsic::CharToString | RuntimeIntrinsic::ToString | RuntimeIntrinsic::ArrayNew | RuntimeIntrinsic::ArrayLen | RuntimeIntrinsic::ArrayGet | RuntimeIntrinsic::ArraySet | RuntimeIntrinsic::ArrayPush
         )
     }
 }
