@@ -4285,9 +4285,9 @@ fn lower_function_call(
             });
             return Ok(());
         }
-        if name == "mem_load64" {
+        if name == "mem_load64" || name == "mem_load_ptr" {
             if args.len() != 1 {
-                ctx.errors.push("mem_load64 需要一个参数 (addr)".to_string());
+                ctx.errors.push("mem_load64/mem_load_ptr 需要一个参数 (addr)".to_string());
                 return Err(ctx.errors.clone());
             }
             let addr_val = lower_expression_to_temp(ctx, &args[0])?;
@@ -4316,6 +4316,44 @@ fn lower_function_call(
                     ty: None,
                 },
                 args: vec![addr_val, val_val],
+                span,
+            });
+            return Ok(());
+        }
+
+        // 字符串内容比较
+        if name == "str_equal" {
+            if args.len() != 2 {
+                ctx.errors.push("str_equal 需要两个参数 (left, right)".to_string());
+                return Err(ctx.errors.clone());
+            }
+            let left_val = lower_expression_to_temp(ctx, &args[0])?;
+            let right_val = lower_expression_to_temp(ctx, &args[1])?;
+            ctx.add_statement(Statement::Call {
+                target: Some(destination.clone()),
+                function: Value::Function {
+                    name: "__runtime_string_equal".to_string(),
+                    ty: None,
+                },
+                args: vec![left_val, right_val],
+                span,
+            });
+            return Ok(());
+        }
+        if name == "str_compare" {
+            if args.len() != 2 {
+                ctx.errors.push("str_compare 需要两个参数 (left, right)".to_string());
+                return Err(ctx.errors.clone());
+            }
+            let left_val = lower_expression_to_temp(ctx, &args[0])?;
+            let right_val = lower_expression_to_temp(ctx, &args[1])?;
+            ctx.add_statement(Statement::Call {
+                target: Some(destination.clone()),
+                function: Value::Function {
+                    name: "__runtime_string_compare".to_string(),
+                    ty: None,
+                },
+                args: vec![left_val, right_val],
                 span,
             });
             return Ok(());

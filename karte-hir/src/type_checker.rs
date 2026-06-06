@@ -1118,6 +1118,14 @@ impl TypeChecker {
                     let alpha = self.fresh_type_var();
                     return Type::function(vec![Type::Var(alpha)], Type::Number);
                 }
+                // 字符串内容比较
+                if name == "str_equal" {
+                    return Type::function(vec![Type::String, Type::String], Type::Number);
+                }
+                // 字符串比较（有序）
+                if name == "str_compare" {
+                    return Type::function(vec![Type::String, Type::String], Type::Number);
+                }
                 // 通用内存原语 — 供标准库实现数组、哈希表等数据结构
                 if name == "gc_alloc" {
                     return Type::function(vec![Type::Number], Type::Number);
@@ -1125,8 +1133,12 @@ impl TypeChecker {
                 if name == "mem_load64" {
                     return Type::function(vec![Type::Number], Type::Number);
                 }
+                if name == "mem_load_ptr" {
+                    return Type::function(vec![Type::Number], Type::String);
+                }
                 if name == "mem_store64" {
-                    return Type::function(vec![Type::Number, Type::Number], Type::Number);
+                    let alpha = self.fresh_type_var();
+                    return Type::function(vec![Type::Number, Type::Var(alpha)], Type::Number);
                 }
                 // 优先检查泛型函数，若匹配则实例化
                 if let Some(scheme) = self.function_schemes.get(name).cloned() {

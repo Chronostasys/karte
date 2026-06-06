@@ -1,174 +1,107 @@
 module std.hashmap
 
-fn hm_new() -> string {
-    "/" + "/" + "/" + "/" + "/" + "/" + "/" + "/" + "/" + "/" + "/" + "/" + "/" + "/" + "/" + "/"
-}
-
-fn hm_hash(s: string) -> number {
-    let n = len(s);
-    let h = 0;
+fn hm_hash(key: string) -> number {
+    let n = len(key);
+    let h = 5381;
     let i = 0;
     while i < n {
-        h = h * 31 + str_index(s, i);
-        i = i + 1
+        h = h * 33 + str_index(key, i);
+        i = i + 1;
     };
     if h < 0 { 0 - h } else { h }
 }
 
-fn hm_insert(m: string, key: string, val: string) -> string {
-    let h = hm_hash(key) % 16;
-    let entry = key + "=" + val + ";";
-    let bucket = hm_get_bucket(m, h);
-    let nb = hm_remove_entry(bucket, key);
-    let result = nb + entry;
-    hm_replace_bucket(m, h, result)
+fn hm_new(cap: number) -> number {
+    let m = gc_alloc(8 + cap * 24);
+    mem_store64(m, 0);
+    m
 }
 
-fn hm_get(m: string, key: string) -> string {
-    let h = hm_hash(key) % 16;
-    let bucket = hm_get_bucket(m, h);
-    hm_find_val(bucket, key)
+fn hm_len(m: number) -> number {
+    mem_load64(m)
 }
 
-fn hm_contains(m: string, key: string) -> bool {
-    let h = hm_hash(key) % 16;
-    let bucket = hm_get_bucket(m, h);
-    hm_find_key(bucket, key)
-}
-
-fn hm_remove(m: string, key: string) -> string {
-    let h = hm_hash(key) % 16;
-    let bucket = hm_get_bucket(m, h);
-    let nb = hm_remove_entry(bucket, key);
-    hm_replace_bucket(m, h, nb)
-}
-
-fn hm_get_bucket(m: string, idx: number) -> string {
+fn hm_insert(m: number, key: string, val: string) -> number {
+    let cap = 0;
+    let count = mem_load64(m);
+    let cap = (count + 1) * 2;
+    let new_m = gc_alloc(8 + cap * 24);
+    mem_store64(new_m, 0);
     let i = 0;
-    let b = 0;
-    let start = 0;
-    while i < len(m) && b < idx {
-        if str_index(m, i) == 47 {
-            b = b + 1;
-            start = i + 1
+    while i < count {
+        let entry_base = m + 8 + i * 24;
+        let old_hash = mem_load64(entry_base);
+        let old_key = mem_load_ptr(entry_base + 8);
+        let old_val = mem_load_ptr(entry_base + 16);
+        let idx = old_hash % cap;
+        let slot = new_m + 8 + idx * 24;
+        let slot_used = mem_load64(slot);
+        while slot_used != 0 {
+            let idx = (idx + 1) % cap;
+            let slot = new_m + 8 + idx * 24;
+            let slot_used = mem_load64(slot);
         };
-        i = i + 1
+        mem_store64(slot, 1);
+        mem_store64(slot + 8, old_key);
+        mem_store64(slot + 16, old_val);
+        let new_len = mem_load64(new_m);
+        mem_store64(new_m, new_len + 1);
+        i = i + 1;
     };
-    let end = start;
-    while end < len(m) {
-        if str_index(m, end) == 47 { break } else { 0 };
-        end = end + 1
+    let h = hm_hash(key);
+    let idx = h % cap;
+    let slot = new_m + 8 + idx * 24;
+    let slot_used = mem_load64(slot);
+    while slot_used != 0 {
+        let k = mem_load_ptr(slot + 8);
+        if str_equal(k, key) {
+            mem_store64(slot + 16, val);
+            let slot_used = 0;
+        } else {
+            let idx = (idx + 1) % cap;
+            let slot = new_m + 8 + idx * 24;
+            let slot_used = mem_load64(slot);
+        }
     };
-    if start >= end { "" } else {
-        let out = "";
-        let j = start;
-        while j < end { out = out + char_to_string(str_index(m, j)); j = j + 1 };
-        out
-    }
+    mem_store64(slot, 1);
+    mem_store64(slot + 8, key);
+    mem_store64(slot + 16, val);
+    let new_len = mem_load64(new_m);
+    mem_store64(new_m, new_len + 1);
+    new_m
 }
 
-fn hm_replace_bucket(m: string, idx: number, bucket: string) -> string {
-    let i = 0;
-    let b = 0;
-    let start = 0;
-    while i < len(m) && b < idx {
-        if str_index(m, i) == 47 {
-            b = b + 1;
-            start = i + 1
-        };
-        i = i + 1
-    };
-    let end = start;
-    while end < len(m) {
-        if str_index(m, end) == 47 { break } else { 0 };
-        end = end + 1
-    };
-    let before = "";
-    let j = 0;
-    while j < start { before = before + char_to_string(str_index(m, j)); j = j + 1 };
-    let after = "";
-    let k = end;
-    while k < len(m) { after = after + char_to_string(str_index(m, k)); k = k + 1 };
-    before + bucket + "/" + after
-}
-
-fn hm_find_val(bucket: string, key: string) -> string {
+fn hm_get(m: number, key: string) -> string {
+    let count = mem_load64(m);
     let i = 0;
     let result = "";
-    let done = 0;
-    while i < len(bucket) && done == 0 {
-        let eq = i;
-        while eq < len(bucket) { if str_index(bucket, eq) == 61 { break } else { 0 }; eq = eq + 1 };
-        let sc = eq + 1;
-        while sc < len(bucket) { if str_index(bucket, sc) == 59 { break } else { 0 }; sc = sc + 1 };
-        let k = "";
-        let j = i;
-        while j < eq { k = k + char_to_string(str_index(bucket, j)); j = j + 1 };
-        if eq_str(k, key) {
-            let v = "";
-            let j2 = eq + 1;
-            while j2 < sc { v = v + char_to_string(str_index(bucket, j2)); j2 = j2 + 1 };
-            result = v;
-            done = 1
+    while i < count {
+        let entry_base = m + 8 + i * 24;
+        let k = mem_load_ptr(entry_base + 8);
+        if str_equal(k, key) {
+            let result = mem_load_ptr(entry_base + 16);
+            let i = count;
+            result
         } else {
-            i = sc + 1
+            let i = i + 1;
         }
     };
     result
 }
 
-fn hm_find_key(bucket: string, key: string) -> bool {
+fn hm_contains(m: number, key: string) -> number {
+    let count = mem_load64(m);
     let i = 0;
-    let found = false;
-    while i < len(bucket) {
-        let eq = i;
-        while eq < len(bucket) { if str_index(bucket, eq) == 61 { break } else { 0 }; eq = eq + 1 };
-        let sc = eq + 1;
-        while sc < len(bucket) { if str_index(bucket, sc) == 59 { break } else { 0 }; sc = sc + 1 };
-        let k = "";
-        let j = i;
-        while j < eq { k = k + char_to_string(str_index(bucket, j)); j = j + 1 };
-        if eq_str(k, key) { found = true; i = len(bucket) } else { i = sc + 1 }
+    let found = 0;
+    while i < count {
+        let entry_base = m + 8 + i * 24;
+        let k = mem_load_ptr(entry_base + 8);
+        if str_equal(k, key) {
+            let found = 1;
+            let i = count;
+        } else {
+            let i = i + 1;
+        }
     };
     found
-}
-
-fn hm_remove_entry(bucket: string, key: string) -> string {
-    let i = 0;
-    let result = bucket;
-    let done = 0;
-    while i < len(bucket) && done == 0 {
-        let eq = i;
-        while eq < len(bucket) { if str_index(bucket, eq) == 61 { break } else { 0 }; eq = eq + 1 };
-        let sc = eq + 1;
-        while sc < len(bucket) { if str_index(bucket, sc) == 59 { break } else { 0 }; sc = sc + 1 };
-        let k = "";
-        let j = i;
-        while j < eq { k = k + char_to_string(str_index(bucket, j)); j = j + 1 };
-        if eq_str(k, key) {
-            let before = "";
-            let j2 = 0;
-            while j2 < i { before = before + char_to_string(str_index(bucket, j2)); j2 = j2 + 1 };
-            let after = "";
-            let j3 = sc + 1;
-            while j3 < len(bucket) { after = after + char_to_string(str_index(bucket, j3)); j3 = j3 + 1 };
-            result = before + after;
-            done = 1
-        } else {
-            i = sc + 1
-        }
-    };
-    result
-}
-
-fn eq_str(a: string, b: string) -> bool {
-    if len(a) != len(b) { false } else {
-        let i = 0;
-        let r = true;
-        while i < len(a) {
-            if str_index(a, i) != str_index(b, i) { r = false; 0 } else { 0 };
-            i = i + 1
-        };
-        r
-    }
 }
