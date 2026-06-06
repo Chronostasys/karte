@@ -370,6 +370,12 @@ let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering
 ## Notable Recent Changes
 
 Recent work includes:
+- **Language Polish Round 2 (2026-06-06)** — Multiple improvements:
+  - **LIR pipeline 性能优化**: 82s→11.7s (7x提速)
+  - **字符串有序比较**: `<`, `>`, `<=`, `>=` 支持 string 类型
+  - **块注释支持**: `/* ... */` 多行块注释
+  - **栈溢出修复**: 不再需要 RUST_MIN_STACK 环境变量
+  - **std.string 补全**: index_of, to_upper/lower, reverse 等
 - **Generic functions / let-polymorphism (2025-05-30)**: Added `TypeScheme` for generic function support. Parser allows optional parameter type annotations; TypeChecker generalizes functions with free type variables into type schemes and instantiates them per call site. Added 3 integration tests (identity, first, apply). Current limitation: monomorphic use only; polymorphic calls require future MIR monomorphization pass.
 - **Function-as-parameter fix (2025-12-02)**: Implemented unified representation for functions and closures with wrapper functions to handle calling convention differences
 - **Language Polish Round (2025-06-05)** — Major improvements across the entire compiler:
@@ -657,7 +663,8 @@ Store { target = %10000, value = %2 }
 - MIR to LIR lowering: `karte-lir/src/lower/memory.rs:314-335` handles `Value::Reference` with ID >= 10000
 
 **Important Notes**:
-- karte目前不支持注释，不要在karte源代码中加入任何注释
+- karte支持 // 行注释和 /* */ 块注释
+- 重要：karte目前不支持注释，任何测试代码不要加注释
 - bin不一定是最新的，执行命令之前一定先重新编译一下bin
 - 如果想看逃逸分析的日志，请用类似 `karte --verbose <subcommand>` 这种格式
 - build指令默认就会生成lir，用tail可以看到命令打印的lir位置
@@ -670,7 +677,8 @@ Store { target = %10000, value = %2 }
 - 不要在不是问题的行为上浪费时间，比如debug每次都gc就是设计好的行为，并不少它导致了错误，它只是拒绝掩盖错误。不要为了快速掩盖问题解决提出问题的人
 - 禁止运行 `cargo build`命令，必须去掉--release
 - 不允许cargo命令使用 --release flag除非我要求
-- karte目前不支持注释，任何测试代码不要加测试
+- karte支持 // 行注释和 /* */ 块注释（2026-06-06 已实现）
+- 任何测试代码不要加注释
 - 禁止任何时间对项目进行release编译，除非我要求
 - **x86_64 GOTCHA**: `effect_tag_register`、`return_address` 等专用寄存器绝不能与 `vm_sp(R10)` 或 `vm_fp(R11)` 冲突，否则 EffectPerform 会直接破坏虚拟栈指针
 - **AArch64 X16 GOTCHA**: `emit_str_reg_mem`/`emit_ldr_reg_mem` 在大偏移（|offset|>256）时使用 X16 作为临时寄存器加载偏移值。当 src/dst 或 base 寄存器恰好是 X16 时，`MOV X16, #offset` 会覆盖 X16 原始值。**修复**: src/base 与 X16 冲突时自动切换到 X17。`compile_store64` 的立即数路径（MOV X16, #imm; emit_str_reg_mem）也受此影响——立即数被偏移值覆盖。
