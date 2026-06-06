@@ -2,6 +2,19 @@ use karte_diagnostics::{DiagnosticBag, Span};
 use logos::Logos;
 use std::fmt;
 
+/// 跳过块注释 /* ... */
+/// 匹配 /* 后在回调中手动查找 */，跳过整个块注释
+fn skip_block_comment(lex: &mut logos::Lexer<Token>) -> logos::Filter<()> {
+    let remainder = lex.remainder();
+    if let Some(offset) = remainder.find("*/") {
+        lex.bump(offset + 2); // 跳过 */
+    } else {
+        // 未终止块注释：消费到 EOF
+        lex.bump(remainder.len());
+    }
+    logos::Filter::Skip
+}
+
 /// 处理字符串字面量中的转义序列
 /// 支持: \n, \t, \r, \\, \", \0
 /// 未知转义序列返回 Err，由 Logos 回退到 Error token
@@ -319,6 +332,9 @@ pub enum Token {
 
     // 跳过行注释（// 到行尾）
     #[regex(r"//[^\n]*", logos::skip)]
+
+    // 跳过块注释 /* ... */
+    #[regex(r"/\*", skip_block_comment)]
 
     // Error token - handled automatically by Logos 0.13+
     Error,
