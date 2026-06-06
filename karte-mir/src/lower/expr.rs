@@ -931,10 +931,10 @@ pub(crate) fn lower_expression(
             let pre_loop_block = ctx.current_block();
 
             // 快照所有作用域的变量绑定（不仅仅是当前 scope）
+            // 注意：不使用 .rev()，让内层 scope 的绑定优先（后出现的覆盖先出现的）
             let pre_loop_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
                 ctx.scopes
                     .iter()
-                    .rev()
                     .flat_map(|scope| scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership))))
                     .collect();
 
@@ -959,10 +959,10 @@ pub(crate) fn lower_expression(
             ctx.loop_stack.pop();
 
             // 收集所有作用域中变量更新后的绑定
+            // 注意：不使用 .rev()，让内层 scope 的绑定优先（后出现的覆盖先出现的）
             let post_loop_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
                 ctx.scopes
                     .iter()
-                    .rev()
                     .flat_map(|scope| scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership))))
                     .collect();
 
@@ -1102,10 +1102,10 @@ pub(crate) fn lower_expression(
 
             // 收集循环体中变量更新后的值（用于 phi incoming）
             // 遍历所有作用域，因为 if-else 的 phi 更新可能在内层作用域
+            // 注意：不使用 .rev()，让内层 scope 的绑定优先（后出现的覆盖先出现的）
             let final_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
                 ctx.scopes
                     .iter()
-                    .rev()
                     .flat_map(|scope| {
                         scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
                     })
@@ -2566,7 +2566,13 @@ pub(crate) fn lower_expression(
             final_expr,
             span,
         } => {
-            ctx.enter_scope();
+            // 修复 Phi 节点分析：analysis_mode 下不创建新 scope
+            // 原因：while 循环的预分析需要检测循环体内的 let 重新绑定，
+            // 如果 enter_scope/exit_scope 创建并销毁内层 scope，绑定变化会丢失
+            let should_scope = !ctx.analysis_mode;
+            if should_scope {
+                ctx.enter_scope();
+            }
 
             // Hoisting Pass: 预先注册当前块中的函数定义，支持相互递归
             for stmt in statements {
@@ -2594,7 +2600,9 @@ pub(crate) fn lower_expression(
                     span: *span,
                 });
             }
-            ctx.exit_scope(*span);
+            if should_scope {
+                ctx.exit_scope(*span);
+            }
         }
 
         Expr::Statement { stmt, .. } => {

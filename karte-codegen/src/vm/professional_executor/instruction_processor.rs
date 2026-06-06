@@ -2,6 +2,13 @@
 //!
 //! 负责处理所有LIR指令的执行，提供完整的指令集支持
 
+// 调试打印宏：生产环境禁用，调试时取消注释 debug_println! 行
+macro_rules! debug_println {
+    ($($arg:tt)*) => {
+        // 调试时取消注释: debug_println!($($arg)*);
+    };
+}
+
 use super::{ExecutionEngine, InstructionResult, ProgramManager};
 use karte_lir::{ComparisonCondition, Instruction, LabelId, Operand, Register};
 
@@ -150,7 +157,7 @@ impl InstructionProcessor {
                 let addr = engine.get_register(dst)? as usize;
                 let value = engine.get_register(id)?;
 
-                println!("执行存储操作: 地址={}, 值={}", addr, value);
+                debug_println!("执行存储操作: 地址={}, 值={}", addr, value);
 
                 // 执行内存存储
                 engine.store_memory(addr, value)?;
@@ -353,10 +360,10 @@ impl InstructionProcessor {
 
         let target_label = karte_lir::LabelId(function_address as usize);
 
-        println!("CallIndirect 调试信息:");
-        println!("  function_register: {:?}", function_register);
-        println!("  function_address: {}", function_address);
-        println!("  target_label: {:?}", target_label);
+        debug_println!("CallIndirect 调试信息:");
+        debug_println!("  function_register: {:?}", function_register);
+        debug_println!("  function_address: {}", function_address);
+        debug_println!("  target_label: {:?}", target_label);
 
         // 2. 准备参数 - 将参数值传递到参数寄存器
         let mut arg_values = Vec::new();
@@ -364,13 +371,13 @@ impl InstructionProcessor {
             let arg_value = engine.get_register(arg_reg)?;
             arg_values.push(arg_value);
 
-            println!("  参数{}: 寄存器{:?} = {}", i, arg_reg, arg_value);
+            debug_println!("  参数{}: 寄存器{:?} = {}", i, arg_reg, arg_value);
 
             // 如果有足够的参数寄存器，设置参数寄存器
             if i < engine.get_calling_convention().argument_registers.len() {
                 let param_reg = engine.get_calling_convention().argument_registers[i];
                 engine.set_register(&Register::Virtual(param_reg as usize), arg_value)?;
-                println!("  -> 设置参数寄存器r{} = {}", param_reg, arg_value);
+                debug_println!("  -> 设置参数寄存器r{} = {}", param_reg, arg_value);
             }
         }
 
@@ -380,12 +387,12 @@ impl InstructionProcessor {
         // 6. 查找目标函数PC
         let target_pc = match program_manager.get_label_pc(&target_label) {
             Ok(pc) => {
-                println!("  -> 找到目标函数PC: {}", pc);
+                debug_println!("  -> 找到目标函数PC: {}", pc);
                 pc
             }
             Err(e) => {
-                println!("  -> 错误：无法找到函数地址 {:?}: {}", target_label, e);
-                println!("  -> 可用标签: {:?}", program_manager.get_all_labels());
+                debug_println!("  -> 错误：无法找到函数地址 {:?}: {}", target_label, e);
+                debug_println!("  -> 可用标签: {:?}", program_manager.get_all_labels());
                 return Err(format!(
                     "Function address {:?} not found: {}",
                     target_label, e
@@ -396,7 +403,7 @@ impl InstructionProcessor {
         // 7. 标记这是一个函数调用，需要在返回时恢复状态
         engine.push_call_frame(current_pc + 1, result.cloned())?;
 
-        println!(
+        debug_println!(
             "  -> 成功跳转到PC: {} (标签: {:?})",
             target_pc, target_label
         );
@@ -431,7 +438,7 @@ impl InstructionProcessor {
         let store_addr = (base_addr as i64 + offset) as usize;
         let value = engine.get_operand_value(src)?;
 
-        println!(
+        debug_println!(
             "Store64: storing {} to address {} (base {} + offset {})",
             value, store_addr, base_addr, offset
         );
@@ -452,7 +459,7 @@ impl InstructionProcessor {
         let load_addr = (base_addr as i64 + offset) as usize;
         let value = engine.load_memory(load_addr)?;
 
-        println!(
+        debug_println!(
             "Load64: loaded {} from address {} (base {} + offset {})",
             value, load_addr, base_addr, offset
         );
@@ -481,7 +488,8 @@ impl InstructionProcessor {
             current
         };
 
-        // println!("Alloc: allocated {} bytes at address {}", size, addr);
+        // debug_println!("Alloc: allocated {} bytes at address {}", size, addr);
+        debug_println!("Alloc: allocated {} bytes at address {}", size, addr);
 
         engine.set_register(dst, addr as i64)?;
         Ok(InstructionResult::Continue)
@@ -504,7 +512,7 @@ impl InstructionProcessor {
         // 从字段地址加载值
         let value = engine.load_memory(field_addr)?;
 
-        println!(
+        debug_println!(
             "StructFieldLoad: loaded {} from field at address {} (base {} + offset {})",
             value, field_addr, base_addr, field_offset
         );

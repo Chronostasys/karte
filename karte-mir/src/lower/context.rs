@@ -169,6 +169,16 @@ impl<'a> LoweringContext<'a> {
     /// 释放作用域内所有引用计数的变量
     pub(crate) fn exit_scope(&mut self, span: Span) {
         if let Some(frame) = self.scopes.pop() {
+            // 🔧 修复 Phi 节点：将内层 scope 中与外层同名的变量绑定传播到外层 scope
+            // 这样 while 循环体中的 let 重新绑定（如 let s = inc(s)）能被 Phi 分析捕获
+            if let Some(outer) = self.scopes.last_mut() {
+                for (name, binding) in &frame.bindings {
+                    if outer.bindings.contains_key(name) {
+                        // 内层 scope 重新绑定了外层已有的变量，传播到外层
+                        outer.bindings.insert(name.clone(), binding.clone());
+                    }
+                }
+            }
             for name in frame.order.iter().rev() {
                 if let Some(binding) = frame.bindings.get(name) {
                     self.release_binding(binding, span);

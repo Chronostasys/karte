@@ -35,7 +35,7 @@ impl X86Compiler {
     /// 创建新的x86编译器
     pub fn new(debug_mode: bool) -> crate::Result<Self> {
         Ok(Self {
-            debug_mode: true,
+            debug_mode: false, // 默认关闭调试模式，避免 I/O 瓶颈
             current_function_used_regs: Vec::new(),
             current_stack_frame_size: 0,
             stack_frame_size_for_epilogue: 0,

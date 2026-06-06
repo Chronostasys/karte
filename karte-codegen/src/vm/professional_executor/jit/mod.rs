@@ -68,7 +68,7 @@ impl JitManager {
                     debug_mode,
                 ),
             execution_mode: ExecutionMode::Hybrid, // 默认混合模式
-            debug_mode: true,
+            debug_mode, // 使用传入的参数控制调试模式
         })
     }
 
