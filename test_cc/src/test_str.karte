@@ -1,0 +1,19 @@
+module main
+fn test_upper() -> number {
+    let s = "hello";
+    let u = to_upper(s);
+    if u == "HELLO" { 1 } else { 0 }
+}
+fn test_index_of() -> number {
+    let s = "Hello World";
+    let i = index_of(s, char_code("W", 0));
+    i
+}
+fn test_reverse() -> number {
+    let s = "abc";
+    let r = reverse(s);
+    if r == "cba" { 1 } else { 0 }
+}
+fn main() -> number {
+    test_upper() + test_index_of() + test_reverse()
+}
