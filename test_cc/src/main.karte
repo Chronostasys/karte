@@ -3,7 +3,7 @@ module main
 fn emit(s: string) -> number { print(s + "\n"); 0 }
 
 fn main() -> number {
-    let src = "int fib(int n) { if (n <= 1) { return n; } else { return fib(n - 1) + fib(n - 2); } } int main() { return fib(10); }";
+    let src = "int main() { int s; s = 0; int i; for (i = 1; i <= 10; i += 1) { s += i; }; return s; }";
     let tk = tokenize(src);
     let tn = count_tk(tk);
     emit(".globl _start");
@@ -144,8 +144,25 @@ fn do_stmt_from(pos: number, tk: string, tn: number, vars: string, end: number) 
             emit("  mov %rax, " + to_string(0 - (var_off(vars, nm) + 1) * 8) + "(%rbp)");
             ep
         } else {
+        if k2 >= 34 && k2 <= 38 {
+            let nm = get_val(tk, pos, tn);
+            let off = var_off(vars, nm);
+            emit("  mov " + to_string(0 - (off + 1) * 8) + "(%rbp), %rax");
+            emit("  push %rax");
+            let ep = expr(pos + 2, tk, tn, vars);
+            emit("  pop %rcx");
+            emit("  pop %rax");
+            if k2 == 34 { emit("  add %rcx, %rax") } else {
+            if k2 == 35 { emit("  sub %rcx, %rax") } else {
+            if k2 == 36 { emit("  imul %rcx, %rax") } else {
+            if k2 == 37 { emit("  cqto"); emit("  idiv %rcx") } else {
+            emit("  cqto"); emit("  idiv %rcx"); emit("  mov %rdx, %rax")
+            }}}};
+            emit("  mov %rax, " + to_string(0 - (off + 1) * 8) + "(%rbp)");
+            ep
+        } else {
             pos
-        }
+        }}
     } else {
         pos
     }}
@@ -162,8 +179,25 @@ fn do_stmt(pos: number, tk: string, tn: number, vars: string) -> number {
             emit("  mov %rax, " + to_string(0 - (var_off(vars, nm) + 1) * 8) + "(%rbp)");
             ep + 1
         } else {
+        if k2 >= 34 && k2 <= 38 {
+            let nm = get_val(tk, pos, tn);
+            let off = var_off(vars, nm);
+            emit("  mov " + to_string(0 - (off + 1) * 8) + "(%rbp), %rax");
+            emit("  push %rax");
+            let ep = expr(pos + 2, tk, tn, vars);
+            emit("  pop %rcx");
+            emit("  pop %rax");
+            if k2 == 34 { emit("  add %rcx, %rax") } else {
+            if k2 == 35 { emit("  sub %rcx, %rax") } else {
+            if k2 == 36 { emit("  imul %rcx, %rax") } else {
+            if k2 == 37 { emit("  cqto"); emit("  idiv %rcx") } else {
+            emit("  cqto"); emit("  idiv %rcx"); emit("  mov %rdx, %rax")
+            }}}};
+            emit("  mov %rax, " + to_string(0 - (off + 1) * 8) + "(%rbp)");
+            ep + 1
+        } else {
             pos
-        }
+        }}
     } else {
         if k == 1 {
             let nm = get_val(tk, pos + 1, tn);
@@ -229,9 +263,17 @@ fn do_block(pos: number, tk: string, tn: number, vars: string, lc: number) -> (n
         if k == 5 { p = p + 1 } else {
         if k == 1 {
             let nm = get_val(tk, p + 1, tn);
-            p = p + 3;
-            v = v + nm + ":" + to_string(vc2) + ",";
-            vc2 = vc2 + 1
+            let nk = tk_kind(tk, p + 2, tn);
+            if nk == 32 {
+                let cnt = tk_num(tk, p + 3, tn);
+                v = v + nm + ":" + to_string(vc2) + ";" + to_string(cnt) + ",";
+                vc2 = vc2 + cnt;
+                p = p + 6
+            } else {
+                v = v + nm + ":" + to_string(vc2) + ",";
+                vc2 = vc2 + 1;
+                p = p + 3
+            }
         } else {
         if k == 20 {
             p = p + 1;
@@ -257,12 +299,42 @@ fn do_block(pos: number, tk: string, tn: number, vars: string, lc: number) -> (n
             vc2 = r.1
         } else {
             let nm = get_val(tk, p, tn);
-            let off = var_off(v, nm);
-            p = p + 2;
-            let ep = expr(p, tk, tn, v);
-            emit("  pop %rax");
-            emit("  mov %rax, " + to_string(0 - (off + 1) * 8) + "(%rbp)");
-            p = ep + 1
+            let nk = tk_kind(tk, p + 1, tn);
+            if nk == 32 {
+                let off = var_off(v, nm);
+                let ip = expr(p + 2, tk, tn, v);
+                let ep = expr(ip + 2, tk, tn, v);
+                emit("  pop %rax");
+                emit("  pop %rcx");
+                emit("  neg %rcx");
+                emit("  mov %rax, " + to_string(0 - (off + 1) * 8) + "(%rbp, %rcx, 8)");
+                p = ep + 1
+            } else {
+            if nk >= 34 && nk <= 38 {
+                let off = var_off(v, nm);
+                emit("  mov " + to_string(0 - (off + 1) * 8) + "(%rbp), %rax");
+                emit("  push %rax");
+                let ep = expr(p + 2, tk, tn, v);
+                emit("  pop %rcx");
+                emit("  pop %rax");
+                if nk == 34 { emit("  add %rcx, %rax") } else {
+                if nk == 35 { emit("  sub %rcx, %rax") } else {
+                if nk == 36 { emit("  imul %rcx, %rax") } else {
+                if nk == 37 { emit("  cqto"); emit("  idiv %rcx") } else {
+                emit("  cqto"); emit("  idiv %rcx"); emit("  mov %rdx, %rax")
+                }}}};
+                emit("  push %rax");
+                emit("  pop %rax");
+                emit("  mov %rax, " + to_string(0 - (off + 1) * 8) + "(%rbp)");
+                p = ep + 1
+            } else {
+                let off = var_off(v, nm);
+                p = p + 2;
+                let ep = expr(p, tk, tn, v);
+                emit("  pop %rax");
+                emit("  mov %rax, " + to_string(0 - (off + 1) * 8) + "(%rbp)");
+                p = ep + 1
+            }}
         }}}}}}}
     };
     (p, v, vc2)
@@ -498,12 +570,22 @@ fn p_primary(pos: number, tk: string, tn: number, vars: string) -> number {
             emit("  push %rax");
             p + 1
         } else {
+        if k2 == 32 {
+            let nm = get_val(tk, pos, tn);
+            let off = var_off(vars, nm);
+            let ip = expr(pos + 2, tk, tn, vars);
+            emit("  pop %rax");
+            emit("  neg %rax");
+            emit("  mov " + to_string(0 - (off + 1) * 8) + "(%rbp, %rax, 8), %rcx");
+            emit("  push %rcx");
+            ip + 1
+        } else {
             let nm = get_val(tk, pos, tn);
             let off = var_off(vars, nm);
             emit("  mov " + to_string(0 - (off + 1) * 8) + "(%rbp), %rax");
             emit("  push %rax");
             pos + 1
-        }
+        }}
     } else {
     if k == 6 {
         let p = expr(pos + 1, tk, tn, vars);
@@ -608,11 +690,21 @@ fn tok_sym(src: string, i: number, n: number) -> (number, string) {
             (i + 1, "")
         }
     } else {
-    if c == 43 { (i + 1, "15:0:0:+|") } else {
-    if c == 45 { (i + 1, "16:0:0:-|") } else {
-    if c == 42 { (i + 1, "17:0:0:*|") } else {
-    if c == 47 { (i + 1, "18:0:0:/|") } else {
-    if c == 37 { (i + 1, "30:0:0:%|") } else {
+    if c == 43 {
+        if i + 1 < n && str_index(src, i + 1) == 61 { (i + 2, "34:0:0:+=|") } else { (i + 1, "15:0:0:+|") }
+    } else {
+    if c == 45 {
+        if i + 1 < n && str_index(src, i + 1) == 61 { (i + 2, "35:0:0:-=|") } else { (i + 1, "16:0:0:-|") }
+    } else {
+    if c == 42 {
+        if i + 1 < n && str_index(src, i + 1) == 61 { (i + 2, "36:0:0:*=|") } else { (i + 1, "17:0:0:*|") }
+    } else {
+    if c == 47 {
+        if i + 1 < n && str_index(src, i + 1) == 61 { (i + 2, "37:0:0:/=|") } else { (i + 1, "18:0:0:/|") }
+    } else {
+    if c == 37 {
+        if i + 1 < n && str_index(src, i + 1) == 61 { (i + 2, "38:0:0:%=|") } else { (i + 1, "30:0:0:%|") }
+    } else {
         (i + 1, "")
     }}}}}}}}}}}}}}}}}}}
 }
@@ -631,5 +723,6 @@ fn find_c(s: string, start: number) -> number { let i = start; while i < len(s) 
 fn find_p(s: string, start: number) -> number { let i = start; while i < len(s) { if str_index(s, i) == 124 { break } else { 0 }; i = i + 1 }; i }
 fn sub_str(s: string, a: number, b: number) -> string { let out = ""; let i = a; while i < b { out = out + char_to_string(str_index(s, i)); i = i + 1 }; out }
 fn pn(s: string, a: number, b: number) -> number { if a >= b { 0 } else { let v = 0; let i = a; while i < b { v = v * 10 + (str_index(s, i) - 48); i = i + 1 }; v } }
-fn var_off(vm: string, name: string) -> number { let p = find_ch(vm, 0, 58); let i = 0; while p < len(vm) { let nm = sub_str(vm, i, p); if eq(nm, name) { break } else { 0 }; let ns = p + 1; let cp = find_ch(vm, ns, 44); i = cp + 1; p = find_ch(vm, i, 58) }; let ns2 = p + 1; pn(vm, ns2, find_ch(vm, ns2, 44)) }
+fn var_off(vm: string, name: string) -> number { let p = find_ch(vm, 0, 58); let i = 0; while p < len(vm) { let nm = sub_str(vm, i, p); if eq(nm, name) { break } else { 0 }; let ns = p + 1; let cp = find_ch(vm, ns, 44); i = cp + 1; p = find_ch(vm, i, 58) }; let ns2 = p + 1; let sc = find_ch(vm, ns2, 59); let cm = find_ch(vm, ns2, 44); if sc < cm { pn(vm, ns2, sc) } else { pn(vm, ns2, cm) } }
+fn is_arr(vm: string, name: string) -> number { let p = find_ch(vm, 0, 58); let i = 0; while p < len(vm) { let nm = sub_str(vm, i, p); if eq(nm, name) { break } else { 0 }; let ns = p + 1; let cp = find_ch(vm, ns, 44); i = cp + 1; p = find_ch(vm, i, 58) }; let ns2 = p + 1; let sc = find_ch(vm, ns2, 59); let cm = find_ch(vm, ns2, 44); if sc < cm { pn(vm, sc + 1, cm) } else { 0 } }
 fn find_ch(s: string, start: number, ch: number) -> number { let i = start; while i < len(s) { if str_index(s, i) == ch { break } else { 0 }; i = i + 1 }; i }
