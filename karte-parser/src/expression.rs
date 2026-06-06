@@ -1939,12 +1939,28 @@ impl<'a> Parser<'a> {
                             if matches!(next.token, Token::RightParen) {
                                 let end_span = next.span;
                                 self.advance();
-                                let span = Span::new(expr.span().start, end_span.end);
-                                expr = Expr::FunctionCall {
-                                    function: Box::new(expr),
-                                    args,
-                                    span,
-                                };
+
+                                // 方法调用解糖：obj.method(args) → method(obj, args)
+                                if let Expr::FieldAccess { object, field, span: field_span } = &expr {
+                                    let mut method_args = vec![object.as_ref().clone()];
+                                    method_args.extend(args.iter().cloned());
+                                    let call_span = Span::new(field_span.start, end_span.end);
+                                    expr = Expr::FunctionCall {
+                                        function: Box::new(Expr::Identifier {
+                                            name: field.clone(),
+                                            span: *field_span,
+                                        }),
+                                        args: method_args,
+                                        span: call_span,
+                                    };
+                                } else {
+                                    let span = Span::new(expr.span().start, end_span.end);
+                                    expr = Expr::FunctionCall {
+                                        function: Box::new(expr),
+                                        args,
+                                        span,
+                                    };
+                                }
                             } else {
                                 return Err(ParseError::UnexpectedToken {
                                     expected: "')'".to_string(),
