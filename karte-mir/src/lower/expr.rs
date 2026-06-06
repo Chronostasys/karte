@@ -4285,9 +4285,24 @@ fn lower_function_call(
             });
             return Ok(());
         }
-        if name == "mem_load64" || name == "mem_load_ptr" {
+        // unsafe_cast(value) — 编译时类型转换，运行时 no-op
+        if name == "unsafe_cast" {
             if args.len() != 1 {
-                ctx.errors.push("mem_load64/mem_load_ptr 需要一个参数 (addr)".to_string());
+                ctx.errors.push("unsafe_cast 需要一个参数".to_string());
+                return Err(ctx.errors.clone());
+            }
+            let val = lower_expression_to_temp(ctx, &args[0])?;
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: val,
+                span,
+            });
+            return Ok(());
+        }
+
+        if name == "mem_load64" {
+            if args.len() != 1 {
+                ctx.errors.push("mem_load64 需要一个参数 (addr)".to_string());
                 return Err(ctx.errors.clone());
             }
             let addr_val = lower_expression_to_temp(ctx, &args[0])?;

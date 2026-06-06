@@ -1356,7 +1356,7 @@ pub(super) fn lower_statement(
                         }
                         return Ok(());
                     }
-                    "mem_load64" | "mem_load_ptr" | "__runtime_mem_load64" => {
+                    "mem_load64" | "__runtime_mem_load64" => {
                         let addr_op = ctx.lower_to_rvalue(&args[0]);
                         let addr_reg = match addr_op {
                             Operand::Register { id } => id,

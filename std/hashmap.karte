@@ -14,6 +14,7 @@ fn hm_hash(key: string) -> number {
 fn hm_new(cap: number) -> number {
     let m = gc_alloc(8 + cap * 24);
     mem_store64(m, 0);
+    mem_store64(m + 8, cap);
     m
 }
 
@@ -21,87 +22,109 @@ fn hm_len(m: number) -> number {
     mem_load64(m)
 }
 
+fn hm_cap(m: number) -> number {
+    mem_load64(m + 8)
+}
+
 fn hm_insert(m: number, key: string, val: string) -> number {
-    let cap = 0;
-    let count = mem_load64(m);
-    let cap = (count + 1) * 2;
-    let new_m = gc_alloc(8 + cap * 24);
-    mem_store64(new_m, 0);
+    let cap = mem_load64(m + 8);
+    let h = hm_hash(key) % cap;
     let i = 0;
-    while i < count {
-        let entry_base = m + 8 + i * 24;
-        let old_hash = mem_load64(entry_base);
-        let old_key = mem_load_ptr(entry_base + 8);
-        let old_val = mem_load_ptr(entry_base + 16);
-        let idx = old_hash % cap;
-        let slot = new_m + 8 + idx * 24;
-        let slot_used = mem_load64(slot);
-        while slot_used != 0 {
-            let idx = (idx + 1) % cap;
-            let slot = new_m + 8 + idx * 24;
-            let slot_used = mem_load64(slot);
-        };
-        mem_store64(slot, 1);
-        mem_store64(slot + 8, old_key);
-        mem_store64(slot + 16, old_val);
-        let new_len = mem_load64(new_m);
-        mem_store64(new_m, new_len + 1);
-        i = i + 1;
-    };
-    let h = hm_hash(key);
-    let idx = h % cap;
-    let slot = new_m + 8 + idx * 24;
-    let slot_used = mem_load64(slot);
-    while slot_used != 0 {
-        let k = mem_load_ptr(slot + 8);
-        if str_equal(k, key) {
+    while i < cap {
+        let idx = (h + i) % cap;
+        let slot = m + 8 + idx * 24;
+        let used = mem_load64(slot);
+        if used == 0 {
+            mem_store64(slot, 1);
+            mem_store64(slot + 8, key);
             mem_store64(slot + 16, val);
-            let slot_used = 0;
+            let len = mem_load64(m);
+            mem_store64(m, len + 1);
+            i = cap;
         } else {
-            let idx = (idx + 1) % cap;
-            let slot = new_m + 8 + idx * 24;
-            let slot_used = mem_load64(slot);
+            let k = unsafe_cast(mem_load64(slot + 8));
+            if str_equal(k, key) {
+                mem_store64(slot + 16, val);
+                i = cap;
+            } else {
+                i = i + 1;
+            }
         }
     };
-    mem_store64(slot, 1);
-    mem_store64(slot + 8, key);
-    mem_store64(slot + 16, val);
-    let new_len = mem_load64(new_m);
-    mem_store64(new_m, new_len + 1);
-    new_m
+    m
 }
 
 fn hm_get(m: number, key: string) -> string {
-    let count = mem_load64(m);
+    let cap = mem_load64(m + 8);
+    let h = hm_hash(key) % cap;
     let i = 0;
     let result = "";
-    while i < count {
-        let entry_base = m + 8 + i * 24;
-        let k = mem_load_ptr(entry_base + 8);
-        if str_equal(k, key) {
-            let result = mem_load_ptr(entry_base + 16);
-            let i = count;
-            result
+    while i < cap {
+        let idx = (h + i) % cap;
+        let slot = m + 8 + idx * 24;
+        let used = mem_load64(slot);
+        if used == 0 {
+            i = cap;
         } else {
-            let i = i + 1;
+            let k = unsafe_cast(mem_load64(slot + 8));
+            if str_equal(k, key) {
+                result = unsafe_cast(mem_load64(slot + 16));
+                i = cap;
+            } else {
+                i = i + 1;
+            }
         }
     };
     result
 }
 
 fn hm_contains(m: number, key: string) -> number {
-    let count = mem_load64(m);
+    let cap = mem_load64(m + 8);
+    let h = hm_hash(key) % cap;
     let i = 0;
     let found = 0;
-    while i < count {
-        let entry_base = m + 8 + i * 24;
-        let k = mem_load_ptr(entry_base + 8);
-        if str_equal(k, key) {
-            let found = 1;
-            let i = count;
+    while i < cap {
+        let idx = (h + i) % cap;
+        let slot = m + 8 + idx * 24;
+        let used = mem_load64(slot);
+        if used == 0 {
+            i = cap;
         } else {
-            let i = i + 1;
+            let k = unsafe_cast(mem_load64(slot + 8));
+            if str_equal(k, key) {
+                found = 1;
+                i = cap;
+            } else {
+                i = i + 1;
+            }
         }
     };
     found
+}
+
+fn hm_remove(m: number, key: string) -> number {
+    let cap = mem_load64(m + 8);
+    let h = hm_hash(key) % cap;
+    let i = 0;
+    while i < cap {
+        let idx = (h + i) % cap;
+        let slot = m + 8 + idx * 24;
+        let used = mem_load64(slot);
+        if used == 0 {
+            i = cap;
+        } else {
+            let k = unsafe_cast(mem_load64(slot + 8));
+            if str_equal(k, key) {
+                mem_store64(slot, 0);
+                mem_store64(slot + 8, 0);
+                mem_store64(slot + 16, 0);
+                let len = mem_load64(m);
+                mem_store64(m, len - 1);
+                i = cap;
+            } else {
+                i = i + 1;
+            }
+        }
+    };
+    m
 }

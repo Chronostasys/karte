@@ -1133,8 +1133,10 @@ impl TypeChecker {
                 if name == "mem_load64" {
                     return Type::function(vec![Type::Number], Type::Number);
                 }
-                if name == "mem_load_ptr" {
-                    return Type::function(vec![Type::Number], Type::String);
+                if name == "unsafe_cast" {
+                    let alpha = self.fresh_type_var();
+                    let beta = self.fresh_type_var();
+                    return Type::function(vec![Type::Var(alpha)], Type::Var(beta));
                 }
                 if name == "mem_store64" {
                     let alpha = self.fresh_type_var();
