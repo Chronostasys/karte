@@ -21,41 +21,7 @@ fn main() -> number {
     emit("  mov %rsp, %rbp");
     emit("  sub $208, %rsp");
     pos = skip_to(tk, pos, tn, 4) + 1;
-    let p = pos;
-    let v = vars;
-    let vc2 = vc;
-    let done = 0;
-    while done == 0 && p < tn {
-        let k = tk_kind(tk, p, tn);
-        if k == 8 { done = 1 } else {
-        if k == 5 { p = p + 1 } else {
-        if k == 1 {
-            let nm = get_val(tk, p + 1, tn);
-            p = p + 3;
-            v = v + nm + ":" + to_string(vc2) + ",";
-            vc2 = vc2 + 1
-        } else {
-        if k == 20 {
-            p = p + 1;
-            let ep = expr(p, tk, tn, v);
-            emit("  pop %rax");
-            p = ep + 1;
-            done = 1
-        } else {
-        if k == 21 {
-            let r = do_while(p, tk, tn, v, vc2);
-            p = r.0;
-            vc2 = r.1
-        } else {
-            let nm = get_val(tk, p, tn);
-            let off = var_off(v, nm);
-            p = p + 2;
-            let ep = expr(p, tk, tn, v);
-            emit("  pop %rax");
-            emit("  mov %rax, " + to_string(0 - (off + 1) * 8) + "(%rbp)");
-            p = ep + 1
-        }}}}}
-    };
+    let r = do_block(pos - 1, tk, tn, vars, vc);
     emit("  leave");
     emit("  ret");
     0
@@ -72,10 +38,51 @@ fn do_while(pos: number, tk: string, tn: number, vars: string, lc: number) -> (n
     let b = do_block(ep + 1, tk, tn, vars, endl + 1);
     emit("  jmp .L" + to_string(sl));
     emit(".L" + to_string(endl) + ":");
-    (b.0 + 1, b.1)
+    (b.0 + 1, b.2)
 }
 
-fn do_block(pos: number, tk: string, tn: number, vars: string, lc: number) -> (number, number) {
+fn do_if(pos: number, tk: string, tn: number, vars: string, lc: number) -> (number, string, number) {
+    let elsel = lc;
+    let endl = lc + 1;
+    let ep = expr(pos + 2, tk, tn, vars);
+    emit("  pop %rax");
+    emit("  cmp $0, %rax");
+    emit("  je .L" + to_string(elsel));
+    let b = do_block(ep + 1, tk, tn, vars, endl + 1);
+    emit("  jmp .L" + to_string(endl));
+    emit(".L" + to_string(elsel) + ":");
+    let p = b.0;
+    let v = b.1;
+    let vc2 = b.2;
+    if p < tn {
+        let nk = tk_kind(tk, p, tn);
+        if nk == 8 {
+            let np = p + 1;
+            if np < tn {
+                let k2 = tk_kind(tk, np, tn);
+                if k2 == 22 {
+                    let b2 = do_block(np + 1, tk, tn, v, vc2 + 1);
+                    emit(".L" + to_string(endl) + ":");
+                    (b2.0, b2.1, b2.2)
+                } else {
+                    emit(".L" + to_string(endl) + ":");
+                    (np, v, vc2)
+                }
+            } else {
+                emit(".L" + to_string(endl) + ":");
+                (np, v, vc2)
+            }
+        } else {
+            emit(".L" + to_string(endl) + ":");
+            (p, v, vc2)
+        }
+    } else {
+        emit(".L" + to_string(endl) + ":");
+        (p, v, vc2)
+    }
+}
+
+fn do_block(pos: number, tk: string, tn: number, vars: string, lc: number) -> (number, string, number) {
     let p = skip_to(tk, pos, tn, 4) + 1;
     let v = vars;
     let vc2 = lc;
@@ -102,6 +109,12 @@ fn do_block(pos: number, tk: string, tn: number, vars: string, lc: number) -> (n
             p = r.0;
             vc2 = r.1
         } else {
+        if k == 19 {
+            let r = do_if(p, tk, tn, v, vc2);
+            p = r.0;
+            v = r.1;
+            vc2 = r.2
+        } else {
             let nm = get_val(tk, p, tn);
             let off = var_off(v, nm);
             p = p + 2;
@@ -109,9 +122,9 @@ fn do_block(pos: number, tk: string, tn: number, vars: string, lc: number) -> (n
             emit("  pop %rax");
             emit("  mov %rax, " + to_string(0 - (off + 1) * 8) + "(%rbp)");
             p = ep + 1
-        }}}}}
+        }}}}}}
     };
-    (p, vc2)
+    (p, v, vc2)
 }
 
 fn expr(pos: number, tk: string, tn: number, vars: string) -> number { p_add(pos, tk, tn, vars) }
