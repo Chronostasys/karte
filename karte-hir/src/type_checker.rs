@@ -1742,9 +1742,13 @@ impl TypeChecker {
                 else_branch,
                 span: _,
             } => {
-                // 推断条件的类型，条件必须是布尔类型
+                // 推断条件的类型，条件可以是布尔或数字类型（非零为 true）
                 let condition_type = self.infer_expr(condition, env);
-                self.add_constraint(condition_type, Type::bool(), condition.span());
+                // 允许 number 和 bool 作为条件
+                match condition_type {
+                    Type::Number | Type::Int(_) | Type::Bool => {}
+                    _ => self.add_constraint(condition_type, Type::bool(), condition.span()),
+                };
 
                 // 推断then分支的类型
                 let then_type = self.infer_expr(then_branch, env);
@@ -1753,8 +1757,16 @@ impl TypeChecker {
                 if let Some(else_branch) = else_branch {
                     let else_type = self.infer_expr(else_branch, env);
                     // 约束：then和else分支的类型必须兼容
-                    self.add_constraint(then_type.clone(), else_type, else_branch.span());
-                    then_type
+                    // 放宽策略：如果其中一个分支是 Unit，返回另一个分支的类型
+                    // 这允许 if-else 的一个分支是语句（返回 Unit），另一个是表达式
+                    match (&then_type, &else_type) {
+                        (Type::Unit, _) => else_type.clone(),
+                        (_, Type::Unit) => then_type.clone(),
+                        _ => {
+                            self.add_constraint(then_type.clone(), else_type, else_branch.span());
+                            then_type
+                        }
+                    }
                 } else {
                     // 如果没有else分支，if表达式返回unit类型
                     // 但不强制then分支必须是unit（允许表达式求值但丢弃结果）
@@ -1765,9 +1777,12 @@ impl TypeChecker {
             Expr::While {
                 condition, body, ..
             } => {
-                // 条件必须是布尔类型
+                // 条件可以是布尔或数字类型（非零为 true）
                 let condition_type = self.infer_expr(condition, env);
-                self.add_constraint(condition_type, Type::bool(), condition.span());
+                match condition_type {
+                    Type::Number | Type::Int(_) | Type::Bool => {}
+                    _ => self.add_constraint(condition_type, Type::bool(), condition.span()),
+                };
 
                 // while循环的body可以是任何类型，但while表达式本身返回Unit
                 self.infer_expr(body, env);

@@ -119,25 +119,29 @@ mod type_checking_tests {
     }
 
     #[test]
-    fn test_if_condition_must_be_boolean() {
+    fn test_if_condition_accepts_number() {
+        // 现在允许 number 作为 if 条件（非零为 true，零为 false）
         let input = "if 42 then 1 else 0";
         let (tokens, _) = tokenize(input);
         let (ast, _) = parse(&tokens);
         assert!(ast.is_some());
 
         let (_, diagnostics) = type_check(ast.as_ref().unwrap());
-        assert!(diagnostics.has_errors());
+        // 不再报错，number 可以作为条件
+        assert!(!diagnostics.has_errors());
     }
 
     #[test]
-    fn test_while_condition_must_be_boolean() {
+    fn test_while_condition_accepts_number() {
+        // 现在允许 number 作为 while 条件
         let input = "while 42 do 1";
         let (tokens, _) = tokenize(input);
         let (ast, _) = parse(&tokens);
         assert!(ast.is_some());
 
         let (_, diagnostics) = type_check(ast.as_ref().unwrap());
-        assert!(diagnostics.has_errors());
+        // 不再报错，number 可以作为条件
+        assert!(!diagnostics.has_errors());
     }
 }
 
