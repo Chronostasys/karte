@@ -950,6 +950,43 @@ impl<'a> Parser<'a> {
                     let type_name = type_name.clone();
                     self.advance();
 
+                    // fn 关键字：函数类型 fn(params) -> return_type
+                    if type_name == "fn" {
+                        // 期望 '('
+                        if let Some(next) = self.peek() {
+                            if matches!(next.token, Token::LeftParen) {
+                                self.advance(); // consume '('
+                                let mut param_types = Vec::new();
+                                if !matches!(self.peek().map(|t| &t.token), Some(Token::RightParen)) {
+                                    param_types.push(self.parse_type_expression()?);
+                                    while matches!(self.peek().map(|t| &t.token), Some(Token::Comma)) {
+                                        self.advance(); // consume ','
+                                        param_types.push(self.parse_type_expression()?);
+                                    }
+                                }
+                                self.expect_token(Token::RightParen)?;
+
+                                // 期望 '->'
+                                if let Some(arrow) = self.peek() {
+                                    if matches!(arrow.token, Token::Arrow) {
+                                        self.advance(); // consume '->'
+                                        let return_type = self.parse_type_expression()?;
+                                        return Ok(Type::Function {
+                                            params: param_types,
+                                            return_type: Box::new(return_type),
+                                        });
+                                    }
+                                }
+                                // 没有 '->'，默认返回 Unit
+                                return Ok(Type::Function {
+                                    params: param_types,
+                                    return_type: Box::new(Type::Unit),
+                                });
+                            }
+                        }
+                        return Ok(Type::Unknown);
+                    }
+
                     // 检查是否有泛型参数
                     if let Some(next_token) = self.peek() {
                         if matches!(next_token.token, Token::Less) {
