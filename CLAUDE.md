@@ -394,6 +394,13 @@ let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering
 ## Notable Recent Changes
 
 Recent work includes:
+- **unsafe_cast + hashmap 修复 + 编译性能优化 (2026-06-07)** — 内存原语与标准库改进：
+  - **`unsafe_cast` 内建函数**: 替代 `mem_load_ptr`，接受任意类型返回任意类型，MIR 层为 no-op（直接 Assign）
+  - **`std/hashmap.karte` 修复**: while 循环中 `let` 新绑定改为赋值（`=` 语法），避免无限循环；用 `unsafe_cast(mem_load64(...))` 替代 `mem_load_ptr`
+  - **Dev profile `opt-level = 1`**: `[profile.dev]` 设 `opt-level = 1`, `overflow-checks = false`，编译性能从 8s→1.1s。**注意：边界检查已关闭**，调试奇怪问题时可临时恢复 `opt-level = 0`
+  - **3 个内存原语 + `unsafe_cast`**: `gc_alloc`, `mem_load64`, `mem_store64`（Runtime）+ `unsafe_cast`（编译期 no-op）+ `str_equal`/`str_compare`（内置字符串比较）
+  - **纯 Karte 数据结构**: `std/array.karte` 和 `std/hashmap.karte` 完全用 Karte 语言实现，不依赖 Rust Runtime 高级操作
+  - **test_cc**: 用 Karte 编写的 C 子集编译器，当前支持变量声明、赋值、while/if/else、基本算术表达式（+,-,*,<,>,==），输出 x86_64 汇编
 - **Struct 值传递 + Phi 节点修复 (2026-06-06)** — 编译器核心 bug 修复：
   - **Struct 值传递语义**: 函数参数深拷贝（`lower_to_rvalue` 中 `Alloc` + `Load64`/`Store64`），防止函数内部修改影响调用者
   - **MIR `start_function` 传播参数类型**: 新增 `param_types` 参数，函数参数绑定时设置 `ty` 字段
