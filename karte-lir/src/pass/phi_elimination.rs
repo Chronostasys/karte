@@ -6,9 +6,10 @@
 use super::analysis::ControlFlowGraph;
 use super::instruction_transformer::IndexInstructionTransformer;
 use super::{AnalysisManager, FunctionPass, PassResult};
-use crate::{Instruction, LirFunction};
+use crate::{Instruction, LirFunction, Register};
 use karte_diagnostics::Span;
 use log::{debug, error, info};
+use std::collections::HashSet;
 
 /// φ指令消除Pass
 #[derive(Debug)]
@@ -33,6 +34,19 @@ impl PhiEliminationPass {
     ) -> crate::Result<()> {
         let mut transformer = IndexInstructionTransformer::new();
 
+        // 🔧 性能优化：预计算所有 Alloc 目标寄存器集合，替代每个 Phi 的 O(N) 全量扫描
+        let alloc_regs: HashSet<Register> = function
+            .instructions
+            .iter()
+            .filter_map(|instr| {
+                if let Instruction::Alloc { dst, .. } = instr {
+                    Some(*dst)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
         // 扫描所有φ指令
         for (i, instruction) in function.instructions.iter().enumerate() {
             if let Instruction::Phi {
@@ -47,13 +61,7 @@ impl PhiEliminationPass {
                 // 栈地址 Phi 的 dst 是 Alloc 分配的栈地址。
                 // 值通过 lower.rs 的 phi_store_map Store64 传递，
                 // 不需要 PhiElimination 再生成 Move 或 Store64。
-                let is_stack_addr_phi = function.instructions.iter().any(|instr| {
-                    if let Instruction::Alloc { dst: alloc_dst, .. } = instr {
-                        alloc_dst == dst
-                    } else {
-                        false
-                    }
-                });
+                let is_stack_addr_phi = alloc_regs.contains(dst);
                 if is_stack_addr_phi {
                     debug!("🔧 跳过栈地址 Phi: dst={:?}", dst);
                     transformer.remove(i);

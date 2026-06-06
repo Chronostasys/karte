@@ -4,7 +4,7 @@ use crate::pass::ssa_construction::{DominanceInfo, SsaConstructionResult};
 use crate::pass::{AnalysisManager, AnalysisResult, FunctionPass, PassResult};
 use crate::{AllocationType, Instruction, LabelId, LirFunction, Operand, Register};
 // use karte_diagnostics::Span; // 下沉到 StackFrameLayoutPass 后，此处不直接构造基于 FP 的临时指令
-use log::{debug, error, info, warn};
+use log::{debug, error, info, trace, warn};
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
 
@@ -111,7 +111,18 @@ impl Memory2RegPass {
 
         // 第一阶段：从CFG获取基本块信息
         let basic_blocks = self.convert_cfg_to_basic_blocks(cfg);
-        info!("🔍 分析到 {} 个基本块", basic_blocks.len());
+        debug!("分析到 {} 个基本块", basic_blocks.len());
+
+        // 🔧 性能优化：预计算 instruction_to_block 数组，替代逐条指令的 O(B) 线性搜索
+        let instr_count = function.instructions.len();
+        let mut instruction_to_block: Vec<Option<usize>> = vec![None; instr_count];
+        for node in &cfg.nodes {
+            for idx in node.instruction_range.0..node.instruction_range.1 {
+                if idx < instr_count {
+                    instruction_to_block[idx] = Some(node.block_id);
+                }
+            }
+        }
 
         // 第二阶段：识别栈分配
         for (i, instruction) in function.instructions.iter().enumerate() {
@@ -161,7 +172,7 @@ impl Memory2RegPass {
 
         // 第三阶段：分析每个栈槽的使用并记录所在基本块
         for (i, instruction) in function.instructions.iter().enumerate() {
-            let current_block = self.find_basic_block_for_instruction(i, cfg);
+            let current_block = instruction_to_block.get(i).copied().flatten();
 
             match instruction {
                 Instruction::Load64 {
@@ -388,19 +399,19 @@ impl Memory2RegPass {
         function: &mut LirFunction,
         analysis: &Memory2RegAnalysis,
     ) -> crate::Result<bool> {
-        info!("🚀 开始Memory2Reg变换");
+        info!("开始Memory2Reg变换");
 
         let mut transformer = IndexInstructionTransformer::new();
 
-        // 🔥 新增：第一步 - 溢出代码插入
+        // 第一步 - 溢出代码插入
         self.insert_spill_code(function, analysis, &mut transformer)?;
 
-        // 第二步 - 使用专业的φ节点构造算法
+        // 第二步 - φ节点构造
         let mut phi_insertions = Vec::new();
         if let Some(dominance_info) = &analysis.dominance_info {
             phi_insertions = self.compute_phi_insertions(function, analysis, dominance_info);
         } else {
-            warn!("⚠️ 没有SSA构造结果，将使用简化的φ节点插入策略");
+            warn!("没有SSA构造结果，将使用简化的φ节点插入策略");
         }
 
         // 第三步 - 插入φ节点
@@ -410,11 +421,6 @@ impl Memory2RegPass {
         }
 
         // 第四步 - 收集变换操作
-        info!("🚀 步骤2: 收集变换操作");
-        // let mut all_instructions_to_remove = Vec::new();
-        // let mut all_instructions_to_modify = Vec::new();
-
-        // 🔧 修复：按确定性顺序遍历 stack_slots
         let mut sorted_slots: Vec<_> = analysis.stack_slots.iter().collect();
         sorted_slots.sort_by_key(|(slot_id, _)| slot_id.id());
 
@@ -429,6 +435,7 @@ impl Memory2RegPass {
                         &analysis.basic_blocks,
                         &analysis.dominance_info,
                         &mut transformer,
+                        &analysis.stack_slots,
                     );
                 } else {
                     info!("🚀 处理栈槽 {:?}", slot_id);
@@ -436,18 +443,18 @@ impl Memory2RegPass {
                         function,
                         slot,
                         &analysis.basic_blocks,
+                        &analysis.stack_slots,
                         &mut transformer,
                     );
-                    // panic!("🚀 处理栈槽 {:?}", slot_id);
                 }
             }
         }
 
-        // info!("🚀 总共移除 {} 条指令, 修改 {} 条指令", all_instructions_to_remove.len(), all_instructions_to_modify.len());
+        // info!("总共移除/修改指令完成");
 
         // 第五步 - 应用变换
-        info!("🚀 步骤3: 应用变换");
         let (changed, ..) = transformer.apply_to_function(function);
+
         // let changed = self.apply_all_transforms(function, all_instructions_to_remove, all_instructions_to_modify);
 
         if changed {
@@ -570,6 +577,7 @@ impl Memory2RegPass {
         basic_blocks: &HashMap<usize, BasicBlock>,
         dominance_info: &Option<DominanceInfo>,
         transformer: &mut IndexInstructionTransformer,
+        stack_slots: &HashMap<Register, StackSlot>,
     ) {
         debug!("🎯 使用φ节点支持变换栈槽 {:?}", slot.address_register);
 
@@ -974,6 +982,7 @@ impl Memory2RegPass {
         function: &LirFunction,
         slot: &StackSlot,
         basic_blocks: &HashMap<usize, BasicBlock>,
+        stack_slots: &HashMap<Register, StackSlot>,
         transformer: &mut IndexInstructionTransformer,
     ) {
         // 🔧 重大改进：处理更多情况，包括寄存器存储和跨栈槽值传播
@@ -1071,7 +1080,7 @@ impl Memory2RegPass {
                 let effective_src = match src {
                     Operand::Register { id } => {
                         // 尝试找到这个寄存器的定义
-                        self.trace_register_value(*id, store_pos, function)
+                        self.trace_register_value(*id, store_pos, function, stack_slots)
                             .unwrap_or_else(|| src.clone())
                     }
                     _ => src.clone(),
@@ -1299,20 +1308,20 @@ impl Memory2RegPass {
     }
 
     /// 追踪寄存器值的来源，用于跨栈槽值传播
+    /// 🔧 性能优化：接受预计算的 stack_slots 进行 O(1) 查找，替代 O(n) 全函数扫描
     fn trace_register_value(
         &self,
         register: Register,
         before_pos: usize,
         function: &LirFunction,
+        stack_slots: &HashMap<Register, StackSlot>,
     ) -> Option<Operand> {
-        info!(
-            "🔍 追踪寄存器 {:?} 在位置 {} 之前的值",
+        trace!(
+            "追踪寄存器 {:?} 在位置 {} 之前的值",
             register, before_pos
         );
 
         // 向前扫描，找到最近的对该寄存器的定义
-        // 🔧 修复：如果同一寄存器在多个分支中有不同的定义（如 div 零除保护），
-        // 则不能安全传播单个分支的值，必须返回 None
         let mut first_def_pos: Option<usize> = None;
         let mut first_def_value: Option<Operand> = None;
         for i in (0..before_pos).rev() {
@@ -1324,47 +1333,40 @@ impl Memory2RegPass {
             match instruction {
                 Instruction::Move { dst, src, .. } if *dst == register => {
                     if first_def_pos.is_some() {
-                        // 找到第二个定义，说明值依赖控制流分支，不可安全传播
-                        debug!("🔍 寄存器 {:?} 有多个定义点（位置 {:?} 和 {}），跳过传播（控制流依赖）", register, first_def_pos, i);
                         return None;
                     }
-                    debug!("🔍 找到mov定义: {:?} = {:?}", dst, src);
+                    trace!("找到mov定义: {:?} = {:?}", dst, src);
                     first_def_pos = Some(i);
                     first_def_value = Some(src.clone());
                 }
                 Instruction::Load64 { dst, addr, .. } if *dst == register => {
                     if first_def_pos.is_some() {
-                        // 找到第二个定义（load），说明值依赖控制流分支
-                        debug!("🔍 寄存器 {:?} 有多个定义点（位置 {:?} 和 {}），跳过传播（控制流依赖）", register, first_def_pos, i);
                         return None;
                     }
-                    debug!("🔍 找到load定义: {:?} = [{}]", dst, addr);
-                    // 🔧 修复：仅当栈槽有多个store时阻止穿透追踪
-                    // 多个store意味着值依赖控制流（如match不同分支），线性追踪会选错分支的值
-                    if self.is_stack_address_register(*addr, function) {
-                        if self.has_multiple_stores_to_slot(*addr, function) {
-                            debug!("🔍 栈槽 {:?} 有多个store，跳过穿透追踪（控制流依赖）", addr);
+                    trace!("找到load定义: {:?} = [{}]", dst, addr);
+                    // 🔧 性能优化：使用 stack_slots HashMap O(1) 查找替代 is_stack_address_register O(n) 全扫描
+                    if let Some(slot) = stack_slots.get(addr) {
+                        // 🔧 性能优化：使用 slot.stores.len() O(1) 替代 has_multiple_stores_to_slot O(n) 全扫描
+                        if slot.stores.len() > 1 {
+                            trace!("栈槽 {:?} 有多个store，跳过穿透追踪", addr);
                             return None;
                         } else {
-                            return self.trace_stack_slot_value(*addr, i, function);
+                            return self.trace_stack_slot_value(*addr, i, function, stack_slots);
                         }
                     } else {
                         return None;
                     }
                 }
                 Instruction::LoadGlobal { dst, .. } if *dst == register => {
-                    debug!("🔍 找到LoadGlobal定义: {:?}", dst);
-                    // LoadGlobal 加载全局变量，无法简单追踪
                     return None;
                 }
                 Instruction::StructFieldLoad {
                     dst, struct_addr, ..
                 } if *dst == register => {
-                    info!(
-                        "🔍 找到StructFieldLoad定义: {:?} = field from {:?}",
+                    trace!(
+                        "找到StructFieldLoad定义: {:?} = field from {:?}",
                         dst, struct_addr
                     );
-                    // StructFieldLoad 从结构体加载字段，无法简单追踪
                     return None;
                 }
                 Instruction::Add {
@@ -1438,9 +1440,10 @@ impl Memory2RegPass {
         stack_addr: Register,
         before_pos: usize,
         function: &LirFunction,
+        stack_slots: &HashMap<Register, StackSlot>,
     ) -> Option<Operand> {
-        info!(
-            "🔍 追踪栈槽 {:?} 在位置 {} 之前的存储值",
+        trace!(
+            "追踪栈槽 {:?} 在位置 {} 之前的存储值",
             stack_addr, before_pos
         );
 
@@ -1458,7 +1461,7 @@ impl Memory2RegPass {
                     match src {
                         Operand::Register { id } => {
                             // 递归追踪寄存器值（但限制递归深度）
-                            if let Some(traced_value) = self.trace_register_value(*id, i, function)
+                            if let Some(traced_value) = self.trace_register_value(*id, i, function, stack_slots)
                             {
                                 debug!("🔍 递归追踪得到: {:?}", traced_value);
                                 return Some(traced_value);
@@ -1549,80 +1552,55 @@ impl Memory2RegPass {
         _dominance_info: &DominanceInfo,
     ) -> Vec<PhiInsertion> {
         let mut phi_insertions = Vec::new();
-        info!("🔧 开始重构的phi节点插入算法");
+        trace!("开始重构的phi节点插入算法");
+
+        // 🔧 性能优化：预计算合流块集合（对所有slot相同，只算一次）
+        let confluence_blocks: HashSet<usize> = analysis
+            .basic_blocks
+            .iter()
+            .filter_map(|(block_id, block)| {
+                if block.predecessors.len() > 1 {
+                    Some(*block_id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // 递归判断该块或其后继是否有load指令
+        fn block_or_successors_have_load(
+            block_id: usize,
+            basic_blocks: &HashMap<usize, BasicBlock>,
+            slot: &StackSlot,
+            visited: &mut HashSet<usize>,
+        ) -> bool {
+            if !visited.insert(block_id) {
+                return false;
+            }
+            if slot.load_blocks.contains(&block_id) {
+                return true;
+            }
+            if let Some(block) = basic_blocks.get(&block_id) {
+                for &succ in &block.successors {
+                    if block_or_successors_have_load(succ, basic_blocks, slot, visited) {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
 
         for &slot_register in &analysis.promotable_slots {
             if let Some(slot) = analysis.stack_slots.get(&slot_register) {
-                debug!("🎯 为栈槽 {:?} 计算phi节点插入位置", slot_register);
-                // 新增：详细打印store/load分布
-                debug!("  - stores: {:?}", slot.stores);
-                debug!("  - loads:  {:?}", slot.loads);
-                for (i, &store_pos) in slot.stores.iter().enumerate() {
-                    if let Some(&block_id) = slot.store_to_block.get(&store_pos) {
-                        debug!("    store[{}] @{} in block {}", i, store_pos, block_id);
-                    }
+                // 🔧 性能优化：跳过只有一个 store 的简单槽位
+                // 单 store 意味着所有 load 都来自同一个定义，不需要 phi 节点
+                if slot.stores.len() <= 1 {
+                    continue;
                 }
-                for (i, &load_pos) in slot.loads.iter().enumerate() {
-                    if let Some(&block_id) = slot.load_to_block.get(&load_pos) {
-                        debug!("    load[{}] @{} in block {}", i, load_pos, block_id);
-                    }
-                }
-                // 新增：打印所有基本块信息
-                for (block_id, block) in &analysis.basic_blocks {
-                    info!(
-                        "    block {}: label={:?}, range=[{}, {}), preds={:?}, succs={:?}",
-                        block_id,
-                        block.label,
-                        block.start,
-                        block.end,
-                        block.predecessors,
-                        block.successors
-                    );
-                }
+
                 let mut phi_blocks = HashSet::new();
 
-                // 🔧 修复：使用正确的phi节点插入策略
-                // 1. 首先找到所有有多个前驱的基本块（合流点）
-                let mut confluence_blocks = HashSet::new();
-                for (block_id, block) in &analysis.basic_blocks {
-                    if block.predecessors.len() > 1 {
-                        confluence_blocks.insert(*block_id);
-                        info!(
-                            "🎯 发现合流点: 块{} 有{}个前驱",
-                            block_id,
-                            block.predecessors.len()
-                        );
-                    }
-                }
-
-                // 递归判断该块或其后继（不含自身）是否有load指令
-                // 使用预计算的 load_blocks HashSet 做 O(1) 查找
-                fn block_or_successors_have_load(
-                    block_id: usize,
-                    basic_blocks: &HashMap<usize, BasicBlock>,
-                    slot: &StackSlot,
-                    visited: &mut HashSet<usize>,
-                ) -> bool {
-                    if !visited.insert(block_id) {
-                        return false;
-                    }
-                    // O(1) HashSet 查找替代 O(loads) 线性扫描
-                    if slot.load_blocks.contains(&block_id) {
-                        return true;
-                    }
-                    if let Some(block) = basic_blocks.get(&block_id) {
-                        for &succ in &block.successors {
-                            if block_or_successors_have_load(succ, basic_blocks, slot, visited) {
-                                return true;
-                            }
-                        }
-                    }
-                    false
-                }
-
                 // 2. 迭代式计算需要插入 phi 节点的合流点
-                // 修复：前驱块可能有直接 Store64，也可能有 Phi 节点（间接 store）
-                // 必须迭代直到收敛，因为前驱的 Phi 可能由更早的迭代产生
                 let mut changed = true;
                 while changed {
                     changed = false;
@@ -1643,7 +1621,6 @@ impl Memory2RegPass {
                         let mut predecessors_with_stores = HashSet::new();
                         if let Some(block) = analysis.basic_blocks.get(&block_id) {
                             for &pred_id in &block.predecessors {
-                                // O(1) HashSet 查找替代 O(stores) 线性扫描
                                 let has_direct_store = slot.store_blocks.contains(&pred_id);
                                 let has_phi = phi_blocks.contains(&pred_id);
                                 if has_direct_store || has_phi {
@@ -1656,18 +1633,9 @@ impl Memory2RegPass {
                             && analysis.basic_blocks.get(&block_id).map_or(false, |b| b.predecessors.len() > 1)
                             && predecessors_with_stores.len() >= 1;
 
-                        info!(
-                            "🎯 分析块{}: 有load={}, 前驱有store数={}, 需要phi={}",
-                            block_id,
-                            has_relevant_use,
-                            predecessors_with_stores.len(),
-                            needs_phi
-                        );
-
                         if needs_phi {
                             phi_blocks.insert(block_id);
                             changed = true;
-                            debug!("🎯 块{} 需要phi节点: 有相关使用且前驱有store或phi", block_id);
                         }
                     }
                 }
@@ -1681,8 +1649,8 @@ impl Memory2RegPass {
                     let phi_result_register = function.new_register();
 
                     phi_nodes_with_registers.push((phi_block_id, phi_result_register));
-                    info!(
-                        "🎯 为块 {} 的phi节点分配结果寄存器 {:?}",
+                    trace!(
+                        "为块 {} 的phi节点分配结果寄存器 {:?}",
                         phi_block_id, phi_result_register
                     );
                 }
@@ -1789,7 +1757,7 @@ impl Memory2RegPass {
             phi_blocks,
             phi_block_to_register,
         ) {
-            info!("🎯 前驱块 {} 的到达定义: {:?}", pred_block_id, value);
+            trace!(" 前驱块 {} 的到达定义: {:?}", pred_block_id, value);
             return value;
         }
 
@@ -1807,7 +1775,7 @@ impl Memory2RegPass {
                 }
             }
         }
-        info!("🎯 前驱块 {} 没有找到store指令，使用默认值0", pred_block_id);
+        trace!(" 前驱块 {} 没有找到store指令，使用默认值0", pred_block_id);
         Operand::Immediate { value: 0 }
     }
 
@@ -1835,7 +1803,7 @@ impl Memory2RegPass {
         if let Some(last_store) =
             self.find_last_store_in_block(start_block_id, slot, function, basic_blocks)
         {
-            info!("🔍 在块{}找到store指令: {:?}", start_block_id, last_store);
+            trace!(" 在块{}找到store指令: {:?}", start_block_id, last_store);
             return Some(last_store);
         }
 
@@ -1885,7 +1853,7 @@ impl Memory2RegPass {
             }
         }
 
-        info!("🔍 在块{}没有找到到达定义（停止搜索）", start_block_id);
+        trace!(" 在块{}没有找到到达定义（停止搜索）", start_block_id);
         None
     }
 
@@ -1910,7 +1878,7 @@ impl Memory2RegPass {
 
         for (&store_idx, &store_block) in &slot.store_to_block {
             if store_block == block_id {
-                info!("🔍   找到store指令在块{}: 指令索引{}", block_id, store_idx);
+                trace!("   找到store指令在块{}: 指令索引{}", block_id, store_idx);
                 match last_store_idx {
                     None => last_store_idx = Some(store_idx),
                     Some(last) if store_idx > last => last_store_idx = Some(store_idx),
@@ -1929,7 +1897,7 @@ impl Memory2RegPass {
             }
         }
 
-        info!("🔍 在块{}中没有找到任何store指令", block_id);
+        trace!(" 在块{}中没有找到任何store指令", block_id);
         None
     }
 
@@ -2019,6 +1987,7 @@ impl FunctionPass for Memory2RegPass {
                 dominators: HashMap::new(), // 从SSA结果中提取
                 immediate_dominators: HashMap::new(),
                 dominance_frontiers: ssa_result.dominance_frontiers.clone(),
+                dom_tree_children: HashMap::new(),
             })
         } else {
             warn!("⚠️ 没有SSA构造结果，将使用简化的φ节点插入策略");

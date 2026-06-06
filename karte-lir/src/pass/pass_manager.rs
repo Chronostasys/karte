@@ -379,6 +379,7 @@ impl PassManager {
         &mut self,
         function: &mut LirFunction,
     ) -> crate::Result<()> {
+        let func_name = function.name.clone();
         let mut i = 0;
         while i < self.function_passes.len() {
             info!(

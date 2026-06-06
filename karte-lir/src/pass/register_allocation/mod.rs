@@ -146,7 +146,9 @@ impl FunctionPass for SimpleStackRegisterAllocation {
     }
 
     fn invalidated_analyses(&self) -> Vec<&'static str> {
-        vec!["cfg", "def-use"]
+        // 🔧 性能优化：寄存器分配不改变 CFG 结构，只改变 def-use
+        // 保留 cfg 可以避免后续 stack-frame-layout 需要的 lifetime-analysis 重建
+        vec!["def-use"]
     }
 }
 
@@ -917,29 +919,45 @@ impl SimpleStackRegisterAllocation {
     }
 
     /// 🔧 新方法：构建活跃度映射
+    /// 🔧 性能优化：事件驱动活跃度映射构建
+    /// 复杂度 O(R log R + I)，替代原来的 O(I × R) 暴力算法
     fn build_liveness_map(
         &self,
         lifetimes: &[types::RegisterLifetime],
     ) -> HashMap<usize, HashSet<Register>> {
         let mut liveness_map = HashMap::new();
 
-        // 为每个指令位置构建活跃寄存器集合
         let max_instruction = lifetimes.iter().map(|lt| lt.end).max().unwrap_or(0);
 
+        // 事件驱动算法：(position, is_start, register)
+        let mut events: Vec<(usize, bool, Register)> = Vec::with_capacity(lifetimes.len() * 2);
+        for lt in lifetimes {
+            events.push((lt.start, true, lt.register));
+            events.push((lt.end + 1, false, lt.register));
+        }
+        // 排序：同一位置先处理 start，再处理 end
+        events.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then_with(|| b.1.cmp(&a.1))
+        });
+
+        let mut current_live = HashSet::new();
+        let mut event_idx = 0;
         for i in 0..=max_instruction {
-            let mut live_registers = HashSet::new();
-
-            for lifetime in lifetimes {
-                if i >= lifetime.start && i <= lifetime.end {
-                    live_registers.insert(lifetime.register);
+            while event_idx < events.len() && events[event_idx].0 <= i {
+                let (_, is_start, reg) = events[event_idx];
+                if is_start {
+                    current_live.insert(reg);
+                } else {
+                    current_live.remove(&reg);
                 }
+                event_idx += 1;
             }
-
-            liveness_map.insert(i, live_registers);
+            liveness_map.insert(i, current_live.clone());
         }
 
-        info!(
-            "🔍 活跃度映射构建完成，共 {} 个指令位置",
+        trace!(
+            "活跃度映射构建完成，共 {} 个指令位置",
             liveness_map.len()
         );
         liveness_map
@@ -1605,7 +1623,8 @@ impl FunctionPass for LinearScanRegisterAllocation {
     }
 
     fn invalidated_analyses(&self) -> Vec<&'static str> {
-        vec!["cfg", "def-use"]
+        // 🔧 性能优化：寄存器分配不改变 CFG 结构，只改变 def-use
+        vec!["def-use"]
     }
 }
 

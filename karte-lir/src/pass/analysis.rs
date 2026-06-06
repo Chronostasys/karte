@@ -830,7 +830,7 @@ impl LivenessAnalysisPass {
                     // Phi 指令的特殊处理：
                     // 如果后继块 S 有 Phi 指令，检查从当前块来的操作数
                     if let Some(successor_node) =
-                        cfg.nodes.iter().find(|n| n.block_id == successor_id)
+                        cfg.get_node_by_id(successor_id)
                     {
                         self.add_phi_uses_from_predecessor(
                             function,

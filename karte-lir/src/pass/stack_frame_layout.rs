@@ -116,32 +116,25 @@ impl StackFrameLayoutPass {
         slots
     }
 
-    /// 使用专业的生命周期分析计算栈槽生存期
-    ///
-    /// 🔧 修复：不再手动扫描Load/Store指令（会被BlockLayoutPass重排影响）
-    /// 而是使用基于CFG的专业生命周期分析，正确处理控制流
-    fn compute_live_ranges_from_lifetime_analysis(
+    /// 从 LifetimeAnalyzer 的 lifetimes 结果计算栈槽生存期
+    /// 🔧 性能优化：直接接受 analyze_simple 的 lifetimes，不经过 AnalysisManager 依赖链
+    fn compute_live_ranges_from_lifetimes(
         &self,
         slots: &mut [StackSlotInfo],
-        lifetime_result: &crate::pass::LifetimeAnalysisResult,
+        lifetimes: &[crate::pass::register_allocation::RegisterLifetime],
     ) {
         for slot in slots.iter_mut() {
-            // 从生命周期分析结果中查找该地址寄存器的生存期
-            if let Some(lifetime) = lifetime_result
-                .lifetimes
-                .iter()
-                .find(|lt| lt.register == slot.addr_reg)
-            {
+            // 🔧 性能优化：使用迭代器 find 替代二分查找（lifetimes 通常较小）
+            if let Some(lifetime) = lifetimes.iter().find(|lt| lt.register == slot.addr_reg) {
                 slot.start = Some(lifetime.start);
                 slot.end = Some(lifetime.end);
                 debug!(
-                    "📊 栈槽 {:?} 生存期: [{}, {}]（来自生命周期分析）",
+                    "栈槽 {:?} 生存期: [{}, {}]（来自 analyze_simple）",
                     slot.addr_reg, lifetime.start, lifetime.end
                 );
             } else {
-                // 如果生命周期分析中没有找到，说明该寄存器未被使用
                 debug!(
-                    "⚠️ 栈槽 {:?} 未在生命周期分析中找到，视为未使用",
+                    "栈槽 {:?} 未在生命周期分析中找到，视为未使用",
                     slot.addr_reg
                 );
             }
@@ -315,20 +308,17 @@ impl FunctionPass for StackFrameLayoutPass {
             return PassResult::Unchanged;
         }
 
-        // 2) 获取专业的生命周期分析结果
-        // 🔧 修复：使用基于CFG的生命周期分析，正确处理BlockLayoutPass重排后的指令顺序
-        let lifetime_result =
-            match analyses.get_result::<crate::pass::LifetimeAnalysisResult>("lifetime-analysis") {
-                Some(result) => result,
-                None => {
-                    return PassResult::Failed(
-                        "StackFrameLayout 需要先运行 lifetime-analysis".to_string(),
-                    );
-                }
-            };
+        // 2) 直接调用 LifetimeAnalyzer 计算生命周期
+        // 🔧 性能优化：不经过 AnalysisManager 的依赖链机制（会触发 cfg+def-use+liveness 全量重建），
+        // 而是直接调用 analyze_simple。analyze_simple 内部会自行构建 CFG 并计算精确的生存期。
+        // 这保证了正确性（与之前完全一致），同时避免了分析链重建的开销。
+        use crate::pass::register_allocation::lifetime_analysis::LifetimeAnalyzer;
+        let cc = analyses.get_calling_convention();
+        let lifetime_analyzer = LifetimeAnalyzer::new(cc);
+        let (lifetimes, _register_types) = lifetime_analyzer.analyze_simple(function);
 
-        // 3) 从生命周期分析结果计算栈槽生存期
-        self.compute_live_ranges_from_lifetime_analysis(&mut slots, lifetime_result);
+        // 3) 从生命周期结果计算栈槽生存期
+        self.compute_live_ranges_from_lifetimes(&mut slots, &lifetimes);
 
         // 4) 过滤无使用的槽（仅删除 Alloc）
         // 先移除无用 Alloc
@@ -417,9 +407,10 @@ impl FunctionPass for StackFrameLayoutPass {
     }
 
     fn required_analyses(&self) -> Vec<&'static str> {
-        // 🔧 修复：声明依赖生命周期分析，确保栈槽生存期计算正确
-        // LifetimeAnalysis 依赖 CFG、DefUse、Liveness，能够正确处理 BlockLayoutPass 重排后的指令顺序
-        vec!["lifetime-analysis"]
+        // 🔧 性能优化：不再依赖 lifetime-analysis（通过 AnalysisManager 会触发全量分析链重建）。
+        // 改为在 run_on_function 内部直接调用 LifetimeAnalyzer::analyze_simple()，
+        // 保证正确性的同时避免 cfg+def-use+liveness 级联重建。
+        vec![]
     }
 
     fn invalidated_analyses(&self) -> Vec<&'static str> {

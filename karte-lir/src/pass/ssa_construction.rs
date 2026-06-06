@@ -85,6 +85,8 @@ pub struct DominanceInfo {
     pub immediate_dominators: HashMap<usize, usize>,
     /// 支配边界（使用 block_id 作为 key）
     pub dominance_frontiers: HashMap<usize, HashSet<usize>>,
+    /// 支配树子节点：parent -> children（预计算，避免每次 O(B) 遍历）
+    pub dom_tree_children: HashMap<usize, Vec<usize>>,
 }
 
 /// SSA 构造 Pass
@@ -215,6 +217,16 @@ impl SsaConstructionPass {
                     }
                 }
             }
+        }
+
+        // 🔧 性能优化：预计算支配树子节点映射，避免 rename_block_recursive 中每次 O(B) 遍历
+        self.dominance_info.dom_tree_children.clear();
+        for (&child, &parent) in &self.dominance_info.immediate_dominators {
+            self.dominance_info
+                .dom_tree_children
+                .entry(parent)
+                .or_default()
+                .push(child);
         }
 
         Ok(())
@@ -657,22 +669,19 @@ impl SsaConstructionPass {
         }
 
         // 步骤4: 递归处理支配树中的子块
-        // 🔧 修复：使用支配树子节点遍历，而不是 CFG 后继 + idom 检查
-        // 原来的方法只遍历 CFG 后继中 idom == current_block 的块，
-        // 但支配树的子节点不一定是 CFG 直接后继（例如合并块可能是更早块的支配子节点）
-        // 这导致某些块在重命名阶段被遗漏
+        // 🔧 性能优化：使用预计算的 dom_tree_children 替代 O(B) 的 immediate_dominators 遍历
         let dom_tree_children: Vec<usize> = self
             .dominance_info
-            .immediate_dominators
-            .iter()
-            .filter_map(|(&child, &parent)| {
-                if parent == block_id && !visited.contains(&child) {
-                    Some(child)
-                } else {
-                    None
-                }
+            .dom_tree_children
+            .get(&block_id)
+            .map(|children| {
+                children
+                    .iter()
+                    .filter(|&&child| !visited.contains(&child))
+                    .copied()
+                    .collect()
             })
-            .collect();
+            .unwrap_or_default();
 
         for child_id in dom_tree_children {
             self.rename_block_recursive(

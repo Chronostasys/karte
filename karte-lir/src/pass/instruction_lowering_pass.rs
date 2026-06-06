@@ -932,7 +932,7 @@ impl FunctionPass for InstructionLoweringPass {
 
         let mut new_instructions = Vec::new();
         let mut changed = false;
-        let instructions_to_process = function.instructions.clone();
+        let instructions_to_process = std::mem::take(&mut function.instructions);
 
         // 进入函数前重置状态
         self.inserted_early_return = false;
@@ -1279,6 +1279,8 @@ impl FunctionPass for InstructionLoweringPass {
             function.instructions = new_instructions;
             PassResult::Changed
         } else {
+            // 🔧 修复：将 mem::take 取走的指令放回，即使没有改变
+            function.instructions = new_instructions;
             PassResult::Unchanged
         }
     }

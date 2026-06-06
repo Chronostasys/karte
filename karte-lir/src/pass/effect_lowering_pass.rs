@@ -522,7 +522,7 @@ impl FunctionPass for EffectLoweringPass {
         self.inserted_early_return = false;
 
         // 克隆指令列表以避免借用检查问题
-        let instructions_to_process = function.instructions.clone();
+        let instructions_to_process = std::mem::take(&mut function.instructions);
 
         for instruction in &instructions_to_process {
             match instruction {
@@ -592,6 +592,8 @@ impl FunctionPass for EffectLoweringPass {
             function.instructions = new_instructions;
             PassResult::Changed
         } else {
+            // 🔧 修复：将 mem::take 取走的指令放回，即使没有改变
+            function.instructions = new_instructions;
             PassResult::Unchanged
         }
     }
