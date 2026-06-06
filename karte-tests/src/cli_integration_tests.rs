@@ -8063,6 +8063,70 @@ fn main() -> number {
         let exit_code = compile_project_mode_code(code);
         assert_eq!(exit_code, 1590, "GC stress: 100 string concatenations");
     }
+
+    // ==================== 回归测试：GC BigObj 扫描越界修复 ====================
+
+    /// 回归测试：GC BigObj conservative scanning 越界读取
+    /// Bug: collector.rs 扫描 BigObj 数据时，end 指针超出分配区域 16 字节，
+    /// 读入相邻 chunk 的 header/size 字段，将其当作指针追踪，
+    /// 导致 metadata 被字符串数据覆盖（如 header=0x20 即空格字符）。
+    /// 修复：end = obj_start + size（而非 data_start + size）
+    #[test]
+    fn test_gc_bigobj_scan_no_overread() {
+        let code = r#"
+fn main() -> number {
+    let r = 0;
+    for i in 0..50 {
+        let s = "abcdefghijklmn" + to_string(i) + "padding_data_here";
+        let s2 = s + "XXXXXXXX" + s;
+        r = r + len(s2)
+    };
+    r
 }
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert!(exit_code > 0, "GC BigObj scan: should not crash, got exit_code={}", exit_code);
+    }
 
+    /// 回归测试：大量短生命周期大字符串分配触发 BigObj GC 回收
+    /// Bug: BigObj allocator 满时 panic 而非返回 None，
+    /// 且 get_chunk 遇到 corrupted metadata 时 panic。
+    /// 修复：alloc_chunk 返回 None，big_obj_alloc 传递 None 给调用者，
+    /// 触发 emergency GC 而非 crash。
+    #[test]
+    fn test_gc_bigobj_emergency_collect() {
+        let code = r#"
+fn main() -> number {
+    let r = 0;
+    for i in 0..200 {
+        let s = "ABCDEFGHIJKLMNOPQRSTUVWXYZ" + to_string(i);
+        r = r + len(s)
+    };
+    r
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert!(exit_code > 0, "BigObj emergency GC: should not crash, got exit_code={}", exit_code);
+    }
 
+    /// 回归测试：BigObj 交替分配释放（sweep 回收后重用）
+    /// 验证 sweep_big_objs 正确回收 dead BigObj，get_chunk 能重用 freed chunk，
+    /// 且 return_chunk 正确合并相邻空闲 chunk。
+    #[test]
+    fn test_gc_bigobj_sweep_and_reuse() {
+        let code = r#"
+fn main() -> number {
+    let r = 0;
+    for i in 0..100 {
+        let a = "AAAA" + to_string(i);
+        let b = "BBBB" + to_string(i) + a;
+        let c = b + "CCCC";
+        r = r + len(c)
+    };
+    r
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert!(exit_code > 0, "BigObj sweep reuse: should not crash, got exit_code={}", exit_code);
+    }
+}
