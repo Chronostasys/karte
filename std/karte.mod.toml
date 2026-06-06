@@ -27,6 +27,10 @@ id = "std.io"
 path = "io.karte"
 
 [[modules]]
+id = "std.result"
+path = "result.karte"
+
+[[modules]]
 id = "std.prelude"
 path = "prelude.karte"
 deps = ["std.core", "std.math", "std.string", "std.io"]

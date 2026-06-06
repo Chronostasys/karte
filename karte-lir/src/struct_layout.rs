@@ -135,6 +135,7 @@ impl StructLayoutManager {
             Type::Int(_) => Ok((8, 8)),       // 整数类型默认8字节
             Type::Bool => Ok((1, 1)),          // 布尔类型用1字节
             Type::String => Ok((8, 8)),        // 字符串类型用指针（8字节）
+            Type::Generic { .. } => Ok((8, 8)), // 泛型类型引用在 LIR 层应已被实例化，保守估计8字节
         }
     }
 

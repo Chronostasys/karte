@@ -89,6 +89,9 @@ pub struct TypeChecker {
     next_type_var: u32,
     constraints: Vec<Constraint>,
     custom_types: HashMap<String, Type>, // 存储自定义类型
+    /// 存储泛型类型定义模板（带类型参数的 struct/enum 定义）
+    /// key = 类型名（如 "Pair"），value = (type_params, 模板类型)
+    generic_type_defs: HashMap<String, GenericTypeDef>,
     module_context: ModuleContext,
     function_signatures: HashMap<String, FunctionSignature>, // 缓存函数签名，避免重复解析
     /// 存储Lambda表达式的推断类型（保持向后兼容）
@@ -101,6 +104,15 @@ pub struct TypeChecker {
     duplicate_function_spans: HashSet<(usize, usize)>,
     /// 追踪已在 hoisting pass 中处理过的函数 span，用于区分重复定义与二次遍历
     primary_function_spans: HashSet<(usize, usize)>,
+}
+
+/// 泛型类型定义模板
+#[derive(Debug, Clone)]
+struct GenericTypeDef {
+    /// 类型参数名称列表，如 ["T", "E"]
+    type_params: Vec<String>,
+    /// 模板类型（字段/变体中使用 Type::Var 作为类型参数占位符）
+    template: Type,
 }
 
 /// 函数签名，包含参数类型和返回类型
@@ -124,6 +136,7 @@ impl TypeChecker {
             next_type_var: 0,
             constraints: Vec::new(),
             custom_types: HashMap::new(),
+            generic_type_defs: HashMap::new(),
             module_context: ModuleContext::default(),
             function_signatures: HashMap::new(),
             lambda_types: HashMap::new(),
@@ -867,7 +880,11 @@ impl TypeChecker {
         stmt: &Statement,
         struct_defs: &mut HashMap<String, Vec<FieldDef>>,
     ) {
-        if let Statement::StructDef { name, fields, .. } = stmt {
+        if let Statement::StructDef { name, fields, type_params, .. } = stmt {
+            // 泛型 struct 不在普通收集阶段处理
+            if !type_params.is_empty() {
+                return;
+            }
             struct_defs.insert(name.clone(), fields.clone());
         }
     }
@@ -942,7 +959,11 @@ impl TypeChecker {
         stmt: &Statement,
         enum_defs: &mut Vec<(String, Vec<(String, Vec<Type>)>)>,
     ) {
-        if let Statement::TypeDef { name, variants, .. } = stmt {
+        if let Statement::TypeDef { name, variants, type_params, .. } = stmt {
+            // 泛型枚举不在普通收集阶段处理
+            if !type_params.is_empty() {
+                return;
+            }
             let variant_list: Vec<(String, Vec<Type>)> = variants
                 .iter()
                 .map(|v| (v.name.clone(), v.data_types.clone()))
@@ -1369,7 +1390,88 @@ impl TypeChecker {
                             Type::option(Type::Var(self.fresh_type_var()))
                         }
                     }
+                    "Ok" => {
+                        // Ok(value) 构造 Result<T, E>
+                        if let Some(arg_expr) = args.get(0) {
+                            let ok_type = self.infer_expr(arg_expr, env);
+                            Type::result(ok_type, Type::Var(self.fresh_type_var()))
+                        } else {
+                            self.add_error(TypeCheckError::InvalidConstructor {
+                                name: name.clone(),
+                                span: *span,
+                            });
+                            Type::Unknown
+                        }
+                    }
+                    "Err" => {
+                        // Err(error) 构造 Result<T, E>
+                        if let Some(arg_expr) = args.get(0) {
+                            let err_type = self.infer_expr(arg_expr, env);
+                            Type::result(Type::Var(self.fresh_type_var()), err_type)
+                        } else {
+                            self.add_error(TypeCheckError::InvalidConstructor {
+                                name: name.clone(),
+                                span: *span,
+                            });
+                            Type::Unknown
+                        }
+                    }
                     _ => {
+                        // 检查是否是泛型 enum 的构造器
+                        let mut found_generic = None;
+                        for (gen_name, gen_def) in &self.generic_type_defs {
+                            if let Type::Sum { variants, .. } = &gen_def.template {
+                                if variants.iter().any(|v| v.name == *name) {
+                                    found_generic = Some((gen_name.clone(), gen_def.type_params.clone(), variants.clone()));
+                                    break;
+                                }
+                            }
+                        }
+                        if let Some((enum_name, type_params, variants)) = found_generic {
+                            let variant = variants.iter().find(|v| v.name == *name).unwrap();
+                            let mut inferred_args: HashMap<String, Type> = HashMap::new();
+                            
+                            if !variant.data_types.is_empty() {
+                                if args.len() != variant.data_types.len() {
+                                    self.add_error(TypeCheckError::InvalidConstructor {
+                                        name: name.clone(),
+                                        span: *span,
+                                    });
+                                    return Type::Unknown;
+                                }
+                                for (i, arg_expr) in args.iter().enumerate() {
+                                    let arg_type = self.infer_expr(arg_expr, env);
+                                    self.infer_type_params_from_value(
+                                        &variant.data_types[i],
+                                        &arg_type,
+                                        &type_params,
+                                        &mut inferred_args,
+                                    );
+                                }
+                            } else if !args.is_empty() {
+                                self.add_error(TypeCheckError::InvalidConstructor {
+                                    name: name.clone(),
+                                    span: *span,
+                                });
+                                return Type::Unknown;
+                            }
+
+                            let concrete_args: Vec<Type> = type_params.iter().map(|param| {
+                                inferred_args.get(param).cloned().unwrap_or(Type::Var(self.fresh_type_var()))
+                            }).collect();
+
+                            let instantiated = self.instantiate_generic_type(&enum_name, &concrete_args);
+                            
+                            if let Type::Sum { name: mono_name, .. } = &instantiated {
+                                let mono_name_str = mono_name.clone();
+                                if !self.custom_types.contains_key(&mono_name_str) {
+                                    self.custom_types.insert(mono_name_str, instantiated.clone());
+                                }
+                            }
+
+                            return instantiated;
+                        }
+
                         // 检查是否是环境中的构造器
                         if let Some(constructor_type) = env.get(name) {
                             // 如果是函数类型（有参数的构造器），需要应用参数
@@ -1578,7 +1680,62 @@ impl TypeChecker {
             }
 
             Expr::StructLiteral { name, fields, span } => {
-                // 查找结构体类型定义
+                // 首先检查是否是泛型 struct，如果是则推断类型参数
+                if let Some(gen_def) = self.generic_type_defs.get(name).cloned() {
+                    if let Type::Struct { fields: template_fields, .. } = &gen_def.template {
+                        // 检查字段数量匹配
+                        if fields.len() != template_fields.len() {
+                            self.add_error(TypeCheckError::MissingFields {
+                                struct_name: name.clone(),
+                                expected: template_fields.len(),
+                                found: fields.len(),
+                                span: *span,
+                            });
+                            return Type::Unknown;
+                        }
+
+                        // 从字段值推断泛型参数
+                        let mut inferred_args: HashMap<String, Type> = HashMap::new();
+                        for field_init in fields {
+                            if let Some(field_def) = template_fields.iter().find(|f| f.name == field_init.name) {
+                                let field_value_type = self.infer_expr(&field_init.value, env);
+                                // 尝试从字段类型推断泛型参数
+                                self.infer_type_params_from_value(
+                                    &field_def.field_type,
+                                    &field_value_type,
+                                    &gen_def.type_params,
+                                    &mut inferred_args,
+                                );
+                            } else {
+                                self.add_error(TypeCheckError::UnknownField {
+                                    struct_name: name.clone(),
+                                    field_name: field_init.name.clone(),
+                                    span: field_init.span,
+                                });
+                            }
+                        }
+
+                        // 构建具体类型参数列表
+                        let concrete_args: Vec<Type> = gen_def.type_params.iter().map(|param| {
+                            inferred_args.get(param).cloned().unwrap_or(Type::Unknown)
+                        }).collect();
+
+                        // 实例化泛型类型
+                        let instantiated = self.instantiate_generic_type(name, &concrete_args);
+                        
+                        // 生成单态化名称并注册到 custom_types
+                        if let Type::Struct { name: mono_name, fields: mono_fields } = &instantiated {
+                            let mono_name_str = mono_name.clone();
+                            if !self.custom_types.contains_key(&mono_name_str) {
+                                self.custom_types.insert(mono_name_str, instantiated.clone());
+                            }
+                        }
+
+                        return instantiated;
+                    }
+                }
+
+                // 查找非泛型结构体类型定义
                 if let Some(struct_type) = self.custom_types.get(name).cloned() {
                     match struct_type {
                         Type::Struct {
@@ -2414,7 +2571,26 @@ impl TypeChecker {
             Statement::Expression { expr, .. } => {
                 self.infer_expr(expr, env);
             }
-            Statement::TypeDef { name, variants, .. } => {
+            Statement::TypeDef { name, variants, type_params, .. } => {
+                // 如果是泛型枚举，存储为模板
+                if !type_params.is_empty() {
+                    let sum_variants: Vec<crate::types::SumVariant> = variants
+                        .iter()
+                        .map(|variant| {
+                            crate::types::SumVariant {
+                                name: variant.name.clone(),
+                                data_types: variant.data_types.clone(),
+                            }
+                        })
+                        .collect();
+                    let template = Type::sum(name.clone(), sum_variants);
+                    self.generic_type_defs.insert(name.clone(), GenericTypeDef {
+                        type_params: type_params.clone(),
+                        template,
+                    });
+                    return;
+                }
+
                 // 解析变体 data_types 中的骨架占位符（递归枚举自引用等场景）
                 let sum_variants: Vec<crate::types::SumVariant> = variants
                     .iter()
@@ -2449,7 +2625,26 @@ impl TypeChecker {
                     }
                 }
             }
-            Statement::StructDef { name, fields, .. } => {
+            Statement::StructDef { name, fields, type_params, .. } => {
+                // 如果是泛型结构体，存储为模板
+                if !type_params.is_empty() {
+                    let struct_fields: Vec<crate::types::StructField> = fields
+                        .iter()
+                        .map(|field| {
+                            crate::types::StructField {
+                                name: field.name.clone(),
+                                field_type: field.field_type.clone(),
+                            }
+                        })
+                        .collect();
+                    let template = Type::struct_type(name.clone(), struct_fields);
+                    self.generic_type_defs.insert(name.clone(), GenericTypeDef {
+                        type_params: type_params.clone(),
+                        template,
+                    });
+                    return;
+                }
+
                 // 构建结构体类型的字段
                 // field.field_type 已经是 parser 生成的结构化 Type，但自定义类型名可能是骨架占位符
                 // 需要用 process_struct_definitions 中创建的完整类型替换
@@ -2665,7 +2860,114 @@ impl TypeChecker {
                             }
                         }
                     }
+                    "Ok" => {
+                        // Ok(x) 模式，从 expected_type 中提取 Ok 变体的类型
+                        if let Some(arg_pattern) = args.get(0) {
+                            match expected_type {
+                                Type::Sum { name, variants } if name == "Result" => {
+                                    if let Some(ok_variant) =
+                                        variants.iter().find(|v| v.name == "Ok")
+                                    {
+                                        if let Some(ok_type) = ok_variant.data_types.first() {
+                                            self.check_pattern(arg_pattern, ok_type, env);
+                                        } else {
+                                            self.add_error(TypeCheckError::InvalidPattern {
+                                                message: "Ok variant should have data type"
+                                                    .to_string(),
+                                                span: *span,
+                                            });
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    let ok_type = Type::Var(self.fresh_type_var());
+                                    let err_type = Type::Var(self.fresh_type_var());
+                                    let result_type = Type::result(ok_type.clone(), err_type);
+                                    self.add_constraint(expected_type.clone(), result_type, *span);
+                                    self.check_pattern(arg_pattern, &ok_type, env);
+                                }
+                            }
+                        } else {
+                            self.add_error(TypeCheckError::InvalidPattern {
+                                message: "Ok constructor requires an argument".to_string(),
+                                span: *span,
+                            });
+                        }
+                    }
+                    "Err" => {
+                        // Err(e) 模式，从 expected_type 中提取 Err 变体的类型
+                        if let Some(arg_pattern) = args.get(0) {
+                            match expected_type {
+                                Type::Sum { name, variants } if name == "Result" => {
+                                    if let Some(err_variant) =
+                                        variants.iter().find(|v| v.name == "Err")
+                                    {
+                                        if let Some(err_type) = err_variant.data_types.first() {
+                                            self.check_pattern(arg_pattern, err_type, env);
+                                        } else {
+                                            self.add_error(TypeCheckError::InvalidPattern {
+                                                message: "Err variant should have data type"
+                                                    .to_string(),
+                                                span: *span,
+                                            });
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    let ok_type = Type::Var(self.fresh_type_var());
+                                    let err_type = Type::Var(self.fresh_type_var());
+                                    let result_type = Type::result(ok_type, err_type.clone());
+                                    self.add_constraint(expected_type.clone(), result_type, *span);
+                                    self.check_pattern(arg_pattern, &err_type, env);
+                                }
+                            }
+                        } else {
+                            self.add_error(TypeCheckError::InvalidPattern {
+                                message: "Err constructor requires an argument".to_string(),
+                                span: *span,
+                            });
+                        }
+                    }
                     _ => {
+                        // 先检查是否是泛型 enum 的构造器
+                        let mut found_generic = None;
+                        for (gen_name, gen_def) in &self.generic_type_defs {
+                            if let Type::Sum { variants, .. } = &gen_def.template {
+                                if let Some(variant) = variants.iter().find(|v| v.name == *name) {
+                                    found_generic = Some((gen_name.clone(), gen_def.type_params.clone(), variant.clone()));
+                                    break;
+                                }
+                            }
+                        }
+                        if let Some((_enum_name, type_params, variant)) = found_generic {
+                            let mut inferred_args: HashMap<String, Type> = HashMap::new();
+                            if let Type::Sum { variants: exp_variants, .. } = expected_type {
+                                if let Some(exp_variant) = exp_variants.iter().find(|v| v.name == *name) {
+                                    for (i, param_ty) in variant.data_types.iter().enumerate() {
+                                        if let Some(exp_ty) = exp_variant.data_types.get(i) {
+                                            self.infer_type_params_from_value(
+                                                param_ty,
+                                                exp_ty,
+                                                &type_params,
+                                                &mut inferred_args,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+
+                            for (i, arg_pattern) in args.iter().enumerate() {
+                                if let Some(param_ty) = variant.data_types.get(i) {
+                                    let subst: Vec<(String, Type)> = type_params.iter().map(|p| {
+                                        (p.clone(), inferred_args.get(p).cloned().unwrap_or(Type::Unknown))
+                                    }).collect();
+                                    let resolved_ty = self.substitute_type_params(param_ty, &subst);
+                                    self.check_pattern(arg_pattern, &resolved_ty, env);
+                                }
+                            }
+                            return;
+                        }
+
                         // 动态查找构造器所属的 enum 类型
                         let mut found = false;
                         let mut matched_type: Option<Type> = None;
@@ -2868,6 +3170,10 @@ impl TypeChecker {
             Type::Array { element } => Type::Array {
                 element: Box::new(self.apply_substitution(*element)),
             },
+            Type::Generic { name, args } => Type::Generic {
+                name,
+                args: args.into_iter().map(|t| self.apply_substitution(t)).collect(),
+            },
             _ => ty,
         }
     }
@@ -2922,6 +3228,13 @@ impl TypeChecker {
                     "Option" => {
                         if generic_args.len() == 1 {
                             return Ok(Type::option(generic_args[0].clone()));
+                        } else {
+                            return Ok(Type::Unknown); // 错误的参数数量
+                        }
+                    }
+                    "Result" => {
+                        if generic_args.len() == 2 {
+                            return Ok(Type::result(generic_args[0].clone(), generic_args[1].clone()));
                         } else {
                             return Ok(Type::Unknown); // 错误的参数数量
                         }
@@ -3016,6 +3329,13 @@ impl TypeChecker {
                             Type::Unknown // 错误的参数数量
                         }
                     }
+                    "Result" => {
+                        if generic_args.len() == 2 {
+                            Type::result(generic_args[0].clone(), generic_args[1].clone())
+                        } else {
+                            Type::Unknown // 错误的参数数量
+                        }
+                    }
                     _ => {
                         // 其他泛型类型可以在将来支持
                         Type::Unknown
@@ -3103,7 +3423,165 @@ impl TypeChecker {
                     .collect();
                 Type::sum(sum_name.clone(), resolved_variants)
             }
+            Type::Generic { name, args } => {
+                // 实例化泛型类型
+                self.instantiate_generic_type(name, args)
+            }
             _ => ty.clone(),
+        }
+    }
+
+    /// 实例化泛型类型：将泛型模板中的类型参数替换为具体参数
+    fn instantiate_generic_type(&self, name: &str, args: &[Type]) -> Type {
+        // 内置泛型类型
+        match name {
+            "Option" => {
+                if args.len() == 1 {
+                    return Type::option(args[0].clone());
+                }
+                return Type::Unknown;
+            }
+            "Result" => {
+                if args.len() == 2 {
+                    return Type::result(args[0].clone(), args[1].clone());
+                }
+                return Type::Unknown;
+            }
+            _ => {}
+        }
+
+        // 用户自定义泛型类型
+        if let Some(gen_def) = self.generic_type_defs.get(name) {
+            if gen_def.type_params.len() != args.len() {
+                return Type::Unknown;
+            }
+
+            // 解析泛型参数中的类型
+            let resolved_args: Vec<Type> = args
+                .iter()
+                .map(|t| self.resolve_struct_field_from_parsed(t))
+                .collect();
+
+            // 构建替换映射：type_param -> 具体类型
+            let subst: Vec<(String, Type)> = gen_def
+                .type_params
+                .iter()
+                .zip(resolved_args.iter())
+                .map(|(param, arg)| (param.clone(), arg.clone()))
+                .collect();
+
+            // 在模板中替换类型参数为具体类型
+            let instantiated = self.substitute_type_params(&gen_def.template, &subst);
+
+            // 检查是否所有参数都是具体类型（非 Type::Var）
+            let all_concrete = resolved_args.iter().all(|t| !matches!(t, Type::Var(_)));
+
+            // 生成单态化名称并缓存（仅当所有参数都是具体类型时）
+            if all_concrete {
+                let mono_name = format!("{}<{}>", name, resolved_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", "));
+                let final_type = self.rename_type(instantiated, &mono_name);
+                final_type
+            } else {
+                // 包含类型变量，使用原始名称，允许统一化处理
+                instantiated
+            }
+        } else {
+            Type::Unknown
+        }
+    }
+
+    /// 在类型模板中替换类型参数为具体类型
+    /// 类型参数在模板中以 Type::Struct { name: param_name, fields: [] } 骨架形式存在
+    fn substitute_type_params(&self, ty: &Type, subst: &[(String, Type)]) -> Type {
+        match ty {
+            Type::Struct { name, fields } if fields.is_empty() => {
+                // 检查是否是类型参数
+                for (param_name, concrete_type) in subst {
+                    if name == param_name {
+                        return concrete_type.clone();
+                    }
+                }
+                // 不是类型参数，是实际的自定义类型引用
+                if let Some(resolved) = self.custom_types.get(name) {
+                    resolved.clone()
+                } else {
+                    ty.clone()
+                }
+            }
+            Type::Struct { name, fields } => {
+                let resolved_fields = fields
+                    .iter()
+                    .map(|f| crate::types::StructField {
+                        name: f.name.clone(),
+                        field_type: self.substitute_type_params(&f.field_type, subst),
+                    })
+                    .collect();
+                Type::struct_type(name.clone(), resolved_fields)
+            }
+            Type::Sum { name, variants } => {
+                let resolved_variants = variants
+                    .iter()
+                    .map(|v| crate::types::SumVariant {
+                        name: v.name.clone(),
+                        data_types: v
+                            .data_types
+                            .iter()
+                            .map(|dt| self.substitute_type_params(dt, subst))
+                            .collect(),
+                    })
+                    .collect();
+                Type::sum(name.clone(), resolved_variants)
+            }
+            Type::Reference { inner } => {
+                Type::reference(self.substitute_type_params(inner, subst))
+            }
+            Type::Array { element } => {
+                Type::array(self.substitute_type_params(element, subst))
+            }
+            Type::Tuple(types) => {
+                Type::tuple(types.iter().map(|t| self.substitute_type_params(t, subst)).collect())
+            }
+            Type::Function { params, return_type } => Type::Function {
+                params: params.iter().map(|p| self.substitute_type_params(p, subst)).collect(),
+                return_type: Box::new(self.substitute_type_params(return_type, subst)),
+            },
+            Type::Closure { params, return_type } => Type::Closure {
+                params: params.iter().map(|p| self.substitute_type_params(p, subst)).collect(),
+                return_type: Box::new(self.substitute_type_params(return_type, subst)),
+            },
+            _ => ty.clone(),
+        }
+    }
+
+    /// 重命名类型（用于单态化）
+    fn rename_type(&self, ty: Type, new_name: &str) -> Type {
+        match ty {
+            Type::Struct { fields, .. } => Type::struct_type(new_name.to_string(), fields),
+            Type::Sum { variants, .. } => Type::sum(new_name.to_string(), variants),
+            other => other,
+        }
+    }
+
+    /// 从字段值推断泛型类型参数
+    /// template_field_type 是模板中的字段类型（可能包含类型参数骨架）
+    /// value_type 是实际的字段值类型
+    /// type_params 是泛型参数名列表
+    /// inferred_args 是推断出的参数映射
+    fn infer_type_params_from_value(
+        &self,
+        template_field_type: &Type,
+        value_type: &Type,
+        type_params: &[String],
+        inferred_args: &mut HashMap<String, Type>,
+    ) {
+        match template_field_type {
+            Type::Struct { name, fields } if fields.is_empty() => {
+                // 可能是类型参数骨架
+                if type_params.contains(name) && !inferred_args.contains_key(name) {
+                    inferred_args.insert(name.clone(), value_type.clone());
+                }
+            }
+            _ => {}
         }
     }
 
@@ -3148,6 +3626,28 @@ impl TypeChecker {
                     .collect();
                 Type::sum(sum_name.clone(), resolved_variants)
             }
+            Type::Generic { name, args } => {
+                // 实例化泛型类型
+                let resolved_args: Vec<Type> = args
+                    .iter()
+                    .map(|t| self.resolve_parsed_type(t, struct_defs))
+                    .collect();
+                self.instantiate_generic_type(name, &resolved_args)
+            }
+            Type::Struct { name, fields } => {
+                // 完整的 struct 类型，递归解析字段
+                let resolved_fields = fields
+                    .iter()
+                    .map(|f| crate::types::StructField {
+                        name: f.name.clone(),
+                        field_type: self.resolve_parsed_type(&f.field_type, struct_defs),
+                    })
+                    .collect();
+                Type::struct_type(name.clone(), resolved_fields)
+            }
+            Type::Tuple(types) => {
+                Type::tuple(types.iter().map(|t| self.resolve_parsed_type(t, struct_defs)).collect())
+            }
             _ => ty.clone(),
         }
     }
@@ -3186,6 +3686,13 @@ impl TypeChecker {
                     "Option" => {
                         if generic_args.len() == 1 {
                             Type::option(generic_args[0].clone())
+                        } else {
+                            Type::Unknown // 错误的参数数量
+                        }
+                    }
+                    "Result" => {
+                        if generic_args.len() == 2 {
+                            Type::result(generic_args[0].clone(), generic_args[1].clone())
                         } else {
                             Type::Unknown // 错误的参数数量
                         }

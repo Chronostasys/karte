@@ -150,6 +150,11 @@ pub enum Type {
     },
     /// 类型变量，用于类型推断
     Var(TypeVar),
+    /// 泛型类型引用，如 Pair<number>，在类型检查阶段被实例化为具体类型
+    Generic {
+        name: String,
+        args: Vec<Type>,
+    },
     /// 未知类型，用于错误恢复
     Unknown,
 }
@@ -281,7 +286,15 @@ impl Type {
                     && ts1.iter().zip(ts2.iter()).all(|(t1, t2)| t1.structural_eq(t2))
             }
             (Type::Reference { inner: i1 }, Type::Reference { inner: i2 }) => i1.structural_eq(i2),
-            (Type::Var(v1), Type::Var(v2)) => v1 == v2,
+            (Type::Var(_), Type::Var(_)) => true, // 类型变量之间总是兼容（由统一化处理）
+            (
+                Type::Generic { name: n1, args: a1 },
+                Type::Generic { name: n2, args: a2 },
+            ) => {
+                n1 == n2
+                    && a1.len() == a2.len()
+                    && a1.iter().zip(a2.iter()).all(|(t1, t2)| t1.structural_eq(t2))
+            }
             (Type::Unknown, Type::Unknown) => true,
             _ => false,
         }
@@ -364,6 +377,20 @@ impl fmt::Display for Type {
             Type::Reference { inner } => {
                 write!(f, "&{}", inner)
             }
+            Type::Generic { name, args } => {
+                write!(f, "{}", name)?;
+                if !args.is_empty() {
+                    write!(f, "<")?;
+                    for (i, arg) in args.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{}", arg)?;
+                    }
+                    write!(f, ">")?;
+                }
+                Ok(())
+            }
             Type::Var(var) => write!(f, "t{}", var.0),
             Type::Unknown => write!(f, "unknown"),
         }
@@ -413,7 +440,7 @@ impl Type {
             Type::Array { .. } => 8, // 数组是指针
             Type::Function { .. } | Type::Closure { .. } => 8, // 函数值是指针
             Type::Sum { .. } => 8, // Tagged union 是指针
-            Type::Var(_) | Type::Unknown => 8, // 保守估计
+            Type::Var(_) | Type::Unknown | Type::Generic { .. } => 8, // 保守估计
         }
     }
 
@@ -504,6 +531,28 @@ impl Type {
         }
     }
 
+    /// 创建Result类型
+    pub fn result(ok_type: Type, err_type: Type) -> Self {
+        Type::Sum {
+            name: "Result".to_string(),
+            variants: vec![
+                SumVariant {
+                    name: "Ok".to_string(),
+                    data_types: vec![ok_type],
+                },
+                SumVariant {
+                    name: "Err".to_string(),
+                    data_types: vec![err_type],
+                },
+            ],
+        }
+    }
+
+    /// 检查是否为 Result 类型
+    pub fn is_result(&self) -> bool {
+        matches!(self, Type::Sum { name, .. } if name == "Result")
+    }
+
     /// 替换类型中的类型变量
     pub fn substitute(&self, subst: &[(TypeVar, Type)]) -> Type {
         match self {
@@ -554,6 +603,10 @@ impl Type {
             },
             Type::Reference { inner } => Type::Reference {
                 inner: Box::new(inner.substitute(subst)),
+            },
+            Type::Generic { name, args } => Type::Generic {
+                name: name.clone(),
+                args: args.iter().map(|t| t.substitute(subst)).collect(),
             },
             Type::Var(var) => {
                 for (v, t) in subst {
@@ -618,6 +671,13 @@ impl Type {
             }
             Type::Array { element } => element.free_vars(),
             Type::Reference { inner } => inner.free_vars(),
+            Type::Generic { args, .. } => {
+                let mut vars = Vec::new();
+                for arg in args {
+                    vars.extend(arg.free_vars());
+                }
+                vars
+            }
             Type::Var(var) => vec![*var],
         }
     }

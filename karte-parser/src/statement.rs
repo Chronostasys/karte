@@ -367,6 +367,9 @@ impl<'a> Parser<'a> {
             });
         };
 
+        // 可选的泛型类型参数：<T> 或 <T, E>
+        let type_params = self.parse_type_params()?;
+
         // 期望 '{'
         if let Some(token) = self.peek() {
             if matches!(token.token, Token::LeftBrace) {
@@ -487,6 +490,7 @@ impl<'a> Parser<'a> {
                     variants,
                     is_pub,
                     span,
+                    type_params,
                 })
             } else {
                 Err(ParseError::UnexpectedToken {
@@ -525,6 +529,9 @@ impl<'a> Parser<'a> {
                 expected: "struct name".to_string(),
             });
         };
+
+        // 可选的泛型类型参数：<T> 或 <T, E>
+        let type_params = self.parse_type_params()?;
 
         // 期望 '{'
         if let Some(token) = self.peek() {
@@ -628,6 +635,7 @@ impl<'a> Parser<'a> {
                     fields,
                     is_pub,
                     span,
+                    type_params,
                 })
             } else {
                 Err(ParseError::UnexpectedToken {
@@ -984,9 +992,20 @@ impl<'a> Parser<'a> {
                                         Ok(Type::Unknown)
                                     }
                                 }
+                                "Result" => {
+                                    if generic_args.len() == 2 {
+                                        Ok(Type::result(generic_args[0].clone(), generic_args[1].clone()))
+                                    } else {
+                                        Ok(Type::Unknown)
+                                    }
+                                }
                                 _ => {
-                                    // 其他泛型类型暂不支持
-                                    Ok(Type::Unknown)
+                                    // 用户自定义泛型类型，保留为 Type::Generic
+                                    // 在类型检查阶段会被实例化为具体类型
+                                    Ok(Type::Generic {
+                                        name: type_name.clone(),
+                                        args: generic_args,
+                                    })
                                 }
                             }
                         } else {
@@ -1070,6 +1089,61 @@ impl<'a> Parser<'a> {
             }
         } else {
             false
+        }
+    }
+
+    /// 解析可选的泛型类型参数：<T> 或 <T, E>
+    fn parse_type_params(&mut self) -> Result<Vec<String>, ParseError> {
+        if let Some(token) = self.peek() {
+            if matches!(token.token, Token::Less) {
+                self.advance(); // consume '<'
+
+                let mut params = Vec::new();
+                loop {
+                    if let Some(token) = self.peek() {
+                        if let Token::Identifier(name) = &token.token {
+                            // 类型参数名必须是大写字母开头的标识符
+                            params.push(name.clone());
+                            self.advance();
+                        } else {
+                            return Err(ParseError::UnexpectedToken {
+                                expected: "type parameter name".to_string(),
+                                found: token.token.clone(),
+                                span: token.span,
+                            });
+                        }
+                    } else {
+                        return Err(ParseError::UnexpectedEof {
+                            expected: "type parameter name".to_string(),
+                        });
+                    }
+
+                    if let Some(token) = self.peek() {
+                        if matches!(token.token, Token::Comma) {
+                            self.advance(); // consume ','
+                            continue;
+                        } else if matches!(token.token, Token::Greater) {
+                            self.advance(); // consume '>'
+                            break;
+                        } else {
+                            return Err(ParseError::UnexpectedToken {
+                                expected: "',' or '>'".to_string(),
+                                found: token.token.clone(),
+                                span: token.span,
+                            });
+                        }
+                    } else {
+                        return Err(ParseError::UnexpectedEof {
+                            expected: "',' or '>'".to_string(),
+                        });
+                    }
+                }
+                Ok(params)
+            } else {
+                Ok(vec![])
+            }
+        } else {
+            Ok(vec![])
         }
     }
 }

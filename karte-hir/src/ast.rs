@@ -434,6 +434,8 @@ pub enum Statement {
         variants: Vec<TypeVariant>,
         is_pub: bool,
         span: Span,
+        /// 泛型类型参数名称列表，如 enum Option<T> { ... } 中为 vec!["T"]
+        type_params: Vec<String>,
     },
 
     // 结构体定义语句
@@ -442,6 +444,8 @@ pub enum Statement {
         fields: Vec<FieldDef>,
         is_pub: bool,
         span: Span,
+        /// 泛型类型参数名称列表，如 struct Pair<T> { ... } 中为 vec!["T"]
+        type_params: Vec<String>,
     },
 
     // 赋值语句

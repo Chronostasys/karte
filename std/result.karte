@@ -1,0 +1,29 @@
+module std.result
+
+fn is_ok(r: Result<number, string>) -> bool {
+    match r {
+        Ok(_) => true,
+        Err(_) => false,
+    }
+}
+
+fn is_err(r: Result<number, string>) -> bool {
+    match r {
+        Ok(_) => false,
+        Err(_) => true,
+    }
+}
+
+fn unwrap(r: Result<number, string>) -> number {
+    match r {
+        Ok(x) => x,
+        Err(_) => 0,
+    }
+}
+
+fn unwrap_or(r: Result<number, string>, default: number) -> number {
+    match r {
+        Ok(x) => x,
+        Err(_) => default,
+    }
+}
