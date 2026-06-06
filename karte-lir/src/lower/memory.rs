@@ -338,17 +338,60 @@ impl LirLoweringContext {
 
     pub(super) fn lower_to_rvalue(&mut self, value: &Value) -> Operand {
         // 🔧 修复：特殊处理函数参数 - 直接使用参数寄存器
-        if let Value::Variable { name, .. } = value {
+        if let Value::Variable { name, ty, .. } = value {
             if self.current_function_params.contains(name) {
                 if let Some(param_index) =
                     self.current_function_params.iter().position(|p| p == name)
                 {
                     let param_reg = Register::Virtual(param_index + 1); // 参数寄存器: r1, r2, r3, r4
-                    log::debug!(
-                        "🔧 函数参数 {} 在lower_to_rvalue中直接使用寄存器 {:?}",
-                        name,
-                        param_reg
-                    );
+
+                    // 🔧 修复 struct 值语义：struct 参数必须深拷贝
+                    // struct 在 Karte 中是值类型，函数内部修改不应影响调用者
+                    let is_struct = ty.as_ref().map_or(false, |t| {
+                        matches!(t, karte_hir::types::Type::Struct { .. })
+                    });
+                    if is_struct {
+                        // 检查是否已为该参数创建了拷贝（缓存）
+                        let copy_key = format!("__struct_copy__{}", name);
+                        if let Some(&copy_reg) = self.stack_allocations.get(&copy_key) {
+                            return Operand::Register { id: copy_reg };
+                        }
+
+                        // 获取 struct 布局信息
+                        if let Some(karte_hir::types::Type::Struct { name: struct_name, .. }) = ty {
+                            if let Some(layout) = self.global_struct_types.get(struct_name).cloned() {
+                                // 分配新的内存空间用于深拷贝
+                                let copy_reg = self.current_function_mut().new_register();
+                                self.add_instruction(Instruction::Alloc {
+                                    dst: copy_reg,
+                                    size: layout.total_size,
+                                    alignment: layout.alignment,
+                                    allocation_type: AllocationType::Stack,
+                                    span: karte_diagnostics::Span::dummy(),
+                                });
+                                // 逐字段从原始地址拷贝到新地址
+                                for field in &layout.fields {
+                                    let field_val = self.current_function_mut().new_register();
+                                    self.add_instruction(Instruction::Load64 {
+                                        dst: field_val,
+                                        addr: param_reg,
+                                        offset: field.offset as i64,
+                                        span: karte_diagnostics::Span::dummy(),
+                                    });
+                                    self.add_instruction(Instruction::Store64 {
+                                        addr: copy_reg,
+                                        offset: field.offset as i64,
+                                        src: Operand::Register { id: field_val },
+                                        span: karte_diagnostics::Span::dummy(),
+                                    });
+                                }
+                                // 缓存拷贝地址，后续访问直接使用拷贝
+                                self.stack_allocations.insert(copy_key, copy_reg);
+                                return Operand::Register { id: copy_reg };
+                            }
+                        }
+                    }
+
                     return Operand::Register { id: param_reg };
                 }
             }

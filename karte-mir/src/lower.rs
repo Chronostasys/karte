@@ -44,7 +44,7 @@ pub fn lower_expr_to_mir_with_options(
     context.expr_types = expr_types;
 
     // 创建主函数
-    context.start_function(SCRIPT_ENTRY_POINT.to_string(), vec![]);
+    context.start_function(SCRIPT_ENTRY_POINT.to_string(), vec![], vec![]);
 
     // 为主函数结果创建临时变量
     let result_temp = context.new_temp();

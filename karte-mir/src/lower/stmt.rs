@@ -138,10 +138,14 @@ pub(crate) fn lower_statement(
             let old_block = ctx.current_block;
             let old_scopes = ctx.clone_scopes();
 
-            // 提取参数名
+            // 提取参数名和类型
             let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+            let param_types: Vec<Option<karte_hir::types::Type>> = params
+                .iter()
+                .map(|p| p.type_annotation.clone())
+                .collect();
 
-            ctx.start_function(name.clone(), param_names);
+            ctx.start_function(name.clone(), param_names, param_types);
 
             // Lower 函数体
             match lower_expression_to_temp(ctx, body) {

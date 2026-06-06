@@ -189,8 +189,10 @@ pub(crate) fn lower_expression(
                 let original_block = ctx.current_block;
                 let original_scopes = ctx.clone_scopes();
 
-                // 创建wrapper函数
-                ctx.start_function(wrapper_name.clone(), wrapper_params.clone());
+                // 创建wrapper函数（wrapper 参数没有类型标注）
+                let wrapper_param_types: Vec<Option<karte_hir::types::Type>> =
+                    wrapper_params.iter().map(|_| None).collect();
+                ctx.start_function(wrapper_name.clone(), wrapper_params.clone(), wrapper_param_types);
 
                 // 在wrapper中调用原函数，传递所有参数（除了__env）
                 let wrapper_entry = ctx.current_block();
@@ -4031,7 +4033,14 @@ fn lower_lambda_expression(
     let original_scopes = ctx.clone_scopes();
 
     // 5. 开始新函数
-    ctx.start_function(lambda_name.clone(), all_params);
+    // Lambda 参数类型：__env 无类型，其他参数从 lambda_type 中提取
+    let mut all_param_types: Vec<Option<karte_hir::types::Type>> = vec![None]; // __env
+    if let Some(karte_hir::Type::Function { params: ptypes, .. }) = &lambda_type {
+        all_param_types.extend(ptypes.iter().map(|t| Some(t.clone())));
+    } else {
+        all_param_types.extend(param_names.iter().map(|_| None));
+    }
+    ctx.start_function(lambda_name.clone(), all_params, all_param_types);
 
     // 设置函数的类型信息（如果已知）
     if let Some(lambda_type) = lambda_type {

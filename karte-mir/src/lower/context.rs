@@ -85,7 +85,12 @@ impl<'a> LoweringContext<'a> {
     /// 开始新函数
     ///
     /// 创建新的MirFunction并初始化其作用域
-    pub fn start_function(&mut self, name: String, params: Vec<String>) {
+    pub fn start_function(
+        &mut self,
+        name: String,
+        params: Vec<String>,
+        param_types: Vec<Option<karte_hir::types::Type>>,
+    ) {
         let function = MirFunction::new(name.clone(), params.clone());
         let entry_block = function.entry_block;
 
@@ -94,12 +99,13 @@ impl<'a> LoweringContext<'a> {
         self.enter_scope();
 
         // 将参数添加到变量作用域
-        for param in params {
+        for (i, param) in params.iter().enumerate() {
+            let ty = param_types.get(i).cloned().flatten();
             self.bind_variable(
                 param.clone(),
                 Value::Variable {
                     name: param.clone(),
-                    ty: None,
+                    ty,
                 },
                 None,
             );

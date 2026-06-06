@@ -236,6 +236,30 @@ From `.cursor/rules/karte.mdc`:
 - Update TODOS.md after code changes
 - Add or update necessary documentation
 
+### Runtime 与标准库设计原则（类 Go 哲学）
+
+**核心原则：Runtime 只提供操作系统抽象层（syscall），一切能用标准库实现的功能禁止在 Runtime 中实现。**
+
+这一设计哲学类似 Go 语言：
+- **Runtime（`karte-rt` / `karte-aot` / `karte-syscall`）**：只负责提供最底层的操作系统能力——内存映射（mmap）、读写（read/write）、退出（exit）等 syscall 封装，以及 JIT/AOT 执行所需的最低限度运行时支持（虚拟栈管理、堆分配器、GC）。Runtime 不应包含任何业务逻辑或高级抽象。
+- **标准库（`std.*` 模块，用 Karte 语言编写）**：所有高级功能必须在标准库中用 Karte 语言实现。包括但不限于：字符串操作（split、trim、index_of、reverse 等）、数学函数、I/O 格式化、集合操作、错误处理辅助函数等。
+
+**判断标准**：
+1. **问自己：这个功能能用 Karte 语言在标准库中实现吗？** 如果能，就**必须**在标准库中实现，禁止在 Runtime/Rust 侧添加 intrinsic/primitive。
+2. **只有当功能依赖操作系统接口且无法在 Karte 层安全表达时**，才允许在 Runtime 中添加 primitive（如：syscall 封装、内存分配、GC safepoint）。
+3. **已有的 Runtime primitive 如果能迁移到标准库，应当逐步迁移**，而非继续在 Runtime 中扩展。
+
+**反面教材**（应避免）：
+- ❌ 在 Rust runtime 中为 `string.split()` 添加一个 `karte_jit_runtime_string_split` intrinsic
+- ❌ 在 codegen 中硬编码 `print_number`、`char_to_string` 等高级操作的机器码
+
+**正面教材**（应遵循）：
+- ✅ Runtime 只提供 `sys_write` syscall 封装，`println` / `print_number` 等在标准库中用 Karte 实现
+- ✅ Runtime 只提供 `char_to_string`（字符码→单字符，属于底层编码操作），字符串的 `trim`/`split`/`reverse` 在 `std.string` 中用 Karte 实现
+- ✅ `std.prelude` 的 `gcd`、`factorial`、`abs` 等数学函数全部在标准库中用 Karte 实现
+
+**迁移优先级**：当发现一个功能同时在 Runtime 和标准库中存在实现时，以标准库为准，逐步移除 Runtime 中的等价实现。
+
 ## Important Implementation Details
 
 ### Memory Management
@@ -705,6 +729,7 @@ Store { target = %10000, value = %2 }
 - **🔴 绝对禁止 HACKS：永远禁止任何 hack、workaround、取巧绕过、治标不治本的修复。必须找到并修复问题的根因。翻转 bool / unwrap_or 改默认值 / 加条件跳过分析 等绕过手段 = 不可接受。** 🔴
 - **🔴 绝对禁止 HACKS：永远禁止任何 hack、workaround、取巧绕过、治标不治本的修复。必须找到并修复问题的根因。翻转 bool / unwrap_or 改默认值 / 加条件跳过分析 等绕过手段 = 不可接受。** 🔴
 - **🔴 绝对禁止 HACKS：永远禁止任何 hack、workaround、取巧绕过、治标不治本的修复。必须找到并修复问题的根因。翻转 bool / unwrap_or 改默认值 / 加条件跳过分析 等绕过手段 = 不可接受。** 🔴
+- **🔴 Runtime vs 标准库红线**：能用标准库（Karte 代码）实现的功能，**绝对禁止**在 Runtime/Rust 侧添加 intrinsic/primitive。Runtime 只提供 syscall 封装和最低限度执行支持（虚拟栈、堆分配、GC）。字符串操作、数学函数、I/O 格式化等一律在 `std.*` 模块中用 Karte 实现。添加新 Runtime primitive 前必须证明它无法在标准库中实现。 🔴
 - **⚠️ 测试铁律**：
   - **禁止使用 `cargo test`**，必须且只能使用 `cargo nextest run` 运行测试
   - nextest 会为每个测试创建独立进程，SIGSEGV 不会中断整个测试套件，能真实反映所有失败

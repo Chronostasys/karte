@@ -470,15 +470,18 @@ impl InstructionProcessor {
         engine: &mut ExecutionEngine,
     ) -> crate::Result<InstructionResult> {
         // 简化的内存分配：使用递增地址
-        static mut NEXT_ADDR: usize = 1048544; // 从栈之后开始分配
+        // 使用 memory 中段作为 Alloc 区域（0 ~ MEMORY_SIZE/2 为栈空间，MEMORY_SIZE/2 ~ MEMORY_SIZE 为 Alloc 空间）
+        static mut NEXT_ADDR: usize = 512 * 1024; // 从 512KB 开始，预留 512KB 给 Alloc
 
         let addr = unsafe {
             let current = NEXT_ADDR;
             NEXT_ADDR += size;
+            // 对齐到 8 字节
+            NEXT_ADDR = (NEXT_ADDR + 7) & !7;
             current
         };
 
-        println!("Alloc: allocated {} bytes at address {}", size, addr);
+        // println!("Alloc: allocated {} bytes at address {}", size, addr);
 
         engine.set_register(dst, addr as i64)?;
         Ok(InstructionResult::Continue)

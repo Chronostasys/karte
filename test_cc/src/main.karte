@@ -1,7 +1,7 @@
 module main
 
 fn main() -> number {
-    let src = "int main() { int a; a = 10; int b; b = 20; int c; if (a < b) { c = a; } else { c = b; }; return c; }";
+    let src = "int main() { int i; i = 0; int s; s = 0; while (i < 10) { s = s + i; i = i + 1; }; return s; }";
     let out = cc(src);
     print(out);
     0
