@@ -285,7 +285,7 @@ pub fn compile_source_to_artifacts(
             }
             let dependency_interfaces = module_context.dependency_interfaces();
             if dependency_interfaces.contains_key("std.prelude") {
-                let prelude_modules = ["std.core", "std.math", "std.io", "std.string"];
+                let prelude_modules = ["std.core", "std.math", "std.io", "std.string", "std.result"];
                 for mod_key in &prelude_modules {
                     if let Some(iface) = dependency_interfaces.get(*mod_key) {
                         for func_name in iface.functions.keys() {
@@ -331,7 +331,7 @@ pub fn compile_source_to_artifacts(
     if let Some(module_context) = prelude_context {
         let dependency_interfaces = module_context.dependency_interfaces();
         if dependency_interfaces.contains_key("std.prelude") {
-            let prelude_modules = ["std.core", "std.math", "std.io", "std.string"];
+            let prelude_modules = ["std.core", "std.math", "std.io", "std.string", "std.result"];
             for mod_key in &prelude_modules {
                 if let Some(iface) = dependency_interfaces.get(*mod_key) {
                     for (func_name, _func_info) in &iface.functions {

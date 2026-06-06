@@ -626,7 +626,7 @@ impl TypeChecker {
 
         let prelude_key = "std.prelude";
         if context.dependency_interfaces().contains_key(prelude_key) {
-            let prelude_std_modules = ["std.core", "std.math", "std.io", "std.string"];
+            let prelude_std_modules = ["std.core", "std.math", "std.io", "std.string", "std.result"];
             for module_key in &prelude_std_modules {
                 if let Some(iface) = context.dependency_interfaces().get(*module_key) {
                     for (func_name, function) in &iface.functions {
