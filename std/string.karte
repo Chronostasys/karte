@@ -128,3 +128,26 @@ fn reverse(s: string) -> string {
     };
     result
 }
+
+fn trim(s: string) -> string {
+    let n = len(s);
+    let start = 0;
+    let end = n - 1;
+    while start < n {
+        let c = str_index(s, start);
+        if c == 32 || c == 9 || c == 10 || c == 13 {
+            start += 1
+        } else {
+            break
+        }
+    };
+    while end >= start {
+        let c = str_index(s, end);
+        if c == 32 || c == 9 || c == 10 || c == 13 {
+            end -= 1
+        } else {
+            break
+        }
+    };
+    substring(s, start, end + 1)
+}
