@@ -394,6 +394,18 @@ let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering
 ## Notable Recent Changes
 
 Recent work includes:
+- **Struct 值传递 + Phi 节点修复 (2026-06-06)** — 编译器核心 bug 修复：
+  - **Struct 值传递语义**: 函数参数深拷贝（`lower_to_rvalue` 中 `Alloc` + `Load64`/`Store64`），防止函数内部修改影响调用者
+  - **MIR `start_function` 传播参数类型**: 新增 `param_types` 参数，函数参数绑定时设置 `ty` 字段
+  - **JIT `Alloc` 地址空间扩展**: 从 32 bytes 扩展到 512KB
+  - **While 循环 Phi 节点修复**: `analysis_mode` 下 Block 不创建新 scope，防止 `let` 重新绑定在预分析后丢失
+  - **`exit_scope` 传播同名变量**: Block 退出时将内层 scope 中与外层同名的变量绑定传播到外层
+  - **全局 `.rev()` 修复**: 移除所有 bindings 收集中的 `.rev()` 调用（20 处），确保内层 scope 覆盖外层
+  - **JIT 编译器调试模式**: `debug_mode` 从硬编码 `true` 改为 `false`/参数控制，避免生产环境 I/O 瓶颈
+  - **`debug_println!` 宏**: 替代 `instruction_processor.rs` 中的 `println!`，生产环境默认禁用
+- **类型系统易用性改进 (2026-06-06)**:
+  - **if/while 条件接受 number**: 非零为 true，零为 false，不再强制 bool
+  - **if-else 分支类型兼容**: 一个分支返回 Unit 时，if-else 返回另一个分支的类型
 - **Language Polish Round 3 (2026-06-06)** — Major language features:
   - **Result<T,E> 内置类型**: Ok/Err 构造器和模式匹配，与 Option<T> 同级的错误处理类型
   - **用户自定义泛型 struct/enum**: `struct Pair<T> { first: T, second: T }`，`enum Maybe<T> { Just(T), Nothing }`，支持多类型参数
@@ -723,6 +735,9 @@ Store { target = %10000, value = %2 }
 - **ENUM REGISTRATION ORDER GOTCHA**: `collect_function_definitions` 在解析函数签名中的类型标注（如 `fn f(e: Expr)`）时调用 `resolve_struct_field_from_parsed`。如果枚举 TypeDef 尚未通过 `collect_enum_definitions` 注册到 `custom_types`，会被解析为空的 Struct 骨架 `Type::Struct { name, fields: [] }`，导致后续所有类型检查看到空枚举。**解决方案**: `check_program_with_context` 中必须在 `collect_function_definitions` 之前调用 `collect_enum_definitions`。
 - **DUPLICATE FUNCTION GOTCHA**: `collect_function_definitions` 在同一次类型检查中可能被多次调用（多层作用域），需要用 `primary_function_spans` 区分"同一函数定义的二次遍历"与"真正的重复定义"，否则会在 `infer_stmt` 阶段误报 E006 错误。
 - **NESTED ENUM DESUGAR GOTCHA**: 三层及以上嵌套 enum pattern matching 时，`desugar_nested_match_patterns` 中连续的非穷尽内层 match 会导致 MIR lowering 生成错误代码（SIGSEGV 或垃圾值）。**根因**: 内层 match 缺少 wildcard 回退 arm，非穷尽 match 的 fallthrough 破坏控制流，导致 MIR 生成错误的 basic block 跳转。**修复三要素**: (1) 移除 `indices.len()<=1` 守卫以支持单 arm 递归（`karte-parser/src/expression.rs:2844`）；(2) 为内层 match 自动复制原始 wildcard 回退 arm 防止非穷尽（`expression.rs:2899-2906`）；(3) 递归调用 `desugar_nested_match_patterns` 处理内层 arms 确保多层嵌套都能正确降级（`expression.rs:2907`）。**⚠️ MIR 层也需配合**: `handle_pattern_bindings`（`karte-mir/src/lower/helpers.rs:569`）在匹配 Struct 字段中的嵌套 Constructor/QualifiedConstructor/Struct 模式时，必须递归调用自身处理子模式，否则会报 "Unsupported nested pattern" 错误。Parser desugar 将嵌套 enum 展开为多层 match → 每层 match arm 的 struct 字段仍可能含嵌套构造器模式 → MIR lowering 必须能递归处理。详见 `docs/agent/nested-enum-desugaring.md`。
+- **SCOPE BINDINGS .rev() GOTCHA**: 收集变量绑定到 HashMap 时（如 while/if-else/for 的 Phi 分析），`.iter().rev().flat_map().collect()` 会导致**外层 scope 覆盖内层 scope**（`HashMap::collect()` 保留最后一个同 key 值，`.rev()` 使外层最后被处理）。**症状**: 变量在循环体/分支中的修改（`out = out + ...`、`let s = inc(s)`）丢失，Phi 节点不生成或 incoming 值错误。**修复**: 移除所有 bindings 收集中的 `.rev()`（约 20 处），让内层 scope 优先。同时 `exit_scope` 需要将内层 scope 中与外层同名的变量传播到外层（否则 Block 的 `enter_scope/exit_scope` 会删除内层绑定）。
+- **ANALYSIS_MODE SCOPE GOTCHA**: while 循环预分析（`analysis_mode=true`）时，Block 的 `enter_scope/exit_scope` 会创建并销毁内层 scope，导致 `let` 重新绑定（如 `let s = inc(s)`）在 `post_loop_bindings` 收集时丢失。**修复**: `analysis_mode` 下 Block 不创建新 scope（`let should_scope = !ctx.analysis_mode`）。
+- **JIT DEBUG_MODE GOTCHA**: `x86_compiler.rs` 和 `aarch64_compiler.rs` 中 `debug_mode: true` 硬编码会导致编译过程打印大量调试信息。struct 程序由于生成更多指令，I/O 瓶颈导致 JIT 超时。**修复**: 改为 `debug_mode: false` 或使用传入参数控制。
 - **NEGATIVE PATTERN GOTCHA**: Parser 的 `parse_pattern` 需要处理 `-` 前置的负数模式。调用 `parse_pattern` 后需要检查是否为负数并创建 `Pattern::Number` 或保持为变量绑定。在 `karte-parser/src/pattern.rs` 中，`parse_pattern_inner` 遇到 `Minus` token 时，必须解析为 `Number` 模式而非视为前缀表达式。
 - **VIRTUAL STACK SIZE GOTCHA**: JIT 虚拟栈和 AOT 虚拟栈大小必须保持一致。当前值为 65536 条目 (512KB)。JIT 侧在 `execution_engine.rs` 中定义：`vec![0; 65536]`。AOT 侧在三个 runtime 文件（`runtime_x86.rs`、`runtime_aarch64.rs`、`runtime_riscv.rs`）中通过 `mmap` 参数定义：`mmap_len = 524288, vm_sp_init = vstack_base + 524272`。修改时必须在所有四个位置同步更新，否则 JIT/AOT 行为不一致。
 - **PRELUDE SYNC GOTCHA**: `std.prelude` 自动注入的模块列表在 `karte-hir/src/type_checker.rs`（`apply_module_context`）和 `karte-module-system/src/project.rs`（`LoweringOptions` 构建）两处硬编码为 `["std.core", "std.math", "std.io", "std.string"]`。向 std 添加新模块时必须在两处同步更新，否则 type checker 能看到函数但 MIR lowering 不知道它们是 known functions。

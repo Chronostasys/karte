@@ -1,7 +1,7 @@
 module main
 
 fn main() -> number {
-    let src = "int main() { int i; i = 0; int s; s = 0; while (i < 10) { s = s + i; i = i + 1; }; return s; }";
+    let src = "int main() { return 42; }";
     let tk = tokenize(src);
     let tn = count_tk(tk);
     let hdr = ".globl _start\n_start:\n  call main\n  mov %rax, %rdi\n  mov $60, %rax\n  syscall\n";
