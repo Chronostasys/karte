@@ -3,7 +3,7 @@ module main
 fn emit(s: string) -> number { print(s + "\n"); 0 }
 
 fn main() -> number {
-    let src = "int main() { int i; i = 0; int s; s = 0; while (i < 10) { s = s + i; i = i + 1; }; return s; }";
+    let src = "int main() { int i; i = 0; int s; s = 0; while (i < 10) { if (i > 5) { s = s + i; } else { s = s + 1; }; i = i + 1; }; return s; }";
     let tk = tokenize(src);
     let tn = count_tk(tk);
     emit(".globl _start");
@@ -63,7 +63,7 @@ fn do_if(pos: number, tk: string, tn: number, vars: string, lc: number) -> (numb
                 if k2 == 22 {
                     let b2 = do_block(np + 1, tk, tn, v, vc2 + 1);
                     emit(".L" + to_string(endl) + ":");
-                    (b2.0, b2.1, b2.2)
+                    (b2.0 + 1, b2.1, b2.2)
                 } else {
                     emit(".L" + to_string(endl) + ":");
                     (np, v, vc2)
