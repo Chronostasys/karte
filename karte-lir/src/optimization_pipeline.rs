@@ -83,7 +83,7 @@ impl OptimizationPipeline {
 
     /// 列出所有可用的Pass
     pub fn list_available_passes() {
-        let registry = PassRegistry::default();
+        let registry = PassRegistry::global();
         registry.print_available_passes();
     }
 
@@ -98,7 +98,7 @@ impl OptimizationPipeline {
         pipeline_str: &str,
         debug: bool,
     ) -> Result<OptimizationStats, Vec<String>> {
-        let registry = PassRegistry::default();
+        let registry = PassRegistry::global();
         let mut pass_manager = registry
             .build_pipeline_from_string(pipeline_str)
             .map_err(|e| vec![e.to_string()])?;
@@ -159,7 +159,7 @@ impl OptimizationPipeline {
         let instructions_before = self.count_instructions(program);
 
         // 使用 PassRegistry 的强类型 API 构建预设 pipeline
-        let registry = PassRegistry::default();
+        let registry = PassRegistry::global();
         let preset = self.optimization_level_to_preset();
         let mut pass_manager = registry.build_preset_pipeline(preset);
 

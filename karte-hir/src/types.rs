@@ -553,8 +553,8 @@ impl Type {
         matches!(self, Type::Sum { name, .. } if name == "Result")
     }
 
-    /// 替换类型中的类型变量
-    pub fn substitute(&self, subst: &[(TypeVar, Type)]) -> Type {
+    /// 替换类型中的类型变量（HashMap O(1) 查找）
+    pub fn substitute(&self, subst: &std::collections::HashMap<TypeVar, Type>) -> Type {
         match self {
             Type::Number => Type::Number,
             Type::Int(kind) => Type::Int(*kind),
@@ -609,12 +609,7 @@ impl Type {
                 args: args.iter().map(|t| t.substitute(subst)).collect(),
             },
             Type::Var(var) => {
-                for (v, t) in subst {
-                    if v == var {
-                        return t.clone();
-                    }
-                }
-                self.clone()
+                subst.get(var).cloned().unwrap_or_else(|| self.clone())
             }
             Type::Unknown => Type::Unknown,
         }

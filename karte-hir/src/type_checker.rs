@@ -170,7 +170,7 @@ impl TypeChecker {
         if scheme.bound_vars.is_empty() {
             return scheme.body.clone();
         }
-        let subst: Vec<(TypeVar, Type)> = scheme.bound_vars.iter()
+        let subst: std::collections::HashMap<TypeVar, Type> = scheme.bound_vars.iter()
             .map(|var| (*var, Type::Var(self.fresh_type_var())))
             .collect();
         scheme.body.substitute(&subst)
@@ -3583,8 +3583,7 @@ impl TypeChecker {
                 .map(|(param, arg)| (param.clone(), arg.clone()))
                 .collect();
 
-            // 在模板中替换类型参数为具体类型
-            // 注意：不调用 rename_type，保持 base name（如 "Wrapper" 而非 "Wrapper<number>"）
+            // 在模板中替换类型参数为具体类型，保持 base name
             // 这样在 unify 时同名类型可以直接统一字段
             let instantiated = self.substitute_type_params(&gen_def.template, &subst);
 
@@ -3668,14 +3667,6 @@ impl TypeChecker {
     }
 
     /// 重命名类型（用于单态化）
-    fn rename_type(&self, ty: Type, new_name: &str) -> Type {
-        match ty {
-            Type::Struct { fields, .. } => Type::struct_type(new_name.to_string(), fields),
-            Type::Sum { variants, .. } => Type::sum(new_name.to_string(), variants),
-            other => other,
-        }
-    }
-
     /// 从字段值推断泛型类型参数
     /// template_field_type 是模板中的字段类型（可能包含类型参数骨架）
     /// value_type 是实际的字段值类型

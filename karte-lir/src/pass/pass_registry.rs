@@ -39,7 +39,14 @@ pub struct PassRegistry {
 }
 
 impl PassRegistry {
-    /// 创建新的 Pass 注册表
+    /// 获取全局共享的 PassRegistry 实例（懒加载，只初始化一次）
+    pub fn global() -> &'static Self {
+        use std::sync::OnceLock;
+        static INSTANCE: OnceLock<PassRegistry> = OnceLock::new();
+        INSTANCE.get_or_init(|| Self::with_standard_passes())
+    }
+
+    /// 创建新的 Pass 注册表（用于测试或自定义场景）
     pub fn new() -> Self {
         Self {
             function_passes: HashMap::new(),
