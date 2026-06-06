@@ -172,6 +172,15 @@ macro_rules! dispatch_compile_instruction {
             Instruction::CharToString { dst, value, .. } => {
                 $self.compile_char_to_string(dst, value, $cb, $ctx_expr)
             }
+            Instruction::GcAlloc { dst, size, .. } => {
+                $self.compile_gc_alloc(dst, size, $cb, $ctx_expr)
+            }
+            Instruction::MemLoad64 { dst, addr, .. } => {
+                $self.compile_mem_load64(dst, addr, $cb, $ctx_expr)
+            }
+            Instruction::MemStore64 { addr, value, .. } => {
+                $self.compile_mem_store64(addr, value, $cb, $ctx_expr)
+            }
             Instruction::ToString { dst, value, .. } => {
                 $self.compile_to_string(dst, value, $cb, $ctx_expr)
             }

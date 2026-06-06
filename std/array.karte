@@ -1,0 +1,110 @@
+module std.array
+
+fn array_new(cap: number) -> number {
+    let arr = gc_alloc(16 + cap * 8);
+    mem_store64(arr, 0);
+    mem_store64(arr + 8, cap);
+    arr
+}
+
+fn array_len(arr: number) -> number {
+    mem_load64(arr)
+}
+
+fn array_cap(arr: number) -> number {
+    mem_load64(arr + 8)
+}
+
+fn array_push(arr: number, val: number) -> number {
+    let len = mem_load64(arr);
+    let cap = mem_load64(arr + 8);
+    if len < cap {
+        mem_store64(arr + 16 + len * 8, val);
+        mem_store64(arr, len + 1);
+        arr
+    } else {
+        let new_cap = cap + cap;
+        let new_arr = gc_alloc(16 + new_cap * 8);
+        mem_store64(new_arr + 8, new_cap);
+        let i = 0;
+        while i < len {
+            mem_store64(new_arr + 16 + i * 8, mem_load64(arr + 16 + i * 8));
+            i = i + 1;
+        };
+        mem_store64(new_arr + 16 + len * 8, val);
+        mem_store64(new_arr, len + 1);
+        new_arr
+    }
+}
+
+fn array_get(arr: number, idx: number) -> number {
+    mem_load64(arr + 16 + idx * 8)
+}
+
+fn array_set(arr: number, idx: number, val: number) -> number {
+    mem_store64(arr + 16 + idx * 8, val);
+    arr
+}
+
+fn array_pop(arr: number) -> number {
+    let len = mem_load64(arr);
+    if len > 0 {
+        mem_store64(arr, len - 1);
+        mem_load64(arr + 16 + (len - 1) * 8)
+    } else {
+        0
+    }
+}
+
+fn array_contains(arr: number, val: number) -> number {
+    let len = mem_load64(arr);
+    let i = 0;
+    let found = 0;
+    while i < len {
+        if mem_load64(arr + 16 + i * 8) == val {
+            let found = 1;
+        } else { 0 };
+        i = i + 1;
+    };
+    found
+}
+
+fn array_index_of(arr: number, val: number) -> number {
+    let len = mem_load64(arr);
+    let i = 0;
+    let result = -1;
+    while i < len {
+        if mem_load64(arr + 16 + i * 8) == val {
+            let result = i;
+        } else { 0 };
+        i = i + 1;
+    };
+    result
+}
+
+fn array_copy(arr: number) -> number {
+    let len = mem_load64(arr);
+    let cap = mem_load64(arr + 8);
+    let new_arr = gc_alloc(16 + cap * 8);
+    mem_store64(new_arr, len);
+    mem_store64(new_arr + 8, cap);
+    let i = 0;
+    while i < len {
+        mem_store64(new_arr + 16 + i * 8, mem_load64(arr + 16 + i * 8));
+        i = i + 1;
+    };
+    new_arr
+}
+
+fn array_join(arr: number, sep: string) -> string {
+    let len = mem_load64(arr);
+    if len == 0 { "" } else {
+        let result = to_string(mem_load64(arr + 16));
+        let i = 1;
+        while i < len {
+            let result = result + sep + to_string(mem_load64(arr + 16 + i * 8));
+            i = i + 1;
+        };
+        result
+    }
+}

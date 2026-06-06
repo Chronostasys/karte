@@ -23,6 +23,9 @@ pub enum RuntimeIntrinsic {
     PrintNumber,
     PrintBool,
     Panic,
+    MemLoad64,
+    MemStore64,
+    GcAlloc,
 }
 
 impl RuntimeIntrinsic {
@@ -73,6 +76,15 @@ impl RuntimeIntrinsic {
                 runtime::karte_jit_runtime_print_bool as *const ()
             }
             RuntimeIntrinsic::Panic => runtime::karte_jit_runtime_panic as *const (),
+            RuntimeIntrinsic::MemLoad64 => {
+                runtime::karte_jit_runtime_mem_load64 as *const ()
+            }
+            RuntimeIntrinsic::MemStore64 => {
+                runtime::karte_jit_runtime_mem_store64 as *const ()
+            }
+            RuntimeIntrinsic::GcAlloc => {
+                runtime::karte_jit_runtime_gc_alloc as *const ()
+            }
         }
     }
 
@@ -97,13 +109,16 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::PrintNumber => "karte_jit_runtime_print_number",
             RuntimeIntrinsic::PrintBool => "karte_jit_runtime_print_bool",
             RuntimeIntrinsic::Panic => "karte_jit_runtime_panic",
+            RuntimeIntrinsic::MemLoad64 => "karte_jit_runtime_mem_load64",
+            RuntimeIntrinsic::MemStore64 => "karte_jit_runtime_mem_store64",
+            RuntimeIntrinsic::GcAlloc => "karte_jit_runtime_gc_alloc",
         }
     }
 
     pub fn has_result(self) -> bool {
         matches!(
             self,
-            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual | RuntimeIntrinsic::StringCompare | RuntimeIntrinsic::StringCharAt | RuntimeIntrinsic::StringSubstring | RuntimeIntrinsic::StringContains | RuntimeIntrinsic::SplitCount | RuntimeIntrinsic::Trim | RuntimeIntrinsic::CharToString | RuntimeIntrinsic::ToString
+            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual | RuntimeIntrinsic::StringCompare | RuntimeIntrinsic::StringCharAt | RuntimeIntrinsic::StringSubstring | RuntimeIntrinsic::StringContains | RuntimeIntrinsic::SplitCount | RuntimeIntrinsic::Trim | RuntimeIntrinsic::CharToString | RuntimeIntrinsic::ToString | RuntimeIntrinsic::MemLoad64 | RuntimeIntrinsic::GcAlloc
         )
     }
 }
@@ -221,6 +236,27 @@ impl RuntimeCall {
         Self {
             intrinsic: RuntimeIntrinsic::CharToString,
             args: vec![RuntimeArg::Register(value)],
+        }
+    }
+
+    pub fn gc_alloc(size: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::GcAlloc,
+            args: vec![RuntimeArg::Register(size)],
+        }
+    }
+
+    pub fn mem_load64(addr: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::MemLoad64,
+            args: vec![RuntimeArg::Register(addr)],
+        }
+    }
+
+    pub fn mem_store64(addr: Register, value: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::MemStore64,
+            args: vec![RuntimeArg::Register(addr), RuntimeArg::Register(value)],
         }
     }
 

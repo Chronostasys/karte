@@ -1338,6 +1338,63 @@ pub(super) fn lower_statement(
                         }
                         return Ok(());
                     }
+                    // ==================== 通用内存原语 ====================
+                    "gc_alloc" | "__runtime_gc_alloc" => {
+                        let size_op = ctx.lower_to_rvalue(&args[0]);
+                        let size_reg = match size_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move { dst: temp, src: size_op, span: *span });
+                                temp
+                            }
+                        };
+                        let result_reg = ctx.current_function_mut().new_register();
+                        ctx.add_instruction(Instruction::GcAlloc { dst: result_reg, size: size_reg, span: *span });
+                        if let Some(target_value) = target {
+                            ctx.store_value_to_stack(target_value, Operand::Register { id: result_reg });
+                        }
+                        return Ok(());
+                    }
+                    "mem_load64" | "__runtime_mem_load64" => {
+                        let addr_op = ctx.lower_to_rvalue(&args[0]);
+                        let addr_reg = match addr_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move { dst: temp, src: addr_op, span: *span });
+                                temp
+                            }
+                        };
+                        let result_reg = ctx.current_function_mut().new_register();
+                        ctx.add_instruction(Instruction::MemLoad64 { dst: result_reg, addr: addr_reg, span: *span });
+                        if let Some(target_value) = target {
+                            ctx.store_value_to_stack(target_value, Operand::Register { id: result_reg });
+                        }
+                        return Ok(());
+                    }
+                    "mem_store64" | "__runtime_mem_store64" => {
+                        let addr_op = ctx.lower_to_rvalue(&args[0]);
+                        let val_op = ctx.lower_to_rvalue(&args[1]);
+                        let addr_reg = match addr_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move { dst: temp, src: addr_op, span: *span });
+                                temp
+                            }
+                        };
+                        let val_reg = match val_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move { dst: temp, src: val_op, span: *span });
+                                temp
+                            }
+                        };
+                        ctx.add_instruction(Instruction::MemStore64 { addr: addr_reg, value: val_reg, span: *span });
+                        return Ok(());
+                    }
                     _ => {} // 继续常规处理
                 }
             }

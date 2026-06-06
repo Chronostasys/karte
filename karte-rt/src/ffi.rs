@@ -91,6 +91,50 @@ pub extern "C" fn karte_jit_runtime_free(ptr: u64) {
     }
 }
 
+// ==================== 通用内存读写原语 ====================
+// 提供 load/store 操作，让标准库能用纯 Karte 实现数组、哈希表等数据结构。
+// 这是 "Runtime 只提供 syscall 级抽象" 设计哲学的体现。
+
+/// 从指定地址读取 64 位值
+/// addr 是字节偏移地址（number 类型）
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_mem_load64(addr: u64) -> u64 {
+    if addr == 0 {
+        return 0;
+    }
+    unsafe { *(addr as *const u64) }
+}
+
+/// 向指定地址写入 64 位值
+/// addr 是字节偏移地址（number 类型）
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_mem_store64(addr: u64, value: u64) {
+    if addr == 0 {
+        return;
+    }
+    unsafe {
+        *(addr as *mut u64) = value;
+    }
+}
+
+/// 分配 GC 管理的内存，使用 Conservative 类型（保守扫描）
+/// 用于在标准库中实现数组等数据结构
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_gc_alloc(size: u64) -> u64 {
+    if size == 0 {
+        return 0;
+    }
+    unsafe {
+        let ptr = gc_alloc(size as usize, ObjectType::Conservative);
+        if ptr.is_null() {
+            return 0;
+        }
+        // 清零分配的内存
+        std::ptr::write_bytes(ptr, 0u8, size as usize);
+        ptr as u64
+    }
+}
+
 /// ARC 钩子：增加引用计数
 ///
 /// **注意**：在 GC 模式下，这是一个 no-op 函数。

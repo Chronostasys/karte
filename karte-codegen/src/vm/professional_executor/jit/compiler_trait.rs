@@ -291,6 +291,39 @@ pub trait JitCompiler: std::fmt::Debug {
         self.emit_runtime_call(code_builder, call, Some(dst), ctx)
     }
 
+    fn compile_gc_alloc(
+        &mut self,
+        dst: &Register,
+        size: &Register,
+        code_builder: &mut CodeBuilder,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::gc_alloc(*size);
+        self.emit_runtime_call(code_builder, call, Some(dst), ctx)
+    }
+
+    fn compile_mem_load64(
+        &mut self,
+        dst: &Register,
+        addr: &Register,
+        code_builder: &mut CodeBuilder,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::mem_load64(*addr);
+        self.emit_runtime_call(code_builder, call, Some(dst), ctx)
+    }
+
+    fn compile_mem_store64(
+        &mut self,
+        addr: &Register,
+        value: &Register,
+        code_builder: &mut CodeBuilder,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::mem_store64(*addr, *value);
+        self.emit_runtime_call(code_builder, call, None, ctx)
+    }
+
     /// 编译值转字符串指令
     fn compile_to_string(
         &mut self,

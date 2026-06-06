@@ -624,6 +624,42 @@ pub enum Instruction {
         span: Span,
     },
 
+    /// GC 内存分配：dst = gc_alloc(size) — 分配 size 字节的 GC 管理内存
+    /// 调用运行时 karte_jit_runtime_gc_alloc(size) -> addr
+    #[ir_codec(token = "gc_alloc")]
+    GcAlloc {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        size: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 内存读取：dst = mem_load64(addr) — 从 addr 读取 8 字节
+    /// 调用运行时 karte_jit_runtime_mem_load64(addr) -> value
+    #[ir_codec(token = "mem_load64")]
+    MemLoad64 {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        addr: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
+    /// 内存写入：mem_store64(addr, value) — 向 addr 写入 8 字节
+    /// 调用运行时 karte_jit_runtime_mem_store64(addr, value)
+    #[ir_codec(token = "mem_store64")]
+    MemStore64 {
+        #[ir_codec(args)]
+        addr: Register,
+        #[ir_codec(args)]
+        value: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
     /// 数字转字符串：dst = to_string(value) — 将 number 转换为字符串
     /// 调用运行时 karte_jit_runtime_to_string(value) -> str_ptr
     #[ir_codec(token = "to_string")]
@@ -869,6 +905,8 @@ impl Instruction {
             | Instruction::SplitCount { dst, .. }
             | Instruction::Trim { dst, .. }
             | Instruction::CharToString { dst, .. } => Some(*dst),
+            | Instruction::GcAlloc { dst, .. } => Some(*dst),
+            | Instruction::MemLoad64 { dst, .. } => Some(*dst),
             | Instruction::ToString { dst, .. } => Some(*dst),
             Instruction::LoadPair { dst1, .. } => Some(*dst1),
             Instruction::Call { result, .. } | Instruction::CallIndirect { result, .. } => *result,
@@ -913,9 +951,19 @@ impl Instruction {
             | Instruction::StringContains { dst, .. }
             | Instruction::SplitCount { dst, .. }
             | Instruction::Trim { dst, .. }
-            | Instruction::CharToString { dst, .. } => {
+            | Instruction::CharToString { dst, .. }
+            | Instruction::GcAlloc { dst, .. }
+            | Instruction::MemLoad64 { dst, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
+                }
+            }
+            Instruction::MemStore64 { addr, value, .. } => {
+                if *addr == old_reg {
+                    *addr = new_reg;
+                }
+                if *value == old_reg {
+                    *value = new_reg;
                 }
             }
             | Instruction::ToString { dst, .. } => {
@@ -1102,6 +1150,16 @@ impl Instruction {
                 used.push(*str_ptr);
             }
             Instruction::CharToString { value, .. } => {
+                used.push(*value);
+            }
+            Instruction::GcAlloc { size, .. } => {
+                used.push(*size);
+            }
+            Instruction::MemLoad64 { addr, .. } => {
+                used.push(*addr);
+            }
+            Instruction::MemStore64 { addr, value, .. } => {
+                used.push(*addr);
                 used.push(*value);
             }
             Instruction::ToString { value, .. } => {
@@ -1480,6 +1538,30 @@ impl Instruction {
                     *value = new_reg;
                 }
             }
+            Instruction::GcAlloc { dst, size, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                if *size == old_reg {
+                    *size = new_reg;
+                }
+            }
+            Instruction::MemLoad64 { dst, addr, .. } => {
+                if *dst == old_reg {
+                    *dst = new_reg;
+                }
+                if *addr == old_reg {
+                    *addr = new_reg;
+                }
+            }
+            Instruction::MemStore64 { addr, value, .. } => {
+                if *addr == old_reg {
+                    *addr = new_reg;
+                }
+                if *value == old_reg {
+                    *value = new_reg;
+                }
+            }
             Instruction::ToString { dst, value, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
@@ -1763,6 +1845,18 @@ impl Instruction {
             }
             Instruction::CharToString { dst, value, .. } => {
                 defined.push(*dst);
+                used.push(*value);
+            }
+            Instruction::GcAlloc { dst, size, .. } => {
+                defined.push(*dst);
+                used.push(*size);
+            }
+            Instruction::MemLoad64 { dst, addr, .. } => {
+                defined.push(*dst);
+                used.push(*addr);
+            }
+            Instruction::MemStore64 { addr, value, .. } => {
+                used.push(*addr);
                 used.push(*value);
             }
             Instruction::ToString { dst, value, .. } => {

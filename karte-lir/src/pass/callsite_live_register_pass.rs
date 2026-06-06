@@ -42,6 +42,9 @@ impl CallsiteLiveRegisterPass {
                 | Instruction::SplitCount { .. }
                 | Instruction::Trim { .. }
                 | Instruction::CharToString { .. }
+                | Instruction::GcAlloc { .. }
+                | Instruction::MemLoad64 { .. }
+                | Instruction::MemStore64 { .. }
                 | Instruction::ToString { .. }
                 | Instruction::PrintString { .. }
                 | Instruction::PrintNumber { .. }

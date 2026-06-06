@@ -4267,6 +4267,60 @@ fn lower_function_call(
             return Ok(());
         }
 
+        // 通用内存原语：gc_alloc, mem_load64, mem_store64
+        if name == "gc_alloc" {
+            if args.len() != 1 {
+                ctx.errors.push("gc_alloc 需要一个参数 (size)".to_string());
+                return Err(ctx.errors.clone());
+            }
+            let size_val = lower_expression_to_temp(ctx, &args[0])?;
+            ctx.add_statement(Statement::Call {
+                target: Some(destination.clone()),
+                function: Value::Function {
+                    name: "__runtime_gc_alloc".to_string(),
+                    ty: None,
+                },
+                args: vec![size_val],
+                span,
+            });
+            return Ok(());
+        }
+        if name == "mem_load64" {
+            if args.len() != 1 {
+                ctx.errors.push("mem_load64 需要一个参数 (addr)".to_string());
+                return Err(ctx.errors.clone());
+            }
+            let addr_val = lower_expression_to_temp(ctx, &args[0])?;
+            ctx.add_statement(Statement::Call {
+                target: Some(destination.clone()),
+                function: Value::Function {
+                    name: "__runtime_mem_load64".to_string(),
+                    ty: None,
+                },
+                args: vec![addr_val],
+                span,
+            });
+            return Ok(());
+        }
+        if name == "mem_store64" {
+            if args.len() != 2 {
+                ctx.errors.push("mem_store64 需要两个参数 (addr, value)".to_string());
+                return Err(ctx.errors.clone());
+            }
+            let addr_val = lower_expression_to_temp(ctx, &args[0])?;
+            let val_val = lower_expression_to_temp(ctx, &args[1])?;
+            ctx.add_statement(Statement::Call {
+                target: Some(destination.clone()),
+                function: Value::Function {
+                    name: "__runtime_mem_store64".to_string(),
+                    ty: None,
+                },
+                args: vec![addr_val, val_val],
+                span,
+            });
+            return Ok(());
+        }
+
         // 处理 len 内建函数（方法调用解糖：arr.len() → len(arr)）
         if name == "len" && args.len() == 1 {
             let arg_type = ctx.get_expr_type(&args[0]);
