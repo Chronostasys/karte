@@ -2,6 +2,9 @@
 name = "test_cc"
 version = "0.1.0"
 
+[dependencies]
+std.io = "*"
+
 [[modules]]
 id = "main"
 path = "src/main.karte"

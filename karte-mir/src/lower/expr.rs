@@ -521,7 +521,7 @@ pub(crate) fn lower_expression(
                 let pre_bindings: std::collections::HashMap<String, Value> = ctx
                     .scopes
                     .iter()
-                    .rev()
+                    // .rev() removed for correct inner scope priority
                     .flat_map(|scope| {
                         scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone()))
                     })
@@ -545,7 +545,7 @@ pub(crate) fn lower_expression(
                 let right_bindings: std::collections::HashMap<String, Value> = ctx
                     .scopes
                     .iter()
-                    .rev()
+                    // .rev() removed for correct inner scope priority
                     .flat_map(|scope| {
                         scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone()))
                     })
@@ -748,7 +748,6 @@ pub(crate) fn lower_expression(
             let pre_if_bindings: std::collections::HashMap<String, Value> = ctx
                 .scopes
                 .iter()
-                .rev() // 从内到外遍历，内层优先
                 .flat_map(|scope| {
                     scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone()))
                 })
@@ -768,7 +767,6 @@ pub(crate) fn lower_expression(
             let then_bindings: std::collections::HashMap<String, Value> = ctx
                 .scopes
                 .iter()
-                .rev()
                 .flat_map(|scope| {
                     scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone()))
                 })
@@ -813,7 +811,7 @@ pub(crate) fn lower_expression(
             let else_bindings: std::collections::HashMap<String, Value> = ctx
                 .scopes
                 .iter()
-                .rev()
+                    // .rev() removed for correct inner scope priority
                 .flat_map(|scope| {
                     scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone()))
                 })
@@ -931,7 +929,7 @@ pub(crate) fn lower_expression(
             let pre_loop_block = ctx.current_block();
 
             // 快照所有作用域的变量绑定（不仅仅是当前 scope）
-            // 注意：不使用 .rev()，让内层 scope 的绑定优先（后出现的覆盖先出现的）
+                    // .rev() removed for correct inner scope priority
             let pre_loop_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
                 ctx.scopes
                     .iter()
@@ -959,7 +957,7 @@ pub(crate) fn lower_expression(
             ctx.loop_stack.pop();
 
             // 收集所有作用域中变量更新后的绑定
-            // 注意：不使用 .rev()，让内层 scope 的绑定优先（后出现的覆盖先出现的）
+                    // .rev() removed for correct inner scope priority
             let post_loop_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
                 ctx.scopes
                     .iter()
@@ -1102,7 +1100,7 @@ pub(crate) fn lower_expression(
 
             // 收集循环体中变量更新后的值（用于 phi incoming）
             // 遍历所有作用域，因为 if-else 的 phi 更新可能在内层作用域
-            // 注意：不使用 .rev()，让内层 scope 的绑定优先（后出现的覆盖先出现的）
+                    // .rev() removed for correct inner scope priority
             let final_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
                 ctx.scopes
                     .iter()
@@ -1254,7 +1252,7 @@ pub(crate) fn lower_expression(
                 // 收集当前变量绑定（此时指向 loop_head 的 Phi temp）
                 let normal_exit_bindings: std::collections::HashMap<String, Value> = ctx.scopes
                     .iter()
-                    .rev()
+                    // .rev() removed for correct inner scope priority
                     .flat_map(|scope| scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone())))
                     .collect();
 
@@ -1366,7 +1364,7 @@ pub(crate) fn lower_expression(
             let pre_loop_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
                 ctx.scopes
                     .iter()
-                    .rev()
+                    // .rev() removed for correct inner scope priority
                     .flat_map(|scope| scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership))))
                     .collect();
 
@@ -1407,7 +1405,7 @@ pub(crate) fn lower_expression(
             let post_loop_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
                 ctx.scopes
                     .iter()
-                    .rev()
+                    // .rev() removed for correct inner scope priority
                     .flat_map(|scope| scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership))))
                     .collect();
 
@@ -1639,7 +1637,7 @@ pub(crate) fn lower_expression(
             let normal_end_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
                 ctx.scopes
                     .iter()
-                    .rev()
+                    // .rev() removed for correct inner scope priority
                     .flat_map(|scope| {
                         scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
                     })
@@ -1704,7 +1702,7 @@ pub(crate) fn lower_expression(
             let final_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
                 ctx.scopes
                     .iter()
-                    .rev()
+                    // .rev() removed for correct inner scope priority
                     .flat_map(|scope| {
                         scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
                     })
@@ -1902,7 +1900,7 @@ pub(crate) fn lower_expression(
             let pre_loop_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
                 ctx.scopes
                     .iter()
-                    .rev()
+                    // .rev() removed for correct inner scope priority
                     .flat_map(|scope| scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership))))
                     .collect();
 
@@ -1940,7 +1938,7 @@ pub(crate) fn lower_expression(
             let post_loop_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
                 ctx.scopes
                     .iter()
-                    .rev()
+                    // .rev() removed for correct inner scope priority
                     .flat_map(|scope| scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership))))
                     .collect();
 
@@ -2202,7 +2200,7 @@ pub(crate) fn lower_expression(
             let normal_end_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
                 ctx.scopes
                     .iter()
-                    .rev()
+                    // .rev() removed for correct inner scope priority
                     .flat_map(|scope| {
                         scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
                     })
@@ -2259,7 +2257,7 @@ pub(crate) fn lower_expression(
             let final_bindings: std::collections::HashMap<String, (Value, Option<OwnershipKind>)> =
                 ctx.scopes
                     .iter()
-                    .rev()
+                    // .rev() removed for correct inner scope priority
                     .flat_map(|scope| {
                         scope.bindings.iter().map(|(k, v)| (k.clone(), (v.value.clone(), v.ownership)))
                     })
@@ -2392,7 +2390,7 @@ pub(crate) fn lower_expression(
                 let source_block = ctx.current_block();
                 let bindings: std::collections::HashMap<String, Value> = ctx.scopes
                     .iter()
-                    .rev()
+                    // .rev() removed for correct inner scope priority
                     .flat_map(|scope| scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone())))
                     .collect();
                 let break_target = ctx.loop_stack.last().unwrap().break_target;
@@ -2424,7 +2422,7 @@ pub(crate) fn lower_expression(
                 let source_block = ctx.current_block();
                 let bindings: std::collections::HashMap<String, Value> = ctx.scopes
                     .iter()
-                    .rev()
+                    // .rev() removed for correct inner scope priority
                     .flat_map(|scope| scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone())))
                     .collect();
                 let continue_target = ctx.loop_stack.last().unwrap().continue_target;
@@ -2693,7 +2691,7 @@ pub(crate) fn lower_expression(
             let pre_match_bindings: std::collections::HashMap<String, Value> = ctx
                 .scopes
                 .iter()
-                .rev()
+                    // .rev() removed for correct inner scope priority
                 .flat_map(|scope| {
                     scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone()))
                 })
@@ -2802,7 +2800,7 @@ pub(crate) fn lower_expression(
                         let arm_bindings: std::collections::HashMap<String, Value> = ctx
                             .scopes
                             .iter()
-                            .rev()
+                    // .rev() removed for correct inner scope priority
                             .flat_map(|scope| {
                                 scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone()))
                             })
@@ -2847,7 +2845,7 @@ pub(crate) fn lower_expression(
                         let arm_bindings: std::collections::HashMap<String, Value> = ctx
                             .scopes
                             .iter()
-                            .rev()
+                    // .rev() removed for correct inner scope priority
                             .flat_map(|scope| {
                                 scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone()))
                             })
