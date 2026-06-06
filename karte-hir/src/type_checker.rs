@@ -3607,7 +3607,7 @@ impl TypeChecker {
 
     /// 在类型模板中替换类型参数为具体类型
     /// 类型参数在模板中以 Type::Struct { name: param_name, fields: [] } 骨架形式存在
-    fn substitute_type_params(&self, ty: &Type, subst: &std::collections::HashMap<String, Type>) -> Type {
+    fn substitute_type_params(&mut self, ty: &Type, subst: &std::collections::HashMap<String, Type>) -> Type {
         match ty {
             Type::Struct { name, fields } if fields.is_empty() => {
                 // 检查是否是类型参数（HashMap O(1) 查找）
@@ -3662,6 +3662,13 @@ impl TypeChecker {
                 params: params.iter().map(|p| self.substitute_type_params(p, subst)).collect(),
                 return_type: Box::new(self.substitute_type_params(return_type, subst)),
             },
+            Type::Generic { name, args } => {
+                // 递归替换泛型参数中的类型变量，然后实例化泛型类型
+                let resolved_args: Vec<Type> = args.iter()
+                    .map(|a| self.substitute_type_params(a, subst))
+                    .collect();
+                self.instantiate_generic_type(name, &resolved_args)
+            }
             _ => ty.clone(),
         }
     }
