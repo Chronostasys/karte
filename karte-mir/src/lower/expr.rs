@@ -4252,6 +4252,159 @@ fn lower_function_call(
             return Ok(());
         }
 
+        // 处理 len 内建函数（方法调用解糖：arr.len() → len(arr)）
+        if name == "len" && args.len() == 1 {
+            let arg_type = ctx.get_expr_type(&args[0]);
+            match &arg_type {
+                karte_hir::Type::Array { .. } => {
+                    // 数组长度：解引用数组指针（header 第一个字段）
+                    let array_val = lower_expression_to_temp(ctx, &args[0])?;
+                    ctx.add_statement(Statement::Dereference {
+                        target: destination.clone(),
+                        reference: array_val,
+                        span,
+                    });
+                    return Ok(());
+                }
+                karte_hir::Type::String => {
+                    // 字符串长度：调用运行时函数
+                    let str_val = lower_expression_to_temp(ctx, &args[0])?;
+                    ctx.add_statement(Statement::Call {
+                        target: Some(destination.clone()),
+                        function: Value::Function {
+                            name: "__runtime_string_length".to_string(),
+                            ty: None,
+                        },
+                        args: vec![str_val],
+                        span,
+                    });
+                    return Ok(());
+                }
+                _ => {
+                    // 未知类型，尝试作为数组处理
+                    let array_val = lower_expression_to_temp(ctx, &args[0])?;
+                    ctx.add_statement(Statement::Dereference {
+                        target: destination.clone(),
+                        reference: array_val,
+                        span,
+                    });
+                    return Ok(());
+                }
+            }
+        }
+
+        // 处理 abs 内建函数（方法调用解糖：x.abs() → abs(x)）
+        if name == "abs" && args.len() == 1 {
+            let value_temp = lower_expression_to_temp(ctx, &args[0])?;
+
+            let neg_block = ctx.new_block();
+            let pos_block = ctx.new_block();
+            let merge_block = ctx.new_block();
+
+            let cmp_temp = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                target: cmp_temp.clone(),
+                left: value_temp.clone(),
+                op: MirBinaryOp::LessThan,
+                right: Value::Number { value: 0, ty: None },
+                operand_type: None,
+                span,
+            });
+
+            ctx.set_terminator(Terminator::Branch {
+                condition: cmp_temp,
+                then_block: neg_block,
+                else_block: pos_block,
+                span,
+            });
+
+            ctx.set_current_block(neg_block);
+            let neg_temp = ctx.new_temp();
+            ctx.add_statement(Statement::UnaryOp {
+                target: neg_temp.clone(),
+                op: crate::ir::UnaryOperator::Minus,
+                operand: value_temp.clone(),
+                span,
+            });
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: neg_temp,
+                span,
+            });
+            ctx.set_terminator(Terminator::Goto {
+                target: merge_block,
+                span,
+            });
+
+            ctx.set_current_block(pos_block);
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: value_temp,
+                span,
+            });
+            ctx.set_terminator(Terminator::Goto {
+                target: merge_block,
+                span,
+            });
+
+            ctx.set_current_block(merge_block);
+            return Ok(());
+        }
+
+        // 处理 min/max 内建函数
+        if (name == "min" || name == "max") && args.len() == 2 {
+            let left_temp = lower_expression_to_temp(ctx, &args[0])?;
+            let right_temp = lower_expression_to_temp(ctx, &args[1])?;
+
+            let op = if name == "min" { MirBinaryOp::LessThan } else { MirBinaryOp::GreaterThan };
+
+            let then_block = ctx.new_block();
+            let else_block = ctx.new_block();
+            let merge_block = ctx.new_block();
+
+            let cmp_temp = ctx.new_temp();
+            ctx.add_statement(Statement::BinaryOp {
+                target: cmp_temp.clone(),
+                left: left_temp.clone(),
+                op,
+                right: right_temp.clone(),
+                operand_type: None,
+                span,
+            });
+
+            ctx.set_terminator(Terminator::Branch {
+                condition: cmp_temp,
+                then_block,
+                else_block,
+                span,
+            });
+
+            ctx.set_current_block(then_block);
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: left_temp,
+                span,
+            });
+            ctx.set_terminator(Terminator::Goto {
+                target: merge_block,
+                span,
+            });
+
+            ctx.set_current_block(else_block);
+            ctx.add_statement(Statement::Assign {
+                target: destination.clone(),
+                source: right_temp,
+                span,
+            });
+            ctx.set_terminator(Terminator::Goto {
+                target: merge_block,
+                span,
+            });
+
+            ctx.set_current_block(merge_block);
+            return Ok(());
+        }
+
         // 首先检查变量环境中的绑定，并解析实际值
         let resolved_value = if let Some(binding) = ctx.lookup_variable(name) {
             let resolved = ctx.resolve_value(&binding.value);

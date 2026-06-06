@@ -1263,6 +1263,59 @@ impl TypeChecker {
                 args,
                 span,
             } => {
+                // 检测内置函数调用（通过方法调用语法解糖产生的）
+                if let Expr::Identifier { name, .. } = function.as_ref() {
+                    match name.as_str() {
+                        "len" => {
+                            // len(x) - 返回数组/字符串长度
+                            if args.len() == 1 {
+                                let arg_type = self.infer_expr(&args[0], env);
+                                match &arg_type {
+                                    Type::Array { .. } => {
+                                        self.expr_types.insert(&args[0] as *const Expr, arg_type);
+                                        return Type::Number;
+                                    }
+                                    Type::String => {
+                                        return Type::Number;
+                                    }
+                                    _ => {
+                                        // 尝试作为数组处理
+                                        return Type::Number;
+                                    }
+                                }
+                            }
+                        }
+                        "abs" => {
+                            if args.len() == 1 {
+                                let arg_type = self.infer_expr(&args[0], env);
+                                self.add_constraint(Type::Number, arg_type, *span);
+                                return Type::Number;
+                            }
+                        }
+                        "min" | "max" => {
+                            if args.len() == 2 {
+                                let t1 = self.infer_expr(&args[0], env);
+                                let t2 = self.infer_expr(&args[1], env);
+                                self.add_constraint(Type::Number, t1, *span);
+                                self.add_constraint(Type::Number, t2, *span);
+                                return Type::Number;
+                            }
+                        }
+                        "clamp" => {
+                            if args.len() == 3 {
+                                let t1 = self.infer_expr(&args[0], env);
+                                let t2 = self.infer_expr(&args[1], env);
+                                let t3 = self.infer_expr(&args[2], env);
+                                self.add_constraint(Type::Number, t1, *span);
+                                self.add_constraint(Type::Number, t2, *span);
+                                self.add_constraint(Type::Number, t3, *span);
+                                return Type::Number;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
                 let func_type = self.infer_expr(function, env);
                 let arg_types: Vec<Type> =
                     args.iter().map(|arg| self.infer_expr(arg, env)).collect();
