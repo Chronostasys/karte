@@ -248,8 +248,8 @@ impl TypeChecker {
             (Type::Var(v1), Type::Var(v2)) if v1 == v2 => Ok(()),
 
             (Type::Var(var), ty) | (ty, Type::Var(var)) => {
-                // 检查是否会产生无限类型
-                if ty.free_vars().contains(var) {
+                // 检查是否会产生无限类型（短路求值，不分配 Vec）
+                if ty.contains_var(var) {
                     self.add_error(TypeCheckError::InfiniteType {
                         var: *var,
                         ty: ty.clone(),
@@ -3040,7 +3040,7 @@ impl TypeChecker {
 
                             for (i, arg_pattern) in args.iter().enumerate() {
                                 if let Some(param_ty) = variant.data_types.get(i) {
-                                    let subst: Vec<(String, Type)> = type_params.iter().map(|p| {
+                                    let subst: std::collections::HashMap<String, Type> = type_params.iter().map(|p| {
                                         (p.clone(), inferred_args.get(p).cloned().unwrap_or(Type::Unknown))
                                     }).collect();
                                     let resolved_ty = self.substitute_type_params(param_ty, &subst);
@@ -3195,7 +3195,8 @@ impl TypeChecker {
 
     /// 解决所有约束条件
     fn solve_constraints(&mut self) {
-        for constraint in self.constraints.clone() {
+        let constraints = std::mem::take(&mut self.constraints);
+        for constraint in constraints {
             let _ = self.unify(
                 &constraint.left,
                 &constraint.right,
@@ -3574,8 +3575,8 @@ impl TypeChecker {
                 resolved_args.push(self.resolve_struct_field_from_parsed(t));
             }
 
-            // 构建替换映射：type_param -> 具体类型
-            let subst: Vec<(String, Type)> = gen_def
+            // 构建替换映射：type_param -> 具体类型（HashMap O(1) 查找）
+            let subst: std::collections::HashMap<String, Type> = gen_def
                 .type_params
                 .iter()
                 .zip(resolved_args.iter())
@@ -3607,14 +3608,12 @@ impl TypeChecker {
 
     /// 在类型模板中替换类型参数为具体类型
     /// 类型参数在模板中以 Type::Struct { name: param_name, fields: [] } 骨架形式存在
-    fn substitute_type_params(&self, ty: &Type, subst: &[(String, Type)]) -> Type {
+    fn substitute_type_params(&self, ty: &Type, subst: &std::collections::HashMap<String, Type>) -> Type {
         match ty {
             Type::Struct { name, fields } if fields.is_empty() => {
-                // 检查是否是类型参数
-                for (param_name, concrete_type) in subst {
-                    if name == param_name {
-                        return concrete_type.clone();
-                    }
+                // 检查是否是类型参数（HashMap O(1) 查找）
+                if let Some(concrete_type) = subst.get(name) {
+                    return concrete_type.clone();
                 }
                 // 不是类型参数，是实际的自定义类型引用
                 if let Some(resolved) = self.custom_types.get(name) {

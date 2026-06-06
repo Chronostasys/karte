@@ -622,6 +622,47 @@ impl Type {
 
     /// 获取类型中所有的自由类型变量
     pub fn free_vars(&self) -> Vec<TypeVar> {
+        // ... 见上方完整实现
+        self.free_vars_inner()
+    }
+
+    /// 检查类型中是否包含特定的类型变量（短路求值，比 free_vars().contains() 更高效）
+    pub fn contains_var(&self, target: &TypeVar) -> bool {
+        self.contains_var_inner(target)
+    }
+
+    fn contains_var_inner(&self, target: &TypeVar) -> bool {
+        match self {
+            Type::Number | Type::Int(_) | Type::Bool | Type::String | Type::Unit | Type::Unknown => false,
+            Type::Var(var) => var == target,
+            Type::Function { params, return_type } => {
+                params.iter().any(|p| p.contains_var_inner(target))
+                    || return_type.contains_var_inner(target)
+            }
+            Type::Closure { params, return_type } => {
+                params.iter().any(|p| p.contains_var_inner(target))
+                    || return_type.contains_var_inner(target)
+            }
+            Type::Sum { variants, .. } => {
+                variants.iter().any(|v| {
+                    v.data_types.iter().any(|dt| dt.contains_var_inner(target))
+                })
+            }
+            Type::Struct { fields, .. } => {
+                fields.iter().any(|f| f.field_type.contains_var_inner(target))
+            }
+            Type::Tuple(types) => {
+                types.iter().any(|t| t.contains_var_inner(target))
+            }
+            Type::Array { element } => element.contains_var_inner(target),
+            Type::Reference { inner } => inner.contains_var_inner(target),
+            Type::Generic { args, .. } => {
+                args.iter().any(|a| a.contains_var_inner(target))
+            }
+        }
+    }
+
+    fn free_vars_inner(&self) -> Vec<TypeVar> {
         match self {
             Type::Number | Type::Int(_) | Type::Bool | Type::String | Type::Unit | Type::Unknown => vec![],
             Type::Function {

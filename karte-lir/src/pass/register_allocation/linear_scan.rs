@@ -15,6 +15,7 @@ use super::types::{
     SpillSlot,
 };
 use crate::Register;
+use log::debug;
 use std::collections::{HashMap, HashSet};
 
 /// 线性扫描分配器
@@ -80,7 +81,7 @@ impl LinearScanAllocator {
                         self.calling_convention.argument_registers.get(param_index)
                     {
                         register_mapping.insert(lifetime.register, physical_reg);
-                        eprintln!(
+                        debug!(
                             "预分配参数: {:?} -> r{} (lifetime: [{}, {}])",
                             lifetime.register, physical_reg, lifetime.start, lifetime.end
                         );
@@ -93,7 +94,7 @@ impl LinearScanAllocator {
             // 预分配物理寄存器
             if let Register::Physical(p) = lifetime.register {
                 register_mapping.insert(lifetime.register, p);
-                eprintln!("预分配物理寄存器: {:?} -> r{}", lifetime.register, p);
+                debug!("预分配物理寄存器: {:?} -> r{}", lifetime.register, p);
                 available_registers.retain(|&reg| reg != p);
                 active_intervals.push(lifetime.clone());
             }
