@@ -916,6 +916,51 @@ pub(super) fn lower_statement(
                         }
                         return Ok(());
                     }
+                    "__runtime_string_compare" => {
+                        let left_op = ctx.lower_to_rvalue(&args[0]);
+                        let right_op = ctx.lower_to_rvalue(&args[1]);
+
+                        let left_reg = match left_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: left_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+                        let right_reg = match right_op {
+                            Operand::Register { id } => id,
+                            _ => {
+                                let temp = ctx.current_function_mut().new_register();
+                                ctx.add_instruction(Instruction::Move {
+                                    dst: temp,
+                                    src: right_op,
+                                    span: *span,
+                                });
+                                temp
+                            }
+                        };
+
+                        let result_reg = ctx.current_function_mut().new_register();
+                        ctx.add_instruction(Instruction::StringCompare {
+                            dst: result_reg,
+                            left: left_reg,
+                            right: right_reg,
+                            span: *span,
+                        });
+
+                        if let Some(target_value) = target {
+                            ctx.store_value_to_stack(
+                                target_value,
+                                Operand::Register { id: result_reg },
+                            );
+                        }
+                        return Ok(());
+                    }
                     "__runtime_string_char_at" => {
                         let str_op = ctx.lower_to_rvalue(&args[0]);
                         let idx_op = ctx.lower_to_rvalue(&args[1]);

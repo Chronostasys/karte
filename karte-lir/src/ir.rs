@@ -529,6 +529,19 @@ pub enum Instruction {
         span: Span,
     },
 
+    /// 字符串字典序比较：dst = compare(left, right) → -1/0/1
+    #[ir_codec(token = "string_compare")]
+    StringCompare {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        left: Register,
+        #[ir_codec(args)]
+        right: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
     /// 字符取值：dst = char_at(str_ptr, index) — 返回第 index 字节位置的单字节字符串
     /// 调用运行时 karte_jit_runtime_string_char_at(str_ptr, index) -> new_ptr
     #[ir_codec(token = "string_char_at")]
@@ -849,6 +862,7 @@ impl Instruction {
             | Instruction::CompareSet { dst, .. }
             | Instruction::StringConcat { dst, .. }
             | Instruction::StringEqual { dst, .. }
+            | Instruction::StringCompare { dst, .. }
             | Instruction::StringCharAt { dst, .. }
             | Instruction::StringSubstring { dst, .. }
             | Instruction::StringContains { dst, .. }
@@ -893,6 +907,7 @@ impl Instruction {
             | Instruction::CompareSet { dst, .. }
             | Instruction::StringConcat { dst, .. }
             | Instruction::StringEqual { dst, .. }
+            | Instruction::StringCompare { dst, .. }
             | Instruction::StringCharAt { dst, .. }
             | Instruction::StringSubstring { dst, .. }
             | Instruction::StringContains { dst, .. }
@@ -1061,7 +1076,8 @@ impl Instruction {
                 used.push(*left);
                 used.push(*right);
             }
-            Instruction::StringEqual { left, right, .. } => {
+            Instruction::StringEqual { left, right, .. }
+            | Instruction::StringCompare { left, right, .. } => {
                 used.push(*left);
                 used.push(*right);
             }
@@ -1389,7 +1405,8 @@ impl Instruction {
                     *right = new_reg;
                 }
             }
-            Instruction::StringEqual { dst, left, right, .. } => {
+            Instruction::StringEqual { dst, left, right, .. }
+            | Instruction::StringCompare { dst, left, right, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
                 }
@@ -1713,7 +1730,8 @@ impl Instruction {
                 used.push(*left);
                 used.push(*right);
             }
-            Instruction::StringEqual { dst, left, right, .. } => {
+            Instruction::StringEqual { dst, left, right, .. }
+            | Instruction::StringCompare { dst, left, right, .. } => {
                 defined.push(*dst);
                 used.push(*left);
                 used.push(*right);

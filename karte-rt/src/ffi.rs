@@ -496,6 +496,50 @@ pub extern "C" fn karte_jit_runtime_string_equal(left_ptr: u64, right_ptr: u64) 
 /// 打印字符串到 stdout
 /// 字符串格式：[length: i64][bytes...]
 /// 返回 0（Unit）
+
+/// 字符串比较（字典序）
+/// 字符串格式：[length: i64][bytes...]
+/// 返回 -1 (left < right), 0 (left == right), 1 (left > right)
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_string_compare(left_ptr: u64, right_ptr: u64) -> i64 {
+    unsafe {
+        if left_ptr == right_ptr {
+            return 0;
+        }
+        if left_ptr == 0 {
+            return -1;
+        }
+        if right_ptr == 0 {
+            return 1;
+        }
+        let left_len = *(left_ptr as *const i64) as usize;
+        let right_len = *(right_ptr as *const i64) as usize;
+        let min_len = left_len.min(right_len);
+        let left_bytes = (left_ptr as *const u8).add(8);
+        let right_bytes = (right_ptr as *const u8).add(8);
+        for i in 0..min_len {
+            let lb = *left_bytes.add(i);
+            let rb = *right_bytes.add(i);
+            if lb < rb {
+                return -1;
+            }
+            if lb > rb {
+                return 1;
+            }
+        }
+        // 公共前缀相同，比较长度
+        if left_len < right_len {
+            -1
+        } else if left_len > right_len {
+            1
+        } else {
+            0
+        }
+    }
+}
+
+/// 打印字符串到 stdout
+/// 字符串格式：[length: i64][bytes...]
 #[no_mangle]
 pub extern "C" fn karte_jit_runtime_print_string(str_ptr: u64) -> u64 {
     unsafe {

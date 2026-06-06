@@ -201,6 +201,19 @@ pub trait JitCompiler: std::fmt::Debug {
         self.emit_runtime_call(code_builder, call, Some(dst), ctx)
     }
 
+    /// 编译字符串字典序比较指令
+    fn compile_string_compare(
+        &mut self,
+        dst: &Register,
+        left: &Register,
+        right: &Register,
+        code_builder: &mut CodeBuilder,
+        ctx: Option<RuntimeCallContext<'_>>,
+    ) -> crate::Result<()> {
+        let call = RuntimeCall::string_compare(*left, *right);
+        self.emit_runtime_call(code_builder, call, Some(dst), ctx)
+    }
+
     /// 编译字符串字符访问指令
     fn compile_string_char_at(
         &mut self,

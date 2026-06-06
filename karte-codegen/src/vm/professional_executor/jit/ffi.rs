@@ -11,6 +11,7 @@ pub enum RuntimeIntrinsic {
     GcSafepoint,
     StringConcat,
     StringEqual,
+    StringCompare,
     StringCharAt,
     StringSubstring,
     StringContains,
@@ -37,6 +38,9 @@ impl RuntimeIntrinsic {
             }
             RuntimeIntrinsic::StringEqual => {
                 runtime::karte_jit_runtime_string_equal as *const ()
+            }
+            RuntimeIntrinsic::StringCompare => {
+                runtime::karte_jit_runtime_string_compare as *const ()
             }
             RuntimeIntrinsic::StringCharAt => {
                 runtime::karte_jit_runtime_string_char_at as *const ()
@@ -81,6 +85,7 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::GcSafepoint => "karte_jit_runtime_gc_safepoint",
             RuntimeIntrinsic::StringConcat => "karte_jit_runtime_string_concat",
             RuntimeIntrinsic::StringEqual => "karte_jit_runtime_string_equal",
+            RuntimeIntrinsic::StringCompare => "karte_jit_runtime_string_compare",
             RuntimeIntrinsic::StringCharAt => "karte_jit_runtime_string_char_at",
             RuntimeIntrinsic::StringSubstring => "karte_jit_runtime_string_substring",
             RuntimeIntrinsic::StringContains => "karte_jit_runtime_string_contains",
@@ -98,7 +103,7 @@ impl RuntimeIntrinsic {
     pub fn has_result(self) -> bool {
         matches!(
             self,
-            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual | RuntimeIntrinsic::StringCharAt | RuntimeIntrinsic::StringSubstring | RuntimeIntrinsic::StringContains | RuntimeIntrinsic::SplitCount | RuntimeIntrinsic::Trim | RuntimeIntrinsic::CharToString | RuntimeIntrinsic::ToString
+            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual | RuntimeIntrinsic::StringCompare | RuntimeIntrinsic::StringCharAt | RuntimeIntrinsic::StringSubstring | RuntimeIntrinsic::StringContains | RuntimeIntrinsic::SplitCount | RuntimeIntrinsic::Trim | RuntimeIntrinsic::CharToString | RuntimeIntrinsic::ToString
         )
     }
 }
@@ -166,6 +171,13 @@ impl RuntimeCall {
     pub fn string_equal(left: Register, right: Register) -> Self {
         Self {
             intrinsic: RuntimeIntrinsic::StringEqual,
+            args: vec![RuntimeArg::Register(left), RuntimeArg::Register(right)],
+        }
+    }
+
+    pub fn string_compare(left: Register, right: Register) -> Self {
+        Self {
+            intrinsic: RuntimeIntrinsic::StringCompare,
             args: vec![RuntimeArg::Register(left), RuntimeArg::Register(right)],
         }
     }

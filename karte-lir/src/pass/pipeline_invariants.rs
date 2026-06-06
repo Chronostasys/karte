@@ -532,6 +532,8 @@ fn instr_name(instr: &Instruction) -> &'static str {
         Instruction::Safepoint { .. } => "Safepoint",
         Instruction::StringConcat { .. } => "StringConcat",
         Instruction::StringEqual { .. } => "StringEqual",
+        Instruction::StringCompare { .. } => "StringCompare",
+        Instruction::StringCompare { .. } => "StringCompare",
         Instruction::StringCharAt { .. } => "StringCharAt",
         Instruction::StringSubstring { .. } => "StringSubstring",
         Instruction::StringContains { .. } => "StringContains",

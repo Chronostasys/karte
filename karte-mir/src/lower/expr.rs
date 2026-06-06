@@ -284,16 +284,19 @@ pub(crate) fn lower_expression(
                     .map(|t| matches!(t, karte_hir::Type::String))
                     .unwrap_or(false);
 
-            // 检查是否为字符串比较：Equal/NotEqual 且操作数类型为 String
-            // 注意：Equal/NotEqual 的表达式类型是 bool，不是 String
+            // 检查是否为字符串比较：Equal/NotEqual/Less/Greater/LessEqual/GreaterEqual 且操作数类型为 String
+            // 注意：这些运算符的表达式类型是 bool，不是 String
             // 所以需要检查左操作数的类型
             let left_ptr = left.as_ref() as *const Expr as usize;
-            let is_string_compare = matches!(op, karte_hir::BinaryOperator::Equal | karte_hir::BinaryOperator::NotEqual)
-                && ctx
-                    .expr_types
-                    .get(&left_ptr)
-                    .map(|t| matches!(t, karte_hir::Type::String))
-                    .unwrap_or(false);
+            let left_is_string = ctx
+                .expr_types
+                .get(&left_ptr)
+                .map(|t| matches!(t, karte_hir::Type::String))
+                .unwrap_or(false);
+            let is_string_eq_compare = matches!(op, karte_hir::BinaryOperator::Equal | karte_hir::BinaryOperator::NotEqual)
+                && left_is_string;
+            let is_string_ord_compare = matches!(op, karte_hir::BinaryOperator::Less | karte_hir::BinaryOperator::Greater | karte_hir::BinaryOperator::LessEqual | karte_hir::BinaryOperator::GreaterEqual)
+                && left_is_string;
 
             let struct_or_enum_type = ctx
                 .expr_types
@@ -356,7 +359,7 @@ pub(crate) fn lower_expression(
                     args: vec![left_val, right_val],
                     span,
                 });
-            } else if is_string_compare {
+            } else if is_string_eq_compare {
                 // 字符串比较：调用运行时 string_equal 函数
                 let left_val = lower_expression_to_temp(ctx, left)?;
                 let right_val = lower_expression_to_temp(ctx, right)?;
@@ -393,6 +396,92 @@ pub(crate) fn lower_expression(
                         operand_type: None,
                         span,
                     });
+                }
+            } else if is_string_ord_compare {
+                // 字符串有序比较：调用运行时 __runtime_string_compare 函数
+                // 返回 -1 (left < right), 0 (left == right), 1 (left > right)
+                let left_val = lower_expression_to_temp(ctx, left)?;
+                let right_val = lower_expression_to_temp(ctx, right)?;
+
+                let cmp_result = ctx.new_temp();
+                ctx.add_statement(Statement::Call {
+                    target: Some(cmp_result.clone()),
+                    function: Value::Function {
+                        name: "__runtime_string_compare".to_string(),
+                        ty: None,
+                    },
+                    args: vec![left_val, right_val],
+                    span,
+                });
+
+                // 根据运算符类型生成比较：
+                // <  : cmp_result < 0  → cmp_result == -1 (but easier: cmp_result < 0)
+                // >  : cmp_result > 0
+                // <= : cmp_result <= 0 → !(cmp_result > 0)
+                // >= : cmp_result >= 0 → !(cmp_result < 0)
+                let threshold = Value::Number { value: 0, ty: None };
+                match op {
+                    karte_hir::BinaryOperator::Less => {
+                        ctx.add_statement(Statement::BinaryOp {
+                            target: destination.clone(),
+                            left: cmp_result,
+                            op: MirBinaryOp::LessThan,
+                            right: threshold,
+                            operand_type: None,
+                            span,
+                        });
+                    }
+                    karte_hir::BinaryOperator::Greater => {
+                        ctx.add_statement(Statement::BinaryOp {
+                            target: destination.clone(),
+                            left: cmp_result,
+                            op: MirBinaryOp::GreaterThan,
+                            right: threshold,
+                            operand_type: None,
+                            span,
+                        });
+                    }
+                    karte_hir::BinaryOperator::LessEqual => {
+                        // !(cmp > 0) = cmp <= 0
+                        let gt_result = ctx.new_temp();
+                        ctx.add_statement(Statement::BinaryOp {
+                            target: gt_result.clone(),
+                            left: cmp_result,
+                            op: MirBinaryOp::GreaterThan,
+                            right: threshold,
+                            operand_type: None,
+                            span,
+                        });
+                        ctx.add_statement(Statement::BinaryOp {
+                            target: destination.clone(),
+                            left: gt_result,
+                            op: MirBinaryOp::BitXor,
+                            right: Value::Number { value: 1, ty: None },
+                            operand_type: None,
+                            span,
+                        });
+                    }
+                    karte_hir::BinaryOperator::GreaterEqual => {
+                        // !(cmp < 0) = cmp >= 0
+                        let lt_result = ctx.new_temp();
+                        ctx.add_statement(Statement::BinaryOp {
+                            target: lt_result.clone(),
+                            left: cmp_result,
+                            op: MirBinaryOp::LessThan,
+                            right: threshold,
+                            operand_type: None,
+                            span,
+                        });
+                        ctx.add_statement(Statement::BinaryOp {
+                            target: destination.clone(),
+                            left: lt_result,
+                            op: MirBinaryOp::BitXor,
+                            right: Value::Number { value: 1, ty: None },
+                            operand_type: None,
+                            span,
+                        });
+                    }
+                    _ => unreachable!(),
                 }
             } else if matches!(op, karte_hir::BinaryOperator::LogicalAnd | karte_hir::BinaryOperator::LogicalOr) {
                 // 短路求值：LogicalAnd 和 LogicalOr 需要分支控制流

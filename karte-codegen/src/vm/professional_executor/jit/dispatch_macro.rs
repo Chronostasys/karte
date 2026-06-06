@@ -151,6 +151,9 @@ macro_rules! dispatch_compile_instruction {
             Instruction::StringEqual { dst, left, right, .. } => {
                 $self.compile_string_equal(dst, left, right, $cb, $ctx_expr)
             }
+            Instruction::StringCompare { dst, left, right, .. } => {
+                $self.compile_string_compare(dst, left, right, $cb, $ctx_expr)
+            }
             Instruction::StringCharAt { dst, str_ptr, index, .. } => {
                 $self.compile_string_char_at(dst, str_ptr, index, $cb, $ctx_expr)
             }

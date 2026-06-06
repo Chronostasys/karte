@@ -506,7 +506,7 @@ impl DefUseAnalysis {
                 uses.push(*left);
                 uses.push(*right);
             }
-            Instruction::StringEqual { dst, left, right, .. } => {
+            Instruction::StringEqual { dst, left, right, .. } | Instruction::StringCompare { dst, left, right, .. } => {
                 defs.push(*dst);
                 uses.push(*left);
                 uses.push(*right);

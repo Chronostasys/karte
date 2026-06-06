@@ -1118,18 +1118,32 @@ impl TypeChecker {
                     | BinaryOperator::Multiply
                     | BinaryOperator::Divide
                     | BinaryOperator::Modulo
-                    | BinaryOperator::GreaterEqual
-                    | BinaryOperator::LessEqual
-                    | BinaryOperator::Greater
-                    | BinaryOperator::Less
                     | BinaryOperator::BitAnd
                     | BinaryOperator::BitOr
                     | BinaryOperator::BitXor
                     | BinaryOperator::ShiftLeft
                     | BinaryOperator::ShiftRight => {
-                        // 数字运算、有序比较运算、位运算：左右操作数都必须是数字类型
+                        // 数字运算、位运算：左右操作数都必须是数字类型
                         self.add_constraint(left_type.clone(), Type::Number, left.span());
                         self.add_constraint(right_type.clone(), Type::Number, right.span());
+                    }
+                    BinaryOperator::GreaterEqual
+                    | BinaryOperator::LessEqual
+                    | BinaryOperator::Greater
+                    | BinaryOperator::Less => {
+                        // 有序比较运算符：支持 number 和 string 类型
+                        // 如果任一操作数是 string，则两边都必须是 string（字典序比较）
+                        // 否则两边都必须是 number
+                        match (&left_type, &right_type) {
+                            (Type::String, _) | (_, Type::String) => {
+                                self.add_constraint(left_type.clone(), Type::String, left.span());
+                                self.add_constraint(right_type.clone(), Type::String, right.span());
+                            }
+                            _ => {
+                                self.add_constraint(left_type.clone(), Type::Number, left.span());
+                                self.add_constraint(right_type.clone(), Type::Number, right.span());
+                            }
+                        }
                     }
                     BinaryOperator::LogicalAnd | BinaryOperator::LogicalOr => {
                         self.add_constraint(left_type.clone(), Type::bool(), left.span());

@@ -174,7 +174,7 @@ impl DeadCodeElimination {
             Instruction::JumpRegister { .. } => true,
             Instruction::Safepoint { .. } => false,
             Instruction::StringConcat { .. } => true,
-            Instruction::StringEqual { .. } => true,
+            Instruction::StringEqual { .. } | Instruction::StringCompare { .. } => true,
             Instruction::StringCharAt { .. } => true,
             Instruction::StringSubstring { .. } => true,
             Instruction::StringContains { .. } => true,
@@ -324,7 +324,7 @@ impl DeadCodeElimination {
             Instruction::PrintString { ptr, .. } => {
                 used.push(*ptr);
             }
-            Instruction::StringEqual { left, right, .. } => {
+            Instruction::StringEqual { left, right, .. } | Instruction::StringCompare { left, right, .. } => {
                 used.push(*left);
                 used.push(*right);
             }
@@ -394,7 +394,7 @@ impl DeadCodeElimination {
             | Instruction::StructAlloc { dst, .. }
             | Instruction::StructFieldLoad { dst, .. }
             | Instruction::StructFieldAddr { dst, .. } => Some(*dst),
-            Instruction::StringEqual { dst, .. } => Some(*dst),
+            Instruction::StringEqual { dst, .. } | Instruction::StringCompare { dst, .. } => Some(*dst),
             Instruction::StringCharAt { dst, .. } => Some(*dst),
             Instruction::StringSubstring { dst, .. } => Some(*dst),
             Instruction::StringContains { dst, .. } => Some(*dst),
