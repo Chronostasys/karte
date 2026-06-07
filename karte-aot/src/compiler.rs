@@ -73,10 +73,121 @@ impl AotCompiler {
 
     /// x86_64 AOT 编译
     fn compile_x86_64(&self, program: &LirProgram) -> Result<Vec<u8>, String> {
-        use std::collections::HashSet;
+        use std::collections::{HashSet, VecDeque};
         use karte_codegen::vm::professional_executor::jit::ffi::RuntimeIntrinsic;
+        use karte_lir::ir::Instruction;
 
-        // ---- 1. 编译 Karte 函数 ----
+        // ---- 0. Tree-shaking: 只保留从入口可达的 std 库函数 ----
+        //
+        // 背景：LIR 优化后，用户代码中的函数调用已被内联/展开为 Jump 指令，
+        // 跳转目标可能指向优化后的生成代码块而非原始函数入口，导致静态分析
+        // 无法追踪用户代码间的调用关系。
+        //
+        // 策略：
+        // 1. 用户代码（main::xxx）全部保留（保守安全）
+        // 2. std 库函数通过 LoadGlobal + Call/Jump 引用追踪（可静态分析）
+        // 3. BFS 从入口函数出发，标记可达的 std 库函数
+        //
+        // 性能：O(F * I) 建图 + O(F + E) BFS，其中 F=函数数，I=指令数，E=调用边数
+
+        let main_name = program.main_function.as_deref().unwrap_or("main");
+        let entry_func_name = program.functions.keys()
+            .find(|k: &&String| k.ends_with(&format!("::{}", main_name)) || k.as_str() == main_name)
+            .cloned()
+            .unwrap_or_else(|| main_name.to_string());
+
+        // 步骤 1: 区分用户函数和 std 库函数
+        let user_funcs: HashSet<&str> = program.functions.keys()
+            .filter(|k| !k.starts_with("std."))
+            .map(|s| s.as_str())
+            .collect();
+        let std_funcs: HashSet<&str> = program.functions.keys()
+            .filter(|k| k.starts_with("std."))
+            .map(|s| s.as_str())
+            .collect();
+
+        // 步骤 2: 建立 LabelId → std 函数名 映射（只追踪 std 库）
+        let mut std_label_to_func: HashMap<usize, &str> = HashMap::new();
+        for &name in &std_funcs {
+            if let Some(func) = program.functions.get(name) {
+                for instr in &func.instructions {
+                    if let Instruction::Label { id, .. } = instr {
+                        std_label_to_func.insert(id.0, name);
+                    }
+                }
+            }
+        }
+
+        // 步骤 3: 短名 → canonical name 映射（用于 LoadGlobal）
+        let std_short_to_canonical: HashMap<&str, &str> = std_funcs.iter()
+            .filter_map(|&k| k.rsplit_once("::").map(|(_, short)| (short, k)))
+            .collect();
+
+        // 步骤 4: 扫描所有用户函数的指令，收集引用的 std 库函数
+        let mut call_graph: HashMap<&str, HashSet<&str>> = HashMap::new();
+        for (caller_name, func) in &program.functions {
+            let mut callees = HashSet::new();
+            for instr in &func.instructions {
+                // 直接调用/跳转到 std 函数
+                let target_id = match instr {
+                    Instruction::Call { target, .. } => Some(target.0),
+                    Instruction::Jump { target, .. } => Some(target.0),
+                    Instruction::JumpEqual { target, .. } => Some(target.0),
+                    Instruction::JumpNotEqual { target, .. } => Some(target.0),
+                    Instruction::JumpGreater { target, .. } => Some(target.0),
+                    Instruction::JumpGreaterEqual { target, .. } => Some(target.0),
+                    Instruction::JumpLess { target, .. } => Some(target.0),
+                    Instruction::JumpLessEqual { target, .. } => Some(target.0),
+                    _ => None,
+                };
+                if let Some(id) = target_id {
+                    if let Some(&callee) = std_label_to_func.get(&id) {
+                        callees.insert(callee);
+                    }
+                }
+                // LoadGlobal 加载 std 函数地址
+                if let Instruction::LoadGlobal { name, .. } = instr {
+                    if std_funcs.contains(name.as_str()) {
+                        callees.insert(name.as_str());
+                    } else if let Some(&callee) = std_short_to_canonical.get(name.as_str()) {
+                        callees.insert(callee);
+                    }
+                }
+            }
+            call_graph.insert(caller_name.as_str(), callees);
+        }
+
+        // 步骤 5: BFS 从入口出发 + 所有用户函数作为根
+        // 用户函数全部保留，只对 std 库做 tree-shaking
+        let mut reachable: HashSet<String> = user_funcs.iter().map(|&s| s.to_string()).collect();
+        let mut queue: VecDeque<String> = VecDeque::new();
+        // 将所有用户函数作为 BFS 起点（它们可能引用 std 函数）
+        for &name in &user_funcs {
+            queue.push_back(name.to_string());
+        }
+        // 也要追踪 std 函数之间的引用
+        while let Some(current) = queue.pop_front() {
+            if let Some(callees) = call_graph.get(current.as_str()) {
+                for &callee in callees {
+                    if !reachable.contains(callee) {
+                        reachable.insert(callee.to_string());
+                        queue.push_back(callee.to_string());
+                    }
+                }
+            }
+        }
+
+        let total = program.functions.len();
+        let kept = reachable.len();
+        if self.debug {
+            eprintln!("AOT: main_function='{}', entry_func_name='{}'", main_name, entry_func_name);
+        }
+        if self.debug || kept < total {
+            eprintln!("AOT: Tree-shaking: {}/{} 函数可达 (移除 {} 个死函数, 保留 {} 用户 + {} std)",
+                kept, total, total - kept, user_funcs.len(), kept - user_funcs.len());
+        }
+
+        // ---- 1. 只编译可达的 Karte 函数 ----
         let mut compiler = X86Compiler::new(self.debug)
             .map_err(|e| format!("创建 x86 编译器失败: {}", e))?;
 
@@ -84,13 +195,12 @@ impl AotCompiler {
         let mut karte_code: Vec<u8> = Vec::new();
         let mut function_offsets: HashMap<String, usize> = HashMap::new();
 
-        // 编译顺序: main 放最后
-        let main_name = program.main_function.as_deref().unwrap_or("main");
-        let mut func_names: Vec<String> = program.functions.keys().cloned().collect();
+        // 编译顺序: 入口函数放最后，只编译可达函数
+        let mut func_names: Vec<String> = reachable.into_iter().collect();
         func_names.sort_by(|a, b| {
-            if a == main_name { std::cmp::Ordering::Greater }
-            else if b == main_name { std::cmp::Ordering::Less }
-            else { a.cmp(b) } // 确定性排序：非main函数按名字排序
+            if a == &entry_func_name { std::cmp::Ordering::Greater }
+            else if b == &entry_func_name { std::cmp::Ordering::Less }
+            else { a.cmp(b) }
         });
 
         for func_name in &func_names {
@@ -407,8 +517,8 @@ impl AotCompiler {
         }
 
         // ---- 6. 修补 _start 中的 CALL main ----
-        let main_offset = function_offsets.get(main_name)
-            .ok_or_else(|| format!("未找到主函数 '{}'", main_name))?;
+        let main_offset = function_offsets.get(&entry_func_name)
+            .ok_or_else(|| format!("未找到主函数 '{}'", entry_func_name))?;
         let main_addr = code_base + runtime_size as u64 + *main_offset as u64;
 
         let mut runtime_code_mut = runtime.code;
