@@ -139,6 +139,11 @@ impl AotCompiler {
             global_labels.insert("__runtime_karte_jit_runtime_alloc_aligned".to_string(), addr);
             global_labels.insert("__runtime_karte_jit_runtime_alloc".to_string(), addr);
         }
+        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::GC_ALLOC) {
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_gc_alloc".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_gc_alloc".to_string(), addr);
+        }
         if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::FREE) {
             let addr = code_base + off as u64;
             global_labels.insert("karte_jit_runtime_free".to_string(), addr);
@@ -216,6 +221,21 @@ impl AotCompiler {
             global_labels.insert("karte_jit_runtime_char_to_string".to_string(), addr);
             global_labels.insert("__runtime_karte_jit_runtime_char_to_string".to_string(), addr);
         }
+        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::MEM_LOAD64) {
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_mem_load64".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_mem_load64".to_string(), addr);
+        }
+        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::MEM_STORE64) {
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_mem_store64".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_mem_store64".to_string(), addr);
+        }
+        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::STRING_COMPARE) {
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_string_compare".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_string_compare".to_string(), addr);
+        }
         if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::PRINT_STRING) {
             let addr = code_base + off as u64;
             global_labels.insert("karte_jit_runtime_print_string".to_string(), addr);
@@ -269,6 +289,7 @@ impl AotCompiler {
             let retain_ptr = RuntimeIntrinsic::Retain.symbol_ptr() as u64;
             let release_ptr = RuntimeIntrinsic::Release.symbol_ptr() as u64;
             let safepoint_ptr = RuntimeIntrinsic::GcSafepoint.symbol_ptr() as u64;
+            let gc_alloc_ptr = RuntimeIntrinsic::GcAlloc.symbol_ptr() as u64;
 
             // update_stack_top 不在 RuntimeIntrinsic 中, 直接获取
             let update_stack_top_ptr = karte_rt::ffi::karte_jit_runtime_update_stack_top as u64;
@@ -287,6 +308,9 @@ impl AotCompiler {
             }
             if let Some(&new) = global_labels.get("karte_jit_runtime_gc_safepoint") {
                 runtime_ptr_map.insert(safepoint_ptr, new);
+            }
+            if let Some(&new) = global_labels.get("karte_jit_runtime_gc_alloc") {
+                runtime_ptr_map.insert(gc_alloc_ptr, new);
             }
             if let Some(&new) = global_labels.get("karte_jit_runtime_update_stack_top") {
                 runtime_ptr_map.insert(update_stack_top_ptr, new);
@@ -337,6 +361,18 @@ impl AotCompiler {
             let raw_syscall6_ptr = RuntimeIntrinsic::RawSyscall6.symbol_ptr() as u64;
             if let Some(&new) = global_labels.get("karte_jit_runtime_raw_syscall6") {
                 runtime_ptr_map.insert(raw_syscall6_ptr, new);
+            }
+            let mem_load64_ptr = RuntimeIntrinsic::MemLoad64.symbol_ptr() as u64;
+            if let Some(&new) = global_labels.get("karte_jit_runtime_mem_load64") {
+                runtime_ptr_map.insert(mem_load64_ptr, new);
+            }
+            let mem_store64_ptr = RuntimeIntrinsic::MemStore64.symbol_ptr() as u64;
+            if let Some(&new) = global_labels.get("karte_jit_runtime_mem_store64") {
+                runtime_ptr_map.insert(mem_store64_ptr, new);
+            }
+            let string_compare_ptr = RuntimeIntrinsic::StringCompare.symbol_ptr() as u64;
+            if let Some(&new) = global_labels.get("karte_jit_runtime_string_compare") {
+                runtime_ptr_map.insert(string_compare_ptr, new);
             }
             if let Some(&new) = global_labels.get("karte_jit_runtime_print_string") {
                 runtime_ptr_map.insert(print_string_ptr, new);
