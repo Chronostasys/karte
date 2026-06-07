@@ -1,0 +1,159 @@
+#!/bin/bash
+# kcc — Karte C Compiler
+# 用 AOT 编译的 test_cc 将 C 代码编译为 x86_64 可执行文件
+#
+# 用法:
+#   kcc <input.c> [-o <output>]    编译 C 文件
+#   kcc -S <input.c>               只输出汇编
+#   kcc --rebuild                  强制重新 AOT 编译 test_cc
+#   echo 'int main(){return 42;}' | kcc -o test  支持管道输入
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+KARTE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+KARTE_BIN="$KARTE_ROOT/target/debug/karte"
+TEST_CC_SRC="$KARTE_ROOT/test_cc/src/main.karte"
+AOT_BIN="/tmp/.karte_test_cc_aot"
+
+INPUT=""
+OUTPUT="a.out"
+ASM_ONLY=false
+FORCE_REBUILD=false
+USE_STDIN=false
+
+usage() {
+    cat << 'HELP'
+kcc — 用 Karte 编写的 C 子集编译器
+
+用法:
+  kcc <input.c> [-o <output>]     编译为可执行文件
+  kcc -S <input.c> [-o <file.s>]  只输出汇编
+  kcc --rebuild                   强制重新编译 test_cc
+  echo 'int main(){...}' | kcc    从管道读取
+
+选项:
+  -o <path>    输出文件路径 (默认: a.out)
+  -S           只输出汇编，不汇编链接
+  -h, --help   显示帮助
+  --rebuild    强制重新 AOT 编译 test_cc
+
+支持的 C 子集:
+  函数:     int 返回类型, 递归, 多参数
+  变量:     int 类型局部变量, 声明+赋值
+  控制流:   if / else if / else, while, for, return
+  运算符:   + - * / % && || ! == != < > <= >=
+  赋值:     = += -= *= /= %=
+  注释:     // 和 /* */
+  数组:     int arr[10], arr[i], arr[i] = v
+HELP
+    exit 0
+}
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -o)      OUTPUT="$2"; shift 2 ;;
+        -S)      ASM_ONLY=true; shift ;;
+        -h|--help) usage ;;
+        --rebuild) FORCE_REBUILD=true; shift ;;
+        -*)      echo "未知选项: $1" >&2; exit 1 ;;
+        *)       INPUT="$1"; shift ;;
+    esac
+done
+
+# 管道模式
+if [[ -z "$INPUT" ]] && [[ ! -t 0 ]]; then
+    USE_STDIN=true
+fi
+
+if [[ -z "$INPUT" ]] && $USE_STDIN; then
+    : # 从 stdin 读取
+elif [[ -z "$INPUT" ]]; then
+    echo "错误: 未指定输入文件" >&2
+    echo "用法: kcc <input.c> [-o <output>]" >&2
+    exit 1
+elif [[ ! -f "$INPUT" ]]; then
+    echo "错误: 文件不存在: $INPUT" >&2
+    exit 1
+fi
+
+# 确保 AOT 二进制存在且最新
+need_rebuild=false
+if $FORCE_REBUILD; then
+    need_rebuild=true
+elif [[ ! -x "$AOT_BIN" ]]; then
+    need_rebuild=true
+elif [[ -f "$KARTE_BIN" ]] && [[ "$KARTE_BIN" -nt "$AOT_BIN" ]]; then
+    need_rebuild=true
+elif [[ "$TEST_CC_SRC" -nt "$AOT_BIN" ]]; then
+    need_rebuild=true
+fi
+
+if $need_rebuild; then
+    echo "kcc: 编译 test_cc (AOT)..." >&2
+    cd "$KARTE_ROOT"
+    if ! cargo build 2>/dev/null; then
+        echo "kcc: cargo build 失败" >&2
+        exit 1
+    fi
+    if ! "$KARTE_BIN" aot --mode project "$TEST_CC_SRC" -o "$AOT_BIN" 2>/dev/null; then
+        echo "kcc: AOT 编译 test_cc 失败" >&2
+        exit 1
+    fi
+    echo "kcc: AOT 编译完成 ($(stat -c%s "$AOT_BIN") 字节)" >&2
+fi
+
+# 临时文件
+TMPDIR=$(mktemp -d /tmp/kcc_XXXXXX)
+trap "rm -rf $TMPDIR" EXIT
+
+ASM_FILE="$TMPDIR/output.s"
+
+# 编译 C → 汇编
+if $USE_STDIN; then
+    "$AOT_BIN" > "$ASM_FILE" 2>/dev/null
+elif $ASM_ONLY && [[ "$OUTPUT" != "-" ]]; then
+    "$AOT_BIN" < "$INPUT" > "$OUTPUT" 2>/dev/null
+    # 清理末尾数字
+    sed -i '/^[0-9]\+$/d' "$OUTPUT"
+    echo "kcc: 已生成汇编: $OUTPUT" >&2
+    exit 0
+else
+    "$AOT_BIN" < "$INPUT" > "$ASM_FILE" 2>/dev/null
+fi
+
+# 检查 test_cc 是否成功
+if [[ $? -ne 0 ]]; then
+    echo "kcc: 编译失败" >&2
+    exit 1
+fi
+
+# 清理末尾数字（print_number 的副作用）
+sed -i '/^[0-9]\+$/d' "$ASM_FILE"
+
+# 只输出汇编
+if $ASM_ONLY; then
+    cat "$ASM_FILE"
+    exit 0
+fi
+
+# 汇编 + 链接
+OBJ_FILE="$TMPDIR/output.o"
+
+if ! as --64 "$ASM_FILE" -o "$OBJ_FILE" 2>"$TMPDIR/as_err"; then
+    echo "kcc: 汇编错误:" >&2
+    cat "$TMPDIR/as_err" >&2
+    echo "" >&2
+    echo "生成的汇编 ($ASM_FILE):" >&2
+    cat "$ASM_FILE" >&2
+    exit 1
+fi
+
+if ! ld "$OBJ_FILE" -o "$OUTPUT" 2>"$TMPDIR/ld_err"; then
+    echo "kcc: 链接错误:" >&2
+    cat "$TMPDIR/ld_err" >&2
+    exit 1
+fi
+
+chmod +x "$OUTPUT"
+echo "kcc: 已生成可执行文件: $OUTPUT" >&2

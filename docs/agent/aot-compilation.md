@@ -30,10 +30,10 @@ AOT compilation crate that generates executable binaries.
 
 **Files**:
 - `elf.rs` — ELF64 writer (generates minimal ELF with PT_LOAD segments)
-- `runtime_x86.rs` — x86_64 runtime code generator with tri-color mark-sweep-compact GC (1095 lines)
+- `runtime_x86.rs` — x86_64 runtime code generator with tri-color mark-sweep-compact GC (3352 lines)
 - `runtime_aarch64.rs` — AArch64 runtime (placeholder, not yet implemented)
 - `runtime_riscv.rs` — RISC-V 64 runtime code generator with mark-sweep GC (799 lines)
-- `compiler.rs` — Main AOT compiler for x86_64 and RISC-V (574 lines)
+- `compiler.rs` — Main AOT compiler for x86_64, AArch64, and RISC-V (1180 lines)
 
 ## Compilation Pipeline
 
@@ -182,7 +182,7 @@ karte aot /tmp/test.karte -o /tmp/t4 && /tmp/t4; echo $?  # → 50
 ## Known Limitations
 
 1. **GC incomplete**: x86_64 has tri-color mark-sweep-compact GC (⚠️ compact phase has REP MOVSB bug — RDI not set to destination). RISC-V has mark-sweep but doesn't reclaim memory (only clears marks). AArch64 not implemented.
-2. **No string I/O**: print/println built-ins not yet implemented (needs string type support).
+2. **No complete string I/O in AOT**: `print_string`, `print_number`, `print_bool` runtime functions exist in AOT but complex string formatting may have limitations.
 3. **AArch64 not implemented**: Only x86_64 and RISC-V 64 are functional.
 4. **Linux only**: macOS support (Mach-O) not yet implemented.
 5. **No dynamic loading**: All code must be statically compiled into the binary.

@@ -78,34 +78,44 @@ impl X86Runtime {
         self.functions.iter().find(|f| f.name == name).map(|f| f.offset)
     }
 
-    pub fn generate(mut self) -> Self {
+    /// 按需生成运行时代码。只 emit needed_intrinsics 中指定的函数。
+    /// always_emit: 始终 emit 的函数名（_start, gc_alloc 等基础函数）
+    pub fn generate_with(&mut self, needed_intrinsics: &std::collections::HashSet<String>) {
+        // 基础函数——始终 emit
         self.emit_start();
-        self.emit_gc_alloc();
+        self.emit_gc_alloc_bump_only();
         self.emit_gc_alloc_simple();
-        self.emit_gc_collect();
-        self.emit_gc_safepoint();
         self.emit_gc_update_stack_top();
         self.emit_free();
         self.emit_raw_syscall6();
         self.emit_mem_load64();
         self.emit_mem_store64();
-        self.emit_string_compare();
         self.emit_retain();
         self.emit_release();
-        self.emit_string_equal();
-        self.emit_string_concat();
-        self.emit_string_char_at();
-        self.emit_char_to_string();
-        self.emit_trim();
-        self.emit_string_substring();
-        self.emit_string_contains();
-        self.emit_split_count();
-        self.emit_to_string();
-        self.emit_print_string();
-        self.emit_print_number();
-        self.emit_print_bool();
         self.emit_panic();
-        self
+        // gc_safepoint 改为 no-op（AOT 使用 bump-only 分配）
+        self.emit_gc_safepoint_noop();
+
+        // 按需 emit 的 intrinsic 函数
+        let needed = |name: &str| -> bool {
+            needed_intrinsics.contains(name)
+        };
+
+        if needed("karte_jit_runtime_string_equal") { self.emit_string_equal(); }
+        if needed("karte_jit_runtime_string_compare") { self.emit_string_compare(); }
+        if needed("karte_jit_runtime_string_concat") { self.emit_string_concat(); }
+        if needed("karte_jit_runtime_string_char_at") { self.emit_string_char_at(); }
+        if needed("karte_jit_runtime_char_to_string") { self.emit_char_to_string(); }
+        if needed("karte_jit_runtime_string_substring") { self.emit_string_substring(); }
+        if needed("karte_jit_runtime_string_contains") { self.emit_string_contains(); }
+        if needed("karte_jit_runtime_split_count") { self.emit_split_count(); }
+        if needed("karte_jit_runtime_trim") { self.emit_trim(); }
+        if needed("karte_jit_runtime_to_string") { self.emit_to_string(); }
+        if needed("karte_jit_runtime_print_string") { self.emit_print_string(); }
+        if needed("karte_jit_runtime_print_number") { self.emit_print_number(); }
+        if needed("karte_jit_runtime_print_bool") { self.emit_print_bool(); }
+
+        self.patch_internal_calls();
     }
 
     fn fn_start(&mut self, name: &str) {
@@ -830,7 +840,11 @@ impl X86Runtime {
     /// 返回 RAX = 数据指针 (跳过 8 字节 header)
     ///
     /// 对象布局: [color:u8][obj_type:u8][pad:u16][total_size:u32] [data...]
-    fn emit_gc_alloc(&mut self) {
+    /// __karte_gc_alloc_aligned(size, align) → ptr
+    /// Bump-only 分配器（AOT 模式，不触发 GC）
+    /// System V: RDI=size, RSI=align, 返回值 RAX=数据指针
+    /// 对象布局: [GC_HEADER(8B): color+obj_type+pad+total_size] [data...]
+    fn emit_gc_alloc_bump_only(&mut self) {
         self.fn_start(runtime_names::GC_ALLOC_ALIGNED);
         self.push(5); self.push(3);
 
@@ -838,144 +852,59 @@ impl X86Runtime {
         self.mov_rr(3, 7); // RBX = size
 
         // total_size = align_up(8 + size, 16)
-        // RAX = 8 + size
         self.mov_ri(0, GC_HEADER_SIZE);
         self.add_rr(0, 3);
-        // RAX = (RAX + 15) & ~15
         self.add_ri8(0, 15);
         self.and_ri32(0, 0xFFFFFFF0);
-        // RCX = total_size (保存)
+        // RCX = total_size
         self.mov_rr(1, 0);
 
-        // 检查是否需要 GC (alloc_count >= threshold)
+        // 加载 bump_ptr
         let bump_load = self.code.len();
         self.mov_rip_load(0, 0); // RAX = bump_ptr, 占位
-        // 保存旧 bump_ptr 作为返回值候选
+        // 加载 heap_limit
         let limit_load = self.code.len();
         self.mov_rip_load(2, 0); // RDX = heap_limit, 占位
 
         // RAX = bump_ptr + total_size
-        self.add_rr(0, 1); // RAX = new_bump_ptr
+        self.add_rr(0, 1);
 
-        // 检查是否超出堆
+        // 检查溢出
         self.cmp_rr(0, 2);
         let ja_pos = self.code.len();
-        self.ja_rel32(0); // 占位 → 跳到 overflow
+        self.ja_rel32(0); // → OOM
 
         // 更新 bump_ptr
         let bump_update = self.code.len();
         self.mov_rip_store(0, 0); // 存储 new bump_ptr, 占位
 
-        // 写入 GC 头部 (旧 bump_ptr 位置)
-        // 头部: [color=WHITE(0)][obj_type=0][pad=0][total_size]
-        // 我们已经知道旧 bump_ptr = new_bump_ptr - total_size = RAX - RCX
-        self.sub_rr(0, 1); // RAX = old_bump_ptr (对象起始)
-        // color = WHITE (0) — bump 分配的内存已经清零 (mmap), 不需要再写
-        // total_size at offset 4:
-        // MOV dword [RAX+4], ECX (total_size 的低 32 位)
-        // 89 48 04
+        // 写入 GC header: total_size at offset 4
+        self.sub_rr(0, 1); // RAX = old_bump_ptr
         self.bs(&[0x89, 0x48, 0x04]); // MOV [RAX+4], ECX
 
-        // 增加分配计数
-        let alloc_count_load = self.code.len();
-        self.mov_rip_load(2, 0); // RDX = alloc_count, 占位
-        self.add_ri8(2, 1); // alloc_count++
-        let alloc_count_store = self.code.len();
-        self.mov_rip_store(2, 0); // 存储, 占位
-
-        // 返回 data 指针 = 对象起始 + GC_HEADER_SIZE
-        self.add_ri8(0, GC_HEADER_SIZE as u8); // RAX += 8
-        self.pop(3); self.pop(5);
-        self.ret();
-
-        // ---- overflow: 触发 GC 然后重试 ----
-        let overflow_pos = self.code.len();
-        // 调用 gc_collect(vm_sp)
-        // vm_sp 在 R10, 但我们不在运行时函数里直接知道 vm_sp
-        // 用 R11 (vm_fp) 作为近似 — 或者用一个全局变量存储当前 vm_sp
-        // 简化方案: gc_collect 不需要参数, 它扫描从 vstack_bottom 到 bump_ptr 之前的区域
-        // 实际上它需要 vm_sp... 让我们先传 0 (GC 会读全局 vstack_bottom)
-        self.mov_ri(7, 0); // RDI = 0 (gc_collect 会用全局 vstack_bottom)
-        // CALL gc_collect (需要知道 gc_collect 的偏移, 稍后修补)
-        // 用一个占位 call, 记录位置
-        let gc_call_pos = self.code.len();
-        self.call_rel32(0); // 占位
-
-        // GC 后重试分配
-        // 重新加载 bump_ptr, 再次检查
-        let retry_load = self.code.len();
-        self.mov_rip_load(0, 0); // RAX = bump_ptr (GC 后可能变小)
-        self.add_rr(0, 1); // RAX = bump_ptr + total_size
-        let limit_load2 = self.code.len();
-        self.mov_rip_load(2, 0); // RDX = heap_limit
-        self.cmp_rr(0, 2);
-        // 仍然溢出 → 返回 0 (真的 OOM)
-        let ja2_pos = self.code.len();
-        self.ja_rel32(0); // 占位
-
-        // 更新 bump_ptr
-        let bump_update2 = self.code.len();
-        self.mov_rip_store(0, 0);
-        self.sub_rr(0, 1);
-        self.bs(&[0x89, 0x48, 0x04]); // total_size
+        // 返回 data 指针
         self.add_ri8(0, GC_HEADER_SIZE as u8);
         self.pop(3); self.pop(5);
         self.ret();
 
-        // 真的 OOM
+        // OOM: 返回 0
         let oom_pos = self.code.len();
-        self.xor_rr(0, 0); // RAX = 0
+        self.xor_rr(0, 0);
         self.pop(3); self.pop(5);
         self.ret();
 
-        // ---- 修补 ----
+        // ---- 修补 RIP-relative 地址 ----
         let g = self.globals_offset().unwrap();
         let hl = self.heap_limit_offset().unwrap();
-        // 找 alloc_count 和 gc_threshold 的偏移
-        let ac = self.functions.iter().find(|f| f.name == "__alloc_count").unwrap().offset;
-        let gt_off = self.functions.iter().find(|f| f.name == "__gc_threshold").unwrap().offset;
 
-        // bump_ptr load (7 bytes)
         let rip = (bump_load + 7) as i32;
         self.code[bump_load+3..bump_load+7].copy_from_slice(&(g as i32 - rip).to_le_bytes());
-        // heap_limit load
         let rip = (limit_load + 7) as i32;
         self.code[limit_load+3..limit_load+7].copy_from_slice(&(hl as i32 - rip).to_le_bytes());
-        // bump update
         let rip = (bump_update + 7) as i32;
         self.code[bump_update+3..bump_update+7].copy_from_slice(&(g as i32 - rip).to_le_bytes());
-        // alloc_count load
-        let rip = (alloc_count_load + 7) as i32;
-        self.code[alloc_count_load+3..alloc_count_load+7].copy_from_slice(&(ac as i32 - rip).to_le_bytes());
-        // alloc_count store
-        let rip = (alloc_count_store + 7) as i32;
-        self.code[alloc_count_store+3..alloc_count_store+7].copy_from_slice(&(ac as i32 - rip).to_le_bytes());
-
-        // overflow JA
-        let ja_rel = (overflow_pos - (ja_pos + 6)) as i32;
+        let ja_rel = (oom_pos - (ja_pos + 6)) as i32;
         self.code[ja_pos+2..ja_pos+6].copy_from_slice(&ja_rel.to_le_bytes());
-
-        // gc_collect call (修补为 gc_collect 函数的偏移 — 暂时先留占位, 在 generate 最后修补)
-        // 记录 gc_call_pos 以便稍后修补
-        // 这里我们先记录, 等所有函数生成完后再修补
-        self.functions.push(RuntimeFunction {
-            name: "__gc_alloc_call_collect".into(),
-            offset: gc_call_pos,
-            size: 5,
-        });
-
-        // retry bump_ptr load
-        let rip = (retry_load + 7) as i32;
-        self.code[retry_load+3..retry_load+7].copy_from_slice(&(g as i32 - rip).to_le_bytes());
-        // retry limit load
-        let rip = (limit_load2 + 7) as i32;
-        self.code[limit_load2+3..limit_load2+7].copy_from_slice(&(hl as i32 - rip).to_le_bytes());
-        // ja2
-        let ja2_rel = (oom_pos - (ja2_pos + 6)) as i32;
-        self.code[ja2_pos+2..ja2_pos+6].copy_from_slice(&ja2_rel.to_le_bytes());
-        // bump update2
-        let rip = (bump_update2 + 7) as i32;
-        self.code[bump_update2+3..bump_update2+7].copy_from_slice(&(g as i32 - rip).to_le_bytes());
 
         self.fn_end();
     }
@@ -1011,294 +940,14 @@ impl X86Runtime {
     ///
     /// 为了简化实现, 这里只做标记-清除 (不清除, 只重置 bump_ptr)
     /// 实际压缩太复杂了, 先做最简版本
+    /// __karte_gc_collect(vm_sp) — AOT 中已移除，保留空壳以防引用
+    /// AOT 使用 bump-only 分配，GC 由 std/gc.karte 提供（如果需要）
+    #[allow(dead_code)]
     fn emit_gc_collect(&mut self) {
-        self.fn_start(runtime_names::GC_COLLECT);
-        self.push(5); self.push(3); self.push(12); self.push(13); self.push(14); self.push(15);
-
-        let g = self.globals_offset().unwrap();
-        let g_heap_start = self.functions.iter().find(|f| f.name == "__heap_start").unwrap().offset;
-        let g_heap_limit = self.functions.iter().find(|f| f.name == "__heap_limit").unwrap().offset;
-        let g_vstack_bottom = self.functions.iter().find(|f| f.name == "__vstack_bottom").unwrap().offset;
-        let g_alloc_count = self.functions.iter().find(|f| f.name == "__alloc_count").unwrap().offset;
-
-        // ---- 1. 标记阶段: 扫描虚拟栈, 保守标记 ----
-        //
-        // R12 = heap_start (用于范围检查)
-        // R13 = heap_limit (用于范围检查)
-        // R14 = bump_ptr (用于范围检查和堆遍历)
-        // R15 = vstack_bottom (扫描起始)
-
-        // 加载 heap_start → R12
-        self.lea_rip(12, 0); // 占位
-        let lea_hs = self.code.len() - 7;
-        self.mov_indirect_load(12, 12); // R12 = [R12]
-
-        // 加载 heap_limit → R13
-        self.lea_rip(13, 0);
-        let lea_hl = self.code.len() - 7;
-        self.mov_indirect_load(13, 13);
-
-        // 加载 bump_ptr → R14
-        self.lea_rip(14, 0);
-        let lea_bp = self.code.len() - 7;
-        self.mov_indirect_load(14, 14);
-
-        // 加载 vstack_bottom → R15
-        self.lea_rip(15, 0);
-        let lea_vb = self.code.len() - 7;
-        self.mov_indirect_load(15, 15);
-
-        // 修补 LEA 指令
-        fn patch_lea(code: &mut Vec<u8>, lea_pos: usize, target: usize) {
-            let rip_after = (lea_pos + 7) as i32;
-            let disp = target as i32 - rip_after;
-            code[lea_pos+3..lea_pos+7].copy_from_slice(&disp.to_le_bytes());
-        }
-        patch_lea(&mut self.code, lea_hs, g_heap_start);
-        patch_lea(&mut self.code, lea_hl, g_heap_limit);
-        patch_lea(&mut self.code, lea_bp, g);
-        patch_lea(&mut self.code, lea_vb, g_vstack_bottom);
-
-        // 如果 vm_sp 参数 (RDI) 非 0, 使用它作为栈顶; 否则跳过扫描
-        // 简化: 我们使用 vstack_bottom 作为扫描范围, vm_sp 参数暂时忽略
-        //        (safepoint 会传正确的 vm_sp)
-
-        // ---- 扫描虚拟栈 ----
-        // RSI = vstack_bottom (扫描起始 = R15)
-        // RDI = vm_sp (扫描结束, 使用参数 RDI)
-        // 如果 RDI == 0, 不扫描
-        self.mov_rr(6, 15); // RSI = vstack_bottom
-        // 检查 RDI (vm_sp) 是否为 0
-        self.test_rr(7, 7);
-        let skip_scan = self.code.len();
-        self.jz_rel32(0); // 如果 vm_sp == 0, 跳过扫描
-
-        // 扫描循环: for each word in [vstack_bottom, vm_sp)
-        // RAX = 当前扫描位置
-        self.mov_rr(0, 15); // RAX = vstack_bottom
-        // scan_loop:
-        let scan_loop = self.code.len();
-        // 检查 RAX < RDI (vm_sp)
-        self.cmp_rr(0, 7);
-        let scan_done = self.code.len();
-        self.jae_rel32(0); // 如果 RAX >= vm_sp, 跳出
-
-        // 读取当前 word: RCX = [RAX]
-        self.mov_mem_load(1, 0, 0); // RCX = [RAX]
-
-        // 检查 RCX 是否在堆范围内: heap_start <= RCX < heap_limit
-        // 但实际对象数据在 [heap_start + 8, bump_ptr) (跳过 header)
-        // 简化: 检查 heap_start <= RCX < bump_ptr
-        self.cmp_rr(1, 12); // CMP RCX, R12 (heap_start)
-        let scan_next = self.code.len();
-        self.jb_rel32(0); // 如果 < heap_start, 跳过
-
-        self.cmp_rr(1, 14); // CMP RCX, R14 (bump_ptr)
-        let scan_next2 = self.code.len();
-        self.jae_rel32(0); // 如果 >= bump_ptr, 跳过
-
-        // RCX 可能是一个堆指针, 找到对象头并标记
-        // 对象头 = RCX - (RCX - heap_start) % total_size 对齐...
-        // 简化: 线性搜索堆, 找到包含 RCX 的对象
-        // 这太慢了. 改用简单方法: 标记 RCX-8 处的对象头 (假设 RCX 指向 data)
-        // 但 RCX 可能指向 data 中间...
-
-        // 更好的方法: 从 heap_start 开始线性遍历, 找到第一个
-        // header <= RCX < header + total_size 的对象
-        // RDX = 当前搜索位置
-        self.mov_rr(2, 12); // RDX = heap_start
-        // find_loop:
-        let find_loop = self.code.len();
-        // 检查 RDX < bump_ptr
-        self.cmp_rr(2, 14);
-        let find_done = self.code.len();
-        self.jae_rel32(0); // 如果 >= bump_ptr, 没找到
-
-        // 读取对象 total_size: R8 = [RDX + 4] (u32)
-        self.mov_mem_load(8, 2, 4); // R8 = total_size
-        // 检查 RCX >= RDX + 8 (data start)
-        self.mov_rr(9, 2); // R9 = header_pos
-        self.add_ri8(9, GC_HEADER_SIZE as u8); // R9 = data_start
-        self.cmp_rr(1, 9); // CMP RCX, data_start
-        let find_next = self.code.len();
-        self.jb_rel32(0); // RCX < data_start, 对象不包含此指针
-
-        // 检查 RCX < RDX + total_size
-        self.mov_rr(9, 2);
-        self.add_rr(9, 8); // R9 = header + total_size
-        self.cmp_rr(1, 9);
-        let found_obj = self.code.len();
-        self.jb_rel32(0); // RCX < end → 找到了!
-
-        // find_next: RDX += total_size
-        let find_next_label = self.code.len();
-        self.add_rr(2, 8); // RDX += total_size
-        {
-            let rel = (find_loop as i64 - (self.code.len() as i64 + 5)) as i32;
-            self.jmp_rel32(rel);
-        }
-        // find_done:
-        let find_done_label = self.code.len();
-        // 没找到 → 跳到扫描下一个 word
-        self.jmp_rel32(0); // 占位 → scan_next_label
-
-        // found_obj: 标记对象
-        let found_label = self.code.len();
-        // 设置 color = BLACK: MOV byte [RDX], BLACK(2)
-        self.mov_byte_mem_imm(2, 0, COLOR_BLACK);
-
-        // 继续扫描下一个 word
-        // scan_next_label:
-        let scan_next_label = self.code.len();
-        self.add_ri8(0, 8); // RAX += 8 (下一个 word)
-        {
-            let rel = (scan_loop as i64 - (self.code.len() as i64 + 5)) as i32;
-            self.jmp_rel32(rel);
-        }
-
-        // scan_done_label:
-        let scan_done_label = self.code.len();
-
-        // ---- 2. 压缩阶段: 将存活对象复制到堆前端 ----
-        // RSI = 写入位置 (dest), 从 heap_start 开始
-        self.mov_rr(6, 12); // RSI = dest = heap_start
-        // RDI = 读取位置 (src), 从 heap_start 开始
-        self.mov_rr(7, 12); // RDI = src = heap_start
-
-        // compact_loop:
-        let compact_loop = self.code.len();
-        // 检查 RDI < bump_ptr
-        self.cmp_rr(7, 14);
-        let compact_done = self.code.len();
-        self.jae_rel32(0); // done
-
-        // 读取 total_size: R8 = [RDI + 4]
-        self.mov_mem_load(8, 7, 4);
-        // 读取 color: R9b = [RDI]
-        self.movzx_byte(9, 7, 0);
-
-        // 检查 color == BLACK
-        self.cmp_rr(9, 2); // R9 < 2? (实际上应该和立即数比)
-        // 用 test + jnz 代替
-        // 先检查是否是 WHITE 或 BLACK
-        // 如果 BLACK: 复制对象到 dest 位置
-        let is_black = self.code.len();
-        // 如果 color != BLACK, 跳过 (释放此对象)
-        self.cmp_rr(9, 2);
-        let skip_obj = self.code.len();
-        self.jne_rel32(0); // 不是 BLACK → 跳过
-
-        // 复制存活对象: 从 RDI 复制 total_size 字节到 RSI
-        // 用简单的 rep movsb 或者逐字节复制
-        // 使用 RCX 作为计数器, rep movsb
-        self.mov_rr(1, 8); // RCX = total_size
-        // 保存 RSI/RDI (rep movsb 会修改它们)
-        self.push(7); self.push(6);
-        // RSI = src (RDI), RDI = dst (RSI) — 注意 rep movsb 是 [RSI] → [RDI]
-        // 所以我们需要: RSI = src, RDI = dst
-        self.mov_rr(6, 7); // RSI = src (original RDI)
-        // 从栈上恢复 dest 到 RDI: push(6) 保存的 RSI(dest) 现在在 [RSP]
-        self.mov_mem_load(7, 4, 0); // RDI = [RSP] = dest
-        self.push(8); // 保存 total_size
-        // rep movsb
-        self.bs(&[0xF3, 0xA4]); // REP MOVSB
-        self.pop(8); // 恢复 total_size
-        self.pop(6); self.pop(7); // 恢复原始 RSI/RDI
-
-        // 更新 dest: RSI += total_size
-        self.add_rr(6, 8);
-
-        // 更新新位置的 color 为 WHITE (为下次 GC 准备)
-        // 新位置是 RSI - total_size
-        self.sub_rr(6, 8); // RSI = new_obj_start
-        self.mov_byte_mem_imm(6, 0, COLOR_WHITE);
-        self.add_rr(6, 8); // RSI = next dest
-
-        // advance_src:
-        let advance_src = self.code.len();
-        // src += total_size
-        self.add_rr(7, 8);
-        {
-            let rel = (compact_loop as i64 - (self.code.len() as i64 + 5)) as i32;
-            self.jmp_rel32(rel);
-        }
-
-        // skip_obj: 跳过非存活对象
-        let skip_obj_label = self.code.len();
-        self.add_rr(7, 8); // src += total_size
-        {
-            let rel = (compact_loop as i64 - (self.code.len() as i64 + 5)) as i32;
-            self.jmp_rel32(rel);
-        }
-
-        // compact_done:
-        let compact_done_label = self.code.len();
-
-        // 更新 bump_ptr = RSI (新的分配位置)
-        // MOV [rip + bump_ptr_offset], RSI
-        let bump_update_final = self.code.len();
-        self.mov_rip_store(6, 0); // 占位
-
-        // 重置 alloc_count = 0
-        self.xor_rr(0, 0);
-        let ac_reset = self.code.len();
-        self.mov_rip_store(0, 0); // 占位
-
-        self.pop(15); self.pop(14); self.pop(13); self.pop(12); self.pop(3); self.pop(5);
-        self.ret();
-
-        // ---- 修补所有跳转 ----
-        // skip_scan (jz)
-        let skip_scan_rel = (compact_done_label - (skip_scan + 6)) as i32;
-        self.code[skip_scan+2..skip_scan+6].copy_from_slice(&skip_scan_rel.to_le_bytes());
-
-        // scan_done (jae)
-        let scan_done_rel = (scan_done_label - (scan_done + 6)) as i32;
-        self.code[scan_done+2..scan_done+6].copy_from_slice(&scan_done_rel.to_le_bytes());
-
-        // scan_next (jb - pointer < heap_start)
-        let sn_rel = (scan_next_label - (scan_next + 6)) as i32;
-        self.code[scan_next+2..scan_next+6].copy_from_slice(&sn_rel.to_le_bytes());
-
-        // scan_next2 (jae - pointer >= bump_ptr)
-        let sn2_rel = (scan_next_label - (scan_next2 + 6)) as i32;
-        self.code[scan_next2+2..scan_next2+6].copy_from_slice(&sn2_rel.to_le_bytes());
-
-        // find_done (jae)
-        let fd_rel = (find_done_label - (find_done + 6)) as i32;
-        self.code[find_done+2..find_done+6].copy_from_slice(&fd_rel.to_le_bytes());
-
-        // find_next (jb - pointer < data_start)
-        let fn_rel = (find_next_label - (find_next + 6)) as i32;
-        self.code[find_next+2..find_next+6].copy_from_slice(&fn_rel.to_le_bytes());
-
-        // found_obj (jb - pointer < end)
-        let fo_rel = (found_label - (found_obj + 6)) as i32;
-        self.code[found_obj+2..found_obj+6].copy_from_slice(&fo_rel.to_le_bytes());
-
-        // find_done → scan_next
-        let fd2sn_rel = (scan_next_label - (find_done_label + 5)) as i32;
-        self.code[find_done_label+1..find_done_label+5].copy_from_slice(&fd2sn_rel.to_le_bytes());
-
-        // compact_done (jae)
-        let cd_rel = (compact_done_label - (compact_done + 6)) as i32;
-        self.code[compact_done+2..compact_done+6].copy_from_slice(&cd_rel.to_le_bytes());
-
-        // skip_obj (jne)
-        let so_rel = (skip_obj_label - (skip_obj + 6)) as i32;
-        self.code[skip_obj+2..skip_obj+6].copy_from_slice(&so_rel.to_le_bytes());
-
-        // bump_ptr update
-        let rip = (bump_update_final + 7) as i32;
-        self.code[bump_update_final+3..bump_update_final+7].copy_from_slice(&(g as i32 - rip).to_le_bytes());
-
-        // alloc_count reset
-        let rip = (ac_reset + 7) as i32;
-        self.code[ac_reset+3..ac_reset+7].copy_from_slice(&(g_alloc_count as i32 - rip).to_le_bytes());
-
-        self.fn_end();
+        // AOT 不使用手写 GC，此函数保留为空壳
+        // 如果未来需要，可以使用 std/gc.karte 编译的版本
+        unimplemented!("AOT 不使用手写 GC，已迁移到 std/gc.karte");
     }
-
     /// __karte_gc_safepoint(vm_sp) — 检查是否需要 GC
     fn emit_gc_safepoint(&mut self) {
         self.fn_start(runtime_names::GC_SAFEPOINT);
@@ -1353,6 +1002,13 @@ impl X86Runtime {
             size: 5,
         });
 
+        self.fn_end();
+    }
+
+    /// AOT gc_safepoint — no-op（AOT 使用 bump-only 分配，不触发 GC）
+    fn emit_gc_safepoint_noop(&mut self) {
+        self.fn_start(runtime_names::GC_SAFEPOINT);
+        self.ret();
         self.fn_end();
     }
 
@@ -3324,25 +2980,19 @@ impl X86Runtime {
 
     /// 修补内部函数调用 (gc_alloc → gc_collect, safepoint → gc_collect, string_concat → gc_alloc)
     pub fn patch_internal_calls(&mut self) {
-        let gc_collect = self.find_offset(runtime_names::GC_COLLECT).unwrap();
-        let gc_alloc = self.find_offset(runtime_names::GC_ALLOC_ALIGNED).unwrap();
-        let patches: Vec<(usize, usize, i64)> = self.functions.iter()
-            .filter(|f| f.name == "__gc_alloc_call_collect" || f.name == "__safepoint_call_collect")
-            .map(|f| (f.offset, f.size, gc_collect as i64))
-            .collect();
+        // AOT bump-only: gc_alloc 不再调用 gc_collect，只有按需 emit 的字符串函数可能调用 gc_alloc
+        let gc_alloc = match self.find_offset(runtime_names::GC_ALLOC_ALIGNED) {
+            Some(off) => off,
+            None => return, // 没有 gc_alloc 就不需要修补
+        };
+
         let alloc_patches: Vec<(usize, usize, i64)> = self.functions.iter()
             .filter(|f| f.name == "__string_concat_call_alloc" || f.name == "__string_char_at_call_alloc" || f.name == "__to_string_call_alloc" || f.name == "__trim_call_alloc" || f.name == "__string_substring_call_alloc" || f.name == "__char_to_string_call_alloc")
             .map(|f| (f.offset, f.size, gc_alloc as i64))
             .collect();
 
-        let all_patches: Vec<_> = patches.into_iter().chain(alloc_patches.into_iter()).collect();
-
-        for (call_pos, _size, target) in all_patches {
-            // call_pos 指向 E8 字节, rel32 在 call_pos+1
+        for (call_pos, _size, target) in alloc_patches {
             let rel32_pos = call_pos + 1;
-            // CALL rel32: target = RIP_after + rel32
-            // RIP_after = call_pos + 5 (从运行时起始)
-            // rel32 = target - RIP_after
             let rip_after = (call_pos + 5) as i64;
             let rel = (target - rip_after) as i32;
             self.code[rel32_pos..rel32_pos+4].copy_from_slice(&rel.to_le_bytes());

@@ -73,21 +73,10 @@ impl AotCompiler {
 
     /// x86_64 AOT 编译
     fn compile_x86_64(&self, program: &LirProgram) -> Result<Vec<u8>, String> {
-        // ---- 1. 生成运行时代码 ----
-        let mut runtime = X86Runtime::new().generate();
-        runtime.patch_internal_calls();
-        let runtime_code = runtime.code.clone();
-        let runtime_size = runtime_code.len();
-        if self.debug {
-            eprintln!("AOT: 运行时代码大小: {} 字节", runtime_size);
-            for f in &runtime.functions {
-                if f.size > 0 {
-                    eprintln!("  {} @ offset={}, size={}", f.name, f.offset, f.size);
-                }
-            }
-        }
+        use std::collections::HashSet;
+        use karte_codegen::vm::professional_executor::jit::ffi::RuntimeIntrinsic;
 
-        // ---- 2. 编译 Karte 函数 ----
+        // ---- 1. 编译 Karte 函数 ----
         let mut compiler = X86Compiler::new(self.debug)
             .map_err(|e| format!("创建 x86 编译器失败: {}", e))?;
 
@@ -126,121 +115,118 @@ impl AotCompiler {
             }
         }
 
-        // ---- 3. 构建全局标签表 ----
+        // ---- 2. 扫描 Karte 代码，收集需要的 runtime intrinsic ----
+        // 扫描 movabs rax, <ptr>; call rax 模式，提取所有 JIT 函数指针
+        let mut needed_jit_ptrs: HashSet<u64> = HashSet::new();
+        let mut i = 0;
+        while i + 12 <= karte_code.len() {
+            if karte_code[i] == 0x48 && karte_code[i + 1] == 0xB8 &&
+               karte_code[i + 10] == 0xFF && karte_code[i + 11] == 0xD0 {
+                let addr = u64::from_le_bytes(karte_code[i + 2..i + 10].try_into().unwrap());
+                if addr > 0x100000000 {
+                    needed_jit_ptrs.insert(addr);
+                }
+            }
+            i += 1;
+        }
+
+        // 将 JIT 指针映射到 intrinsic 名称
+        let intrinsic_names: Vec<(&'static str, u64)> = [
+            (RuntimeIntrinsic::AllocAligned, "karte_jit_runtime_alloc_aligned"),
+            (RuntimeIntrinsic::Free, "karte_jit_runtime_free"),
+            (RuntimeIntrinsic::Retain, "karte_jit_runtime_retain"),
+            (RuntimeIntrinsic::Release, "karte_jit_runtime_release"),
+            (RuntimeIntrinsic::GcSafepoint, "karte_jit_runtime_gc_safepoint"),
+            (RuntimeIntrinsic::GcAlloc, "karte_jit_runtime_gc_alloc"),
+            (RuntimeIntrinsic::RawSyscall6, "karte_jit_runtime_raw_syscall6"),
+            (RuntimeIntrinsic::MemLoad64, "karte_jit_runtime_mem_load64"),
+            (RuntimeIntrinsic::MemStore64, "karte_jit_runtime_mem_store64"),
+            (RuntimeIntrinsic::StringEqual, "karte_jit_runtime_string_equal"),
+            (RuntimeIntrinsic::StringCompare, "karte_jit_runtime_string_compare"),
+            (RuntimeIntrinsic::StringConcat, "karte_jit_runtime_string_concat"),
+            (RuntimeIntrinsic::StringCharAt, "karte_jit_runtime_string_char_at"),
+            (RuntimeIntrinsic::CharToString, "karte_jit_runtime_char_to_string"),
+            (RuntimeIntrinsic::StringSubstring, "karte_jit_runtime_string_substring"),
+            (RuntimeIntrinsic::StringContains, "karte_jit_runtime_string_contains"),
+            (RuntimeIntrinsic::SplitCount, "karte_jit_runtime_split_count"),
+            (RuntimeIntrinsic::Trim, "karte_jit_runtime_trim"),
+            (RuntimeIntrinsic::ToString, "karte_jit_runtime_to_string"),
+            (RuntimeIntrinsic::PrintString, "karte_jit_runtime_print_string"),
+            (RuntimeIntrinsic::PrintNumber, "karte_jit_runtime_print_number"),
+            (RuntimeIntrinsic::PrintBool, "karte_jit_runtime_print_bool"),
+            (RuntimeIntrinsic::Panic, "karte_jit_runtime_panic"),
+        ].iter().map(|(intrinsic, name)| (*name, intrinsic.symbol_ptr() as u64)).collect();
+
+        let mut needed_intrinsics: HashSet<String> = HashSet::new();
+        for (name, ptr) in &intrinsic_names {
+            if needed_jit_ptrs.contains(ptr) {
+                needed_intrinsics.insert(name.to_string());
+            }
+        }
+
+        if self.debug {
+            eprintln!("AOT: 需要的 runtime intrinsic ({} 个):", needed_intrinsics.len());
+            for name in &needed_intrinsics {
+                eprintln!("  - {}", name);
+            }
+        }
+
+        // ---- 3. 按需生成运行时代码 ----
+        let mut runtime = X86Runtime::new();
+        runtime.generate_with(&needed_intrinsics);
+        let runtime_code = runtime.code.clone();
+        let runtime_size = runtime_code.len();
+        if self.debug {
+            eprintln!("AOT: 运行时代码大小: {} 字节 (按需裁剪)", runtime_size);
+            for f in &runtime.functions {
+                if f.size > 0 {
+                    eprintln!("  {} @ offset={}, size={}", f.name, f.offset, f.size);
+                }
+            }
+        }
+
+        // ---- 4. 构建全局标签表 ----
         let code_base: u64 = 0x400000;
 
         let mut global_labels: HashMap<String, u64> = HashMap::new();
 
         // 运行时函数地址（使用常量，保证与 runtime_x86.rs 中 fn_start 注册的名字一致）
-        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::GC_ALLOC_ALIGNED) {
-            let addr = code_base + off as u64;
-            global_labels.insert("karte_jit_runtime_alloc_aligned".to_string(), addr);
-            global_labels.insert("karte_jit_runtime_alloc".to_string(), addr);
-            global_labels.insert("__runtime_karte_jit_runtime_alloc_aligned".to_string(), addr);
-            global_labels.insert("__runtime_karte_jit_runtime_alloc".to_string(), addr);
-        }
-        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::GC_ALLOC) {
-            let addr = code_base + off as u64;
-            global_labels.insert("karte_jit_runtime_gc_alloc".to_string(), addr);
-            global_labels.insert("__runtime_karte_jit_runtime_gc_alloc".to_string(), addr);
-        }
-        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::FREE) {
-            let addr = code_base + off as u64;
-            global_labels.insert("karte_jit_runtime_free".to_string(), addr);
-            global_labels.insert("__runtime_karte_jit_runtime_free".to_string(), addr);
-        }
-        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::RAW_SYSCALL6) {
-            let addr = code_base + off as u64;
-            global_labels.insert("karte_jit_runtime_raw_syscall6".to_string(), addr);
-            global_labels.insert("__runtime_karte_jit_runtime_raw_syscall6".to_string(), addr);
-        }
-        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::RETAIN) {
-            let addr = code_base + off as u64;
-            global_labels.insert("karte_jit_runtime_retain".to_string(), addr);
-            global_labels.insert("__runtime_karte_jit_runtime_retain".to_string(), addr);
-        }
-        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::RELEASE) {
-            let addr = code_base + off as u64;
-            global_labels.insert("karte_jit_runtime_release".to_string(), addr);
-            global_labels.insert("__runtime_karte_jit_runtime_release".to_string(), addr);
-        }
-        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::GC_SAFEPOINT) {
-            let addr = code_base + off as u64;
-            global_labels.insert("karte_jit_runtime_gc_safepoint".to_string(), addr);
-            global_labels.insert("__runtime_karte_jit_runtime_gc_safepoint".to_string(), addr);
-        }
-        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::GC_UPDATE_STACK_TOP) {
-            let addr = code_base + off as u64;
-            global_labels.insert("karte_jit_runtime_update_stack_top".to_string(), addr);
-            global_labels.insert("__runtime_karte_jit_runtime_update_stack_top".to_string(), addr);
+        // 使用辅助宏简化注册代码
+        macro_rules! register_runtime_label {
+            ($name_const:expr, $jit_name:expr) => {
+                if let Some(off) = runtime.find_offset($name_const) {
+                    let addr = code_base + off as u64;
+                    global_labels.insert($jit_name.to_string(), addr);
+                    global_labels.insert(format!("__runtime_{}", $jit_name), addr);
+                }
+            };
         }
 
-        // 字符串相关运行时函数
-        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::STRING_EQUAL) {
-            let addr = code_base + off as u64;
-            global_labels.insert("karte_jit_runtime_string_equal".to_string(), addr);
-            global_labels.insert("__runtime_karte_jit_runtime_string_equal".to_string(), addr);
-        }
-        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::STRING_CONCAT) {
-            let addr = code_base + off as u64;
-            global_labels.insert("karte_jit_runtime_string_concat".to_string(), addr);
-            global_labels.insert("__runtime_karte_jit_runtime_string_concat".to_string(), addr);
-        }
-        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::STRING_CHAR_AT) {
-            let addr = code_base + off as u64;
-            global_labels.insert("karte_jit_runtime_string_char_at".to_string(), addr);
-            global_labels.insert("__runtime_karte_jit_runtime_string_char_at".to_string(), addr);
-        }
-        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::STRING_SUBSTRING) {
-            let addr = code_base + off as u64;
-            global_labels.insert("karte_jit_runtime_string_substring".to_string(), addr);
-            global_labels.insert("__runtime_karte_jit_runtime_string_substring".to_string(), addr);
-        }
-        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::STRING_CONTAINS) {
-            let addr = code_base + off as u64;
-            global_labels.insert("karte_jit_runtime_string_contains".to_string(), addr);
-            global_labels.insert("__runtime_karte_jit_runtime_string_contains".to_string(), addr);
-        }
-        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::SPLIT_COUNT) {
-            let addr = code_base + off as u64;
-            global_labels.insert("karte_jit_runtime_split_count".to_string(), addr);
-            global_labels.insert("__runtime_karte_jit_runtime_split_count".to_string(), addr);
-        }
-        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::TRIM) {
-            let addr = code_base + off as u64;
-            global_labels.insert("karte_jit_runtime_trim".to_string(), addr);
-            global_labels.insert("__runtime_karte_jit_runtime_trim".to_string(), addr);
-        }
-        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::TO_STRING) {
-            let addr = code_base + off as u64;
-            global_labels.insert("karte_jit_runtime_to_string".to_string(), addr);
-            global_labels.insert("__runtime_karte_jit_runtime_to_string".to_string(), addr);
-        }
-        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::CHAR_TO_STRING) {
-            let addr = code_base + off as u64;
-            global_labels.insert("karte_jit_runtime_char_to_string".to_string(), addr);
-            global_labels.insert("__runtime_karte_jit_runtime_char_to_string".to_string(), addr);
-        }
-        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::MEM_LOAD64) {
-            let addr = code_base + off as u64;
-            global_labels.insert("karte_jit_runtime_mem_load64".to_string(), addr);
-            global_labels.insert("__runtime_karte_jit_runtime_mem_load64".to_string(), addr);
-        }
-        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::MEM_STORE64) {
-            let addr = code_base + off as u64;
-            global_labels.insert("karte_jit_runtime_mem_store64".to_string(), addr);
-            global_labels.insert("__runtime_karte_jit_runtime_mem_store64".to_string(), addr);
-        }
-        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::STRING_COMPARE) {
-            let addr = code_base + off as u64;
-            global_labels.insert("karte_jit_runtime_string_compare".to_string(), addr);
-            global_labels.insert("__runtime_karte_jit_runtime_string_compare".to_string(), addr);
-        }
-        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::PRINT_STRING) {
-            let addr = code_base + off as u64;
-            global_labels.insert("karte_jit_runtime_print_string".to_string(), addr);
-            global_labels.insert("__runtime_karte_jit_runtime_print_string".to_string(), addr);
-        }
+        register_runtime_label!(crate::runtime_x86::runtime_names::GC_ALLOC_ALIGNED, "karte_jit_runtime_alloc_aligned");
+        register_runtime_label!(crate::runtime_x86::runtime_names::GC_ALLOC_ALIGNED, "karte_jit_runtime_alloc");
+        register_runtime_label!(crate::runtime_x86::runtime_names::GC_ALLOC, "karte_jit_runtime_gc_alloc");
+        register_runtime_label!(crate::runtime_x86::runtime_names::FREE, "karte_jit_runtime_free");
+        register_runtime_label!(crate::runtime_x86::runtime_names::RAW_SYSCALL6, "karte_jit_runtime_raw_syscall6");
+        register_runtime_label!(crate::runtime_x86::runtime_names::RETAIN, "karte_jit_runtime_retain");
+        register_runtime_label!(crate::runtime_x86::runtime_names::RELEASE, "karte_jit_runtime_release");
+        register_runtime_label!(crate::runtime_x86::runtime_names::GC_SAFEPOINT, "karte_jit_runtime_gc_safepoint");
+        register_runtime_label!(crate::runtime_x86::runtime_names::GC_UPDATE_STACK_TOP, "karte_jit_runtime_update_stack_top");
+        register_runtime_label!(crate::runtime_x86::runtime_names::STRING_EQUAL, "karte_jit_runtime_string_equal");
+        register_runtime_label!(crate::runtime_x86::runtime_names::STRING_COMPARE, "karte_jit_runtime_string_compare");
+        register_runtime_label!(crate::runtime_x86::runtime_names::STRING_CONCAT, "karte_jit_runtime_string_concat");
+        register_runtime_label!(crate::runtime_x86::runtime_names::STRING_CHAR_AT, "karte_jit_runtime_string_char_at");
+        register_runtime_label!(crate::runtime_x86::runtime_names::CHAR_TO_STRING, "karte_jit_runtime_char_to_string");
+        register_runtime_label!(crate::runtime_x86::runtime_names::STRING_SUBSTRING, "karte_jit_runtime_string_substring");
+        register_runtime_label!(crate::runtime_x86::runtime_names::STRING_CONTAINS, "karte_jit_runtime_string_contains");
+        register_runtime_label!(crate::runtime_x86::runtime_names::SPLIT_COUNT, "karte_jit_runtime_split_count");
+        register_runtime_label!(crate::runtime_x86::runtime_names::TRIM, "karte_jit_runtime_trim");
+        register_runtime_label!(crate::runtime_x86::runtime_names::TO_STRING, "karte_jit_runtime_to_string");
+        register_runtime_label!(crate::runtime_x86::runtime_names::MEM_LOAD64, "karte_jit_runtime_mem_load64");
+        register_runtime_label!(crate::runtime_x86::runtime_names::MEM_STORE64, "karte_jit_runtime_mem_store64");
+        register_runtime_label!(crate::runtime_x86::runtime_names::PRINT_STRING, "karte_jit_runtime_print_string");
+        register_runtime_label!(crate::runtime_x86::runtime_names::PRINT_NUMBER, "karte_jit_runtime_print_number");
+        register_runtime_label!(crate::runtime_x86::runtime_names::PRINT_BOOL, "karte_jit_runtime_print_bool");
+        register_runtime_label!(crate::runtime_x86::runtime_names::PANIC, "karte_jit_runtime_panic");
         if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::PRINT_NUMBER) {
             let addr = code_base + off as u64;
             global_labels.insert("karte_jit_runtime_print_number".to_string(), addr);
@@ -278,113 +264,21 @@ impl AotCompiler {
             }
         }
 
-        // ---- 4. 修补运行时调用 (MOV RAX, imm64; CALL RAX 模式) ----
-        // JIT 生成的代码中运行时调用使用绝对地址, 需要替换为 AOT 运行时地址
+        // ---- 5. 修补运行时调用 (MOV RAX, imm64; CALL RAX 模式) ----
+        // 使用之前构建的 intrinsic_names 列表统一构建 ptr_map
         let mut runtime_ptr_map: HashMap<u64, u64> = HashMap::new();
         {
-            use karte_codegen::vm::professional_executor::jit::ffi::RuntimeIntrinsic;
-
-            let alloc_ptr = RuntimeIntrinsic::AllocAligned.symbol_ptr() as u64;
-            let free_ptr = RuntimeIntrinsic::Free.symbol_ptr() as u64;
-            let retain_ptr = RuntimeIntrinsic::Retain.symbol_ptr() as u64;
-            let release_ptr = RuntimeIntrinsic::Release.symbol_ptr() as u64;
-            let safepoint_ptr = RuntimeIntrinsic::GcSafepoint.symbol_ptr() as u64;
-            let gc_alloc_ptr = RuntimeIntrinsic::GcAlloc.symbol_ptr() as u64;
-
             // update_stack_top 不在 RuntimeIntrinsic 中, 直接获取
             let update_stack_top_ptr = karte_rt::ffi::karte_jit_runtime_update_stack_top as u64;
-
-            if let Some(&new) = global_labels.get("karte_jit_runtime_alloc_aligned") {
-                runtime_ptr_map.insert(alloc_ptr, new);
-            }
-            if let Some(&new) = global_labels.get("karte_jit_runtime_free") {
-                runtime_ptr_map.insert(free_ptr, new);
-            }
-            if let Some(&new) = global_labels.get("karte_jit_runtime_retain") {
-                runtime_ptr_map.insert(retain_ptr, new);
-            }
-            if let Some(&new) = global_labels.get("karte_jit_runtime_release") {
-                runtime_ptr_map.insert(release_ptr, new);
-            }
-            if let Some(&new) = global_labels.get("karte_jit_runtime_gc_safepoint") {
-                runtime_ptr_map.insert(safepoint_ptr, new);
-            }
-            if let Some(&new) = global_labels.get("karte_jit_runtime_gc_alloc") {
-                runtime_ptr_map.insert(gc_alloc_ptr, new);
-            }
             if let Some(&new) = global_labels.get("karte_jit_runtime_update_stack_top") {
                 runtime_ptr_map.insert(update_stack_top_ptr, new);
             }
 
-            // 字符串相关运行时函数指针映射
-            let string_equal_ptr = RuntimeIntrinsic::StringEqual.symbol_ptr() as u64;
-            let string_concat_ptr = RuntimeIntrinsic::StringConcat.symbol_ptr() as u64;
-            let string_char_at_ptr = RuntimeIntrinsic::StringCharAt.symbol_ptr() as u64;
-            let string_contains_ptr = RuntimeIntrinsic::StringContains.symbol_ptr() as u64;
-            let string_substring_ptr = RuntimeIntrinsic::StringSubstring.symbol_ptr() as u64;
-            let split_count_ptr = RuntimeIntrinsic::SplitCount.symbol_ptr() as u64;
-            let trim_ptr = RuntimeIntrinsic::Trim.symbol_ptr() as u64;
-            let to_string_ptr = RuntimeIntrinsic::ToString.symbol_ptr() as u64;
-            let print_string_ptr = RuntimeIntrinsic::PrintString.symbol_ptr() as u64;
-            let print_number_ptr = RuntimeIntrinsic::PrintNumber.symbol_ptr() as u64;
-            let print_bool_ptr = RuntimeIntrinsic::PrintBool.symbol_ptr() as u64;
-            let panic_ptr = RuntimeIntrinsic::Panic.symbol_ptr() as u64;
-
-            if let Some(&new) = global_labels.get("karte_jit_runtime_string_equal") {
-                runtime_ptr_map.insert(string_equal_ptr, new);
-            }
-            if let Some(&new) = global_labels.get("karte_jit_runtime_string_concat") {
-                runtime_ptr_map.insert(string_concat_ptr, new);
-            }
-            if let Some(&new) = global_labels.get("karte_jit_runtime_string_char_at") {
-                runtime_ptr_map.insert(string_char_at_ptr, new);
-            }
-            if let Some(&new) = global_labels.get("karte_jit_runtime_string_substring") {
-                runtime_ptr_map.insert(string_substring_ptr, new);
-            }
-            if let Some(&new) = global_labels.get("karte_jit_runtime_string_contains") {
-                runtime_ptr_map.insert(string_contains_ptr, new);
-            }
-            if let Some(&new) = global_labels.get("karte_jit_runtime_split_count") {
-                runtime_ptr_map.insert(split_count_ptr, new);
-            }
-            if let Some(&new) = global_labels.get("karte_jit_runtime_trim") {
-                runtime_ptr_map.insert(trim_ptr, new);
-            }
-            if let Some(&new) = global_labels.get("karte_jit_runtime_to_string") {
-                runtime_ptr_map.insert(to_string_ptr, new);
-            }
-            let char_to_string_ptr = RuntimeIntrinsic::CharToString.symbol_ptr() as u64;
-            if let Some(&new) = global_labels.get("karte_jit_runtime_char_to_string") {
-                runtime_ptr_map.insert(char_to_string_ptr, new);
-            }
-            let raw_syscall6_ptr = RuntimeIntrinsic::RawSyscall6.symbol_ptr() as u64;
-            if let Some(&new) = global_labels.get("karte_jit_runtime_raw_syscall6") {
-                runtime_ptr_map.insert(raw_syscall6_ptr, new);
-            }
-            let mem_load64_ptr = RuntimeIntrinsic::MemLoad64.symbol_ptr() as u64;
-            if let Some(&new) = global_labels.get("karte_jit_runtime_mem_load64") {
-                runtime_ptr_map.insert(mem_load64_ptr, new);
-            }
-            let mem_store64_ptr = RuntimeIntrinsic::MemStore64.symbol_ptr() as u64;
-            if let Some(&new) = global_labels.get("karte_jit_runtime_mem_store64") {
-                runtime_ptr_map.insert(mem_store64_ptr, new);
-            }
-            let string_compare_ptr = RuntimeIntrinsic::StringCompare.symbol_ptr() as u64;
-            if let Some(&new) = global_labels.get("karte_jit_runtime_string_compare") {
-                runtime_ptr_map.insert(string_compare_ptr, new);
-            }
-            if let Some(&new) = global_labels.get("karte_jit_runtime_print_string") {
-                runtime_ptr_map.insert(print_string_ptr, new);
-            }
-            if let Some(&new) = global_labels.get("karte_jit_runtime_print_number") {
-                runtime_ptr_map.insert(print_number_ptr, new);
-            }
-            if let Some(&new) = global_labels.get("karte_jit_runtime_print_bool") {
-                runtime_ptr_map.insert(print_bool_ptr, new);
-            }
-            if let Some(&new) = global_labels.get("karte_jit_runtime_panic") {
-                runtime_ptr_map.insert(panic_ptr, new);
+            // 从 intrinsic_names 列表构建映射
+            for (jit_name, jit_ptr) in &intrinsic_names {
+                if let Some(&new) = global_labels.get(*jit_name) {
+                    runtime_ptr_map.insert(*jit_ptr, new);
+                }
             }
         }
 
