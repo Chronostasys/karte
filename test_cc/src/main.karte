@@ -25,22 +25,118 @@ fn main() -> number {
 }
 
 fn compile(src: string, pos: number, end: number) -> number {
+    let state = pos;
+    let globals = "";
+    let r1 = while state < end {
+        let tk = peek(src, state, end);
+        if match tk { Tk::Kw(1) => true, _ => false } {
+            state = advance(src, state, end);
+            let name = token_val(src, state, end);
+            state = advance(src, state, end);
+            let nxt = peek(src, state, end);
+            if match nxt { Tk::Sym(6) => true, _ => false } {
+                state = advance(src, state, end);
+                let depth = 1;
+                let r1a = while state < end && depth > 0 {
+                    let t = peek(src, state, end);
+                    if match t { Tk::Sym(6) => true, _ => false } {
+                        depth = depth + 1
+                    } else if match t { Tk::Sym(7) => true, _ => false } {
+                        depth = depth - 1
+                    };
+                    state = advance(src, state, end);
+                    0
+                };
+                let depth2 = 0;
+                let r1b = while state < end {
+                    let t = peek(src, state, end);
+                    if match t { Tk::Sym(4) => true, _ => false } {
+                        depth = depth + 1
+                    } else if match t { Tk::Sym(8) => true, _ => false } {
+                        depth = depth - 1;
+                        if depth == 0 { break; 0 } else { 0 }
+                    };
+                    state = advance(src, state, end);
+                    0
+                };
+                state = advance(src, state, end)
+            } else {
+                let init_val = 0;
+                if match nxt { Tk::Sym(10) => true, _ => false } {
+                    state = advance(src, state, end);
+                    init_val = match peek(src, state, end) {
+                        Tk::Num(n) => n,
+                        _ => 0
+                    };
+                    state = advance(src, state, end)
+                };
+                globals = globals + name + ":" + to_string(init_val) + ",";
+                state = advance(src, state, end)
+            }
+        } else {
+            state = advance(src, state, end)
+        }
+    };
+    if len(globals) > 0 {
+        emit(".data")
+    };
+    let gp = 0;
+    let glen = len(globals);
+    let r2 = while gp < glen {
+        let cp = find_ch(globals, gp, 58);
+        let gn = sub_str(globals, gp, cp);
+        let vp = cp + 1;
+        let np = find_ch(globals, vp, 44);
+        let gv = pn(globals, vp, np);
+        emit(".globl " + gn);
+        emit(gn + ":");
+        emit("  .quad " + to_string(gv));
+        gp = np + 1;
+        0
+    };
+    emit(".text");
     emit(".globl _start");
     emit("_start:");
     emit("  call main");
     emit("  mov %rax, %rdi");
     emit("  mov $60, %rax");
     emit("  syscall");
-    let state = pos;
+    state = pos;
     let lc = 0;
     let func_count = 0;
     let r = while state < end {
         match peek(src, state, end) {
             Tk::Kw(1) => {
+                let save2 = state;
+                state = advance(src, state, end);
+                let name2 = token_val(src, state, end);
+                state = advance(src, state, end);
+                let nxt2 = peek(src, state, end);
+                if match nxt2 { Tk::Sym(6) => true, _ => false } {
+                    state = save2;
+                    let func = parse_func(src, state, end, lc);
+                    emit_func(func.0, func.1);
+                    let end_lbl = ".LFE" + to_string(func_count);
+                    let body = do_block(src, func.2, end, func.3, lc + func.1 * 10, end_lbl, "", "");
+                    emit(end_lbl + ":");
+                    emit("  leave");
+                    emit("  ret");
+                    state = skip_matching(src, func.2, end) + 1;
+                    lc = body.2;
+                    func_count = func_count + 1
+                } else {
+                    if match nxt2 { Tk::Sym(10) => true, _ => false } {
+                        state = advance(src, state, end);
+                        state = advance(src, state, end)
+                    };
+                    state = advance(src, state, end)
+                }
+            },
+            Tk::Kw(43) => {
                 let func = parse_func(src, state, end, lc);
                 emit_func(func.0, func.1);
                 let end_lbl = ".LFE" + to_string(func_count);
-                let body = do_block(src, func.2, end, func.3, lc + func.1 * 10, end_lbl);
+                let body = do_block(src, func.2, end, func.3, lc + func.1 * 10, end_lbl, "", "");
                 emit(end_lbl + ":");
                 emit("  leave");
                 emit("  ret");
@@ -75,7 +171,7 @@ fn parse_func(src: string, pos: number, end: number, lc: number) -> (string, num
     let argc = cp.0;
     s = cp.1;
     let vars = cp.2;
-    let body_start = advance(src, s, end);
+    let body_start = s;
     (name, argc, body_start, vars)
 }
 
@@ -127,11 +223,37 @@ fn slot(off: number) -> string {
     to_string(0 - (off + 1) * 8) + "(%rbp)"
 }
 
+fn store_var(name: string, off: number) -> number {
+    if off >= 0 {
+        emit("  mov %rax, " + slot(off))
+    } else {
+        emit("  movq %rax, " + name + "(%rip)")
+    }
+}
+
+fn load_var(name: string, off: number) -> number {
+    if off >= 0 {
+        emit("  mov " + slot(off) + ", %rax")
+    } else {
+        emit("  movq " + name + "(%rip), %rax")
+    }
+}
+
 fn make_label(lc: number) -> Label {
     Label { start: ".L" + to_string(lc), end: ".L" + to_string(lc + 1), next: lc + 2 }
 }
 
-fn do_block(src: string, pos: number, end: number, vars: string, lc: number, end_lbl: string) -> (number, string, number) {
+fn do_block(src: string, pos: number, end: number, vars: string, lc: number, end_lbl: string, brk: string, cont: string) -> (number, string, number) {
+    let has_brace = match peek(src, pos, end) { Tk::Sym(4) => true, _ => false };
+    if !has_brace {
+        let stmt = do_single_stmt(src, pos, end, vars, lc, end_lbl, brk, cont);
+        (stmt.0, stmt.1, stmt.2)
+    } else {
+        do_block_braced(src, pos, end, vars, lc, end_lbl, brk, cont)
+    }
+}
+
+fn do_block_braced(src: string, pos: number, end: number, vars: string, lc: number, end_lbl: string, brk: string, cont: string) -> (number, string, number) {
     let s = pos;
     let v = vars;
     let vc = lc;
@@ -203,7 +325,7 @@ fn do_block(src: string, pos: number, end: number, vars: string, lc: number, end
                 emit("  pop %rax");
                 emit("  cmp $0, %rax");
                 emit("  je " + lbl.end);
-                let b = do_block(src, s, end, v, lbl.next, end_lbl);
+                let b = do_block(src, s, end, v, lbl.next, end_lbl, lbl.end, lbl.start);
                 emit("  jmp " + lbl.start);
                 emit(lbl.end + ":");
                 s = b.0;
@@ -219,7 +341,7 @@ fn do_block(src: string, pos: number, end: number, vars: string, lc: number, end
                 emit("  pop %rax");
                 emit("  cmp $0, %rax");
                 emit("  je " + lbl.start);
-                let b = do_block(src, s, end, v, lbl.next, end_lbl);
+                let b = do_block(src, s, end, v, lbl.next, end_lbl, brk, cont);
                 if done == 0 {
                     emit("  jmp " + lbl.end)
                 } else {
@@ -232,7 +354,7 @@ fn do_block(src: string, pos: number, end: number, vars: string, lc: number, end
                 let has_else = s < end && is_kw(peek(src, s, end), 22);
                 if has_else {
                     s = advance(src, s, end);
-                    let b2 = do_block(src, s, end, v, vc + 1, end_lbl);
+                    let b2 = do_block(src, s, end, v, vc + 1, end_lbl, brk, cont);
                     emit(lbl.end + ":");
                     s = b2.0;
                     v = b2.1;
@@ -244,23 +366,214 @@ fn do_block(src: string, pos: number, end: number, vars: string, lc: number, end
             },
             Tk::Kw(24) => {
                 let lbl = make_label(vc);
+                let cont_lbl = ".LC" + to_string(vc);
                 s = advance(src, s, end);
-                s = do_stmt(src, s, end, v);
+                s = advance(src, s, end);
+                let init_r = do_for_init(src, s, end, v, vc);
+                s = init_r.0;
+                v = init_r.1;
+                vc = init_r.2;
                 emit(lbl.start + ":");
                 let ep = expr(src, s, end, v);
                 s = ep;
                 emit("  pop %rax");
                 emit("  cmp $0, %rax");
                 emit("  je " + lbl.end);
-                let upos = s;
                 s = advance(src, s, end);
-                let body = do_block(src, s, end, v, lbl.next, end_lbl);
-                do_stmt_update(src, upos, body.1, end, v);
+                let update_start = s;
+                let us = s;
+                let ud = 0;
+                let udone = 0;
+                let rr = while udone == 0 && us < end {
+                    let tk = peek(src, us, end);
+                    let ic = match tk { Tk::Sym(7) => true, _ => false };
+                    let io = match tk { Tk::Sym(6) => true, _ => false };
+                    if ic && ud == 0 {
+                        udone = 1;
+                        0
+                    } else {
+                        if io { ud = ud + 1; 0 } else { 0 };
+                        if ic { ud = ud - 1; 0 } else { 0 };
+                        us = advance(src, us, end);
+                        0
+                    }
+                };
+                s = advance(src, us, end);
+                let body = do_block(src, s, end, v, lbl.next, end_lbl, lbl.end, cont_lbl);
+                emit(cont_lbl + ":");
+                let urn = token_val(src, update_start, end);
+                let uoff = var_off(v, urn);
+                let uus = advance(src, update_start, end);
+                let usym = match peek(src, uus, end) {
+                    Tk::Sym(k) => k,
+                    _ => 10
+                };
+                uus = advance(src, uus, end);
+                if uoff >= 0 {
+                    emit("  mov " + slot(uoff) + ", %rax");
+                    emit("  push %rax")
+                };
+                let _uep = expr(src, uus, end, v);
+                emit("  pop %rcx");
+                emit("  pop %rax");
+                if usym >= 34 && usym <= 38 {
+                    emit_compound(usym)
+                } else {
+                    emit("  add %rcx, %rax")
+                };
+                if uoff >= 0 {
+                    emit("  mov %rax, " + slot(uoff))
+                };
                 emit("  jmp " + lbl.start);
                 emit(lbl.end + ":");
                 s = body.0;
                 v = body.1;
-                vc = body.2;
+                vc = if body.2 > init_r.2 { body.2 } else { init_r.2 };
+                0
+            },
+            Tk::Kw(40) => {
+                let lbl = make_label(vc);
+                s = advance(src, s, end);
+                emit(lbl.start + ":");
+                let b = do_block(src, s, end, v, lbl.next, end_lbl, lbl.end, lbl.start);
+                s = b.0;
+                v = b.1;
+                vc = b.2;
+                s = advance(src, s, end);
+                let ep = expr(src, s, end, v);
+                s = ep;
+                emit("  pop %rax");
+                emit("  cmp $0, %rax");
+                emit("  jne " + lbl.start);
+                s = advance(src, s, end);
+                emit(lbl.end + ":");
+                0
+            },
+            Tk::Kw(41) => {
+                s = advance(src, s, end);
+                s = advance(src, s, end);
+                if len(brk) > 0 {
+                    emit("  jmp " + brk)
+                } else {
+                    0
+                };
+                0
+            },
+            Tk::Kw(42) => {
+                s = advance(src, s, end);
+                s = advance(src, s, end);
+                if len(cont) > 0 {
+                    emit("  jmp " + cont)
+                } else {
+                    0
+                };
+                0
+            },
+            Tk::Kw(45) => {
+                s = advance(src, s, end);
+                s = advance(src, s, end);
+                let ep = expr(src, s, end, v);
+                s = ep;
+                emit("  pop %rax");
+                s = advance(src, s, end);
+                s = advance(src, s, end);
+                let sw_start = s;
+                let sw_lbl = vc * 100;
+                let sw_end = ".Lsw" + to_string(sw_lbl) + "end";
+                let sw_def = ".Lsw" + to_string(sw_lbl) + "def";
+                let ci = 1;
+                let has_def = false;
+                let cases = "";
+                let pass1 = while s < end {
+                    let tk = peek(src, s, end);
+                    if match tk { Tk::Sym(8) => true, _ => false } {
+                        break; 0
+                    } else if match tk { Tk::Kw(46) => true, _ => false } {
+                        s = advance(src, s, end);
+                        let cv = match peek(src, s, end) {
+                            Tk::Num(n) => n,
+                            _ => 0
+                        };
+                        s = advance(src, s, end);
+                        s = advance(src, s, end);
+                        cases = cases + to_string(cv) + ",";
+                        ci = ci + 1;
+                        0
+                    } else if match tk { Tk::Kw(47) => true, _ => false } {
+                        has_def = true;
+                        s = advance(src, s, end);
+                        s = advance(src, s, end);
+                        ci = ci + 1;
+                        0
+                    } else {
+                        s = advance(src, s, end);
+                        0
+                    }
+                };
+                s = sw_start;
+                let p = 0;
+                let ci2 = 1;
+                let nc = len(cases);
+                let pass1b = while p < nc {
+                    let cp = find_ch(cases, p, 44);
+                    let cv2 = pn(cases, p, cp);
+                    let cl = ".Lsw" + to_string(sw_lbl) + "c" + to_string(ci2);
+                    emit("  cmp $" + to_string(cv2) + ", %rax");
+                    emit("  je " + cl);
+                    p = cp + 1;
+                    ci2 = ci2 + 1;
+                    0
+                };
+                if has_def {
+                    emit("  jmp " + sw_def)
+                } else {
+                    emit("  jmp " + sw_end)
+                };
+                let ci3 = 1;
+                let p2 = 0;
+                let pass2 = while s < end {
+                    let tk = peek(src, s, end);
+                    if match tk { Tk::Sym(8) => true, _ => false } {
+                        s = advance(src, s, end);
+                        break; 0
+                    } else if match tk { Tk::Kw(46) => true, _ => false } {
+                        s = advance(src, s, end);
+                        s = advance(src, s, end);
+                        s = advance(src, s, end);
+                        let cl = ".Lsw" + to_string(sw_lbl) + "c" + to_string(ci3);
+                        emit(cl + ":");
+                        ci3 = ci3 + 1;
+                        0
+                    } else if match tk { Tk::Kw(47) => true, _ => false } {
+                        s = advance(src, s, end);
+                        s = advance(src, s, end);
+                        emit(sw_def + ":");
+                        ci3 = ci3 + 1;
+                        0
+                    } else if match tk { Tk::Sym(7) => true, _ => false } {
+                        s = advance(src, s, end);
+                        0
+                    } else if match tk { Tk::Kw(7) => true, _ => false } {
+                        s = advance(src, s, end);
+                        let ep = expr(src, s, end, v);
+                        s = ep;
+                        emit("  pop %rax");
+                        s = advance(src, s, end);
+                        0
+                    } else if match tk { Tk::Kw(41) => true, _ => false } {
+                        s = advance(src, s, end);
+                        s = advance(src, s, end);
+                        emit("  jmp " + sw_end);
+                        0
+                    } else {
+                        let st = do_single_stmt(src, s, end, v, vc, sw_end, sw_end, cont);
+                        s = st.0;
+                        v = st.1;
+                        vc = st.2;
+                        0
+                    }
+                };
+                emit(sw_end + ":");
                 0
             },
             _ => {
@@ -270,33 +583,82 @@ fn do_block(src: string, pos: number, end: number, vars: string, lc: number, end
                     Tk::Sym(k) => k,
                     _ => 10
                 };
-                s = advance(src, s, end);
-                let off = var_off(v, name);
-                if sym == 10 {
-                    let ep = expr(src, s, end, v);
-                    s = ep;
-                    emit("  pop %rax");
-                    emit("  mov %rax, " + slot(off));
+                if sym == 32 {
                     s = advance(src, s, end);
-                    0
-                } else if sym >= 34 && sym <= 38 {
-                    emit("  mov " + slot(off) + ", %rax");
-                    emit("  push %rax");
-                    let ep = expr(src, s, end, v);
-                    s = ep;
-                    emit("  pop %rcx");
+                    let idx_ep = expr(src, s, end, v);
+                    s = idx_ep;
+                    s = advance(src, s, end);
+                    let eq_sym = match peek(src, s, end) {
+                        Tk::Sym(k) => k,
+                        _ => 10
+                    };
+                    if eq_sym == 10 {
+                        s = advance(src, s, end)
+                    };
+                    let off = var_off(v, name);
+                    let val_ep = expr(src, s, end, v);
+                    s = val_ep;
                     emit("  pop %rax");
-                    emit_compound(sym);
-                    emit("  mov %rax, " + slot(off));
+                    emit("  pop %rcx");
+                    emit("  neg %rcx");
+                    emit("  mov %rax, " + to_string(0 - (off + 1) * 8) + "(%rbp, %rcx, 8)");
                     s = advance(src, s, end);
                     0
                 } else {
-                    let ep = expr(src, s, end, v);
-                    s = ep;
-                    emit("  pop %rax");
-                    emit("  mov %rax, " + slot(off));
                     s = advance(src, s, end);
-                    0
+                    let off = var_off(v, name);
+                    if sym == 6 {
+                        let ac = 0;
+                        let rp = while s < end {
+                            let pt = peek(src, s, end);
+                            if match pt { Tk::Sym(7) => true, _ => false } {
+                                s = advance(src, s, end);
+                                break; 0
+                            } else if match pt { Tk::Sym(5) => true, _ => false } {
+                                s = advance(src, s, end);
+                                0
+                            } else {
+                                let ep = expr(src, s, end, v);
+                                emit("  push %rax");
+                                s = ep;
+                                ac = ac + 1;
+                                0
+                            }
+                        };
+                        emit("  call " + name);
+                        if ac > 0 {
+                            emit("  add $" + to_string(ac * 8) + ", %rsp")
+                        };
+                        emit("  push %rax");
+                        emit("  pop %rax");
+                        s = advance(src, s, end);
+                        0
+                    } else if sym == 10 {
+                        let ep = expr(src, s, end, v);
+                        s = ep;
+                        emit("  pop %rax");
+                        store_var(name, off);
+                        s = advance(src, s, end);
+                        0
+                    } else if sym >= 34 && sym <= 38 {
+                        load_var(name, off);
+                        emit("  push %rax");
+                        let ep = expr(src, s, end, v);
+                        s = ep;
+                        emit("  pop %rcx");
+                        emit("  pop %rax");
+                        emit_compound(sym);
+                        store_var(name, off);
+                        s = advance(src, s, end);
+                        0
+                    } else {
+                        let ep = expr(src, s, end, v);
+                        s = ep;
+                        emit("  pop %rax");
+                        store_var(name, off);
+                        s = advance(src, s, end);
+                        0
+                    }
                 }
             }
         }
@@ -305,6 +667,169 @@ fn do_block(src: string, pos: number, end: number, vars: string, lc: number, end
         s = skip_to_close(src, s, end)
     };
     (s, v, vc)
+}
+
+fn do_for_init(src: string, pos: number, end: number, vars: string, vc: number) -> (number, string, number) {
+    let s = pos;
+    let v = vars;
+    let nvc = vc;
+    match peek(src, s, end) {
+        Tk::Sym(5) => {
+            s = advance(src, s, end);
+            (s, v, nvc)
+        },
+        Tk::Kw(1) => {
+            s = advance(src, s, end);
+            let name = token_val(src, s, end);
+            s = advance(src, s, end);
+            let off = nvc;
+            nvc = nvc + 1;
+            emit("  mov $0, " + slot(off));
+            v = v + name + ":" + to_string(off) + ",";
+            match peek(src, s, end) {
+                Tk::Sym(10) => {
+                    s = advance(src, s, end);
+                    let ep = expr(src, s, end, v);
+                    s = ep;
+                    emit("  pop %rax");
+                    emit("  mov %rax, " + slot(off));
+                    s = advance(src, s, end);
+                    (s, v, nvc)
+                },
+                _ => {
+                    s = advance(src, s, end);
+                    (s, v, nvc)
+                }
+            }
+        },
+        _ => {
+            let name = token_val(src, s, end);
+            let off = var_off(v, name);
+            s = advance(src, s, end);
+            let sym = match peek(src, s, end) {
+                Tk::Sym(k) => k,
+                _ => 10
+            };
+            s = advance(src, s, end);
+            let ep = expr(src, s, end, v);
+            s = ep;
+            emit("  pop %rax");
+            if off >= 0 {
+                emit("  mov %rax, " + slot(off))
+            };
+            s = advance(src, s, end);
+            (s, v, nvc)
+        }
+    }
+}
+
+fn do_single_stmt(src: string, pos: number, end: number, vars: string, vc: number, end_lbl: string, brk: string, cont: string) -> (number, string, number) {
+    let s = pos;
+    let v = vars;
+    let nvc = vc;
+    match peek(src, s, end) {
+        Tk::Sym(4) => {
+            let b = do_block_braced(src, s, end, v, nvc, end_lbl, brk, cont);
+            (b.0, b.1, b.2)
+        },
+        Tk::Kw(20) => {
+            s = advance(src, s, end);
+            let ep = expr(src, s, end, v);
+            emit("  pop %rax");
+            emit("  jmp " + end_lbl);
+            (advance(src, ep, end), v, nvc)
+        },
+        Tk::Kw(19) => {
+            let lbl = make_label(nvc);
+            s = advance(src, s, end);
+            let ep = expr(src, s, end, v);
+            s = ep;
+            emit("  pop %rax");
+            emit("  cmp $0, %rax");
+            emit("  je " + lbl.start);
+            let b = do_block(src, s, end, v, lbl.next, end_lbl, brk, cont);
+            emit("  jmp " + lbl.end);
+            emit(lbl.start + ":");
+            s = b.0;
+            v = b.1;
+            nvc = b.2;
+            let has_else = s < end && is_kw(peek(src, s, end), 22);
+            if has_else {
+                s = advance(src, s, end);
+                let b2 = do_block(src, s, end, v, nvc + 1, end_lbl, brk, cont);
+                emit(lbl.end + ":");
+                (b2.0, b2.1, b2.2)
+            } else {
+                emit(lbl.end + ":");
+                (s, v, nvc)
+            }
+        },
+        Tk::Kw(21) => {
+            let lbl = make_label(nvc);
+            s = advance(src, s, end);
+            emit(lbl.start + ":");
+            let ep = expr(src, s, end, v);
+            s = ep;
+            emit("  pop %rax");
+            emit("  cmp $0, %rax");
+            emit("  je " + lbl.end);
+            let b = do_block(src, s, end, v, lbl.next, end_lbl, lbl.end, lbl.start);
+            emit("  jmp " + lbl.start);
+            emit(lbl.end + ":");
+            (b.0, b.1, b.2)
+        },
+        Tk::Kw(40) => {
+            let lbl = make_label(nvc);
+            s = advance(src, s, end);
+            emit(lbl.start + ":");
+            let b = do_block(src, s, end, v, lbl.next, end_lbl, lbl.end, lbl.start);
+            s = b.0;
+            let nvc2 = b.2;
+            s = advance(src, s, end);
+            let ep = expr(src, s, end, b.1);
+            s = ep;
+            emit("  pop %rax");
+            emit("  cmp $0, %rax");
+            emit("  jne " + lbl.start);
+            s = advance(src, s, end);
+            emit(lbl.end + ":");
+            (s, b.1, nvc2)
+        },
+        Tk::Kw(41) => {
+            s = advance(src, s, end);
+            s = advance(src, s, end);
+            if len(brk) > 0 { emit("  jmp " + brk) } else { 0 };
+            (s, v, nvc)
+        },
+        Tk::Kw(42) => {
+            s = advance(src, s, end);
+            s = advance(src, s, end);
+            if len(cont) > 0 { emit("  jmp " + cont) } else { 0 };
+            (s, v, nvc)
+        },
+        _ => {
+            let name = token_val(src, s, end);
+            s = advance(src, s, end);
+            let sym = match peek(src, s, end) {
+                Tk::Sym(k) => k,
+                _ => 10
+            };
+            if sym == 10 {
+                s = advance(src, s, end);
+                let ep = expr(src, s, end, v);
+                s = ep;
+                emit("  pop %rax");
+                let off = var_off(v, name);
+                store_var(name, off);
+                s = advance(src, s, end);
+                (s, v, nvc)
+            } else {
+                s = expr(src, s, end, v);
+                emit("  pop %rax");
+                (advance(src, s, end), v, nvc)
+            }
+        }
+    }
 }
 
 fn skip_to_close(src: string, pos: number, end: number) -> number {
@@ -356,7 +881,24 @@ fn do_stmt_update(src: string, start: number, varend: string, end: number, vars:
 }
 
 fn expr(src: string, pos: number, end: number, vars: string) -> number {
-    p_or(src, pos, end, vars)
+    let s = p_or(src, pos, end, vars);
+    let is_q = match peek(src, s, end) { Tk::Sym(48) => true, _ => false };
+    if is_q {
+        s = advance(src, s, end);
+        let s_true = p_or(src, s, end, vars);
+        s = advance(src, s_true, end);
+        let s_false = p_or(src, s, end, vars);
+        s = s_false;
+        emit("  pop %rcx");
+        emit("  pop %rax");
+        emit("  pop %rdx");
+        emit("  cmp $0, %rdx");
+        emit("  cmovz %rcx, %rax");
+        emit("  push %rax");
+        s
+    } else {
+        s
+    }
 }
 
 fn p_or(src: string, pos: number, end: number, vars: string) -> number {
@@ -528,12 +1070,18 @@ fn p_primary(src: string, pos: number, end: number, vars: string) -> number {
                 emit("  neg %rax");
                 emit("  mov " + to_string(0 - (off + 1) * 8) + "(%rbp, %rax, 8), %rcx");
                 emit("  push %rcx");
-                ep
+                advance(src, ep, end)
             } else {
                 let off = var_off(vars, name);
-                emit("  mov " + slot(off) + ", %rax");
-                emit("  push %rax");
-                advance(src, pos, end)
+                if off >= 0 {
+                    emit("  mov " + slot(off) + ", %rax");
+                    emit("  push %rax");
+                    advance(src, pos, end)
+                } else {
+                    emit("  movq " + name + "(%rip), %rax");
+                    emit("  push %rax");
+                    advance(src, pos, end)
+                }
             }
         },
         Tk::Sym(6) => {
@@ -701,6 +1249,8 @@ fn single_char(c: number) -> number {
     else if c == 42 { 17 }
     else if c == 47 { 18 }
     else if c == 37 { 30 }
+    else if c == 63 { 48 }
+    else if c == 58 { 49 }
     else { 0 }
 }
 
@@ -711,6 +1261,14 @@ fn keyword_id(w: string) -> number {
     else if eq(w, "if") { 19 }
     else if eq(w, "else") { 22 }
     else if eq(w, "for") { 24 }
+    else if eq(w, "do") { 40 }
+    else if eq(w, "break") { 41 }
+    else if eq(w, "continue") { 42 }
+    else if eq(w, "void") { 43 }
+    else if eq(w, "char") { 44 }
+    else if eq(w, "switch") { 45 }
+    else if eq(w, "case") { 46 }
+    else if eq(w, "default") { 47 }
     else { 0 }
 }
 
@@ -741,30 +1299,34 @@ fn eq(a: string, b: string) -> bool {
 fn var_off(vm: string, name: string) -> number {
     let p = find_ch(vm, 0, 58);
     let i = 0;
+    let found = false;
+    let last_p = 0;
     let r = while p < len(vm) {
         let nm = sub_str(vm, i, p);
-        if eq(nm, name) { break; 0 } else { 0 };
+        if eq(nm, name) { found = true; last_p = p; 0 } else { 0 };
         let ns = p + 1;
         let cp = find_ch(vm, ns, 44);
         i = cp + 1;
         p = find_ch(vm, i, 58)
     };
-    let ns2 = p + 1;
+    if !found { return -1 };
+    let ns2 = last_p + 1;
     let sc = find_ch(vm, ns2, 59);
     let cm = find_ch(vm, ns2, 44);
     if sc < cm { pn(vm, ns2, sc) } else { pn(vm, ns2, cm) }
 }
 
 fn skip_matching(src: string, pos: number, end: number) -> number {
-    let depth = 1;
+    let depth = 0;
     let i = pos;
-    let r = while i < end && depth > 0 {
+    let r = while i < end {
         match peek(src, i, end) {
             Tk::Sym(4) => { depth = depth + 1; 0 },
             Tk::Sym(8) => { depth = depth - 1; 0 },
             _ => 0
         };
-        i = advance(src, i, end)
+        i = advance(src, i, end);
+        if depth == 0 { break; 0 } else { 0 }
     };
     i
 }

@@ -14,6 +14,7 @@ pub mod parser_tests;
 pub mod reference_tests;
 pub mod struct_tests;
 pub mod sum_types_tests;
+pub mod test_cc_regression;
 pub mod type_checker_tests;
 
 use karte_diagnostics::Span;
