@@ -33,16 +33,20 @@ fn compile(src: string, pos: number, end: number) -> number {
     emit("  syscall");
     let state = pos;
     let lc = 0;
+    let func_count = 0;
     let r = while state < end {
         match peek(src, state, end) {
             Tk::Kw(1) => {
                 let func = parse_func(src, state, end, lc);
                 emit_func(func.0, func.1);
-                let body = do_block(src, func.2, end, func.3, lc + func.1 * 10);
+                let end_lbl = ".LFE" + to_string(func_count);
+                let body = do_block(src, func.2, end, func.3, lc + func.1 * 10, end_lbl);
+                emit(end_lbl + ":");
                 emit("  leave");
                 emit("  ret");
                 state = skip_matching(src, func.2, end) + 1;
-                lc = body.2
+                lc = body.2;
+                func_count = func_count + 1
             },
             _ => { state = advance(src, state, end) }
         }
@@ -127,11 +131,12 @@ fn make_label(lc: number) -> Label {
     Label { start: ".L" + to_string(lc), end: ".L" + to_string(lc + 1), next: lc + 2 }
 }
 
-fn do_block(src: string, pos: number, end: number, vars: string, lc: number) -> (number, string, number) {
+fn do_block(src: string, pos: number, end: number, vars: string, lc: number, end_lbl: string) -> (number, string, number) {
     let s = pos;
     let v = vars;
     let vc = lc;
     let done = 0;
+    let returned = 0;
     let r = while done == 0 && s < end {
         match peek(src, s, end) {
             Tk::Sym(4) => {
@@ -148,7 +153,7 @@ fn do_block(src: string, pos: number, end: number, vars: string, lc: number) -> 
                 0
             },
             Tk::Kw(1) => {
-                let dummy = advance(src, s, end);
+                s = advance(src, s, end);
                 let name = token_val(src, s, end);
                 s = advance(src, s, end);
                 match peek(src, s, end) {
@@ -167,7 +172,13 @@ fn do_block(src: string, pos: number, end: number, vars: string, lc: number) -> 
                     _ => {
                         s = advance(src, s, end);
                         v = v + name + ":" + to_string(vc) + ",";
+                        let off = vc;
                         vc = vc + 1;
+                        let ep = expr(src, s, end, v);
+                        s = ep;
+                        emit("  pop %rax");
+                        emit("  mov %rax, " + slot(off));
+                        s = advance(src, s, end);
                         0
                     }
                 }
@@ -176,9 +187,11 @@ fn do_block(src: string, pos: number, end: number, vars: string, lc: number) -> 
                 s = advance(src, s, end);
                 let ep = expr(src, s, end, v);
                 emit("  pop %rax");
+                emit("  jmp " + end_lbl);
                 s = ep;
                 s = advance(src, s, end);
                 done = 1;
+                returned = 1;
                 0
             },
             Tk::Kw(21) => {
@@ -190,7 +203,7 @@ fn do_block(src: string, pos: number, end: number, vars: string, lc: number) -> 
                 emit("  pop %rax");
                 emit("  cmp $0, %rax");
                 emit("  je " + lbl.end);
-                let b = do_block(src, s, end, v, lbl.next);
+                let b = do_block(src, s, end, v, lbl.next, end_lbl);
                 emit("  jmp " + lbl.start);
                 emit(lbl.end + ":");
                 s = b.0;
@@ -206,7 +219,7 @@ fn do_block(src: string, pos: number, end: number, vars: string, lc: number) -> 
                 emit("  pop %rax");
                 emit("  cmp $0, %rax");
                 emit("  je " + lbl.start);
-                let b = do_block(src, s, end, v, lbl.next);
+                let b = do_block(src, s, end, v, lbl.next, end_lbl);
                 if done == 0 {
                     emit("  jmp " + lbl.end)
                 } else {
@@ -219,7 +232,7 @@ fn do_block(src: string, pos: number, end: number, vars: string, lc: number) -> 
                 let has_else = s < end && is_kw(peek(src, s, end), 22);
                 if has_else {
                     s = advance(src, s, end);
-                    let b2 = do_block(src, s, end, v, vc + 1);
+                    let b2 = do_block(src, s, end, v, vc + 1, end_lbl);
                     emit(lbl.end + ":");
                     s = b2.0;
                     v = b2.1;
@@ -241,7 +254,7 @@ fn do_block(src: string, pos: number, end: number, vars: string, lc: number) -> 
                 emit("  je " + lbl.end);
                 let upos = s;
                 s = advance(src, s, end);
-                let body = do_block(src, s, end, v, lbl.next);
+                let body = do_block(src, s, end, v, lbl.next, end_lbl);
                 do_stmt_update(src, upos, body.1, end, v);
                 emit("  jmp " + lbl.start);
                 emit(lbl.end + ":");
@@ -288,7 +301,7 @@ fn do_block(src: string, pos: number, end: number, vars: string, lc: number) -> 
             }
         }
     };
-    if done == 1 {
+    if returned == 1 {
         s = skip_to_close(src, s, end)
     };
     (s, v, vc)
