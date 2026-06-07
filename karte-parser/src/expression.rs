@@ -2801,7 +2801,7 @@ impl<'a> Parser<'a> {
 
         let has_nested = arms
             .iter()
-            .any(|arm| Self::pattern_has_nested_constructor(&arm.pattern));
+            .any(|arm| Self::pattern_has_nested(&arm.pattern));
         if !has_nested {
             return arms;
         }
@@ -2828,7 +2828,7 @@ impl<'a> Parser<'a> {
             let key = outer_key.unwrap();
 
             let args = Self::get_pattern_args(&arm.pattern);
-            let has_nested = args.iter().any(|a| Self::is_constructor_pattern(a));
+            let has_nested = args.iter().any(|a| Self::is_nested_pattern(a));
 
             if !has_nested {
                 result.push(arm.clone());
@@ -2837,7 +2837,7 @@ impl<'a> Parser<'a> {
             }
 
             let has_non_ctor_arg = args.iter().any(|a| {
-                !Self::is_constructor_pattern(a) && !matches!(a, Pattern::Wildcard { .. })
+                !Self::is_nested_pattern(a) && !matches!(a, Pattern::Wildcard { .. })
             });
             if has_non_ctor_arg {
                 result.push(arm.clone());
@@ -2887,7 +2887,8 @@ impl<'a> Parser<'a> {
 
             let all_covered = indices.iter().all(|&idx| {
                 let inner = Self::extract_nested_pattern(&arms[idx].pattern, arg_idx);
-                matches!(inner, Pattern::Constructor { .. } | Pattern::QualifiedConstructor { .. })
+                matches!(inner, Pattern::Constructor { .. } | Pattern::QualifiedConstructor { .. }
+                    | Pattern::Number { .. } | Pattern::Boolean { .. })
             });
 
             if !all_covered {
@@ -2955,9 +2956,26 @@ impl<'a> Parser<'a> {
         )
     }
 
+    /// 检查是否为需要 desugar 的嵌套模式（构造器、数字字面量、布尔字面量）
+    fn is_nested_pattern(pattern: &karte_hir::Pattern) -> bool {
+        matches!(
+            pattern,
+            karte_hir::Pattern::Constructor { .. }
+            | karte_hir::Pattern::QualifiedConstructor { .. }
+            | karte_hir::Pattern::Number { .. }
+            | karte_hir::Pattern::Boolean { .. }
+        )
+    }
+
     fn pattern_has_nested_constructor(pattern: &karte_hir::Pattern) -> bool {
         let args = Self::get_pattern_args(pattern);
         args.iter().any(|a| Self::is_constructor_pattern(a))
+    }
+
+    /// 检查模式是否包含需要 desugar 的嵌套模式（构造器、字面量）
+    fn pattern_has_nested(pattern: &karte_hir::Pattern) -> bool {
+        let args = Self::get_pattern_args(pattern);
+        args.iter().any(|a| Self::is_nested_pattern(a))
     }
 
     fn outer_constructor_key(pattern: &karte_hir::Pattern) -> Option<String> {
@@ -2982,7 +3000,7 @@ impl<'a> Parser<'a> {
 
     fn find_first_nested_arg_index(pattern: &karte_hir::Pattern) -> Option<usize> {
         let args = Self::get_pattern_args(pattern);
-        args.iter().position(|a| Self::is_constructor_pattern(a))
+        args.iter().position(|a| Self::is_nested_pattern(a))
     }
 
     fn replace_nested_arg_with_variable(

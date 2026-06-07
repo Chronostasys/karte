@@ -19,6 +19,90 @@ mod cli_tests {
     use std::path::{Path, PathBuf};
 
     #[test]
+    fn test_enum_literal_pattern_match() {
+        let code = r#"
+enum Tk {
+    Num(number),
+    Kw(number),
+    Eof
+}
+
+fn classify(tk: Tk) -> number {
+    match tk {
+        Tk::Kw(1) => 100,
+        Tk::Kw(2) => 200,
+        Tk::Num(0) => 300,
+        _ => 999
+    }
+}
+
+fn main() -> number {
+    let a = classify(Tk::Kw(1));
+    let b = classify(Tk::Kw(2));
+    let c = classify(Tk::Num(0));
+    let d = classify(Tk::Kw(99));
+    a + b + c + d
+}
+        "#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 100 + 200 + 300 + 999, "Expected 1599, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_enum_literal_pattern_single_arm() {
+        let code = r#"
+enum Tk {
+    Num(number),
+    Kw(number),
+    Eof
+}
+
+fn test(tk: Tk) -> number {
+    match tk {
+        Tk::Kw(42) => 1,
+        _ => 0
+    }
+}
+
+fn main() -> number {
+    test(Tk::Kw(42)) + test(Tk::Kw(1)) + test(Tk::Num(42))
+}
+        "#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 1, "Expected 1, got {}", exit_code);
+    }
+
+    #[test]
+    #[ignore] // TODO: 混合字面量和变量 pattern 的 desugar 需要 desugar 逻辑将 Variable 也展开
+    fn test_enum_literal_pattern_with_var() {
+        let code = r#"
+enum Result {
+    Ok(number),
+    Err(number)
+}
+
+fn test(r: Result) -> number {
+    match r {
+        Result::Ok(0) => 10,
+        Result::Ok(n) => n,
+        Result::Err(1) => 100,
+        Result::Err(n) => 0 - n
+    }
+}
+
+fn main() -> number {
+    let a = test(Result::Ok(0));
+    let b = test(Result::Ok(5));
+    let c = test(Result::Err(1));
+    let d = test(Result::Err(3));
+    a + b + c + d
+}
+        "#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 10 + 5 + 100 + (-3), "Expected 112, got {}", exit_code);
+    }
+
+    #[test]
     fn test_compile_and_run_project_mode() {
         // Locate the entry Karte file declared in test_project/karte.mod.toml
         let mut entry_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
