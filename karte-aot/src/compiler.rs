@@ -144,6 +144,11 @@ impl AotCompiler {
             global_labels.insert("karte_jit_runtime_free".to_string(), addr);
             global_labels.insert("__runtime_karte_jit_runtime_free".to_string(), addr);
         }
+        if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::RAW_SYSCALL6) {
+            let addr = code_base + off as u64;
+            global_labels.insert("karte_jit_runtime_raw_syscall6".to_string(), addr);
+            global_labels.insert("__runtime_karte_jit_runtime_raw_syscall6".to_string(), addr);
+        }
         if let Some(off) = runtime.find_offset(crate::runtime_x86::runtime_names::RETAIN) {
             let addr = code_base + off as u64;
             global_labels.insert("karte_jit_runtime_retain".to_string(), addr);
@@ -328,6 +333,10 @@ impl AotCompiler {
             let char_to_string_ptr = RuntimeIntrinsic::CharToString.symbol_ptr() as u64;
             if let Some(&new) = global_labels.get("karte_jit_runtime_char_to_string") {
                 runtime_ptr_map.insert(char_to_string_ptr, new);
+            }
+            let raw_syscall6_ptr = RuntimeIntrinsic::RawSyscall6.symbol_ptr() as u64;
+            if let Some(&new) = global_labels.get("karte_jit_runtime_raw_syscall6") {
+                runtime_ptr_map.insert(raw_syscall6_ptr, new);
             }
             if let Some(&new) = global_labels.get("karte_jit_runtime_print_string") {
                 runtime_ptr_map.insert(print_string_ptr, new);

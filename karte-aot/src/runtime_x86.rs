@@ -30,6 +30,7 @@ pub mod runtime_names {
     pub const STRING_CONTAINS: &str = "__karte_string_contains";
     pub const SPLIT_COUNT: &str = "__karte_split_count";
     pub const CHAR_TO_STRING: &str = "__karte_char_to_string";
+    pub const RAW_SYSCALL6: &str = "__karte_raw_syscall6";
 }
 
 /// 运行时函数描述
@@ -80,6 +81,7 @@ impl X86Runtime {
         self.emit_gc_safepoint();
         self.emit_gc_update_stack_top();
         self.emit_free();
+        self.emit_raw_syscall6();
         self.emit_retain();
         self.emit_release();
         self.emit_string_equal();
@@ -1335,6 +1337,46 @@ impl X86Runtime {
 
     fn emit_free(&mut self) {
         self.fn_start(runtime_names::FREE);
+        self.ret();
+        self.fn_end();
+    }
+
+    /// __karte_raw_syscall6(sysno, a1, a2, a3, a4, a5, a6) -> i64
+    ///
+    /// Go-style raw syscall: 直接执行 syscall 指令
+    /// System V AMD64 ABI 入参: RDI=sysno, RSI=a1, RDX=a2, RCX=a3, R8=a4, R9=a5, [stack+0]=a6
+    /// x86_64 syscall 约定: RAX=sysno, RDI=a1, RSI=a2, RDX=a3, R10=a4, R8=a5, R9=a6
+    fn emit_raw_syscall6(&mut self) {
+        self.fn_start(runtime_names::RAW_SYSCALL6);
+
+        // sub rsp, 40 — 在栈上暂存前 5 个参数
+        self.bs(&[0x48, 0x83, 0xEC, 0x28]);
+
+        // 暂存入参到栈上 (RDI/RDX/RCX 会被覆盖)
+        self.bs(&[0x48, 0x89, 0x7C, 0x24, 0x00]); // [rsp+0]  = RDI = sysno
+        self.bs(&[0x48, 0x89, 0x54, 0x24, 0x08]); // [rsp+8]  = RDX = a2
+        self.bs(&[0x48, 0x89, 0x4C, 0x24, 0x10]); // [rsp+16] = RCX = a3
+
+        // 从栈上加载到 syscall 寄存器
+        self.bs(&[0x48, 0x8B, 0x44, 0x24, 0x00]); // RAX = [rsp+0]  = sysno
+        // RDI = a1 (RSI 保持不变)
+        self.mov_rr(7, 6);                                  // RDI = RSI = a1
+        // RSI = a2
+        self.bs(&[0x48, 0x8B, 0x74, 0x24, 0x08]); // RSI = [rsp+8]  = a2
+        // RDX = a3
+        self.bs(&[0x48, 0x8B, 0x54, 0x24, 0x10]); // RDX = [rsp+16] = a3
+        // R10 = a4 (R8 保持不变)
+        self.mov_rr(10, 8);                                 // R10 = R8 = a4
+        // R8 = a5 (R9 保持不变)
+        self.bs(&[0x4D, 0x89, 0xC8]);              // R8 = R9 = a5
+        // R9 = a6 (栈上第7个参数: sub_rsp=40, ret_addr=8, 所以 a6 在 rsp+48)
+        self.bs(&[0x4C, 0x8B, 0x4C, 0x24, 0x30]); // R9 = [rsp+48] = a6
+
+        // 执行 syscall
+        self.syscall();
+
+        // 恢复 RSP 并返回
+        self.bs(&[0x48, 0x83, 0xC4, 0x28]); // add rsp, 40
         self.ret();
         self.fn_end();
     }
