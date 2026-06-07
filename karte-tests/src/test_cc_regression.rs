@@ -740,4 +740,99 @@ int main() {
         let exit = compile_and_run_c(c_source);
         assert_eq!(exit, 5, "-(-5)=5, got {}", exit);
     }
+
+    /// bitwise and
+    #[test]
+    fn test_cc_bitwise_and() {
+        let c_source = r#"int main() {
+    return 12 & 10;
+}
+"#;
+        let exit = compile_and_run_c(c_source);
+        assert_eq!(exit, 8, "12 & 10 = 8, got {}", exit);
+    }
+
+    /// bitwise or, xor, left/right shift, not
+    #[test]
+    fn test_cc_bitwise_ops() {
+        let c_source = r#"int main() {
+    int a = 12;
+    int b = 10;
+    int r1 = a | b;
+    int r2 = a ^ b;
+    int r3 = a << 2;
+    int r4 = b >> 1;
+    int r5 = ~a;
+    return r1 + r2 + r3 + r4 + r5;
+}
+"#;
+        let exit = compile_and_run_c(c_source);
+        assert_eq!(exit, 60, "14+6+48+5-13=60, got {}", exit);
+    }
+
+    /// char type declaration
+    #[test]
+    fn test_cc_char_type() {
+        let c_source = r#"int main() {
+    char a = 65;
+    char b = 66;
+    return a + b;
+}
+"#;
+        let exit = compile_and_run_c(c_source);
+        assert_eq!(exit, 131, "65+66=131, got {}", exit);
+    }
+
+    /// character literals with escape
+    #[test]
+    fn test_cc_char_literal() {
+        let c_source = r#"int main() {
+    char a = 'A';
+    char b = 'B';
+    char c = '\n';
+    return a + b + c;
+}
+"#;
+        let exit = compile_and_run_c(c_source);
+        assert_eq!(exit, 141, "65+66+10=141, got {}", exit);
+    }
+
+    /// sizeof operator
+    #[test]
+    fn test_cc_sizeof() {
+        let c_source = r#"int main() {
+    int s = sizeof(int);
+    return s;
+}
+"#;
+        let exit = compile_and_run_c(c_source);
+        assert_eq!(exit, 8, "sizeof(int)=8, got {}", exit);
+    }
+
+    /// pointer address-of and dereference
+    #[test]
+    fn test_cc_ptr_deref() {
+        let c_source = r#"int main() {
+    int x = 42;
+    int y = *(&x);
+    return y;
+}
+"#;
+        let exit = compile_and_run_c(c_source);
+        assert_eq!(exit, 42, "*(&x)=42, got {}", exit);
+    }
+
+    /// pointer write through dereference
+    #[test]
+    fn test_cc_ptr_write() {
+        let c_source = r#"int main() {
+    int x = 10;
+    int p = &x;
+    *p = 99;
+    return x;
+}
+"#;
+        let exit = compile_and_run_c(c_source);
+        assert_eq!(exit, 99, "x after *p=99 should be 99, got {}", exit);
+    }
 }

@@ -29,7 +29,7 @@ fn compile(src: string, pos: number, end: number) -> number {
     let globals = "";
     let r1 = while state < end {
         let tk = peek(src, state, end);
-        if match tk { Tk::Kw(1) => true, _ => false } {
+        if match tk { Tk::Kw(1) => true, Tk::Kw(44) => true, _ => false } {
             state = advance(src, state, end);
             let name = token_val(src, state, end);
             state = advance(src, state, end);
@@ -106,7 +106,7 @@ fn compile(src: string, pos: number, end: number) -> number {
     let func_count = 0;
     let r = while state < end {
         match peek(src, state, end) {
-            Tk::Kw(1) => {
+            Tk::Kw(1) | Tk::Kw(44) => {
                 let save2 = state;
                 state = advance(src, state, end);
                 let name2 = token_val(src, state, end);
@@ -190,7 +190,7 @@ fn parse_params(src: string, pos: number, end: number) -> (number, number, strin
                     s = advance(src, s, end);
                     0
                 },
-                Tk::Kw(1) => {
+                Tk::Kw(1) | Tk::Kw(44) => {
                     s = advance(src, s, end);
                     let pname = token_val(src, s, end);
                     s = advance(src, s, end);
@@ -274,7 +274,7 @@ fn do_block_braced(src: string, pos: number, end: number, vars: string, lc: numb
                 s = advance(src, s, end);
                 0
             },
-            Tk::Kw(1) => {
+            Tk::Kw(1) | Tk::Kw(44) => {
                 s = advance(src, s, end);
                 let name = token_val(src, s, end);
                 s = advance(src, s, end);
@@ -577,6 +577,27 @@ fn do_block_braced(src: string, pos: number, end: number, vars: string, lc: numb
                 0
             },
             _ => {
+                let first = peek(src, s, end);
+                if match first { Tk::Sym(17) => true, _ => false } {
+                    s = advance(src, s, end);
+                    let ptr_ep = p_unary(src, s, end, v);
+                    s = ptr_ep;
+                    let eq_tk = peek(src, s, end);
+                    if match eq_tk { Tk::Sym(10) => true, _ => false } {
+                        s = advance(src, s, end);
+                        let val_ep = expr(src, s, end, v);
+                        s = val_ep;
+                        emit("  pop %rax");
+                        emit("  pop %rcx");
+                        emit("  mov %rax, (%rcx)");
+                        s = advance(src, s, end);
+                        0
+                    } else {
+                        emit("  pop %rax");
+                        s = advance(src, s, end);
+                        0
+                    }
+                } else {
                 let name = token_val(src, s, end);
                 s = advance(src, s, end);
                 let sym = match peek(src, s, end) {
@@ -661,6 +682,7 @@ fn do_block_braced(src: string, pos: number, end: number, vars: string, lc: numb
                     }
                 }
             }
+            }
         }
     };
     if returned == 1 {
@@ -678,7 +700,7 @@ fn do_for_init(src: string, pos: number, end: number, vars: string, vc: number) 
             s = advance(src, s, end);
             (s, v, nvc)
         },
-        Tk::Kw(1) => {
+        Tk::Kw(1) | Tk::Kw(44) => {
             s = advance(src, s, end);
             let name = token_val(src, s, end);
             s = advance(src, s, end);
@@ -930,7 +952,7 @@ fn p_and(src: string, pos: number, end: number, vars: string) -> number {
 }
 
 fn p_eq(src: string, pos: number, end: number, vars: string) -> number {
-    let s = p_cmp(src, pos, end, vars);
+    let s = p_bitwise(src, pos, end, vars);
     let r = while match peek(src, s, end) {
         Tk::Sym(23) => true,
         Tk::Sym(27) => true,
@@ -938,7 +960,7 @@ fn p_eq(src: string, pos: number, end: number, vars: string) -> number {
     } {
         let op = match peek(src, s, end) { Tk::Sym(23) => "sete", _ => "setne" };
         s = advance(src, s, end);
-        let s2 = p_cmp(src, s, end, vars);
+        let s2 = p_bitwise(src, s, end, vars);
         emit("  pop %rcx");
         emit("  pop %rax");
         emit("  cmp %rcx, %rax");
@@ -950,8 +972,32 @@ fn p_eq(src: string, pos: number, end: number, vars: string) -> number {
     s
 }
 
+fn p_bitwise(src: string, pos: number, end: number, vars: string) -> number {
+    let s = p_cmp(src, pos, end, vars);
+    let r = while match peek(src, s, end) {
+        Tk::Sym(50) => true,
+        Tk::Sym(51) => true,
+        Tk::Sym(52) => true,
+        _ => false
+    } {
+        let op = match peek(src, s, end) {
+            Tk::Sym(50) => "and",
+            Tk::Sym(51) => "or",
+            _ => "xor"
+        };
+        s = advance(src, s, end);
+        let s2 = p_cmp(src, s, end, vars);
+        emit("  pop %rcx");
+        emit("  pop %rax");
+        emit("  " + op + " %rcx, %rax");
+        emit("  push %rax");
+        s = s2
+    };
+    s
+}
+
 fn p_cmp(src: string, pos: number, end: number, vars: string) -> number {
-    let s = p_add(src, pos, end, vars);
+    let s = p_shift(src, pos, end, vars);
     let r = while match peek(src, s, end) {
         Tk::Sym(11) => true,
         Tk::Sym(13) => true,
@@ -966,12 +1012,31 @@ fn p_cmp(src: string, pos: number, end: number, vars: string) -> number {
             _ => "setge"
         };
         s = advance(src, s, end);
-        let s2 = p_add(src, s, end, vars);
+        let s2 = p_shift(src, s, end, vars);
         emit("  pop %rcx");
         emit("  pop %rax");
         emit("  cmp %rcx, %rax");
         emit("  " + op + " %al");
         emit("  movzx %al, %rax");
+        emit("  push %rax");
+        s = s2
+    };
+    s
+}
+
+fn p_shift(src: string, pos: number, end: number, vars: string) -> number {
+    let s = p_add(src, pos, end, vars);
+    let r = while match peek(src, s, end) {
+        Tk::Sym(54) => true,
+        Tk::Sym(55) => true,
+        _ => false
+    } {
+        let op = match peek(src, s, end) { Tk::Sym(54) => "shl", _ => "sar" };
+        s = advance(src, s, end);
+        let s2 = p_add(src, s, end, vars);
+        emit("  pop %rcx");
+        emit("  pop %rax");
+        emit("  " + op + " %cl, %rax");
         emit("  push %rax");
         s = s2
     };
@@ -1046,6 +1111,44 @@ fn p_unary(src: string, pos: number, end: number, vars: string) -> number {
             emit("  movzx %al, %rax");
             emit("  push %rax");
             s2
+        },
+        Tk::Sym(53) => {
+            let s = advance(src, pos, end);
+            let s2 = p_unary(src, s, end, vars);
+            emit("  pop %rax");
+            emit("  not %rax");
+            emit("  push %rax");
+            s2
+        },
+        Tk::Sym(50) => {
+            let s = advance(src, pos, end);
+            let name = token_val(src, s, end);
+            let off = var_off(vars, name);
+            if off >= 0 {
+                emit("  lea " + to_string(0 - (off + 1) * 8) + "(%rbp), %rax")
+            } else {
+                emit("  lea " + name + "(%rip), %rax")
+            };
+            emit("  push %rax");
+            advance(src, s, end)
+        },
+        Tk::Sym(17) => {
+            let s = advance(src, pos, end);
+            let s2 = p_unary(src, s, end, vars);
+            emit("  pop %rax");
+            emit("  mov (%rax), %rax");
+            emit("  push %rax");
+            s2
+        },
+        Tk::Kw(50) => {
+            let s = advance(src, pos, end);
+            s = advance(src, s, end);
+            let tk = peek(src, s, end);
+            if match tk { Tk::Kw(1) => true, Tk::Kw(44) => true, _ => false } {
+                s = advance(src, s, end)
+            };
+            emit("  push $8");
+            advance(src, s, end)
         },
         _ => p_primary(src, pos, end, vars)
     }
@@ -1136,7 +1239,10 @@ fn peek(src: string, pos: number, end: number) -> Tk {
         Tk::Eof
     } else {
         let c = str_index(src, i);
-        if is_d(c) == 1 {
+        if is_char_literal(c) == 1 {
+            let v = parse_char(src, i, end);
+            Tk::Num(v.0)
+        } else if is_d(c) == 1 {
             let v = parse_num(src, i, end);
             Tk::Num(v.0)
         } else if is_a(c) == 1 {
@@ -1156,7 +1262,8 @@ fn advance(src: string, pos: number, end: number) -> number {
         end
     } else {
         let c = str_index(src, i);
-        if is_d(c) == 1 { parse_num(src, i, end).1 }
+        if is_char_literal(c) == 1 { parse_char(src, i, end).1 }
+        else if is_d(c) == 1 { parse_num(src, i, end).1 }
         else if is_a(c) == 1 { parse_ident(src, i, end).1 }
         else { lex_sym(src, i, end).1 }
     }
@@ -1165,7 +1272,8 @@ fn advance(src: string, pos: number, end: number) -> number {
 fn token_val(src: string, pos: number, end: number) -> string {
     let i = skip_ws(src, pos, end);
     let c = str_index(src, i);
-    if is_d(c) == 1 { to_string(parse_num(src, i, end).0) }
+    if is_char_literal(c) == 1 { to_string(parse_char(src, i, end).0) }
+    else if is_d(c) == 1 { to_string(parse_num(src, i, end).0) }
     else if is_a(c) == 1 { parse_ident(src, i, end).0 }
     else { "" }
 }
@@ -1199,6 +1307,27 @@ fn parse_num(src: string, start: number, end: number) -> (number, number) {
     (v, i)
 }
 
+fn parse_char(src: string, start: number, end: number) -> (number, number) {
+    let i = start + 1;
+    let v = if i < end { str_index(src, i) } else { 0 };
+    if v == 92 {
+        i = i + 1;
+        let esc = if i < end { str_index(src, i) } else { 0 };
+        if esc == 110 { v = 10 }
+        else if esc == 116 { v = 9 }
+        else if esc == 114 { v = 13 }
+        else if esc == 92 { v = 92 }
+        else if esc == 39 { v = 39 }
+        else { v = esc }
+    };
+    if i + 1 < end { i = i + 1 };
+    (v, i + 1)
+}
+
+fn is_char_literal(c: number) -> number {
+    if c == 39 { 1 } else { 0 }
+}
+
 fn parse_ident(src: string, start: number, end: number) -> (string, number) {
     let w = "";
     let i = start;
@@ -1223,6 +1352,8 @@ fn two_char(c: number, c2: number) -> (number, number) {
     else if c == 62 && c2 == 61 { (29, 2) }
     else if c == 38 && c2 == 38 { (26, 2) }
     else if c == 124 && c2 == 124 { (25, 2) }
+    else if c == 60 && c2 == 60 { (54, 2) }
+    else if c == 62 && c2 == 62 { (55, 2) }
     else if c == 43 && c2 == 61 { (34, 2) }
     else if c == 45 && c2 == 61 { (35, 2) }
     else if c == 42 && c2 == 61 { (36, 2) }
@@ -1251,6 +1382,10 @@ fn single_char(c: number) -> number {
     else if c == 37 { 30 }
     else if c == 63 { 48 }
     else if c == 58 { 49 }
+    else if c == 38 { 50 }
+    else if c == 124 { 51 }
+    else if c == 94 { 52 }
+    else if c == 126 { 53 }
     else { 0 }
 }
 
@@ -1269,6 +1404,7 @@ fn keyword_id(w: string) -> number {
     else if eq(w, "switch") { 45 }
     else if eq(w, "case") { 46 }
     else if eq(w, "default") { 47 }
+    else if eq(w, "sizeof") { 50 }
     else { 0 }
 }
 
