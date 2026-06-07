@@ -1708,6 +1708,9 @@ fn main() -> number {
 
         let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
 
+        // 设置目标架构为 RISC-V，确保寄存器分配器使用正确的 calling convention
+        lir.set_target("riscv64".to_string());
+
         // LIR 优化（将 Stack alloc 转为寄存器，RISC-V 编译器需要）
         let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
         pipeline.optimize(&mut lir).expect("Optimization failed");

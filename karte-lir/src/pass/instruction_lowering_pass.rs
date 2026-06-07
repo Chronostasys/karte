@@ -229,25 +229,39 @@ impl InstructionLoweringPass {
     }
 
     /// 获取指定指令位置需要保存的调用者保存寄存器
+    ///
+    /// 策略：保守保存所有 caller-saved 寄存器，确保正确性。
+    /// 精确的 liveness 分析需要完整的数据流分析（考虑循环、条件跳转等），
+    /// 目前不实现。
+    #[allow(dead_code)]
+    fn get_live_caller_saved_registers_precise(
+        &self,
+        instruction_index: usize,
+        function: &LirFunction,
+        caller_saved_convention: &HashSet<u8>,
+    ) -> HashSet<u8> {
+        let mut live_regs: HashSet<u8> = HashSet::new();
+        for instr in function.instructions.iter().skip(instruction_index + 1) {
+            if matches!(instr, Instruction::Return { .. } | Instruction::Jump { .. }) {
+                break;
+            }
+            for reg in instr.get_used_registers() {
+                if let Register::Physical(phys) = reg {
+                    live_regs.insert(phys);
+                }
+            }
+        }
+        caller_saved_convention.intersection(&live_regs).copied().collect()
+    }
+
+    /// 保守策略：保存所有 caller-saved 寄存器
     fn get_live_caller_saved_registers_at(
         &self,
         _instruction_index: usize,
-        _analyses: &AnalysisManager,
+        _function: &LirFunction,
+        caller_saved_convention: &HashSet<u8>,
     ) -> HashSet<u8> {
-        // 保守策略：保存所有 caller-saved 寄存器
-        //
-        // 关键：当返回值寄存器同时也是参数寄存器时（如 RISC-V 的 a0），
-        // 必须保存它，否则跨调用后参数值会丢失。
-        // lower_call/lower_call_indirect 会在恢复 caller-saved 之前，
-        // 先将返回值暂存到 vm_sp 下方的安全位置，因此返回值不会丢失。
-        //
-        // 对于 x86，返回值寄存器 RAX (p0) 不是参数寄存器，保存它只是
-        // 多了一对额外的 save/restore，不会影响正确性。
-        self.calling_convention
-            .caller_saved
-            .iter()
-            .cloned()
-            .collect()
+        caller_saved_convention.clone()
     }
 
     /// 降级Alloc指令
@@ -410,7 +424,7 @@ impl InstructionLoweringPass {
 
         // 获取需要保存的调用者保存寄存器
         let live_caller_saved =
-            self.get_live_caller_saved_registers_at(instruction_index, analyses);
+            self.get_live_caller_saved_registers_at(instruction_index, function, &self.calling_convention.caller_saved);
         let mut caller_saved: Vec<_> = live_caller_saved.into_iter().collect();
         
         // 溢出参数使用 callee-saved 寄存器传递，需要在调用前保存/恢复
@@ -623,7 +637,7 @@ impl InstructionLoweringPass {
 
         // 获取需要保存的调用者保存寄存器
         let live_caller_saved =
-            self.get_live_caller_saved_registers_at(instruction_index, analyses);
+            self.get_live_caller_saved_registers_at(instruction_index, function, &self.calling_convention.caller_saved);
         let mut caller_saved: Vec<_> = live_caller_saved.into_iter().collect();
         
         // 溢出参数使用 callee-saved 寄存器传递，需要在调用前保存/恢复
@@ -974,8 +988,8 @@ impl FunctionPass for InstructionLoweringPass {
                             });
                         }
 
-                        // 仅在 main 函数初始化 effect 栈
-                        if function.name == "main" {
+                        // 仅在 main 函数初始化 effect 栈指针
+                        if function.name == "main" || function.name == "main::main" || function.name.ends_with("::__script_entry__") {
                             new_instructions.push(Instruction::Move {
                                 dst: self.effect_stack_register(),
                                 src: Operand::Immediate { value: 0 },

@@ -1297,11 +1297,17 @@ impl JitCompiler for RiscvCompiler {
     ) -> crate::Result<()> {
         let return_rv = self.map_register(0); // a0 = x10
 
-        // 使用统一的 exclude 计算
-        let exclude: Vec<u8> = compute_exclude_return_reg(&call, result, return_rv);
+        // 使用 Karte 编号（0）而非物理编号（10）计算 exclude，
+        // 因为 save_call_clobbered_registers_ex 使用 Karte 编号过滤
+        let exclude_karte: Vec<u8> = if result.is_some() && call.expects_result() {
+            vec![0u8] // Karte #0 = a0，排除返回值寄存器
+        } else {
+            vec![]
+        };
 
         // 保存 caller-saved 寄存器到虚拟栈
-        let (saved_regs, stack_space) = self.save_call_clobbered_registers_ex(cb, &exclude);
+        let (saved_regs, stack_space) = self.save_call_clobbered_registers_ex(cb, &exclude_karte);
+
 
         // RISC-V 函数调用参数寄存器: a0(x10)-a7(x17)
         // 对应 Karte 编号 0-7

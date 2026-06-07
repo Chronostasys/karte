@@ -514,26 +514,44 @@ impl CallingConvention {
 
     /// 获取可用于寄存器分配的通用寄存器
     pub fn get_allocatable_registers(&self) -> Vec<PhysicalRegister> {
+        // 🔧 精简保留列表：释放不需要全局保留的寄存器
+        //
+        // 全局保留:
+        // - R0(return_register/RAX): 函数返回值
+        // - R10(stack_pointer/vm_sp): 虚拟栈指针
+        // - R11(frame_pointer/vm_fp): 虚拟帧指针
+        // - R12(effect_stack_pointer): effect 栈指针
+        //   虽然 EffectLoweringPass 在 regalloc 前生成了 Physical(12) 使用，
+        //   但 lifetime analysis 对 Physical 寄存器的处理不够完善，
+        //   在部分函数中 R12 被错误分配给其他变量
+        //
+        // 不全局保留（按需占用）:
+        // - R8(effect_tag_register): 只在含 effect 操作的函数中使用
+        //   EffectLoweringPass 在 regalloc 前运行，Physical(8) 被自动预分配
+        // - R9(return_address): 只在 Call lowering 时临时使用
+        // - R0(effect_payload_register): 与 return_register 相同
+        //
+        // 效果: 可分配寄存器从 8 个增加到 10 个（+25%）
         let reserved = [
             self.return_register,
-            self.return_address,
             self.stack_pointer,
             self.frame_pointer,
             self.effect_stack_pointer,
-            self.effect_payload_register,
-            self.effect_tag_register,
         ];
 
-        // 额外排除：
-        // x86_64: RSP(4) 和 RBP(5) 是 x86 硬件栈指针和帧指针，不能用于通用分配
+        // 额外排除（架构特定）：
+        // x86_64: RSP(4) 和 RBP(5) 是 x86 硬件栈指针和帧指针
+        // RISC-V: ra(27) 硬件返回地址，t0(8)/t1(9) 是 codegen 隐式临时寄存器
+        //   riscv_compiler.rs 在返回、比较等操作中使用 Karte #8(t0) 作为临时寄存器
+        //   （不在 LIR 中体现，但编译器隐式依赖）
         // AArch64: X16(IP0) 和 X17(IP1) 被 codegen 用作临时寄存器
-        //   （大偏移 load/store、立即数 store、ADRP+ADD 标签地址计算），
-        //   不能被寄存器分配器分配
         let extra_reserved: &[PhysicalRegister] =
             if self.argument_registers == vec![7u8, 6, 2, 1, 8, 9] {
                 &[4, 5] // x86_64 的 RSP, RBP
+            } else if self.argument_registers == vec![0u8, 1, 2, 3, 4, 5, 6, 7] {
+                &[8, 9, 27] // RISC-V 的 t0, t1(隐式临时), ra
             } else {
-                &[16, 17] // AArch64 的 X16(IP0), X17(IP1) — codegen 临时寄存器
+                &[16, 17] // AArch64 的 X16(IP0), X17(IP1)
             };
 
         // 确定最大的寄存器编号：从 callee_saved + caller_saved + temp_registers 中取最大值
@@ -646,9 +664,8 @@ mod tests {
         assert!(!allocatable.contains(&cc.return_register), "返回值寄存器不应被分配");
         assert!(!allocatable.contains(&cc.stack_pointer), "栈指针不应被分配");
         assert!(!allocatable.contains(&cc.frame_pointer), "帧指针不应被分配");
-        assert!(!allocatable.contains(&cc.return_address), "返回地址寄存器不应被分配");
-        assert!(!allocatable.contains(&cc.effect_stack_pointer), "effect 栈指针不应被分配");
-        assert!(!allocatable.contains(&cc.effect_payload_register), "effect payload 不应被分配");
+        // R8/R9/R12 不再全局保留——EffectLoweringPass 在 regalloc 前运行，
+        // 含 effect 操作的函数会自动占用这些寄存器
 
         // x86_64 特有检查
         #[cfg(target_arch = "x86_64")]

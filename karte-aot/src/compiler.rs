@@ -52,6 +52,16 @@ impl AotCompiler {
 
     /// 编译 LirProgram 为字节
     pub fn compile_to_bytes(&self, program: &mut LirProgram) -> Result<Vec<u8>, String> {
+        // 设置 LIR program 的目标架构，确保寄存器分配器使用正确的 calling convention
+        // 如果不设置，LirProgram::target() 会返回编译主机架构（如 x86_64），
+        // 导致 RISC-V AOT 编译时使用了 x86_64 的 argument_registers
+        let target_str = match self.target {
+            AotTarget::X86_64 => "x86_64",
+            AotTarget::AArch64 => "aarch64",
+            AotTarget::Riscv64 => "riscv64",
+        };
+        program.set_target(target_str.to_string());
+
         match self.target {
             AotTarget::X86_64 => {
                 #[cfg(target_arch = "x86_64")]

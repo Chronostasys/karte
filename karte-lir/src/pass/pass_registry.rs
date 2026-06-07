@@ -335,8 +335,13 @@ impl PassRegistry {
         manager.add_function_passes(vec![
             Box::new(crate::pass::stack_frame_layout::StackFrameLayoutPass::new()),
             Box::new(PeepholeOptimizer::new()),
+            // 🔧 综合内存优化: SLF + RLE + DSE + Value Propagation
+            Box::new(crate::pass::memory_optimization::MemoryOptimizationPass::new()),
             Box::new(DeadCodeElimination::new()),
+            // 第二轮
             Box::new(PeepholeOptimizer::new()),
+            Box::new(crate::pass::memory_optimization::MemoryOptimizationPass::new()),
+            Box::new(DeadCodeElimination::new()),
             Box::new(InstructionLoweringPass::new()),
             // 🔧 调用位置活跃寄存器标注 - 必须在 InstructionLowering 之后运行
             Box::new(CallsiteLiveRegisterPass::new()),
@@ -395,8 +400,13 @@ impl PassRegistry {
         manager.add_function_passes(vec![
             Box::new(crate::pass::stack_frame_layout::StackFrameLayoutPass::new()),
             Box::new(PeepholeOptimizer::new()),
+            // 🔧 综合内存优化: SLF + RLE + DSE + Value Propagation
+            Box::new(crate::pass::memory_optimization::MemoryOptimizationPass::new()),
             Box::new(DeadCodeElimination::new()),
+            // 第二轮：新产生的 Move 可能触发更多 store-load 转发
             Box::new(PeepholeOptimizer::new()),
+            Box::new(crate::pass::memory_optimization::MemoryOptimizationPass::new()),
+            Box::new(DeadCodeElimination::new()),
             // 额外的优化轮次
             Box::new(ConstantFolding::new()),
             Box::new(DeadCodeElimination::new()),

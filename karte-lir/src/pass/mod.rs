@@ -1,6 +1,8 @@
 pub mod analysis;
 pub mod block_layout_pass;
 pub mod callsite_live_register_pass;
+pub mod copy_propagation;
+pub mod memory_optimization;
 pub mod effect_lowering_pass;
 pub mod explicit_jump_pass;
 pub mod instruction_lowering_pass;
