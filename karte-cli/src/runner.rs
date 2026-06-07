@@ -843,7 +843,7 @@ pub fn aot_compile(
 
     // AOT 编译
     let aot_compiler = karte_aot::AotCompiler::new(verbose > 0).with_target(target);
-    let binary = aot_compiler.compile_to_bytes(&lir_program)
+    let binary = aot_compiler.compile_to_bytes(&mut lir_program)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
     // 写入输出文件

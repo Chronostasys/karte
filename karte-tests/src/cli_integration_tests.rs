@@ -1542,7 +1542,7 @@ fn main() -> number {
         // AOT 编译
         let aot_compiler = karte_aot::AotCompiler::new(false);
         let binary = aot_compiler
-            .compile_to_bytes(&lir)
+            .compile_to_bytes(&mut lir)
             .expect("AOT compilation failed");
 
         // 写入临时文件并执行
@@ -1637,7 +1637,7 @@ fn main() -> number {
         // AOT 编译
         let aot_compiler = karte_aot::AotCompiler::new(false);
         let binary = aot_compiler
-            .compile_to_bytes(&lir)
+            .compile_to_bytes(&mut lir)
             .expect("AOT compilation failed");
 
         // 写入临时文件并执行
@@ -1716,7 +1716,7 @@ fn main() -> number {
         let aot_compiler = karte_aot::AotCompiler::new(false)
             .with_target(karte_aot::AotTarget::Riscv64);
         let binary = aot_compiler
-            .compile_to_bytes(&lir)
+            .compile_to_bytes(&mut lir)
             .expect("RISC-V AOT compilation failed");
 
         // 写入临时文件
@@ -1981,7 +1981,7 @@ fn main() -> number {
 
         let aot_compiler = karte_aot::AotCompiler::new(false);
         let binary = aot_compiler
-            .compile_to_bytes(&lir_program)
+            .compile_to_bytes(&mut lir_program)
             .expect("AOT compilation failed");
 
         let temp_dir = std::env::temp_dir();

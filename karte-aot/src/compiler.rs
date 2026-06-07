@@ -51,7 +51,7 @@ impl AotCompiler {
     }
 
     /// 编译 LirProgram 为字节
-    pub fn compile_to_bytes(&self, program: &LirProgram) -> Result<Vec<u8>, String> {
+    pub fn compile_to_bytes(&self, program: &mut LirProgram) -> Result<Vec<u8>, String> {
         match self.target {
             AotTarget::X86_64 => {
                 #[cfg(target_arch = "x86_64")]
@@ -72,7 +72,7 @@ impl AotCompiler {
     }
 
     /// x86_64 AOT 编译
-    fn compile_x86_64(&self, program: &LirProgram) -> Result<Vec<u8>, String> {
+    fn compile_x86_64(&self, program: &mut LirProgram) -> Result<Vec<u8>, String> {
         use std::collections::{HashSet, VecDeque};
         use karte_codegen::vm::professional_executor::jit::ffi::RuntimeIntrinsic;
         use karte_lir::ir::Instruction;
