@@ -1071,6 +1071,7 @@ impl<'a> Parser<'a> {
     fn type_name_to_type(name: &str) -> Type {
         match name {
             "number" => Type::Number,
+            "char" => Type::Number,
             "string" => Type::string(),
             "unit" => Type::Unit,
             "bool" => Type::bool(),

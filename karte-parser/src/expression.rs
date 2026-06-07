@@ -978,6 +978,12 @@ impl<'a> Parser<'a> {
                     self.advance();
                     Ok(Expr::Number { value, span })
                 }
+                Token::CharLiteral(value) => {
+                    let value = *value;
+                    let span = token.span;
+                    self.advance();
+                    Ok(Expr::Number { value, span })
+                }
                 Token::StringLiteral(value) => {
                     let value = value.clone();
                     let span = token.span;

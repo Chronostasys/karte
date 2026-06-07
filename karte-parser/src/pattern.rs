@@ -39,6 +39,12 @@ impl<'a> Parser<'a> {
                     self.advance();
                     Ok(karte_hir::Pattern::Number { value, span })
                 }
+                Token::CharLiteral(value) => {
+                    let value = *value;
+                    let span = token.span;
+                    self.advance();
+                    Ok(karte_hir::Pattern::Number { value, span })
+                }
                 Token::Identifier(name) => {
                     let name = name.clone();
                     let span = token.span;

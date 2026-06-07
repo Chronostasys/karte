@@ -82,6 +82,28 @@ pub enum Token {
     })]
     Number(i64),
 
+    // 字符字面量 'a' '\n' 等（支持转义）
+    #[regex(r"'([^'\\]|\\.)'", |lex| {
+        let s = lex.slice();
+        let inner = &s[1..s.len()-1];  // strip quotes
+        if inner.starts_with('\\') {
+            let esc = inner.chars().nth(1).unwrap_or('\0');
+            Some(match esc {
+                'n' => b'\n' as i64,
+                't' => b'\t' as i64,
+                'r' => b'\r' as i64,
+                '\\' => b'\\' as i64,
+                '\'' => b'\'' as i64,
+                '"' => b'"' as i64,
+                '0' => 0,
+                _ => esc as i64,
+            })
+        } else {
+            Some(inner.chars().next().unwrap_or('\0') as i64)
+        }
+    })]
+    CharLiteral(i64),
+
     // 复合赋值运算符（必须在对应单字符运算符之前，Logos 最长匹配）
     #[token("+=")]
     PlusEqual,
@@ -344,6 +366,7 @@ impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Token::Number(n) => write!(f, "{}", n),
+            Token::CharLiteral(c) => write!(f, "'{}'", *c as u8 as char),
             Token::PlusEqual => write!(f, "+="),
             Token::MinusEqual => write!(f, "-="),
             Token::StarEqual => write!(f, "*="),
