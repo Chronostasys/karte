@@ -7,6 +7,18 @@ fn array_new(cap: number) -> number {
     arr
 }
 
+fn array_new_with(af: number, count: number) -> number {
+    let arr = gc_alloc(16 + count * 8);
+    mem_store64(arr, count);
+    mem_store64(arr + 8, count);
+    let i = 0;
+    while i < count {
+        mem_store64(arr + 16 + i * 8, af);
+        i += 1
+    };
+    arr
+}
+
 fn array_len(arr: number) -> number {
     mem_load64(arr)
 }
@@ -15,24 +27,28 @@ fn array_cap(arr: number) -> number {
     mem_load64(arr + 8)
 }
 
+fn array_is_empty(arr: number) -> bool {
+    mem_load64(arr) == 0
+}
+
 fn array_push(arr: number, val: number) -> number {
-    let len = mem_load64(arr);
+    let alen = mem_load64(arr);
     let cap = mem_load64(arr + 8);
-    if len < cap {
-        mem_store64(arr + 16 + len * 8, val);
-        mem_store64(arr, len + 1);
+    if alen < cap {
+        mem_store64(arr + 16 + alen * 8, val);
+        mem_store64(arr, alen + 1);
         arr
     } else {
-        let new_cap = cap + cap;
+        let new_cap = if cap == 0 { 8 } else { cap + cap };
         let new_arr = gc_alloc(16 + new_cap * 8);
         mem_store64(new_arr + 8, new_cap);
         let i = 0;
-        while i < len {
+        while i < alen {
             mem_store64(new_arr + 16 + i * 8, mem_load64(arr + 16 + i * 8));
-            i = i + 1;
+            i += 1
         };
-        mem_store64(new_arr + 16 + len * 8, val);
-        mem_store64(new_arr, len + 1);
+        mem_store64(new_arr + 16 + alen * 8, val);
+        mem_store64(new_arr, alen + 1);
         new_arr
     }
 }
@@ -47,64 +63,314 @@ fn array_set(arr: number, idx: number, val: number) -> number {
 }
 
 fn array_pop(arr: number) -> number {
-    let len = mem_load64(arr);
-    if len > 0 {
-        mem_store64(arr, len - 1);
-        mem_load64(arr + 16 + (len - 1) * 8)
+    let alen = mem_load64(arr);
+    if alen > 0 {
+        mem_store64(arr, alen - 1);
+        mem_load64(arr + 16 + (alen - 1) * 8)
     } else {
         0
     }
 }
 
-fn array_contains(arr: number, val: number) -> number {
-    let len = mem_load64(arr);
+fn array_peek(arr: number) -> number {
+    let alen = mem_load64(arr);
+    if alen > 0 {
+        mem_load64(arr + 16 + (alen - 1) * 8)
+    } else {
+        0
+    }
+}
+
+fn array_contains(arr: number, val: number) -> bool {
+    let alen = mem_load64(arr);
     let i = 0;
-    let found = 0;
-    while i < len {
+    let found = false;
+    while i < alen && !found {
         if mem_load64(arr + 16 + i * 8) == val {
-            let found = 1;
-        } else { 0 };
-        i = i + 1;
+            found = true; 0
+        } else {
+            i += 1; 0
+        }
     };
     found
 }
 
 fn array_index_of(arr: number, val: number) -> number {
-    let len = mem_load64(arr);
+    let alen = mem_load64(arr);
     let i = 0;
-    let result = -1;
-    while i < len {
+    while i < alen {
         if mem_load64(arr + 16 + i * 8) == val {
-            let result = i;
-        } else { 0 };
-        i = i + 1;
+            return i
+        };
+        i += 1
     };
-    result
+    -1
+}
+
+fn array_last_index_of(arr: number, val: number) -> number {
+    let alen = mem_load64(arr);
+    let i = alen - 1;
+    while i >= 0 {
+        if mem_load64(arr + 16 + i * 8) == val {
+            return i
+        };
+        i -= 1
+    };
+    -1
+}
+
+fn array_remove_at(arr: number, idx: number) -> number {
+    let alen = mem_load64(arr);
+    if idx < 0 || idx >= alen {
+        arr
+    } else {
+        let i = idx;
+        while i < alen - 1 {
+            mem_store64(arr + 16 + i * 8, mem_load64(arr + 16 + (i + 1) * 8));
+            i += 1
+        };
+        mem_store64(arr, alen - 1);
+        arr
+    }
+}
+
+fn array_insert_at(arr: number, idx: number, val: number) -> number {
+    let alen = mem_load64(arr);
+    let cap = mem_load64(arr + 8);
+    let base = if alen >= cap {
+        let new_cap = if cap == 0 { 8 } else { cap + cap };
+        let new_arr = gc_alloc(16 + new_cap * 8);
+        mem_store64(new_arr + 8, new_cap);
+        let i = 0;
+        while i < alen {
+            mem_store64(new_arr + 16 + i * 8, mem_load64(arr + 16 + i * 8));
+            i += 1
+        };
+        new_arr
+    } else {
+        arr
+    };
+    let actual_len = mem_load64(base);
+    let i = actual_len;
+    while i > idx {
+        mem_store64(base + 16 + i * 8, mem_load64(base + 16 + (i - 1) * 8));
+        i -= 1
+    };
+    mem_store64(base + 16 + idx * 8, val);
+    mem_store64(base, actual_len + 1);
+    base
 }
 
 fn array_copy(arr: number) -> number {
-    let len = mem_load64(arr);
+    let alen = mem_load64(arr);
     let cap = mem_load64(arr + 8);
     let new_arr = gc_alloc(16 + cap * 8);
-    mem_store64(new_arr, len);
+    mem_store64(new_arr, alen);
     mem_store64(new_arr + 8, cap);
     let i = 0;
-    while i < len {
+    while i < alen {
         mem_store64(new_arr + 16 + i * 8, mem_load64(arr + 16 + i * 8));
-        i = i + 1;
+        i += 1
     };
     new_arr
 }
 
+fn array_copy_range(arr: number, start: number, end: number) -> number {
+    let alen = end - start;
+    let new_arr = gc_alloc(16 + alen * 8);
+    mem_store64(new_arr, alen);
+    mem_store64(new_arr + 8, alen);
+    let i = 0;
+    while i < alen {
+        mem_store64(new_arr + 16 + i * 8, mem_load64(arr + 16 + (start + i) * 8));
+        i += 1
+    };
+    new_arr
+}
+
+fn array_reverse(arr: number) -> number {
+    let alen = mem_load64(arr);
+    let i = 0;
+    while i < alen / 2 {
+        let tmp = mem_load64(arr + 16 + i * 8);
+        mem_store64(arr + 16 + i * 8, mem_load64(arr + 16 + (alen - 1 - i) * 8));
+        mem_store64(arr + 16 + (alen - 1 - i) * 8, tmp);
+        i += 1
+    };
+    arr
+}
+
 fn array_join(arr: number, sep: string) -> string {
-    let len = mem_load64(arr);
-    if len == 0 { "" } else {
+    let alen = mem_load64(arr);
+    if alen == 0 {
+        ""
+    } else {
         let result = to_string(mem_load64(arr + 16));
         let i = 1;
-        while i < len {
+        while i < alen {
             let result = result + sep + to_string(mem_load64(arr + 16 + i * 8));
-            i = i + 1;
+            i += 1
         };
         result
+    }
+}
+
+fn array_sum(arr: number) -> number {
+    let alen = mem_load64(arr);
+    let total = 0;
+    let i = 0;
+    while i < alen {
+        total = total + mem_load64(arr + 16 + i * 8);
+        i += 1
+    };
+    total
+}
+
+fn array_min(arr: number) -> number {
+    let alen = mem_load64(arr);
+    if alen == 0 {
+        0
+    } else {
+        let m = mem_load64(arr + 16);
+        let i = 1;
+        while i < alen {
+            let v = mem_load64(arr + 16 + i * 8);
+            if v < m { m = v; 0 } else { 0 };
+            i += 1
+        };
+        m
+    }
+}
+
+fn array_max(arr: number) -> number {
+    let alen = mem_load64(arr);
+    if alen == 0 {
+        0
+    } else {
+        let m = mem_load64(arr + 16);
+        let i = 1;
+        while i < alen {
+            let v = mem_load64(arr + 16 + i * 8);
+            if v > m { m = v; 0 } else { 0 };
+            i += 1
+        };
+        m
+    }
+}
+
+fn array_sort(arr: number) -> number {
+    let alen = mem_load64(arr);
+    if alen <= 1 {
+        arr
+    } else {
+        let i = 1;
+        while i < alen {
+            let key = mem_load64(arr + 16 + i * 8);
+            let j = i - 1;
+            while j >= 0 && mem_load64(arr + 16 + j * 8) > key {
+                mem_store64(arr + 16 + (j + 1) * 8, mem_load64(arr + 16 + j * 8));
+                j -= 1
+            };
+            mem_store64(arr + 16 + (j + 1) * 8, key);
+            i += 1
+        };
+        arr
+    }
+}
+
+fn array_fill(arr: number, val: number) -> number {
+    let alen = mem_load64(arr);
+    let i = 0;
+    while i < alen {
+        mem_store64(arr + 16 + i * 8, val);
+        i += 1
+    };
+    arr
+}
+
+fn array_count(arr: number, val: number) -> number {
+    let alen = mem_load64(arr);
+    let count = 0;
+    let i = 0;
+    while i < alen {
+        if mem_load64(arr + 16 + i * 8) == val {
+            count += 1; 0
+        } else {
+            0
+        };
+        i += 1
+    };
+    count
+}
+
+fn array_swap(arr: number, i: number, j: number) -> number {
+    let tmp = mem_load64(arr + 16 + i * 8);
+    mem_store64(arr + 16 + i * 8, mem_load64(arr + 16 + j * 8));
+    mem_store64(arr + 16 + j * 8, tmp);
+    arr
+}
+
+fn array_resize(arr: number, new_len: number) -> number {
+    let alen = mem_load64(arr);
+    let cap = mem_load64(arr + 8);
+    if new_len <= cap {
+        mem_store64(arr, new_len);
+        arr
+    } else {
+        let new_arr = gc_alloc(16 + new_len * 8);
+        mem_store64(new_arr + 8, new_len);
+        let i = 0;
+        while i < alen {
+            mem_store64(new_arr + 16 + i * 8, mem_load64(arr + 16 + i * 8));
+            i += 1
+        };
+        while i < new_len {
+            mem_store64(new_arr + 16 + i * 8, 0);
+            i += 1
+        };
+        mem_store64(new_arr, new_len);
+        new_arr
+    }
+}
+
+fn array_append(arr: number, other: number) -> number {
+    let alen = mem_load64(arr);
+    let olen = mem_load64(other);
+    let new_len = alen + olen;
+    let cap = mem_load64(arr + 8);
+    let base = if new_len <= cap {
+        arr
+    } else {
+        let new_cap = cap + cap;
+        let new_arr = gc_alloc(16 + new_cap * 8);
+        mem_store64(new_arr + 8, new_cap);
+        let i = 0;
+        while i < alen {
+            mem_store64(new_arr + 16 + i * 8, mem_load64(arr + 16 + i * 8));
+            i += 1
+        };
+        new_arr
+    };
+    let i = 0;
+    while i < olen {
+        mem_store64(base + 16 + (alen + i) * 8, mem_load64(other + 16 + i * 8));
+        i += 1
+    };
+    mem_store64(base, new_len);
+    base
+}
+
+fn array_to_string(arr: number) -> string {
+    let alen = mem_load64(arr);
+    if alen == 0 {
+        "[]"
+    } else {
+        let result = "[" + to_string(mem_load64(arr + 16));
+        let i = 1;
+        while i < alen {
+            let result = result + ", " + to_string(mem_load64(arr + 16 + i * 8));
+            i += 1
+        };
+        result + "]"
     }
 }

@@ -1,0 +1,125 @@
+module std.char
+
+fn is_digit(c: number) -> bool {
+    c >= 48 && c <= 57
+}
+
+fn is_alpha(c: number) -> bool {
+    is_lower(c) || is_upper(c)
+}
+
+fn is_lower(c: number) -> bool {
+    c >= 97 && c <= 122
+}
+
+fn is_upper(c: number) -> bool {
+    c >= 65 && c <= 90
+}
+
+fn is_alpha_num(c: number) -> bool {
+    is_alpha(c) || is_digit(c)
+}
+
+fn is_space(c: number) -> bool {
+    c == 32 || c == 9 || c == 10 || c == 13
+}
+
+fn is_printable(c: number) -> bool {
+    c >= 32 && c <= 126
+}
+
+fn to_upper(c: number) -> number {
+    if is_lower(c) {
+        c - 32
+    } else {
+        c
+    }
+}
+
+fn to_lower(c: number) -> number {
+    if is_upper(c) {
+        c + 32
+    } else {
+        c
+    }
+}
+
+fn to_char(c: number) -> string {
+    char_to_string(c)
+}
+
+fn from_char(s: string) -> number {
+    if len(s) > 0 {
+        str_index(s, 0)
+    } else {
+        0
+    }
+}
+
+fn is_newline(c: number) -> bool {
+    c == 10
+}
+
+fn is_tab(c: number) -> bool {
+    c == 9
+}
+
+fn is_carriage_return(c: number) -> bool {
+    c == 13
+}
+
+fn digit_value(c: number) -> number {
+    if is_digit(c) {
+        c - 48
+    } else {
+        -1
+    }
+}
+
+fn hex_value(c: number) -> number {
+    if is_digit(c) {
+        c - 48
+    } else {
+        if c >= 97 && c <= 102 {
+            c - 97 + 10
+        } else {
+            if c >= 65 && c <= 70 {
+                c - 65 + 10
+            } else {
+                -1
+            }
+        }
+    }
+}
+
+fn escape_char(c: number) -> string {
+    if c == 10 {
+        "\\n"
+    } else {
+        if c == 9 {
+            "\\t"
+        } else {
+            if c == 13 {
+                "\\r"
+            } else {
+                if c == 0 {
+                    "\\0"
+                } else {
+                    if c == 92 {
+                        "\\\\"
+                    } else {
+                        if c == 39 {
+                            "\\'"
+                        } else {
+                            if c == 34 {
+                                "\\\""
+                            } else {
+                                char_to_string(c)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

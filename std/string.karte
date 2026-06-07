@@ -8,12 +8,12 @@ fn concat(a: string, b: string) -> string {
     a + b
 }
 
-fn contains(s: string, ch: number) -> number {
-    str_contains(s, ch)
+fn is_empty(s: string) -> bool {
+    len(s) == 0
 }
 
-fn count_splits(s: string, delimiter: number) -> number {
-    split_count(s, delimiter)
+fn char_at(s: string, index: number) -> number {
+    str_index(s, index)
 }
 
 fn char_code(s: string, index: number) -> number {
@@ -24,11 +24,15 @@ fn from_number(n: number) -> string {
     to_string(n)
 }
 
-fn is_empty(s: string) -> bool {
-    len(s) == 0
+fn eq(a: string, b: string) -> bool {
+    if str_equal(a, b) == 1 { true } else { false }
 }
 
-fn starts_with(s: string, ch: number) -> bool {
+fn compare(a: string, b: string) -> number {
+    str_compare(a, b)
+}
+
+fn starts_with_char(s: string, ch: number) -> bool {
     if len(s) > 0 {
         str_index(s, 0) == ch
     } else {
@@ -36,12 +40,51 @@ fn starts_with(s: string, ch: number) -> bool {
     }
 }
 
-fn ends_with(s: string, ch: number) -> bool {
+fn ends_with_char(s: string, ch: number) -> bool {
     let n = len(s);
     if n > 0 {
         str_index(s, n - 1) == ch
     } else {
         false
+    }
+}
+
+fn starts_with(s: string, prefix: string) -> bool {
+    let pn = len(prefix);
+    if pn > len(s) {
+        false
+    } else {
+        let i = 0;
+        let ok = true;
+        while i < pn && ok {
+            if str_index(s, i) != str_index(prefix, i) {
+                ok = false; 0
+            } else {
+                0
+            };
+            i += 1
+        };
+        ok
+    }
+}
+
+fn ends_with(s: string, suffix: string) -> bool {
+    let sn = len(suffix);
+    let n = len(s);
+    if sn > n {
+        false
+    } else {
+        let i = 0;
+        let ok = true;
+        while i < sn && ok {
+            if str_index(s, n - sn + i) != str_index(suffix, i) {
+                ok = false; 0
+            } else {
+                0
+            };
+            i += 1
+        };
+        ok
     }
 }
 
@@ -67,6 +110,18 @@ fn index_of(s: string, ch: number) -> number {
     -1
 }
 
+fn index_of_from(s: string, ch: number, from: number) -> number {
+    let n = len(s);
+    let i = from;
+    while i < n {
+        if str_index(s, i) == ch {
+            return i
+        };
+        i += 1
+    };
+    -1
+}
+
 fn last_index_of(s: string, ch: number) -> number {
     let i = len(s) - 1;
     while i >= 0 {
@@ -76,6 +131,53 @@ fn last_index_of(s: string, ch: number) -> number {
         i -= 1
     };
     -1
+}
+
+fn contains_char(s: string, ch: number) -> bool {
+    index_of(s, ch) >= 0
+}
+
+fn contains(s: string, ch: number) -> number {
+    if index_of(s, ch) >= 0 { 1 } else { 0 }
+}
+
+fn count_char(s: string, ch: number) -> number {
+    let n = len(s);
+    let count = 0;
+    let i = 0;
+    while i < n {
+        if str_index(s, i) == ch {
+            count += 1; 0
+        } else {
+            0
+        };
+        i += 1
+    };
+    count
+}
+
+fn count_splits(s: string, delimiter: number) -> number {
+    split_count(s, delimiter)
+}
+
+fn slice(s: string, start: number) -> string {
+    substring(s, start, len(s))
+}
+
+fn slice_range(s: string, start: number, end: number) -> string {
+    if start < 0 {
+        substring(s, 0, end)
+    } else {
+        if end > len(s) {
+            substring(s, start, len(s))
+        } else {
+            if start >= end {
+                ""
+            } else {
+                substring(s, start, end)
+            }
+        }
+    }
 }
 
 fn to_upper_char(ch: number) -> number {
@@ -150,4 +252,165 @@ fn trim(s: string) -> string {
         }
     };
     substring(s, start, end + 1)
+}
+
+fn trim_start(s: string) -> string {
+    let n = len(s);
+    let start = 0;
+    while start < n {
+        let c = str_index(s, start);
+        if c == 32 || c == 9 || c == 10 || c == 13 {
+            start += 1
+        } else {
+            break
+        }
+    };
+    substring(s, start, n)
+}
+
+fn trim_end(s: string) -> string {
+    let end = len(s) - 1;
+    while end >= 0 {
+        let c = str_index(s, end);
+        if c == 32 || c == 9 || c == 10 || c == 13 {
+            end -= 1
+        } else {
+            break
+        }
+    };
+    substring(s, 0, end + 1)
+}
+
+fn pad_left(s: string, width: number, ch: number) -> string {
+    let n = len(s);
+    if n >= width {
+        s
+    } else {
+        let pad = repeat(char_to_string(ch), width - n);
+        pad + s
+    }
+}
+
+fn pad_right(s: string, width: number, ch: number) -> string {
+    let n = len(s);
+    if n >= width {
+        s
+    } else {
+        let pad = repeat(char_to_string(ch), width - n);
+        s + pad
+    }
+}
+
+fn split_at(s: string, delimiter: number, part: number) -> string {
+    let n = len(s);
+    if part == 0 {
+        let i = index_of(s, delimiter);
+        if i < 0 { s } else { substring(s, 0, i) }
+    } else {
+        let i = index_of(s, delimiter);
+        if i < 0 {
+            ""
+        } else {
+            substring(s, i + 1, n)
+        }
+    }
+}
+
+fn split_count_parts(s: string, delimiter: number) -> number {
+    if len(s) == 0 {
+        0
+    } else {
+        count_splits(s, delimiter) + 1
+    }
+}
+
+fn join_char(parts_ptr: number, count: number, sep: number) -> string {
+    let result = "";
+    let i = 0;
+    while i < count {
+        if i > 0 {
+            result = result + char_to_string(sep)
+        };
+        let str_ptr = mem_load64(parts_ptr + i * 8);
+        result = result + unsafe_cast(str_ptr);
+        i += 1
+    };
+    result
+}
+
+fn replace_char(s: string, old_ch: number, new_ch: number) -> string {
+    let n = len(s);
+    let result = "";
+    let i = 0;
+    while i < n {
+        let c = str_index(s, i);
+        if c == old_ch {
+            result = result + char_to_string(new_ch)
+        } else {
+            result = result + char_to_string(c)
+        };
+        i += 1
+    };
+    result
+}
+
+fn split_to_buf(s: string, delimiter: number, buf: number, max_parts: number) -> number {
+    let n = len(s);
+    let start = 0;
+    let count = 0;
+    let i = 0;
+    while i < n && count < max_parts {
+        if str_index(s, i) == delimiter {
+            mem_store64(buf + count * 8, unsafe_cast(substring(s, start, i)));
+            count += 1;
+            start = i + 1;
+            0
+        } else {
+            0
+        };
+        i += 1
+    };
+    if start <= n && count < max_parts {
+        mem_store64(buf + count * 8, unsafe_cast(substring(s, start, n)));
+        count += 1; 0
+    } else {
+        0
+    };
+    count
+}
+
+fn from_char_code(code: number) -> string {
+    char_to_string(code)
+}
+
+fn is_whitespace(c: number) -> bool {
+    c == 32 || c == 9 || c == 10 || c == 13
+}
+
+fn strip_prefix(s: string, prefix: string) -> string {
+    if starts_with(s, prefix) {
+        substring(s, len(prefix), len(s))
+    } else {
+        s
+    }
+}
+
+fn strip_suffix(s: string, suffix: string) -> string {
+    if ends_with(s, suffix) {
+        substring(s, 0, len(s) - len(suffix))
+    } else {
+        s
+    }
+}
+
+fn find_substr(s: string, target: number, from: number) -> number {
+    let n = len(s);
+    let i = from;
+    while i < n {
+        if str_index(s, i) == target {
+            return i
+        };
+        i += 1
+    };
+    -1
 }

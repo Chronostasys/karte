@@ -1,9 +1,13 @@
 [package]
 name = "test_cc"
-version = "0.1.0"
+version = "0.2.0"
 
 [dependencies]
 std.io = "*"
+std.core = "*"
+std.string = "*"
+std.array = "*"
+std.char = "*"
 
 [[modules]]
 id = "main"

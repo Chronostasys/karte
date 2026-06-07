@@ -3,7 +3,7 @@ module std.prelude
 import std.core::{abs, min, max, clamp, sign, is_even, is_odd, floor_div, factorial, gcd, lcm, pow, fibonacci, sum_to, number_to_string, ceil_div}
 import std.math::{sqrt_floor, is_prime}
 import std.io::{println, print_number, println_number, print_bool, println_bool, debug, debug_string}
-import std.string::{length, concat, contains, count_splits, char_code, from_number, is_empty, starts_with, ends_with, repeat, index_of, last_index_of, to_upper, to_lower, reverse, trim}
+import std.string::{length, concat, contains_char, count_splits, char_code, from_number, is_empty, starts_with_char, ends_with_char, repeat, index_of, last_index_of, to_upper, to_lower, reverse, trim, eq, compare, trim_start, trim_end, replace_char, pad_left, pad_right, split_at, slice}
 
 fn __prelude_init() -> number {
     0
