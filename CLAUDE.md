@@ -139,7 +139,7 @@ The module system (`karte-module-system`) implements a sophisticated multi-modul
 - Product types (structs): `struct Point { x: number, y: number }`
 - Reference types: `&T` with explicit dereferencing (`*ref`)
 - Pattern matching with exhaustiveness checking
-- Built-in types: `Bool`, `Option<T>`
+- Built-in types: `Bool`, `Option<T>`, `char` (映射为 `number`，支持字面量 `'a'`)
 
 #### Function and Closure Representation
 
@@ -394,7 +394,12 @@ let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering
 ## Notable Recent Changes
 
 Recent work includes:
-- **unsafe_cast + hashmap 修复 + 编译性能优化 (2026-06-07)** — 内存原语与标准库改进：
+- **Karte char 字面量与 std 文件操作 (2026-06-07)** — 语言特性与标准库完善：
+  - **`'a'` char 字面量**: Lexer 新增 `CharLiteral(i64)` token，支持转义 `\n` `\t` `\r` `\\` `\'` `\"` `\0`，parser 映射为 `Expr::Number`
+  - **`char` 类型**: 类型注解 `char` 映射为 `Type::Number`（如 C 语言 char 即整数），`let c: char = 'A'` 和 `fn f(c: char) -> char` 均支持
+  - **Pattern matching**: `match c { 'a' => ..., '\n' => ... }` 原生支持
+  - **std 文件操作**: `std/io.karte` 已完备——`sys_open`/`sys_close`/`sys_read`/`sys_write` (使用 `raw_syscall6` 原语) + 高层 API `file_read_all`/`file_write_all`。字符串布局: offset0=len(8字节), offset8=data。
+- **test_cc bitwise/char/指针/sizeof (2026-06-07)** — C子集编译器重大扩充：
   - **`unsafe_cast` 内建函数**: 替代 `mem_load_ptr`，接受任意类型返回任意类型，MIR 层为 no-op（直接 Assign）
   - **`std/hashmap.karte` 修复**: while 循环中 `let` 新绑定改为赋值（`=` 语法），避免无限循环；用 `unsafe_cast(mem_load64(...))` 替代 `mem_load_ptr`
   - **Dev profile `opt-level = 1`**: `[profile.dev]` 设 `opt-level = 1`, `overflow-checks = false`，编译性能从 8s→1.1s。**注意：边界检查已关闭**，调试奇怪问题时可临时恢复 `opt-level = 0`
