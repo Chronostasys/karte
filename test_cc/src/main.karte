@@ -3,40 +3,48 @@ module main
 fn emit(s: string) -> number { print(s + "\n"); 0 }
 
 fn main() -> number {
-    let src = "int main() { int s; s = 0; int i; for (i = 1; i <= 10; i += 1) { s += i; }; return s; }";
-    let tk = tokenize(src);
-    let tn = count_tk(tk);
-    emit(".globl _start");
-    emit("_start:");
-    emit("  call main");
-    emit("  mov %rax, %rdi");
-    emit("  mov $60, %rax");
-    emit("  syscall");
-    let pos = 0;
-    let lc = 0;
-    while pos < tn {
-        let k = tk_kind(tk, pos, tn);
-        if k == 1 {
-            let name = get_val(tk, pos + 1, tn);
-            let p2 = pos + 2;
-            let argc = count_args(p2, tk, tn);
-            emit(name + ":");
-            emit("  push %rbp");
-            emit("  mov %rsp, %rbp");
-            emit("  sub $208, %rsp");
-            let pv = save_params(p2, tk, tn, argc);
-            let body_start = skip_to(tk, p2, tn, 4);
-            let r = do_block(body_start, tk, tn, pv, lc + argc * 10);
-            lc = r.2;
-            emit("  leave");
-            emit("  ret");
-            let body_end = skip_matching(body_start + 1, tk, tn);
-            pos = body_end + 1
-        } else {
-            pos = pos + 1
-        }
-    };
-    0
+    let buf = gc_alloc(65536 + 8);
+    let n = sys_read(0, buf + 8, 65535);
+    if n <= 0 {
+        print("error: no input\n");
+        0 - 1
+    } else {
+        mem_store64(buf, n);
+        let src = unsafe_cast(buf);
+        let tk = tokenize(src);
+        let tn = count_tk(tk);
+        emit(".globl _start");
+        emit("_start:");
+        emit("  call main");
+        emit("  mov %rax, %rdi");
+        emit("  mov $60, %rax");
+        emit("  syscall");
+        let pos = 0;
+        let lc = 0;
+        while pos < tn {
+            let k = tk_kind(tk, pos, tn);
+            if k == 1 {
+                let name = get_val(tk, pos + 1, tn);
+                let p2 = pos + 2;
+                let argc = count_args(p2, tk, tn);
+                emit(name + ":");
+                emit("  push %rbp");
+                emit("  mov %rsp, %rbp");
+                emit("  sub $208, %rsp");
+                let pv = save_params(p2, tk, tn, argc);
+                let body_start = skip_to(tk, p2, tn, 4);
+                let r = do_block(body_start, tk, tn, pv, lc + argc * 10);
+                lc = r.2;
+                emit("  leave");
+                emit("  ret");
+                let body_end = skip_matching(body_start + 1, tk, tn);
+                pos = body_end + 1
+            } else {
+                pos = pos + 1
+            }
+        };
+        0
+    }
 }
 
 fn count_args(pos: number, tk: string, tn: number) -> number {
@@ -59,19 +67,16 @@ fn count_args(pos: number, tk: string, tn: number) -> number {
 fn save_params(pos: number, tk: string, tn: number, argc: number) -> string {
     let p = pos + 1;
     let vars = "";
-    let i = 0;
-    while i < argc {
+    for i in 0..argc {
         if tk_kind(tk, p, tn) == 1 {
             let nm = get_val(tk, p + 1, tn);
             vars = vars + nm + ":" + to_string(i) + ",";
-            let reg = param_reg(i);
-            emit("  mov " + reg + ", " + to_string(0 - (i + 1) * 8) + "(%rbp)");
+            emit("  mov " + param_reg(i) + ", " + to_string(0 - (i + 1) * 8) + "(%rbp)");
             p = p + 3;
             if p < tn && tk_kind(tk, p, tn) == 9 { p = p + 1 } else { 0 }
         } else {
             p = p + 1
-        };
-        i = i + 1
+        }
     };
     vars
 }
@@ -111,14 +116,14 @@ fn do_for(pos: number, tk: string, tn: number, vars: string, lc: number) -> (num
     emit("  je .L" + to_string(endl));
     let upos = cond_end + 1;
     let update_end = skip_to(tk, upos, tn, 7);
-    let brace_pos = skip_to(tk, update_end, tn, 4);
-    let body_end = skip_matching(brace_pos + 1, tk, tn);
+    let body_end = skip_matching(skip_to(tk, update_end, tn, 4) + 1, tk, tn);
     let b = do_block(update_end, tk, tn, vars, endl + 1);
     do_stmt_from(upos, tk, tn, b.1, update_end);
     emit("  jmp .L" + to_string(sl));
     emit(".L" + to_string(endl) + ":");
     (body_end + 1, b.2)
 }
+
 
 fn skip_matching(pos: number, tk: string, tn: number) -> number {
     let depth = 1;
@@ -223,32 +228,26 @@ fn do_if(pos: number, tk: string, tn: number, vars: string, lc: number) -> (numb
     emit(".L" + to_string(elsel) + ":");
     let p = b.0;
     let v = b.1;
-    let vc2 = b.2;
+    let vc = b.2;
     if p < tn {
         let nk = tk_kind(tk, p, tn);
         if nk == 8 {
             let np = p + 1;
-            if np < tn {
-                let k2 = tk_kind(tk, np, tn);
-                if k2 == 22 {
-                    let b2 = do_block(np + 1, tk, tn, v, vc2 + 1);
-                    emit(".L" + to_string(endl) + ":");
-                    (b2.0 + 1, b2.1, b2.2)
-                } else {
-                    emit(".L" + to_string(endl) + ":");
-                    (np, v, vc2)
-                }
+            if np < tn && tk_kind(tk, np, tn) == 22 {
+                let b2 = do_block(np + 1, tk, tn, v, vc + 1);
+                emit(".L" + to_string(endl) + ":");
+                (b2.0 + 1, b2.1, b2.2)
             } else {
                 emit(".L" + to_string(endl) + ":");
-                (np, v, vc2)
+                (np, v, vc)
             }
         } else {
             emit(".L" + to_string(endl) + ":");
-            (p, v, vc2)
+            (p, v, vc)
         }
     } else {
         emit(".L" + to_string(endl) + ":");
-        (p, v, vc2)
+        (p, v, vc)
     }
 }
 

@@ -26,6 +26,7 @@ pub enum RuntimeIntrinsic {
     MemLoad64,
     MemStore64,
     GcAlloc,
+    RawSyscall6,
 }
 
 impl RuntimeIntrinsic {
@@ -85,6 +86,9 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::GcAlloc => {
                 runtime::karte_jit_runtime_gc_alloc as *const ()
             }
+            RuntimeIntrinsic::RawSyscall6 => {
+                runtime::karte_jit_runtime_raw_syscall6 as *const ()
+            }
         }
     }
 
@@ -112,13 +116,14 @@ impl RuntimeIntrinsic {
             RuntimeIntrinsic::MemLoad64 => "karte_jit_runtime_mem_load64",
             RuntimeIntrinsic::MemStore64 => "karte_jit_runtime_mem_store64",
             RuntimeIntrinsic::GcAlloc => "karte_jit_runtime_gc_alloc",
+            RuntimeIntrinsic::RawSyscall6 => "karte_jit_runtime_raw_syscall6",
         }
     }
 
     pub fn has_result(self) -> bool {
         matches!(
             self,
-            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual | RuntimeIntrinsic::StringCompare | RuntimeIntrinsic::StringCharAt | RuntimeIntrinsic::StringSubstring | RuntimeIntrinsic::StringContains | RuntimeIntrinsic::SplitCount | RuntimeIntrinsic::Trim | RuntimeIntrinsic::CharToString | RuntimeIntrinsic::ToString | RuntimeIntrinsic::MemLoad64 | RuntimeIntrinsic::GcAlloc
+            RuntimeIntrinsic::AllocAligned | RuntimeIntrinsic::StringConcat | RuntimeIntrinsic::StringEqual | RuntimeIntrinsic::StringCompare | RuntimeIntrinsic::StringCharAt | RuntimeIntrinsic::StringSubstring | RuntimeIntrinsic::StringContains | RuntimeIntrinsic::SplitCount | RuntimeIntrinsic::Trim | RuntimeIntrinsic::CharToString | RuntimeIntrinsic::ToString | RuntimeIntrinsic::MemLoad64 | RuntimeIntrinsic::GcAlloc | RuntimeIntrinsic::RawSyscall6
         )
     }
 }

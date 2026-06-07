@@ -629,3 +629,55 @@ pub extern "C" fn karte_jit_runtime_panic() {
     eprintln!("runtime error: division by zero");
     std::process::exit(134);
 }
+
+/// raw_syscall6(sysno, a1, a2, a3, a4, a5, a6) -> result
+/// 通用 syscall 入口，Go 风格。所有参数和返回值都是 i64/u64。
+/// std 库中用 Karte 代码封装 open/read/write/close 等。
+#[no_mangle]
+pub extern "C" fn karte_jit_runtime_raw_syscall6(
+    sysno: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64, a6: u64,
+) -> u64 {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let ret: u64;
+        unsafe {
+            core::arch::asm!(
+                "syscall",
+                inlateout("rax") sysno => ret,
+                in("rdi") a1,
+                in("rsi") a2,
+                in("rdx") a3,
+                in("r10") a4,
+                in("r8") a5,
+                in("r9") a6,
+                out("rcx") _,
+                out("r11") _,
+                options(nostack)
+            );
+        }
+        ret
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        let ret: u64;
+        unsafe {
+            core::arch::asm!(
+                "svc #0",
+                inlateout("x8") sysno => ret,
+                in("x0") a1,
+                in("x1") a2,
+                in("x2") a3,
+                in("x3") a4,
+                in("x4") a5,
+                in("x5") a6,
+                options(nostack)
+            );
+        }
+        ret
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        let _ = (sysno, a1, a2, a3, a4, a5, a6);
+        0
+    }
+}

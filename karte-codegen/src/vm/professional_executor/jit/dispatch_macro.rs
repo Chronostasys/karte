@@ -175,6 +175,9 @@ macro_rules! dispatch_compile_instruction {
             Instruction::GcAlloc { dst, size, .. } => {
                 $self.compile_gc_alloc(dst, size, $cb, $ctx_expr)
             }
+            Instruction::Syscall6 { dst, sysno, a1, a2, a3, a4, a5, a6, .. } => {
+                $self.compile_syscall6(dst, sysno, a1, a2, a3, a4, a5, a6, $cb)
+            }
             Instruction::MemLoad64 { dst, addr, .. } => {
                 $self.compile_mem_load64(dst, addr, $cb, $ctx_expr)
             }

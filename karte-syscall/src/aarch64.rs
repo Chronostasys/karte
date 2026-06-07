@@ -9,6 +9,8 @@ use crate::{SyscallError, SyscallResult};
 // AArch64 系统调用号 (与 x86_64 不同!)
 const SYS_READ: u64 = 63;
 const SYS_WRITE: u64 = 64;
+const SYS_OPENAT: u64 = 56;
+const SYS_CLOSE: u64 = 57;
 const SYS_EXIT: u64 = 93;
 const SYS_MMAP: u64 = 222;
 const SYS_MUNMAP: u64 = 215;
@@ -37,6 +39,12 @@ unsafe fn syscall6(n: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64)
 #[inline(always)]
 unsafe fn syscall3(n: u64, a0: u64, a1: u64, a2: u64) -> u64 {
     syscall6(n, a0, a1, a2, 0, 0, 0)
+}
+
+/// 原始系统调用 (4 参数)
+#[inline(always)]
+unsafe fn syscall4(n: u64, a0: u64, a1: u64, a2: u64, a3: u64) -> u64 {
+    syscall6(n, a0, a1, a2, a3, 0, 0)
 }
 
 /// 原始系统调用 (2 参数)
@@ -69,6 +77,16 @@ pub fn sys_write(fd: usize, buf: *const u8, count: usize) -> SyscallResult {
 /// read(fd, buf, count) — 从文件描述符读取数据
 pub fn sys_read(fd: usize, buf: *mut u8, count: usize) -> SyscallResult {
     unsafe { check(syscall3(SYS_READ, fd as u64, buf as u64, count as u64)) }
+}
+
+/// openat(dirfd, path, flags, mode) — 打开文件 (AArch64 使用 openat)
+pub fn sys_open(path: *const u8, flags: i32, mode: u32) -> SyscallResult {
+    unsafe { check(syscall4(SYS_OPENAT, 0xFFFFFFFFFFFFFFFFu64, path as u64, flags as u64, mode as u64)) }
+}
+
+/// close(fd) — 关闭文件描述符
+pub fn sys_close(fd: i32) -> SyscallResult {
+    unsafe { check(syscall1(SYS_CLOSE, fd as u64)) }
 }
 
 /// exit(code) — 退出进程

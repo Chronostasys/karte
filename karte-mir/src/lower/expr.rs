@@ -4300,6 +4300,23 @@ fn lower_function_call(
             return Ok(());
         }
 
+        // raw_syscall6(sysno, a1, a2, a3, a4, a5, a6) -> result
+        // 通用 syscall 入口（Go 风格），直接调用 Runtime
+        if name == "raw_syscall6" {
+            if args.len() != 7 {
+                ctx.errors.push("raw_syscall6 需要 7 个参数 (sysno, a1..a6)".to_string());
+                return Err(ctx.errors.clone());
+            }
+            let arg_vals: Vec<Value> = args.iter().map(|a| lower_expression_to_temp(ctx, a)).collect::<Result<_, _>>()?;
+            ctx.add_statement(Statement::Call {
+                target: Some(destination.clone()),
+                function: Value::Function { name: "__runtime_raw_syscall6".to_string(), ty: None },
+                args: arg_vals,
+                span,
+            });
+            return Ok(());
+        }
+
         if name == "mem_load64" {
             if args.len() != 1 {
                 ctx.errors.push("mem_load64 需要一个参数 (addr)".to_string());

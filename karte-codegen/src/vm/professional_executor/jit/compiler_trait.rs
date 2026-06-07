@@ -302,6 +302,15 @@ pub trait JitCompiler: std::fmt::Debug {
         self.emit_runtime_call(code_builder, call, Some(dst), ctx)
     }
 
+    /// 编译 Syscall6 指令（架构相关实现）
+    fn compile_syscall6(
+        &mut self,
+        dst: &Register,
+        sysno: &Register, a1: &Register, a2: &Register, a3: &Register,
+        a4: &Register, a5: &Register, a6: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()>;
+
     fn compile_mem_load64(
         &mut self,
         dst: &Register,

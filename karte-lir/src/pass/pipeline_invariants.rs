@@ -541,6 +541,7 @@ fn instr_name(instr: &Instruction) -> &'static str {
         Instruction::Trim { .. } => "Trim",
         Instruction::CharToString { .. } => "CharToString",
         Instruction::GcAlloc { .. } => "GcAlloc",
+        Instruction::Syscall6 { .. } => "Syscall6",
         Instruction::MemLoad64 { .. } => "MemLoad64",
         Instruction::MemStore64 { .. } => "MemStore64",
             Instruction::ToString { .. } => "ToString",

@@ -1138,6 +1138,13 @@ impl TypeChecker {
                     let beta = self.fresh_type_var();
                     return Type::function(vec![Type::Var(alpha)], Type::Var(beta));
                 }
+                // 通用 syscall 入口（Go 风格 raw_syscall6）
+                if name == "raw_syscall6" {
+                    return Type::function(
+                        vec![Type::Number, Type::Number, Type::Number, Type::Number, Type::Number, Type::Number, Type::Number],
+                        Type::Number,
+                    );
+                }
                 if name == "mem_store64" {
                     let alpha = self.fresh_type_var();
                     return Type::function(vec![Type::Number, Type::Var(alpha)], Type::Number);
@@ -1781,16 +1788,8 @@ impl TypeChecker {
                 if let Some(else_branch) = else_branch {
                     let else_type = self.infer_expr(else_branch, env);
                     // 约束：then和else分支的类型必须兼容
-                    // 放宽策略：如果其中一个分支是 Unit，返回另一个分支的类型
-                    // 这允许 if-else 的一个分支是语句（返回 Unit），另一个是表达式
-                    match (&then_type, &else_type) {
-                        (Type::Unit, _) => else_type.clone(),
-                        (_, Type::Unit) => then_type.clone(),
-                        _ => {
-                            self.add_constraint(then_type.clone(), else_type, else_branch.span());
-                            then_type
-                        }
-                    }
+                    self.add_constraint(then_type.clone(), else_type, else_branch.span());
+                    then_type
                 } else {
                     // 如果没有else分支，if表达式返回unit类型
                     // 但不强制then分支必须是unit（允许表达式求值但丢弃结果）

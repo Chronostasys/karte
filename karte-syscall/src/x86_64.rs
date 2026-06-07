@@ -9,6 +9,8 @@ use crate::{SyscallError, SyscallResult};
 // x86_64 系统调用号
 const SYS_READ: u64 = 0;
 const SYS_WRITE: u64 = 1;
+const SYS_OPEN: u64 = 2;
+const SYS_CLOSE: u64 = 3;
 const SYS_EXIT: u64 = 60;
 const SYS_MMAP: u64 = 9;
 const SYS_MUNMAP: u64 = 11;
@@ -75,6 +77,16 @@ pub fn sys_write(fd: usize, buf: *const u8, count: usize) -> SyscallResult {
 /// read(fd, buf, count) — 从文件描述符读取数据
 pub fn sys_read(fd: usize, buf: *mut u8, count: usize) -> SyscallResult {
     unsafe { check(syscall3(SYS_READ, fd as u64, buf as u64, count as u64)) }
+}
+
+/// open(path, flags, mode) — 打开文件
+pub fn sys_open(path: *const u8, flags: i32, mode: u32) -> SyscallResult {
+    unsafe { check(syscall3(SYS_OPEN, path as u64, flags as u64, mode as u64)) }
+}
+
+/// close(fd) — 关闭文件描述符
+pub fn sys_close(fd: i32) -> SyscallResult {
+    unsafe { check(syscall1(SYS_CLOSE, fd as u64)) }
 }
 
 /// exit(code) — 退出进程

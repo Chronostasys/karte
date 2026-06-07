@@ -15,4 +15,5 @@ pub use karte_rt::ffi::{
     karte_jit_runtime_to_string,
     karte_jit_runtime_update_stack_top,
     karte_jit_runtime_mem_load64, karte_jit_runtime_mem_store64, karte_jit_runtime_gc_alloc,
+    karte_jit_runtime_raw_syscall6,
 };

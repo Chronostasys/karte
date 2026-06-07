@@ -1339,6 +1339,31 @@ pub(super) fn lower_statement(
                         return Ok(());
                     }
                     // ==================== 通用内存原语 ====================
+                    // raw_syscall6 — 生成内联 syscall 指令
+                    "__runtime_raw_syscall6" => {
+                        let regs: Vec<crate::ir::Register> = args.iter().map(|a| {
+                            let op = ctx.lower_to_rvalue(a);
+                            match op {
+                                Operand::Register { id } => id,
+                                _ => {
+                                    let temp = ctx.current_function_mut().new_register();
+                                    ctx.add_instruction(Instruction::Move { dst: temp, src: op, span: *span });
+                                    temp
+                                }
+                            }
+                        }).collect();
+                        let result_reg = ctx.current_function_mut().new_register();
+                        ctx.add_instruction(Instruction::Syscall6 {
+                            dst: result_reg,
+                            sysno: regs[0], a1: regs[1], a2: regs[2], a3: regs[3],
+                            a4: regs[4], a5: regs[5], a6: regs[6],
+                            span: *span,
+                        });
+                        if let Some(target_value) = target {
+                            ctx.store_value_to_stack(target_value, Operand::Register { id: result_reg });
+                        }
+                        return Ok(());
+                    }
                     "gc_alloc" | "__runtime_gc_alloc" => {
                         let size_op = ctx.lower_to_rvalue(&args[0]);
                         let size_reg = match size_op {

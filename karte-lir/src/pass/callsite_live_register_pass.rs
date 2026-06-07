@@ -43,6 +43,7 @@ impl CallsiteLiveRegisterPass {
                 | Instruction::Trim { .. }
                 | Instruction::CharToString { .. }
                 | Instruction::GcAlloc { .. }
+                | Instruction::Syscall6 { .. }
                 | Instruction::MemLoad64 { .. }
                 | Instruction::MemStore64 { .. }
                 | Instruction::ToString { .. }

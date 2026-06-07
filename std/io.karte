@@ -27,3 +27,60 @@ fn debug(label: string, value: number) -> number {
 fn debug_string(label: string, value: string) -> number {
     print(label + ": " + value + "\n")
 }
+
+fn str_ptr(s: string) -> number {
+    unsafe_cast(s) + 8
+}
+
+fn str_len(s: string) -> number {
+    mem_load64(unsafe_cast(s))
+}
+
+fn sys_write(fd: number, s: string) -> number {
+    raw_syscall6(1, fd, str_ptr(s), str_len(s), 0, 0, 0)
+}
+
+fn sys_read(fd: number, buf: number, count: number) -> number {
+    raw_syscall6(0, fd, buf, count, 0, 0, 0)
+}
+
+fn sys_open(path: string, flags: number) -> number {
+    raw_syscall6(2, str_ptr(path), flags, 0, 0, 0, 0)
+}
+
+fn sys_open_mode(path: string, flags: number, mode: number) -> number {
+    raw_syscall6(2, str_ptr(path), flags, mode, 0, 0, 0)
+}
+
+fn sys_close(fd: number) -> number {
+    raw_syscall6(3, fd, 0, 0, 0, 0, 0)
+}
+
+fn file_read_all(path: string) -> number {
+    let fd = sys_open(path, 0);
+    if fd < 0 {
+        0 - 1
+    } else {
+        let buf = gc_alloc(65536);
+        let n = sys_read(fd, buf, 65535);
+        sys_close(fd);
+        if n < 0 {
+            0 - 1
+        } else {
+            mem_store64(buf + n, 0);
+            buf
+        }
+    }
+}
+
+fn file_write_all(path: string, content: string) -> number {
+    let fd = sys_open_mode(path, 65, 438);
+    if fd < 0 {
+        0 - 1
+    } else {
+        let n = sys_write(fd, content);
+        sys_close(fd);
+        n
+    }
+}
+

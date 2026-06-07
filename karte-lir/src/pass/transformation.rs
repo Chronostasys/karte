@@ -182,6 +182,7 @@ impl DeadCodeElimination {
             Instruction::Trim { .. } => true,
             Instruction::CharToString { .. } => true,
             Instruction::GcAlloc { .. } => true,
+            Instruction::Syscall6 { .. } => true,
             Instruction::MemLoad64 { .. } => true,
             Instruction::MemStore64 { .. } => true,
             Instruction::ToString { .. } => true,
@@ -357,6 +358,15 @@ impl DeadCodeElimination {
             Instruction::GcAlloc { size, .. } => {
                 used.push(*size);
             }
+            Instruction::Syscall6 { sysno, a1, a2, a3, a4, a5, a6, .. } => {
+                used.push(*sysno);
+                used.push(*a1);
+                used.push(*a2);
+                used.push(*a3);
+                used.push(*a4);
+                used.push(*a5);
+                used.push(*a6);
+            }
             Instruction::MemLoad64 { addr, .. } => {
                 used.push(*addr);
             }
@@ -415,6 +425,7 @@ impl DeadCodeElimination {
             Instruction::Trim { dst, .. } => Some(*dst),
             Instruction::CharToString { dst, .. } => Some(*dst),
             Instruction::GcAlloc { dst, .. } => Some(*dst),
+            Instruction::Syscall6 { dst, .. } => Some(*dst),
             Instruction::MemLoad64 { dst, .. } => Some(*dst),
             Instruction::ToString { dst, .. } => Some(*dst),
             Instruction::LoadPair { dst1, .. } => Some(*dst1),

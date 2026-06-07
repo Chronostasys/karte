@@ -1547,6 +1547,30 @@ impl X86Compiler {
 // x86-64 指令编码
 // ============================================================================
 impl X86Compiler {
+    /// 通过 C FFI 调用 raw_syscall6
+    fn compile_syscall6_impl(
+        &mut self,
+        dst: &Register,
+        sysno: &Register, a1: &Register, a2: &Register, a3: &Register,
+        a4: &Register, a5: &Register, a6: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        use crate::vm::professional_executor::jit::ffi::{RuntimeCall, RuntimeIntrinsic, RuntimeArg};
+        let call = RuntimeCall {
+            intrinsic: RuntimeIntrinsic::RawSyscall6,
+            args: vec![
+                RuntimeArg::Register(*sysno),
+                RuntimeArg::Register(*a1),
+                RuntimeArg::Register(*a2),
+                RuntimeArg::Register(*a3),
+                RuntimeArg::Register(*a4),
+                RuntimeArg::Register(*a5),
+                RuntimeArg::Register(*a6),
+            ],
+        };
+        self.emit_runtime_call(code_builder, call, Some(dst), None)
+    }
+
     fn emit_rex_prefix(&self, code_builder: &mut CodeBuilder, w: bool, r: u8, x: u8, b: u8) {
         let rex = 0x40
             | (if w { 0x08 } else { 0x00 })
@@ -2038,11 +2062,21 @@ impl JitCompiler for X86Compiler {
 
         // System V ABI 参数寄存器: RDI, RSI, RDX, RCX, R8, R9
         let arg_regs = [7u8, 6, 2, 1, 8, 9]; // RDI=7, RSI=6, RDX=2, RCX=1, R8=8, R9=9
+        // 第 7+ 个参数通过栈传递（C ABI）
 
         // 参数传递：使用系统栈中转，避免寄存器交换冲突
-        // Phase 1: 将所有源寄存器值压入系统栈
+        // Phase 0: 如果有超过 6 个参数，先将第 7+ 个参数压入调用栈
+        for (idx, arg) in call.args.iter().enumerate() {
+            if idx >= arg_regs.len() {
+                // 栈参数：按照 C ABI 从右到左压栈
+                // 先跳过，Phase 0.5 后处理
+            }
+        }
+
+        // Phase 1: 将前 6 个源寄存器值压入系统栈
         let mut reg_arg_count = 0usize;
-        for arg in call.args.iter() {
+        for (idx, arg) in call.args.iter().enumerate() {
+            if idx >= arg_regs.len() { continue; } // 栈参数在后面处理
             if let RuntimeArg::Register(reg) = arg {
                 let src_reg = self.get_physical_register(reg)?;
                 self.emit_push(code_builder, src_reg);
@@ -2054,11 +2088,7 @@ impl JitCompiler for X86Compiler {
         let _pop_remaining = reg_arg_count;
         for (idx, arg) in call.args.iter().enumerate().rev() {
             if idx >= arg_regs.len() {
-                return Err(format!(
-                    "runtime call {} 超过支持的参数数量(最多 {})",
-                    call.intrinsic.name(),
-                    arg_regs.len()
-                ).into());
+                continue; // 栈参数跳过
             }
             let target_reg = arg_regs[idx];
             match arg {
@@ -2067,6 +2097,23 @@ impl JitCompiler for X86Compiler {
                 }
                 RuntimeArg::Immediate(_) => {
                     // 立即数参数不参与 push/pop，稍后设置
+                }
+            }
+        }
+
+        // Phase 2.5: 设置栈上的参数（第 7+ 个参数）
+        // C ABI 中栈参数从右到左压入
+        for (idx, arg) in call.args.iter().enumerate().rev() {
+            if idx < arg_regs.len() { continue; }
+            match arg {
+                RuntimeArg::Register(reg) => {
+                    let src_reg = self.get_physical_register(reg)?;
+                    self.emit_push(code_builder, src_reg);
+                }
+                RuntimeArg::Immediate(value) => {
+                    // 用 RAX 中转：mov rax, imm64; push rax
+                    self.emit_mov_reg_imm64(code_builder, 0, *value); // RAX=0
+                    self.emit_push(code_builder, 0);
                 }
             }
         }
@@ -2080,6 +2127,14 @@ impl JitCompiler for X86Compiler {
         }
 
         self.emit_call_absolute(code_builder, call.intrinsic.symbol_ptr() as u64);
+
+        // 清理栈参数（如果有超过 6 个参数的）
+        let stack_arg_count = call.args.len().saturating_sub(arg_regs.len());
+        if stack_arg_count > 0 {
+            // add rsp, stack_arg_count * 8
+            self.emit_add_reg_imm32(code_builder, 4, (stack_arg_count * 8) as i32); // RSP=4
+        }
+
         self.restore_call_clobbered_registers(code_builder, &saved_regs, stack_space);
 
         if let (Some(dst), true) = (result, call.expects_result()) {
@@ -2090,6 +2145,16 @@ impl JitCompiler for X86Compiler {
         }
 
         Ok(())
+    }
+
+    fn compile_syscall6(
+        &mut self,
+        dst: &Register,
+        sysno: &Register, a1: &Register, a2: &Register, a3: &Register,
+        a4: &Register, a5: &Register, a6: &Register,
+        code_builder: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        self.compile_syscall6_impl(dst, sysno, a1, a2, a3, a4, a5, a6, code_builder)
     }
 }
 

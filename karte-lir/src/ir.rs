@@ -636,6 +636,31 @@ pub enum Instruction {
         span: Span,
     },
 
+    /// 通用 syscall：dst = syscall6(sysno, a1, a2, a3, a4, a5, a6)
+    /// Go 风格的 raw syscall，直接内联 syscall 指令
+    /// 参数通过 Karte 调用约定的物理寄存器传入
+    #[ir_codec(token = "syscall6")]
+    Syscall6 {
+        #[ir_codec(args)]
+        dst: Register,
+        #[ir_codec(args)]
+        sysno: Register,
+        #[ir_codec(args)]
+        a1: Register,
+        #[ir_codec(args)]
+        a2: Register,
+        #[ir_codec(args)]
+        a3: Register,
+        #[ir_codec(args)]
+        a4: Register,
+        #[ir_codec(args)]
+        a5: Register,
+        #[ir_codec(args)]
+        a6: Register,
+        #[ir_codec(skip)]
+        span: Span,
+    },
+
     /// 内存读取：dst = mem_load64(addr) — 从 addr 读取 8 字节
     /// 调用运行时 karte_jit_runtime_mem_load64(addr) -> value
     #[ir_codec(token = "mem_load64")]
@@ -906,6 +931,7 @@ impl Instruction {
             | Instruction::Trim { dst, .. }
             | Instruction::CharToString { dst, .. } => Some(*dst),
             | Instruction::GcAlloc { dst, .. } => Some(*dst),
+            | Instruction::Syscall6 { dst, .. } => Some(*dst),
             | Instruction::MemLoad64 { dst, .. } => Some(*dst),
             | Instruction::ToString { dst, .. } => Some(*dst),
             Instruction::LoadPair { dst1, .. } => Some(*dst1),
@@ -1154,6 +1180,10 @@ impl Instruction {
             }
             Instruction::GcAlloc { size, .. } => {
                 used.push(*size);
+            }
+            Instruction::Syscall6 { sysno, a1, a2, a3, a4, a5, a6, .. } => {
+                used.push(*sysno);
+                used.extend_from_slice(&[*a1, *a2, *a3, *a4, *a5, *a6]);
             }
             Instruction::MemLoad64 { addr, .. } => {
                 used.push(*addr);
@@ -1546,6 +1576,13 @@ impl Instruction {
                     *size = new_reg;
                 }
             }
+            Instruction::Syscall6 { dst, sysno, a1, a2, a3, a4, a5, a6, .. } => {
+                for r in [&mut *dst, &mut *sysno, &mut *a1, &mut *a2, &mut *a3, &mut *a4, &mut *a5, &mut *a6] {
+                    if *r == old_reg {
+                        *r = new_reg;
+                    }
+                }
+            }
             Instruction::MemLoad64 { dst, addr, .. } => {
                 if *dst == old_reg {
                     *dst = new_reg;
@@ -1850,6 +1887,11 @@ impl Instruction {
             Instruction::GcAlloc { dst, size, .. } => {
                 defined.push(*dst);
                 used.push(*size);
+            }
+            Instruction::Syscall6 { dst, sysno, a1, a2, a3, a4, a5, a6, .. } => {
+                defined.push(*dst);
+                used.push(*sysno);
+                used.extend_from_slice(&[*a1, *a2, *a3, *a4, *a5, *a6]);
             }
             Instruction::MemLoad64 { dst, addr, .. } => {
                 defined.push(*dst);

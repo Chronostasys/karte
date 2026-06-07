@@ -1347,6 +1347,29 @@ impl JitCompiler for RiscvCompiler {
 
         Ok(())
     }
+
+    fn compile_syscall6(
+        &mut self,
+        dst: &Register,
+        sysno: &Register, a1: &Register, a2: &Register, a3: &Register,
+        a4: &Register, a5: &Register, a6: &Register,
+        cb: &mut CodeBuilder,
+    ) -> crate::Result<()> {
+        use crate::vm::professional_executor::jit::ffi::{RuntimeCall, RuntimeIntrinsic, RuntimeArg};
+        let call = RuntimeCall {
+            intrinsic: RuntimeIntrinsic::RawSyscall6,
+            args: vec![
+                RuntimeArg::Register(*sysno),
+                RuntimeArg::Register(*a1),
+                RuntimeArg::Register(*a2),
+                RuntimeArg::Register(*a3),
+                RuntimeArg::Register(*a4),
+                RuntimeArg::Register(*a5),
+                RuntimeArg::Register(*a6),
+            ],
+        };
+        self.emit_runtime_call(cb, call, Some(dst), None)
+    }
 }
 
 #[cfg(test)]
