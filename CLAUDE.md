@@ -400,7 +400,7 @@ Recent work includes:
   - **Dev profile `opt-level = 1`**: `[profile.dev]` 设 `opt-level = 1`, `overflow-checks = false`，编译性能从 8s→1.1s。**注意：边界检查已关闭**，调试奇怪问题时可临时恢复 `opt-level = 0`
   - **3 个内存原语 + `unsafe_cast`**: `gc_alloc`, `mem_load64`, `mem_store64`（Runtime）+ `unsafe_cast`（编译期 no-op）+ `str_equal`/`str_compare`（内置字符串比较）
   - **纯 Karte 数据结构**: `std/array.karte` 和 `std/hashmap.karte` 完全用 Karte 语言实现，不依赖 Rust Runtime 高级操作
-  - **test_cc**: 用 Karte 编写的 C 子集编译器，支持：函数定义/调用（含递归）、数组声明/访问/赋值、for/while/if-else、注释(//和/* */）、逻辑运算符(&&/||/!)、比较运算符(<>/<=/>=/==/!=)、算术运算符(+-*/%)、一元运算符(-/!)、复合赋值(+=/-=/*=/等），输出 x86_64 汇编。验证通过 fib(10)=55（递归）、fib 数组版、sum(1..10)=55
+  - **test_cc**: 用 Karte 编写的 C 子集编译器，支持：函数定义/调用（含递归）、数组声明/访问/赋值、switch-case(含default/break)、全局变量(.data段+跨函数)、char类型、字符字面量('a'+转义)、for/while/do-while/if-else、break/continue、三元运算符(?:)、注释(//和/* */）、逻辑运算符(&&/||/!)、bitwise运算符(&|^~<<>>)、取地址(&)和解引用(*)、sizeof、比较运算符(<>/<=/>=/==/!=)、算术运算符(+-*/%)、一元运算符(-/!)、复合赋值(+=/-=/*=/等），输出 x86_64 汇编。41 个回归测试 + 全量 879/879 通过。
 - **Struct 值传递 + Phi 节点修复 (2026-06-06)** — 编译器核心 bug 修复：
   - **Struct 值传递语义**: 函数参数深拷贝（`lower_to_rvalue` 中 `Alloc` + `Load64`/`Store64`），防止函数内部修改影响调用者
   - **MIR `start_function` 传播参数类型**: 新增 `param_types` 参数，函数参数绑定时设置 `ty` 字段
@@ -748,6 +748,10 @@ Store { target = %10000, value = %2 }
 - **NEGATIVE PATTERN GOTCHA**: Parser 的 `parse_pattern` 需要处理 `-` 前置的负数模式。调用 `parse_pattern` 后需要检查是否为负数并创建 `Pattern::Number` 或保持为变量绑定。在 `karte-parser/src/pattern.rs` 中，`parse_pattern_inner` 遇到 `Minus` token 时，必须解析为 `Number` 模式而非视为前缀表达式。
 - **VIRTUAL STACK SIZE GOTCHA**: JIT 虚拟栈和 AOT 虚拟栈大小必须保持一致。当前值为 65536 条目 (512KB)。JIT 侧在 `execution_engine.rs` 中定义：`vec![0; 65536]`。AOT 侧在三个 runtime 文件（`runtime_x86.rs`、`runtime_aarch64.rs`、`runtime_riscv.rs`）中通过 `mmap` 参数定义：`mmap_len = 524288, vm_sp_init = vstack_base + 524272`。修改时必须在所有四个位置同步更新，否则 JIT/AOT 行为不一致。
 - **PRELUDE SYNC GOTCHA**: `std.prelude` 自动注入的模块列表在 `karte-hir/src/type_checker.rs`（`apply_module_context`）和 `karte-module-system/src/project.rs`（`LoweringOptions` 构建）两处硬编码为 `["std.core", "std.math", "std.io", "std.string"]`。向 std 添加新模块时必须在两处同步更新，否则 type checker 能看到函数但 MIR lowering 不知道它们是 known functions。
+- **TEST_CC SYM(50) DUAL-USE GOTCHA**: `Sym(50)` = `&` 在表达式解析器中既是 **bitwise-and**（中缀，`p_bitwise` 处理）又是 **取地址**（前缀，`p_unary` 处理）。两者通过上下文区分——前缀 `&expr` 走 `p_unary`，中缀 `a & b` 走 `p_bitwise`。同理 `Sym(17)` = `*` 既是乘法（中缀，`p_mul`）又是解引用（前缀，`p_unary`）。
+- **TEST_CC POINTER_WRITE GOTCHA**: `*p = val` 在 `do_block_braced` 的 `_ =>` 分支中不匹配标准标识符模式（`*` 是符号不是标识符），必须作为**特殊前缀**在 `let name = token_val(...)` 之前检测 `Sym(17)` → 解析指针表达式 → 生成 `mov %rax, (%rcx)` 存储。
+- **TEST_CC FUNC_CALL vs ASSIGN GOTCHA**: `do_block_braced` 的 `_ =>` 分支中需要区分标识符后的 token 类型：`Sym(6)`=`(` → 函数调用；`Sym(32)`=`[` → 数组下标；`Sym(10)`=`=` → 赋值；其他 → 普通表达式。错误处理会导致 `increment()` 被当作全局变量写入（`movq %rax, increment(%rip)` 覆盖函数代码→SIGSEGV）。
+- **TEST_CC VAR_OFF FALLTHROUGH GOTCHA**: `var_off(v, name)` 返回 -1 时表示变量未找到（可能是全局变量或未定义变量）。`store_var`/`load_var` 辅助函数自动降级为 `name(%rip)` (RIP-relative) 访问，这要求全局变量已在 `.data` 段声明。未声明全局变量被引用时会导致链接错误而非编译错误。
 - **🔴 绝对禁止 HACKS：永远禁止任何 hack、workaround、取巧绕过、治标不治本的修复。必须找到并修复问题的根因。翻转 bool / unwrap_or 改默认值 / 加条件跳过分析 等绕过手段 = 不可接受。** 🔴
 - **🔴 绝对禁止 HACKS：永远禁止任何 hack、workaround、取巧绕过、治标不治本的修复。必须找到并修复问题的根因。翻转 bool / unwrap_or 改默认值 / 加条件跳过分析 等绕过手段 = 不可接受。** 🔴
 - **🔴 绝对禁止 HACKS：永远禁止任何 hack、workaround、取巧绕过、治标不治本的修复。必须找到并修复问题的根因。翻转 bool / unwrap_or 改默认值 / 加条件跳过分析 等绕过手段 = 不可接受。** 🔴
