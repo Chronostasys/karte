@@ -387,6 +387,11 @@ impl LirLoweringContext {
                                 }
                                 // 缓存拷贝地址，后续访问直接使用拷贝
                                 self.stack_allocations.insert(copy_key, copy_reg);
+                                // 注册 struct layout，使后续 Store 能识别为 struct 并逐字段复制
+                                self.set_struct_layout_for_value(
+                                    &Value::Variable { name: name.clone(), ty: ty.clone() },
+                                    layout,
+                                );
                                 return Operand::Register { id: copy_reg };
                             }
                         }

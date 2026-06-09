@@ -46,6 +46,8 @@ impl LirLoweringContext {
         self.block_to_label.clear();
         // 清空栈分配，每个函数都重新开始
         self.stack_allocations.clear();
+        // 清空 struct layout，避免跨函数 TempId 冲突
+        self.struct_value_layouts.clear();
     }
 
     pub fn start_function_with_params(&mut self, name: String, params: &[String]) {
@@ -56,6 +58,8 @@ impl LirLoweringContext {
         self.block_to_label.clear();
         // 清空栈分配，每个函数都重新开始
         self.stack_allocations.clear();
+        // 清空 struct layout，避免跨函数 TempId 冲突
+        self.struct_value_layouts.clear();
         self.label_seed = 0;
         self.known_constants.clear();
         self.returned_temp_ids = HashSet::new();

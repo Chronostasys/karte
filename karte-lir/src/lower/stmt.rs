@@ -2199,7 +2199,23 @@ pub(super) fn lower_statement(
             let target_addr_reg = ctx.ensure_register_from_operand(target_addr_operand, *span);
 
             // 如果存储的是结构体，需要逐字段写入，不能只写指针
-            if let Some(layout) = ctx.get_struct_layout_for_value(value) {
+            // 先从 struct_value_layouts 查找，再用 global_struct_types fallback
+            let struct_layout = ctx.get_struct_layout_for_value(value).or_else(|| {
+                match value {
+                    Value::Variable { ty: Some(ty), .. } => {
+                        if let karte_hir::types::Type::Struct { name, .. } = ty {
+                            return ctx.global_struct_types.get(name).cloned();
+                        }
+                    }
+                    Value::Struct { name, .. } => {
+                        return ctx.global_struct_types.get(name).cloned();
+                    }
+                    _ => {}
+                }
+                None
+            });
+
+            if let Some(layout) = struct_layout {
                 let source_ptr_operand = ctx.lower_to_rvalue(value);
                 let source_ptr_reg = ctx.ensure_register_from_operand(source_ptr_operand, *span);
 
