@@ -6,6 +6,15 @@ use crate::escape_point_detector::{EscapePoint, EscapePointDetector};
 use karte_mir::{BasicBlockId, MirFunction, MirProgram, Statement, TempId, Terminator, Value};
 use log::{debug, info, trace};
 
+/// 计算 Value 所需的堆分配大小
+/// struct 按 fields.len() * 8 计算，其他为 8
+fn heap_alloc_size_for_value(value: &Value) -> usize {
+    match value {
+        Value::Struct { fields, .. } => fields.len().max(1) * 8,
+        _ => 8,
+    }
+}
+
 /// 逃逸点转换器
 pub struct EscapePointTransformer {
     detector: EscapePointDetector,
@@ -143,9 +152,10 @@ impl EscapePointTransformer {
 
             // 1. 分配堆内存
             let heap_temp = self.alloc_temp();
+            let alloc_size = heap_alloc_size_for_value(value);
             new_statements.push(Statement::HeapAlloc {
                 target: heap_temp.clone(),
-                size: 8,
+                size: alloc_size,
                 object_type: "escaped_value".to_string(),
                 span: *span,
             });
@@ -226,10 +236,11 @@ impl EscapePointTransformer {
                 if self.detector.needs_escape(captured_value) {
                     // 需要逃逸：分配堆内存并复制
                     let heap_temp = self.alloc_temp();
+                    let alloc_size = heap_alloc_size_for_value(captured_value);
 
                     new_statements.push(Statement::HeapAlloc {
                         target: heap_temp.clone(),
-                        size: 8,
+                        size: alloc_size,
                         object_type: "captured_value".to_string(),
                         span: *span,
                     });

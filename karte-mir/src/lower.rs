@@ -52,7 +52,7 @@ pub fn lower_expr_to_mir_with_options(
     // 降级表达式
     expr::lower_expression(&mut context, expr, &result_temp)?;
     maybe_retain_for_escape(&mut context, expr, &result_temp);
-    context.exit_scope(expr.span());
+    context.exit_scope(expr.span(), false);
 
     // 添加返回语句
     context.set_terminator(Terminator::Return {

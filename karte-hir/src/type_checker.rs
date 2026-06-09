@@ -1238,8 +1238,17 @@ impl TypeChecker {
                         }
                     }
                     BinaryOperator::LogicalAnd | BinaryOperator::LogicalOr => {
-                        self.add_constraint(left_type.clone(), Type::bool(), left.span());
-                        self.add_constraint(right_type.clone(), Type::bool(), right.span());
+                        // 逻辑运算符接受 bool 或 number（与 if/while 条件一致）
+                        match (&left_type, &right_type) {
+                            (Type::Number, _) | (_, Type::Number) => {
+                                self.add_constraint(left_type.clone(), Type::Number, left.span());
+                                self.add_constraint(right_type.clone(), Type::Number, right.span());
+                            }
+                            _ => {
+                                self.add_constraint(left_type.clone(), Type::bool(), left.span());
+                                self.add_constraint(right_type.clone(), Type::bool(), right.span());
+                            }
+                        }
                     }
                 }
 
@@ -1267,7 +1276,13 @@ impl TypeChecker {
                     | BinaryOperator::LessEqual
                     | BinaryOperator::Greater
                     | BinaryOperator::Less => Type::bool(),
-                    BinaryOperator::LogicalAnd | BinaryOperator::LogicalOr => Type::bool(),
+                    BinaryOperator::LogicalAnd | BinaryOperator::LogicalOr => {
+                        // 逻辑运算返回值：number 操作数返回 number，bool 操作数返回 bool
+                        match (&left_type, &right_type) {
+                            (Type::Number, _) | (_, Type::Number) => Type::Number,
+                            _ => Type::bool(),
+                        }
+                    }
                 }
             }
 
@@ -1788,8 +1803,15 @@ impl TypeChecker {
                 if let Some(else_branch) = else_branch {
                     let else_type = self.infer_expr(else_branch, env);
                     // 约束：then和else分支的类型必须兼容
-                    self.add_constraint(then_type.clone(), else_type, else_branch.span());
-                    then_type
+                    // 特殊处理：如果一个分支是 Unit，if-else 返回另一个分支的类型
+                    match (&then_type, &else_type) {
+                        (Type::Unit, _) => else_type,
+                        (_, Type::Unit) => then_type.clone(),
+                        _ => {
+                            self.add_constraint(then_type.clone(), else_type, else_branch.span());
+                            then_type
+                        }
+                    }
                 } else {
                     // 如果没有else分支，if表达式返回unit类型
                     // 但不强制then分支必须是unit（允许表达式求值但丢弃结果）

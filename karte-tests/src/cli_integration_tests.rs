@@ -2937,7 +2937,6 @@ fn main() -> number {
     }
 
     #[test]
-    #[ignore] // TODO: 嵌套 for 循环的预分析机制需要修复——分析阶段创建的临时变量在清理后丢失
     fn test_for_loop_phi_nested() {
         let code = r#"
 fn main() -> number {
@@ -8215,5 +8214,483 @@ fn main() -> number {
 "#;
         let exit_code = compile_project_mode_code(code);
         assert!(exit_code > 0, "BigObj sweep reuse: should not crash, got exit_code={}", exit_code);
+    }
+
+    /// 回归测试：块作用域变量遮蔽不应泄露到外层
+    /// 内层块中的 let x = 20 不应影响外层的 x = 10
+    #[test]
+    fn test_block_scope_shadow_no_leak() {
+        let code = r#"
+fn main() -> number {
+    let x = 10;
+    {
+        let x = 20;
+    };
+    x
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 10, "block scope shadow should not leak: expected 10, got {}", exit_code);
+    }
+
+    /// 回归测试：while 循环中 let 重绑定仍然通过 Phi 传播
+    /// 循环体中的 let i = i + 1 应该正确更新循环变量
+    #[test]
+    fn test_while_loop_phi_propagate() {
+        let code = r#"
+fn main() -> number {
+    let s = 0;
+    let i = 0;
+    while i < 10 {
+        let i = i + 1;
+        let s = s + i;
+    };
+    s
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 55, "while loop phi should propagate: expected 55, got {}", exit_code);
+    }
+
+    /// 回归测试：嵌套块作用域遮蔽不应泄露
+    #[test]
+    fn test_nested_block_scope_shadow() {
+        let code = r#"
+fn main() -> number {
+    let a = 1;
+    let b = 2;
+    {
+        let a = 10;
+        {
+            let b = 20;
+        };
+    };
+    a + b
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 3, "nested block scope shadow: expected 3, got {}", exit_code);
+    }
+
+    /// 回归测试：同一 scope 中重复 let 绑定不会双重释放
+    #[test]
+    fn test_duplicate_let_no_double_free() {
+        let code = r#"
+fn main() -> number {
+    let x = "hello";
+    let x = "world";
+    let x = "test";
+    len(x)
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 4, "duplicate let should work without double free, got {}", exit_code);
+    }
+
+    /// 回归测试：字符串 RC 在多次重绑定后正确释放
+    #[test]
+    fn test_string_rc_rebind() {
+        let code = r#"
+fn main() -> number {
+    let s = "aaaa";
+    let s = "bbbbb";
+    let s = "cccccc";
+    let s = "ddddddd";
+    let result = len(s);
+    result
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 7, "string RC rebind: expected 7, got {}", exit_code);
+    }
+
+    /// 回归测试：while 循环内 match arm 的 let shadow 不应泄露到外层
+    /// arm body 中的 let x = 42 不应通过 Phi 传播影响外层的 x = 0
+    #[test]
+    fn test_match_arm_shadow_no_phi_leak() {
+        let code = r#"
+fn main() -> number {
+    let x = 0;
+    let i = 0;
+    while i < 1 {
+        match 1 {
+            x => {
+                let x = 42;
+            },
+            _ => { }
+        };
+        let i = i + 1;
+    };
+    x
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 0, "match arm shadow should not leak via Phi: expected 0, got {}", exit_code);
+    }
+
+    /// 回归测试：match arm 中正确修改变量值（非 shadow）
+    #[test]
+    fn test_match_arm_modify_var() {
+        let code = r#"
+fn main() -> number {
+    let result = 0;
+    match 1 {
+        1 => { result = 100; },
+        _ => { result = 200; }
+    };
+    result
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 100, "match arm modify var: expected 100, got {}", exit_code);
+    }
+
+    /// 回归测试：while + match + 正确的 Phi 值合并
+    #[test]
+    fn test_while_match_phi_merge() {
+        let code = r#"
+fn main() -> number {
+    let sum = 0;
+    let i = 0;
+    while i < 3 {
+        match i {
+            0 => { sum = sum + 10; },
+            1 => { sum = sum + 20; },
+            _ => { sum = sum + 30; }
+        };
+        let i = i + 1;
+    };
+    sum
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 60, "while match phi merge: expected 60, got {}", exit_code);
+    }
+
+    /// 回归测试：多个结构体有同名字段时字段访问偏移量正确
+    /// S1.x 在 offset 0，S2.x 在 offset 8，不应混淆
+    #[test]
+    fn test_struct_same_name_field_offset() {
+        let code = r#"
+struct S1 { x: number, y: number }
+struct S2 { z: number, x: number }
+fn main() -> number {
+    let a = S1 { x: 10, y: 20 };
+    let b = S2 { z: 30, x: 40 };
+    a.x + b.x
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 50, "struct same-name field offset: expected 50, got {}", exit_code);
+    }
+
+    /// 回归测试：单个结构体字段访问在多结构体环境下正确
+    #[test]
+    fn test_struct_field_single_access() {
+        let code = r#"
+struct S1 { x: number, y: number }
+struct S2 { z: number, x: number }
+fn main() -> number {
+    let b = S2 { z: 30, x: 40 };
+    b.x
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 40, "struct field single access: expected 40, got {}", exit_code);
+    }
+
+    /// 回归测试：if-else 分支中一个返回 Unit 时类型兼容
+    /// then 分支为空块 (Unit)，else 分支返回 number，if-else 返回 number
+    #[test]
+    fn test_if_else_unit_branch_compat() {
+        let code = r#"
+fn main() -> number {
+    let x = if false { } else { 42 };
+    x
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 42, "if-else unit branch compat: expected 42, got {}", exit_code);
+    }
+
+    /// 回归测试：if-else then 分支为 Unit，条件为 true 时返回 Unit(0)
+    #[test]
+    fn test_if_else_unit_then_branch() {
+        let code = r#"
+fn main() -> number {
+    let x = if true { } else { 42 };
+    0
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 0, "if-else unit then branch: expected 0, got {}", exit_code);
+    }
+
+    /// 回归测试：未类型标注的函数作为高阶参数传递时 wrapper 参数数量正确
+    /// add_one(x) 无类型标注，被 call(f, x) 调用，应正确传递参数
+    #[test]
+    fn test_untyped_function_as_hof_param() {
+        let code = r#"
+fn add_one(x) { x + 1 }
+fn call(f, x) { f(x) }
+fn main() -> number {
+    call(add_one, 41)
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 42, "untyped function as HOF param: expected 42, got {}", exit_code);
+    }
+
+    /// 回归测试：多个未类型标注函数的高阶调用
+    #[test]
+    fn test_multiple_untyped_hof() {
+        let code = r#"
+fn double(x) { x * 2 }
+fn add(a, b) { a + b }
+fn apply(f, x) { f(x) }
+fn main() -> number {
+    apply(double, 5) + add(10, 20)
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 40, "multiple untyped HOF: expected 40, got {}", exit_code);
+    }
+
+    /// 回归测试：struct 参数被闭包捕获时的正确堆分配
+    /// struct Point 有 2 个字段 (16字节)，需要正确分配堆空间
+    /// 之前 HeapAlloc size 硬编码为 8 导致 SIGSEGV
+    #[test]
+    fn test_struct_closure_capture_escape() {
+        let code = r#"
+struct Point { x: number, y: number }
+fn make_closure(p: Point) -> fn() -> number { || { p.x + p.y } }
+fn main() -> number {
+    let pt = Point { x: 7, y: 8 };
+    let f = make_closure(pt);
+    f()
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 15, "struct closure capture escape: expected 15, got {}", exit_code);
+    }
+
+    /// 回归测试：大型 struct (3字段) 被闭包捕获
+    #[test]
+    fn test_large_struct_closure_capture() {
+        let code = r#"
+struct Vec3 { x: number, y: number, z: number }
+fn make_getter(v: Vec3) -> fn() -> number { || { v.x * v.y + v.z } }
+fn main() -> number {
+    let v = Vec3 { x: 3, y: 4, z: 5 };
+    let f = make_getter(v);
+    f()
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 17, "large struct closure capture: expected 17, got {}", exit_code);
+    }
+
+    /// 回归测试：struct 通过闭包捕获后修改字段（间接引用）
+    #[test]
+    fn test_struct_closure_field_access_chain() {
+        let code = r#"
+struct Pair { a: number, b: number }
+fn make_sub(p: Pair) -> fn() -> number { || { p.a - p.b } }
+fn main() -> number {
+    let p = Pair { a: 100, b: 37 };
+    let f = make_sub(p);
+    f()
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 63, "struct closure field access chain: expected 63, got {}", exit_code);
+    }
+
+    /// 回归测试：while 循环中 struct 变量更新（无闭包捕获）
+    #[test]
+    fn test_struct_while_loop_update() {
+        let code = r#"
+struct Point { x: number, y: number }
+fn main() -> number {
+    let p = Point { x: 1, y: 2 };
+    let result = 0;
+    let i = 0;
+    while i < 3 {
+        let result = result + p.x + p.y;
+        let i = i + 1;
+    };
+    result
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 9, "struct while loop update: expected 9, got {}", exit_code);
+    }
+
+    /// 回归测试：for-in 循环累加
+    #[test]
+    fn test_struct_for_in_loop() {
+        let code = r#"
+fn main() -> number {
+    let items = [10, 20, 30];
+    let sum = 0;
+    for item in items {
+        let sum = sum + item;
+    };
+    sum
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 60, "struct for-in loop: expected 60, got {}", exit_code);
+    }
+
+    /// 回归测试：逻辑运算符 && 和 || 接受 number 操作数
+    /// 之前类型检查器要求 bool 操作数，但 if/while 条件已支持 number
+    #[test]
+    fn test_logical_and_or_with_numbers() {
+        let code = r#"
+fn main() -> number {
+    let a = 5 && 3;
+    let b = 0 && 3;
+    let c = 0 || 4;
+    let d = 5 || 4;
+    if a && c { 1 } else { 0 }
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 1, "logical and/or with numbers: expected 1, got {}", exit_code);
+    }
+
+    /// 回归测试：逻辑运算符短路求值与 number 操作数
+    #[test]
+    fn test_logical_short_circuit_with_numbers() {
+        let code = r#"
+fn main() -> number {
+    let x = 0 && 42;
+    let y = 1 || 99;
+    if x { 10 } else { y }
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 1, "logical short-circuit with numbers: expected 1, got {}", exit_code);
+    }
+
+    /// 回归测试：enum match 函数多次调用
+    /// 验证 Option::Some 和 Option::None 的 match 在函数重入时正确工作
+    #[test]
+    fn test_enum_match_function_reentry() {
+        let code = r#"
+enum Option { Some(number), None }
+fn unwrap_or(opt: Option, default: number) -> number {
+    match opt {
+        Option::Some(v) => v,
+        Option::None => default
+    }
+}
+fn main() -> number {
+    let a = unwrap_or(Option::Some(42), 0);
+    let b = unwrap_or(Option::None, 99);
+    a + b
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 141, "enum match function reentry: expected 141, got {}", exit_code);
+    }
+
+    /// 回归测试：struct 函数参数传递后字段访问
+    #[test]
+    fn test_struct_fn_param_field_access() {
+        let code = r#"
+struct Triple { a: number, b: number, c: number }
+fn sum_triple(t: Triple) -> number { t.a + t.b + t.c }
+fn main() -> number {
+    let t = Triple { a: 10, b: 20, c: 30 };
+    sum_triple(t)
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 60, "struct fn param field access: expected 60, got {}", exit_code);
+    }
+
+    /// 回归测试：嵌套 if-else 返回不同值
+    #[test]
+    fn test_nested_if_else_values() {
+        let code = r#"
+fn classify(x: number) -> number {
+    if x > 100 {
+        3
+    } else if x > 10 {
+        2
+    } else if x > 0 {
+        1
+    } else {
+        0
+    }
+}
+fn main() -> number {
+    classify(200) + classify(50) + classify(5) + classify(-1)
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 6, "nested if-else values: expected 6, got {}", exit_code);
+    }
+
+    /// 回归测试：struct 构造器中的表达式
+    #[test]
+    fn test_struct_constructor_expressions() {
+        let code = r#"
+struct Point { x: number, y: number }
+fn main() -> number {
+    let a = 3;
+    let b = 4;
+    let p = Point { x: a * a, y: b * b };
+    p.x + p.y
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 25, "struct constructor expressions: expected 25, got {}", exit_code);
+    }
+
+    /// 回归测试：闭包多次调用返回一致值
+    #[test]
+    fn test_closure_consistent_return() {
+        let code = r#"
+fn main() -> number {
+    let x = 10;
+    let f = || { x + 1 };
+    let a = f();
+    let b = f();
+    a + b
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 22, "closure consistent return: expected 22, got {}", exit_code);
+    }
+
+    /// 回归测试：方法调用语法
+    #[test]
+    fn test_method_call_syntax() {
+        let code = r#"
+fn double(x: number) -> number { x * 2 }
+fn main() -> number {
+    5.double() + 10.double()
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 30, "method call syntax: expected 30, got {}", exit_code);
+    }
+
+    /// 回归测试：字符串相等比较
+    #[test]
+    fn test_string_equality_with_ne() {
+        let code = r#"
+fn main() -> number {
+    let a = "hello";
+    let b = "hello";
+    let c = "world";
+    if a == b && a != c { 1 } else { 0 }
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 1, "string equality with ne: expected 1, got {}", exit_code);
     }
 }

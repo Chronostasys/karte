@@ -792,13 +792,26 @@ impl LirLoweringContext {
         object: &Value,
         field_name: &str,
     ) -> Result<usize, String> {
+        // 首先尝试从 struct_value_layouts 获取精确的结构体布局
+        if let Some(layout) = self.get_struct_layout_for_value(object) {
+            for field in &layout.fields {
+                if field.name == field_name {
+                    return Ok(field.offset);
+                }
+            }
+            return Err(format!(
+                "Field '{}' not found in struct '{}'",
+                field_name, layout.name
+            ));
+        }
+
         // 获取对象的结构体类型名称
         let struct_name = match object {
             Value::Struct { name, .. } => name.clone(),
             Value::Temp { .. } | Value::Variable { .. } => {
-                // 🔧 改进：基于字段名称推断结构体类型
+                // 基于字段名称推断结构体类型
                 match field_name {
-                    "function_ptr" | "env_ptr" => "Closure".to_string(), // 闭包结构体字段
+                    "function_ptr" | "env_ptr" => "Closure".to_string(),
                     _ => {
                         // 元组字段: _0, _1, _2...
                         if let Some(index_str) = field_name.strip_prefix('_') {
@@ -806,7 +819,8 @@ impl LirLoweringContext {
                                 return Ok(index * 8);
                             }
                         }
-                        // 如果无法推断，尝试从所有已知类型中查找包含该字段的类型
+                        // 回退：遍历所有已知类型查找包含该字段的类型
+                        // 注意：当多个结构体有同名字段时，结果可能不准确
                         for layout in self.global_struct_types.values() {
                             if layout.fields.iter().any(|f| f.name == field_name) {
                                 return Ok(layout
@@ -818,7 +832,7 @@ impl LirLoweringContext {
                             }
                         }
                         return Err(format!(
-                            "Cannot infer struct type for field '{}'",
+                            "Cannot infer struct type for field '{}' on temp/variable value",
                             field_name
                         ));
                     }

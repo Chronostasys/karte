@@ -169,8 +169,14 @@ pub(crate) fn lower_expression(
                         return_type,
                     } => (params.clone(), return_type.clone()),
                     _ => {
-                        // 如果类型未知，创建简单的wrapper
-                        (vec![], Box::new(karte_hir::Type::Unknown))
+                        // 类型未知时，从已编译的函数中获取参数数量
+                        let param_count = ctx.program.functions.get(name)
+                            .map(|f| f.params.len())
+                            .unwrap_or(0);
+                        let param_types: Vec<karte_hir::Type> = (0..param_count)
+                            .map(|_| karte_hir::Type::Number)
+                            .collect();
+                        (param_types, Box::new(karte_hir::Type::Unknown))
                     }
                 };
 
@@ -598,9 +604,10 @@ pub(crate) fn lower_expression(
                             } else {
                                 let loc = ctx.new_temp();
                                 if !ctx.analysis_mode {
+                                    let alloc_size = ctx.heap_alloc_size_for_value(&right_value);
                                     ctx.add_statement(Statement::HeapAlloc {
                                         target: loc.clone(),
-                                        size: 8,
+                                        size: alloc_size,
                                         object_type: "shared_var".to_string(),
                                         span,
                                     });
@@ -618,9 +625,10 @@ pub(crate) fn lower_expression(
                             } else {
                                 let loc = ctx.new_temp();
                                 if !ctx.analysis_mode {
+                                    let alloc_size = ctx.heap_alloc_size_for_value(&shortcut_value);
                                     ctx.add_statement(Statement::HeapAlloc {
                                         target: loc.clone(),
-                                        size: 8,
+                                        size: alloc_size,
                                         object_type: "shared_var".to_string(),
                                         span,
                                     });
@@ -846,9 +854,10 @@ pub(crate) fn lower_expression(
                             // 非Reference 值：创建 shared_location 并存储值
                             let loc = ctx.new_temp();
                             if !ctx.analysis_mode {
+                                let alloc_size = ctx.heap_alloc_size_for_value(&then_value);
                                 ctx.add_statement(Statement::HeapAlloc {
                                     target: loc.clone(),
-                                    size: 8,
+                                    size: alloc_size,
                                     object_type: "shared_var".to_string(),
                                     span,
                                 });
@@ -866,9 +875,10 @@ pub(crate) fn lower_expression(
                         } else {
                             let loc = ctx.new_temp();
                             if !ctx.analysis_mode {
+                                let alloc_size = ctx.heap_alloc_size_for_value(&else_value);
                                 ctx.add_statement(Statement::HeapAlloc {
                                     target: loc.clone(),
-                                    size: 8,
+                                    size: alloc_size,
                                     object_type: "shared_var".to_string(),
                                     span,
                                 });
@@ -948,11 +958,14 @@ pub(crate) fn lower_expression(
             ctx.analysis_mode = true;
             let pre_analysis_block_count = ctx.current_function_mut().basic_blocks.len();
             let saved_block = ctx.current_block();
+            let saved_lambda_counter = ctx.lambda_counter;
             let analysis_block = ctx.new_block();
             ctx.set_current_block(analysis_block);
             let temp_result = ctx.new_temp();
             let _ = lower_expression(ctx, body, &temp_result);
             ctx.analysis_mode = false;
+            // 恢复 lambda_counter，避免分析模式中的副作用
+            ctx.lambda_counter = saved_lambda_counter;
             // 弹出预分析用的循环上下文
             ctx.loop_stack.pop();
 
@@ -1139,15 +1152,19 @@ pub(crate) fn lower_expression(
                 for (source_block, cont_bindings) in &while_continue_sources {
                     if let Some(cont_value) = cont_bindings.get(name) {
                         if let Value::Reference { value: ref_target, .. } = cont_value {
-                            // 需要在 continue 的来源块中插入 Dereference
-                            // 但此时已经离开了来源块，所以在 back-edge 块中处理
-                            let derefed = ctx.new_temp();
-                            ctx.add_statement(Statement::Dereference {
-                                target: derefed.clone(),
-                                reference: *ref_target.clone(),
-                                span: body.span(),
-                            });
-                            actual_continue_values.insert((name.clone(), *source_block), derefed);
+                            if struct_ref_vars.contains(name) {
+                                // 结构体变量：提取内部 shared_var 指针，不做 Dereference
+                                actual_continue_values.insert((name.clone(), *source_block), ref_target.as_ref().clone());
+                            } else {
+                                // 基本类型变量：Dereference 获取实际值
+                                let derefed = ctx.new_temp();
+                                ctx.add_statement(Statement::Dereference {
+                                    target: derefed.clone(),
+                                    reference: *ref_target.clone(),
+                                    span: body.span(),
+                                });
+                                actual_continue_values.insert((name.clone(), *source_block), derefed);
+                            }
                         }
                     }
                 }
@@ -1155,13 +1172,19 @@ pub(crate) fn lower_expression(
                 for (source_block, break_bindings) in &while_break_sources {
                     if let Some(break_value) = break_bindings.get(name) {
                         if let Value::Reference { value: ref_target, .. } = break_value {
-                            let derefed = ctx.new_temp();
-                            ctx.add_statement(Statement::Dereference {
-                                target: derefed.clone(),
-                                reference: *ref_target.clone(),
-                                span: body.span(),
-                            });
-                            actual_break_values.insert((name.clone(), *source_block), derefed);
+                            if struct_ref_vars.contains(name) {
+                                // 结构体变量：提取内部 shared_var 指针，不做 Dereference
+                                actual_break_values.insert((name.clone(), *source_block), ref_target.as_ref().clone());
+                            } else {
+                                // 基本类型变量：Dereference 获取实际值
+                                let derefed = ctx.new_temp();
+                                ctx.add_statement(Statement::Dereference {
+                                    target: derefed.clone(),
+                                    reference: *ref_target.clone(),
+                                    span: body.span(),
+                                });
+                                actual_break_values.insert((name.clone(), *source_block), derefed);
+                            }
                         }
                     }
                 }
@@ -1380,6 +1403,7 @@ pub(crate) fn lower_expression(
             ctx.analysis_mode = true;
             let pre_analysis_block_count = ctx.current_function_mut().basic_blocks.len();
             let saved_block = ctx.current_block();
+            let saved_lambda_counter = ctx.lambda_counter;
             let analysis_block = ctx.new_block();
             ctx.set_current_block(analysis_block);
 
@@ -1397,6 +1421,8 @@ pub(crate) fn lower_expression(
             let temp_result = ctx.new_temp();
             let _ = lower_expression(ctx, body, &temp_result);
             ctx.analysis_mode = false;
+            // 恢复 lambda_counter，避免分析模式中的副作用
+            ctx.lambda_counter = saved_lambda_counter;
 
             // 弹出预分析用的循环上下文
             ctx.loop_stack.pop();
@@ -1665,12 +1691,32 @@ pub(crate) fn lower_expression(
                     let normal_value = normal_end_bindings.get(name)
                         .map(|(v, _)| v.clone())
                         .unwrap_or_else(|| _initial_value.clone());
+                    // 对 struct_ref_vars：从 Reference 中提取 shared_location 指针
+                    let normal_value = if struct_ref_vars.contains(name) {
+                        if let Value::Reference { value: ref_target, .. } = &normal_value {
+                            ref_target.as_ref().clone()
+                        } else {
+                            normal_value
+                        }
+                    } else {
+                        normal_value
+                    };
                     // 构建 incoming：正常结束块 + 所有 continue 来源块
                     let mut incoming = vec![(normal_end_block, normal_value)];
                     for (source_block, cont_bindings) in &for_continue_sources {
                         let cont_value = cont_bindings.get(name)
                             .cloned()
                             .unwrap_or_else(|| _initial_value.clone());
+                        // 对 struct_ref_vars：从 Reference 中提取 shared_location 指针
+                        let cont_value = if struct_ref_vars.contains(name) {
+                            if let Value::Reference { value: ref_target, .. } = &cont_value {
+                                ref_target.as_ref().clone()
+                            } else {
+                                cont_value
+                            }
+                        } else {
+                            cont_value
+                        };
                         incoming.push((*source_block, cont_value));
                     }
                     ctx.add_statement(Statement::Phi {
@@ -1678,11 +1724,16 @@ pub(crate) fn lower_expression(
                         incoming,
                         span: *span,
                     });
-                    inc_phi_values.insert(name.clone(), inc_phi_temp);
-                }
-                // 更新 context 中的变量绑定指向 increment_block 的 phi 结果
-                for (name, inc_phi_val) in &inc_phi_values {
-                    ctx.update_variable(name, inc_phi_val.clone(), None);
+                    inc_phi_values.insert(name.clone(), inc_phi_temp.clone());
+                    // 对 struct_ref_vars：保持变量为 Reference 包装
+                    if struct_ref_vars.contains(name) {
+                        ctx.update_variable(name, Value::Reference {
+                            value: Box::new(inc_phi_temp),
+                            ty: None,
+                        }, None);
+                    } else {
+                        ctx.update_variable(name, inc_phi_temp, None);
+                    }
                 }
             }
 
@@ -1823,21 +1874,49 @@ pub(crate) fn lower_expression(
 
                     if need_phi {
                         let exit_phi_temp = ctx.new_temp();
+                        // 对 struct_ref_vars：提取 shared_location 指针作为 Phi incoming
+                        let normal_phi_value = if struct_ref_vars.contains(name) {
+                            if let Value::Reference { value: ref_target, .. } = &normal_value {
+                                ref_target.as_ref().clone()
+                            } else {
+                                normal_value.clone()
+                            }
+                        } else {
+                            normal_value.clone()
+                        };
                         let mut incoming = vec![
-                            (loop_head, normal_value.clone()),
+                            (loop_head, normal_phi_value),
                         ];
                         for (source_block, break_bindings) in &for_break_sources {
                             let break_value = break_bindings.get(name)
                                 .cloned()
                                 .unwrap_or_else(|| normal_value.clone());
-                            incoming.push((*source_block, break_value));
+                            // 对 struct_ref_vars：提取 shared_location 指针
+                            let break_phi_value = if struct_ref_vars.contains(name) {
+                                if let Value::Reference { value: ref_target, .. } = &break_value {
+                                    ref_target.as_ref().clone()
+                                } else {
+                                    break_value
+                                }
+                            } else {
+                                break_value
+                            };
+                            incoming.push((*source_block, break_phi_value));
                         }
                         ctx.add_statement(Statement::Phi {
                             target: exit_phi_temp.clone(),
                             incoming,
                             span: *span,
                         });
-                        ctx.update_variable(name, exit_phi_temp, None);
+                        // 对 struct_ref_vars：结果包装为 Reference
+                        if struct_ref_vars.contains(name) {
+                            ctx.update_variable(name, Value::Reference {
+                                value: Box::new(exit_phi_temp),
+                                ty: None,
+                            }, None);
+                        } else {
+                            ctx.update_variable(name, exit_phi_temp, None);
+                        }
                     }
                 }
             }
@@ -1915,6 +1994,7 @@ pub(crate) fn lower_expression(
             ctx.analysis_mode = true;
             let pre_analysis_block_count = ctx.current_function_mut().basic_blocks.len();
             let saved_block = ctx.current_block();
+            let saved_lambda_counter = ctx.lambda_counter;
             let analysis_block = ctx.new_block();
             ctx.set_current_block(analysis_block);
 
@@ -1932,6 +2012,8 @@ pub(crate) fn lower_expression(
             let temp_result = ctx.new_temp();
             let _ = lower_expression(ctx, body, &temp_result);
             ctx.analysis_mode = false;
+            // 恢复 lambda_counter，避免分析模式中的副作用
+            ctx.lambda_counter = saved_lambda_counter;
 
             ctx.loop_stack.pop();
 
@@ -2223,11 +2305,31 @@ pub(crate) fn lower_expression(
                     let normal_value = normal_end_bindings.get(name)
                         .map(|(v, _)| v.clone())
                         .unwrap_or_else(|| _initial_value.clone());
+                    // 对 struct_ref_vars：从 Reference 中提取 shared_location 指针
+                    let normal_value = if struct_ref_vars.contains(name) {
+                        if let Value::Reference { value: ref_target, .. } = &normal_value {
+                            ref_target.as_ref().clone()
+                        } else {
+                            normal_value
+                        }
+                    } else {
+                        normal_value
+                    };
                     let mut incoming = vec![(normal_end_block, normal_value)];
                     for (source_block, cont_bindings) in &for_continue_sources {
                         let cont_value = cont_bindings.get(name)
                             .cloned()
                             .unwrap_or_else(|| _initial_value.clone());
+                        // 对 struct_ref_vars：从 Reference 中提取 shared_location 指针
+                        let cont_value = if struct_ref_vars.contains(name) {
+                            if let Value::Reference { value: ref_target, .. } = &cont_value {
+                                ref_target.as_ref().clone()
+                            } else {
+                                cont_value
+                            }
+                        } else {
+                            cont_value
+                        };
                         incoming.push((*source_block, cont_value));
                     }
                     ctx.add_statement(Statement::Phi {
@@ -2235,10 +2337,16 @@ pub(crate) fn lower_expression(
                         incoming,
                         span: *span,
                     });
-                    inc_phi_values.insert(name.clone(), inc_phi_temp);
-                }
-                for (name, inc_phi_val) in &inc_phi_values {
-                    ctx.update_variable(name, inc_phi_val.clone(), None);
+                    inc_phi_values.insert(name.clone(), inc_phi_temp.clone());
+                    // 对 struct_ref_vars：保持变量为 Reference 包装
+                    if struct_ref_vars.contains(name) {
+                        ctx.update_variable(name, Value::Reference {
+                            value: Box::new(inc_phi_temp),
+                            ty: None,
+                        }, None);
+                    } else {
+                        ctx.update_variable(name, inc_phi_temp, None);
+                    }
                 }
             }
 
@@ -2354,21 +2462,49 @@ pub(crate) fn lower_expression(
 
                     if need_phi {
                         let exit_phi_temp = ctx.new_temp();
+                        // 对 struct_ref_vars：提取 shared_location 指针作为 Phi incoming
+                        let normal_phi_value = if struct_ref_vars.contains(name) {
+                            if let Value::Reference { value: ref_target, .. } = &normal_value {
+                                ref_target.as_ref().clone()
+                            } else {
+                                normal_value.clone()
+                            }
+                        } else {
+                            normal_value.clone()
+                        };
                         let mut incoming = vec![
-                            (loop_head, normal_value.clone()),
+                            (loop_head, normal_phi_value),
                         ];
                         for (source_block, break_bindings) in &for_break_sources {
                             let break_value = break_bindings.get(name)
                                 .cloned()
                                 .unwrap_or_else(|| normal_value.clone());
-                            incoming.push((*source_block, break_value));
+                            // 对 struct_ref_vars：提取 shared_location 指针
+                            let break_phi_value = if struct_ref_vars.contains(name) {
+                                if let Value::Reference { value: ref_target, .. } = &break_value {
+                                    ref_target.as_ref().clone()
+                                } else {
+                                    break_value
+                                }
+                            } else {
+                                break_value
+                            };
+                            incoming.push((*source_block, break_phi_value));
                         }
                         ctx.add_statement(Statement::Phi {
                             target: exit_phi_temp.clone(),
                             incoming,
                             span: *span,
                         });
-                        ctx.update_variable(name, exit_phi_temp, None);
+                        // 对 struct_ref_vars：结果包装为 Reference
+                        if struct_ref_vars.contains(name) {
+                            ctx.update_variable(name, Value::Reference {
+                                value: Box::new(exit_phi_temp),
+                                ty: None,
+                            }, None);
+                        } else {
+                            ctx.update_variable(name, exit_phi_temp, None);
+                        }
                     }
                 }
             }
@@ -2599,7 +2735,8 @@ pub(crate) fn lower_expression(
                 });
             }
             if should_scope {
-                ctx.exit_scope(*span);
+                let in_loop = !ctx.loop_stack.is_empty();
+                ctx.exit_scope(*span, in_loop);
             }
         }
 
@@ -2796,16 +2933,6 @@ pub(crate) fn lower_expression(
                             target: merge_block,
                             span: arm.span,
                         });
-
-                        let arm_bindings: std::collections::HashMap<String, Value> = ctx
-                            .scopes
-                            .iter()
-                    // .rev() removed for correct inner scope priority
-                            .flat_map(|scope| {
-                                scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone()))
-                            })
-                            .collect();
-                        arm_bindings_list.push(arm_bindings);
                     }
                 } else {
                     // 无 guard 的 arm：原有逻辑
@@ -2841,20 +2968,24 @@ pub(crate) fn lower_expression(
                             target: merge_block,
                             span: arm.span,
                         });
-
-                        let arm_bindings: std::collections::HashMap<String, Value> = ctx
-                            .scopes
-                            .iter()
-                    // .rev() removed for correct inner scope priority
-                            .flat_map(|scope| {
-                                scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone()))
-                            })
-                            .collect();
-                        arm_bindings_list.push(arm_bindings);
                     }
                 }
 
-                ctx.exit_scope(arm.span);
+                // 先退出 arm 作用域，再收集 arm_bindings
+                // 这样 arm 作用域中的模式变量和 shadow 不会污染 arm_bindings
+                ctx.exit_scope(arm.span, false);
+
+                // 收集 arm_bindings：在 exit_scope 之后，只包含外层作用域的绑定
+                if !arm_terminated_early.last().unwrap() {
+                    let arm_bindings: std::collections::HashMap<String, Value> = ctx
+                        .scopes
+                        .iter()
+                        .flat_map(|scope| {
+                            scope.bindings.iter().map(|(k, v)| (k.clone(), v.value.clone()))
+                        })
+                        .collect();
+                    arm_bindings_list.push(arm_bindings);
+                }
 
                 // 恢复绑定到 match 之前的状态（下一个 arm 需从原始状态开始）
                 for scope in ctx.scopes.iter_mut() {
@@ -2897,9 +3028,10 @@ pub(crate) fn lower_expression(
                                 // 非 Reference 值：创建 shared_location 并存储值
                                 let loc = ctx.new_temp();
                                 if !ctx.analysis_mode {
+                                    let alloc_size = ctx.heap_alloc_size_for_value(arm_value);
                                     ctx.add_statement(Statement::HeapAlloc {
                                         target: loc.clone(),
-                                        size: 8,
+                                        size: alloc_size,
                                         object_type: "shared_var".to_string(),
                                         span,
                                     });
@@ -3920,9 +4052,10 @@ fn lower_lambda_expression(
                         } else {
                             // 基本类型变量：shared_location 直接存储值
                             let shared_location = ctx.new_temp();
+                            let alloc_size = ctx.heap_alloc_size_for_value(&binding.value);
                             ctx.add_statement(Statement::HeapAlloc {
                                 target: shared_location.clone(),
-                                size: 8,
+                                size: alloc_size,
                                 object_type: "shared_var".to_string(),
                                 span,
                             });
@@ -4117,7 +4250,7 @@ fn lower_lambda_expression(
     // 对于identity闭包等情况，返回值可能是函数或闭包类型
     infer_and_register_lambda_return_type(ctx, body, &lambda_name, &return_val);
 
-    ctx.exit_scope(body.span());
+    ctx.exit_scope(body.span(), false);
     ctx.set_terminator(Terminator::Return {
         value: Some(return_val),
         span: body.span(),

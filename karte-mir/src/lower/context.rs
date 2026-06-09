@@ -82,6 +82,31 @@ impl<'a> LoweringContext<'a> {
         self.program.functions.contains_key(name) || self.external_functions.contains(name)
     }
 
+    /// 计算值所需的堆分配大小
+    /// 对于 struct，大小等于字段数 * 8；对于其他值，大小为 8
+    pub(crate) fn heap_alloc_size_for_value(&self, value: &Value) -> usize {
+        match value {
+            Value::Struct { fields, .. } => {
+                // 每个 struct 字段占 8 字节
+                let size = fields.len() * 8;
+                size.max(8) // 最小分配 8 字节
+            }
+            Value::Reference { .. } => 8, // 引用本身是 8 字节指针
+            _ => 8, // number, string, function, closure 等都是 8 字节
+        }
+    }
+
+    /// 计算类型所需的堆分配大小
+    pub(crate) fn heap_alloc_size_for_type(&self, ty: Option<&karte_hir::types::Type>) -> usize {
+        match ty {
+            Some(karte_hir::types::Type::Struct { fields, .. }) => {
+                let size = fields.len() * 8;
+                size.max(8)
+            }
+            _ => 8,
+        }
+    }
+
     /// 开始新函数
     ///
     /// 创建新的MirFunction并初始化其作用域
@@ -101,13 +126,19 @@ impl<'a> LoweringContext<'a> {
         // 将参数添加到变量作用域
         for (i, param) in params.iter().enumerate() {
             let ty = param_types.get(i).cloned().flatten();
-            self.bind_variable(
+            // 从参数类型中提取 struct 类型名称，用于后续闭包捕获
+            let struct_name = match &ty {
+                Some(karte_hir::types::Type::Struct { name, .. }) => Some(name.clone()),
+                _ => None,
+            };
+            self.bind_variable_with_struct_name(
                 param.clone(),
                 Value::Variable {
                     name: param.clone(),
                     ty,
                 },
                 None,
+                struct_name,
             );
         }
 
@@ -167,15 +198,16 @@ impl<'a> LoweringContext<'a> {
     /// 退出当前作用域
     ///
     /// 释放作用域内所有引用计数的变量
-    pub(crate) fn exit_scope(&mut self, span: Span) {
+    pub(crate) fn exit_scope(&mut self, span: Span, propagate: bool) {
         if let Some(frame) = self.scopes.pop() {
             // 🔧 修复 Phi 节点：将内层 scope 中与外层同名的变量绑定传播到外层 scope
-            // 这样 while 循环体中的 let 重新绑定（如 let s = inc(s)）能被 Phi 分析捕获
-            if let Some(outer) = self.scopes.last_mut() {
-                for (name, binding) in &frame.bindings {
-                    if outer.bindings.contains_key(name) {
-                        // 内层 scope 重新绑定了外层已有的变量，传播到外层
-                        outer.bindings.insert(name.clone(), binding.clone());
+            // 但只在循环体中传播（propagate=true），普通块中不应泄露遮蔽变量
+            if propagate {
+                if let Some(outer) = self.scopes.last_mut() {
+                    for (name, binding) in &frame.bindings {
+                        if outer.bindings.contains_key(name) {
+                            outer.bindings.insert(name.clone(), binding.clone());
+                        }
                     }
                 }
             }
@@ -229,6 +261,10 @@ impl<'a> LoweringContext<'a> {
         struct_name: Option<String>,
     ) {
         let frame = self.current_scope_mut();
+        // 如果变量名在同一 scope 中已存在，先移除 order 中的旧条目
+        if frame.bindings.contains_key(&name) {
+            frame.order.retain(|n| n != &name);
+        }
         frame.order.push(name.clone());
         frame.bindings.insert(
             name,
@@ -250,12 +286,20 @@ impl<'a> LoweringContext<'a> {
         value: Value,
         ownership: Option<OwnershipKind>,
     ) -> Option<VariableBinding> {
+        let new_struct_name = match &value {
+            Value::Struct { name, .. } => Some(name.clone()),
+            _ => None,
+        };
         for frame in self.scopes.iter_mut().rev() {
             if let Some(binding) = frame.bindings.get_mut(name) {
                 let old = binding.clone();
                 binding.value = value;
                 binding.ownership = ownership;
                 binding.moved = false;
+                // 如果新值是 Struct 类型，更新 struct_name
+                if new_struct_name.is_some() {
+                    binding.struct_name = new_struct_name;
+                }
                 return Some(old);
             }
         }
