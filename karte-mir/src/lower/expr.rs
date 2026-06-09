@@ -1007,13 +1007,16 @@ pub(crate) fn lower_expression(
             // 切换到 saved_block（循环前的块），确保堆分配语句插入到正确位置
             ctx.set_current_block(saved_block);
             let mut struct_ref_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+            // 基本类型变量被闭包捕获变为 Reference 的集合
+            let mut basic_ref_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
             for (name, initial_value, loop_value) in &mut updated_vars {
                 // 通过 scope 中的 binding.struct_name 判断是否为结构体变量
                 let is_struct = ctx.scopes.iter().rev()
                     .find_map(|scope| scope.bindings.get(name))
                     .and_then(|b| b.struct_name.clone())
                     .is_some();
-                let becomes_ref = matches!(loop_value, Value::Reference { .. });
+                // 如果初始值是 Reference，说明变量被闭包捕获
+                let becomes_ref = matches!(initial_value, Value::Reference { .. }) || matches!(loop_value, Value::Reference { .. });
                 if is_struct && becomes_ref {
                     // 从 scope 获取结构体名称，从 program 获取大小
                     let struct_name = ctx.scopes.iter().rev()
@@ -1060,10 +1063,12 @@ pub(crate) fn lower_expression(
                     struct_ref_vars.insert(name.clone());
                     // 更新变量绑定
                     ctx.update_variable(name, initial_value.clone(), None);
+                } else if becomes_ref {
+                    // 基本类型变量被闭包捕获：Phi temp 存的是 shared_location 指针
+                    // 循环结束后需要 Dereference 才能得到实际值
+                    basic_ref_vars.insert(name.clone());
                 }
             }
-
-            // === 第三步：创建 phi temp 并更新 context ===
             // 这样后续 lower 循环体时会使用 phi 结果
             let mut phi_values: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
             for (name, initial_value, loop_value) in &updated_vars {
@@ -1075,6 +1080,7 @@ pub(crate) fn lower_expression(
 
             // 更新 context 中的变量绑定指向 phi temp
             // 对于预转换的结构体变量，绑定保持为 Reference(phi_temp)
+            // 对于被闭包捕获的基本类型变量，Phi incoming 已经 Dereference，直接使用 phi_temp
             for (name, phi_val) in &phi_values {
                 if struct_ref_vars.contains(name) {
                     ctx.update_variable(name, Value::Reference {
@@ -1201,12 +1207,31 @@ pub(crate) fn lower_expression(
             // === 第五步：生成循环头（包含 phi 节点）===
             ctx.set_current_block(loop_head);
 
+            // 保存当前块，切换到 pre-header 块插入 Phi initial 的 Dereference
+            // 避免在 loop header 中插入 Dereference（会在 Phi 之前执行，污染 incoming）
+            let phi_pre_header = ctx.current_block();
+            ctx.set_current_block(pre_loop_block);
+
             for (name, initial_value, _loop_value) in &updated_vars {
                 let phi_temp = phi_values.get(name).unwrap().clone();
                 // 对于预转换的结构体变量，Phi incoming 使用 Reference 内部的 shared_var 指针
                 let phi_initial = if struct_ref_vars.contains(name) {
                     if let Value::Reference { value: inner, .. } = initial_value {
                         inner.as_ref().clone()
+                    } else {
+                        initial_value.clone()
+                    }
+                } else if basic_ref_vars.contains(name) {
+                    // 基本类型变量被闭包捕获：initial_value 是 Reference(shared_location)
+                    // Phi incoming 需要实际值，在 pre-header 中 Dereference
+                    if let Value::Reference { value: inner, .. } = initial_value {
+                        let derefed = ctx.new_temp();
+                        ctx.add_statement(Statement::Dereference {
+                            target: derefed.clone(),
+                            reference: *inner.clone(),
+                            span: body.span(),
+                        });
+                        derefed
                     } else {
                         initial_value.clone()
                     }
@@ -1243,6 +1268,9 @@ pub(crate) fn lower_expression(
                     span: *span,
                 });
             }
+
+            // Phi 构建完成，切回 loop header
+            ctx.set_current_block(loop_head);
 
             // 更新 context 指向 phi 结果
             // 对于预转换的结构体变量，绑定保持为 Reference(phi_temp)
@@ -1467,13 +1495,13 @@ pub(crate) fn lower_expression(
             // 切换到 saved_block（循环前的块），确保堆分配语句插入到正确位置
             ctx.set_current_block(saved_block);
             let mut struct_ref_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut basic_ref_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
             for (name, initial_value, loop_value) in &mut updated_vars {
-                // 通过 scope 中的 binding.struct_name 判断是否为结构体变量
                 let is_struct = ctx.scopes.iter().rev()
                     .find_map(|scope| scope.bindings.get(name))
                     .and_then(|b| b.struct_name.clone())
                     .is_some();
-                let becomes_ref = matches!(loop_value, Value::Reference { .. });
+                let becomes_ref = matches!(initial_value, Value::Reference { .. }) || matches!(loop_value, Value::Reference { .. });
                 if is_struct && becomes_ref {
                     // 从 scope 获取结构体名称，从 program 获取大小
                     let struct_name = ctx.scopes.iter().rev()
@@ -1520,6 +1548,8 @@ pub(crate) fn lower_expression(
                     struct_ref_vars.insert(name.clone());
                     // 更新变量绑定
                     ctx.update_variable(name, initial_value.clone(), None);
+                } else if becomes_ref {
+                    basic_ref_vars.insert(name.clone());
                 }
             }
 
@@ -1555,21 +1585,42 @@ pub(crate) fn lower_expression(
             });
 
             // === 第四步：生成循环头（phi + 条件判断）===
-            ctx.set_current_block(loop_head);
-
-            // Phi 节点（用户变量）
+            // 在 pre_loop_block 中插入 Phi initial 的 Dereference
+            // 避免在 loop_head 中插入 Dereference（会在 Phi 之前执行，污染 incoming）
+            let mut phi_initials: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+            ctx.set_current_block(pre_loop_block);
             for (name, initial_value, _loop_value) in &updated_vars {
-                let phi_temp = phi_values.get(name).unwrap().clone();
-                // 对于预转换的结构体变量，Phi incoming 使用 Reference 内部的 shared_var 指针
                 let phi_initial = if struct_ref_vars.contains(name) {
                     if let Value::Reference { value: inner, .. } = initial_value {
                         inner.as_ref().clone()
                     } else {
                         initial_value.clone()
                     }
+                } else if basic_ref_vars.contains(name) {
+                    if let Value::Reference { value: inner, .. } = initial_value {
+                        let derefed = ctx.new_temp();
+                        ctx.add_statement(Statement::Dereference {
+                            target: derefed.clone(),
+                            reference: *inner.clone(),
+                            span: *span,
+                        });
+                        derefed
+                    } else {
+                        initial_value.clone()
+                    }
                 } else {
                     initial_value.clone()
                 };
+                phi_initials.insert(name.clone(), phi_initial);
+            }
+
+            // 切到 loop_head 添加 Phi 节点
+            ctx.set_current_block(loop_head);
+
+            // Phi 节点（用户变量）
+            for (name, _initial_value, _loop_value) in &updated_vars {
+                let phi_temp = phi_values.get(name).unwrap().clone();
+                let phi_initial = phi_initials.get(name).unwrap().clone();
                 // back edge 的值稍后填入（先占位，第五步更新）
                 ctx.add_statement(Statement::Phi {
                     target: phi_temp,
@@ -2068,12 +2119,13 @@ pub(crate) fn lower_expression(
             // === 第 2.5 步：预转换结构体变量 ===
             ctx.set_current_block(saved_block);
             let mut struct_ref_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut basic_ref_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
             for (name, initial_value, loop_value) in &mut updated_vars {
                 let is_struct = ctx.scopes.iter().rev()
                     .find_map(|scope| scope.bindings.get(name))
                     .and_then(|b| b.struct_name.clone())
                     .is_some();
-                let becomes_ref = matches!(loop_value, Value::Reference { .. });
+                let becomes_ref = matches!(initial_value, Value::Reference { .. }) || matches!(loop_value, Value::Reference { .. });
                 if is_struct && becomes_ref {
                     let struct_name = ctx.scopes.iter().rev()
                         .find_map(|scope| scope.bindings.get(name))
@@ -2116,6 +2168,8 @@ pub(crate) fn lower_expression(
                     *initial_value = ref_value;
                     struct_ref_vars.insert(name.clone());
                     ctx.update_variable(name, initial_value.clone(), None);
+                } else if becomes_ref {
+                    basic_ref_vars.insert(name.clone());
                 }
             }
 
@@ -2148,20 +2202,41 @@ pub(crate) fn lower_expression(
             });
 
             // === 第四步：生成循环头（phi + 条件判断）===
-            ctx.set_current_block(loop_head);
-
-            // Phi 节点（用户变量）
+            // 在 pre_loop_block 中插入 Phi initial 的 Dereference
+            let mut phi_initials: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+            ctx.set_current_block(pre_loop_block);
             for (name, initial_value, _loop_value) in &updated_vars {
-                let phi_temp = phi_values.get(name).unwrap().clone();
                 let phi_initial = if struct_ref_vars.contains(name) {
                     if let Value::Reference { value: inner, .. } = initial_value {
                         inner.as_ref().clone()
                     } else {
                         initial_value.clone()
                     }
+                } else if basic_ref_vars.contains(name) {
+                    if let Value::Reference { value: inner, .. } = initial_value {
+                        let derefed = ctx.new_temp();
+                        ctx.add_statement(Statement::Dereference {
+                            target: derefed.clone(),
+                            reference: *inner.clone(),
+                            span: *span,
+                        });
+                        derefed
+                    } else {
+                        initial_value.clone()
+                    }
                 } else {
                     initial_value.clone()
                 };
+                phi_initials.insert(name.clone(), phi_initial);
+            }
+
+            // 切到 loop_head 添加 Phi 节点
+            ctx.set_current_block(loop_head);
+
+            // Phi 节点（用户变量）
+            for (name, _initial_value, _loop_value) in &updated_vars {
+                let phi_temp = phi_values.get(name).unwrap().clone();
+                let phi_initial = phi_initials.get(name).unwrap().clone();
                 ctx.add_statement(Statement::Phi {
                     target: phi_temp,
                     incoming: vec![

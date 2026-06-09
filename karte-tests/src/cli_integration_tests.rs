@@ -8693,4 +8693,115 @@ fn main() -> number {
         let exit_code = compile_project_mode_code(code);
         assert_eq!(exit_code, 1, "string equality with ne: expected 1, got {}", exit_code);
     }
+
+    /// 回归测试：while 循环 + 闭包捕获基本类型变量
+    /// 修复前：返回垃圾值（Phi incoming 合并 shared_location 指针和数字值）
+    #[test]
+    fn test_while_loop_closure_capture_basic_type() {
+        let code = r#"
+fn main() -> number {
+    let x = 0;
+    let f = || { x };
+    let i = 0;
+    while i < 5 {
+        let x = x + i;
+        let i = i + 1;
+    };
+    x
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 10, "while loop closure capture basic type: expected 10, got {}", exit_code);
+    }
+
+    /// 回归测试：while 循环 + 闭包捕获 + 简单自增
+    #[test]
+    fn test_while_loop_closure_capture_simple() {
+        let code = r#"
+fn main() -> number {
+    let sum = 0;
+    let f = || { sum };
+    while sum < 5 {
+        let sum = sum + 1;
+    };
+    sum
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 5, "while loop closure capture simple: expected 5, got {}", exit_code);
+    }
+
+    /// 回归测试：for-in 循环 + 闭包捕获 + continue
+    /// 修复前：返回垃圾值（Phi incoming 类型不一致 + 缺少 Dereference）
+    #[test]
+    fn test_for_in_loop_closure_capture_with_continue() {
+        let code = r#"
+fn main() -> number {
+    let sum = 0;
+    let f = || { sum };
+    for i in 0..5 {
+        let sum = sum + i;
+        if i == 3 { continue; };
+        let sum = sum + 10;
+    };
+    sum
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 50, "for-in loop closure capture with continue: expected 50, got {}", exit_code);
+    }
+
+    /// 回归测试：for-in 循环 + 闭包捕获（无 continue）
+    #[test]
+    fn test_for_in_loop_closure_capture_no_continue() {
+        let code = r#"
+fn main() -> number {
+    let sum = 0;
+    let f = || { sum };
+    for i in 0..5 {
+        let sum = sum + i;
+    };
+    sum
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 10, "for-in loop closure capture no continue: expected 10, got {}", exit_code);
+    }
+
+    /// 回归测试：单字段 struct 闭包
+    /// 修复前：struct_value_layouts 跨函数 TempId 冲突导致 SIGSEGV
+    #[test]
+    fn test_single_field_struct_closure() {
+        let code = r#"
+struct Wrapper { value: number }
+fn wrap(x: number) -> number {
+    let w = Wrapper { value: x };
+    let f = || { w };
+    let result = f();
+    result.value
+}
+fn main() -> number {
+    wrap(42)
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 42, "single field struct closure: expected 42, got {}", exit_code);
+    }
+
+    /// 回归测试：闭包返回闭包
+    /// 修复前：struct_value_layouts 跨函数冲突导致 SIGSEGV
+    #[test]
+    fn test_closure_returning_closure() {
+        let code = r#"
+fn make_adder(x: number) -> number {
+    let add = |y| { x + y };
+    add(3)
+}
+fn main() -> number {
+    make_adder(5)
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 8, "closure returning closure: expected 8, got {}", exit_code);
+    }
 }
