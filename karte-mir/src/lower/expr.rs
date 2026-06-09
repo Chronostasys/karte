@@ -1692,12 +1692,21 @@ pub(crate) fn lower_expression(
                         .map(|(v, _)| v.clone())
                         .unwrap_or_else(|| _initial_value.clone());
                     // 对 struct_ref_vars：从 Reference 中提取 shared_location 指针
+                    // 对基本类型 Reference：Dereference 获取实际值
                     let normal_value = if struct_ref_vars.contains(name) {
                         if let Value::Reference { value: ref_target, .. } = &normal_value {
                             ref_target.as_ref().clone()
                         } else {
                             normal_value
                         }
+                    } else if let Value::Reference { value: ref_target, .. } = &normal_value {
+                        let derefed = ctx.new_temp();
+                        ctx.add_statement(Statement::Dereference {
+                            target: derefed.clone(),
+                            reference: *ref_target.clone(),
+                            span: *span,
+                        });
+                        derefed
                     } else {
                         normal_value
                     };
@@ -1707,13 +1716,23 @@ pub(crate) fn lower_expression(
                         let cont_value = cont_bindings.get(name)
                             .cloned()
                             .unwrap_or_else(|| _initial_value.clone());
-                        // 对 struct_ref_vars：从 Reference 中提取 shared_location 指针
+                        // 处理 Reference 值
                         let cont_value = if struct_ref_vars.contains(name) {
+                            // 结构体变量：从 Reference 中提取 shared_location 指针
                             if let Value::Reference { value: ref_target, .. } = &cont_value {
                                 ref_target.as_ref().clone()
                             } else {
                                 cont_value
                             }
+                        } else if let Value::Reference { value: ref_target, .. } = &cont_value {
+                            // 基本类型变量：Dereference 获取实际值
+                            let derefed = ctx.new_temp();
+                            ctx.add_statement(Statement::Dereference {
+                                target: derefed.clone(),
+                                reference: *ref_target.clone(),
+                                span: *span,
+                            });
+                            derefed
                         } else {
                             cont_value
                         };
@@ -2306,12 +2325,21 @@ pub(crate) fn lower_expression(
                         .map(|(v, _)| v.clone())
                         .unwrap_or_else(|| _initial_value.clone());
                     // 对 struct_ref_vars：从 Reference 中提取 shared_location 指针
+                    // 对基本类型 Reference：Dereference 获取实际值
                     let normal_value = if struct_ref_vars.contains(name) {
                         if let Value::Reference { value: ref_target, .. } = &normal_value {
                             ref_target.as_ref().clone()
                         } else {
                             normal_value
                         }
+                    } else if let Value::Reference { value: ref_target, .. } = &normal_value {
+                        let derefed = ctx.new_temp();
+                        ctx.add_statement(Statement::Dereference {
+                            target: derefed.clone(),
+                            reference: *ref_target.clone(),
+                            span: *span,
+                        });
+                        derefed
                     } else {
                         normal_value
                     };
@@ -2320,13 +2348,23 @@ pub(crate) fn lower_expression(
                         let cont_value = cont_bindings.get(name)
                             .cloned()
                             .unwrap_or_else(|| _initial_value.clone());
-                        // 对 struct_ref_vars：从 Reference 中提取 shared_location 指针
+                        // 处理 Reference 值
                         let cont_value = if struct_ref_vars.contains(name) {
+                            // 结构体变量：从 Reference 中提取 shared_location 指针
                             if let Value::Reference { value: ref_target, .. } = &cont_value {
                                 ref_target.as_ref().clone()
                             } else {
                                 cont_value
                             }
+                        } else if let Value::Reference { value: ref_target, .. } = &cont_value {
+                            // 基本类型变量：Dereference 获取实际值
+                            let derefed = ctx.new_temp();
+                            ctx.add_statement(Statement::Dereference {
+                                target: derefed.clone(),
+                                reference: *ref_target.clone(),
+                                span: *span,
+                            });
+                            derefed
                         } else {
                             cont_value
                         };
