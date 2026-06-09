@@ -1007,6 +1007,8 @@ pub(crate) fn lower_expression(
             // 切换到 saved_block（循环前的块），确保堆分配语句插入到正确位置
             ctx.set_current_block(saved_block);
             let mut struct_ref_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+            // 保存 struct 变量的 size（用于 HeapAlloc）
+            let mut struct_sizes: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
             // 基本类型变量被闭包捕获变为 Reference 的集合
             let mut basic_ref_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
             for (name, initial_value, loop_value) in &mut updated_vars {
@@ -1026,6 +1028,7 @@ pub(crate) fn lower_expression(
                     let struct_size = ctx.program.get_struct_type(&struct_name)
                         .map(|t| t.fields.len().max(1) * 8)
                         .unwrap_or(8);
+                    struct_sizes.insert(name.clone(), struct_size);
 
                     // 在 pre_loop_block 中插入堆分配（在 Goto loop_head 之前）
                     let heap_copy = ctx.new_temp();
@@ -1035,9 +1038,30 @@ pub(crate) fn lower_expression(
                         object_type: "struct_copy".to_string(),
                         span: *span,
                     });
+                    // initial_value 是 Reference(shared_location)
+                    // 结构体被闭包捕获后有双层间接：shared_var → struct_copy → struct value
+                    // 需要二次 Dereference 得到实际 struct 值
+                    let actual_struct_value = if let Value::Reference { value: inner, .. } = initial_value {
+                        let derefed1 = ctx.new_temp();
+                        ctx.add_statement(Statement::Dereference {
+                            target: derefed1.clone(),
+                            reference: *inner.clone(),
+                            span: *span,
+                        });
+                        // derefed1 是 struct_copy 指针，需要再次 Dereference 得到 struct 值
+                        let derefed2 = ctx.new_temp();
+                        ctx.add_statement(Statement::Dereference {
+                            target: derefed2.clone(),
+                            reference: derefed1,
+                            span: *span,
+                        });
+                        derefed2
+                    } else {
+                        initial_value.clone()
+                    };
                     ctx.add_statement(Statement::Store {
                         target: heap_copy.clone(),
-                        value: initial_value.clone(),
+                        value: actual_struct_value,
                         span: *span,
                     });
 
@@ -1152,6 +1176,35 @@ pub(crate) fn lower_expression(
                             });
                             actual_backedge_values.insert(name.clone(), derefed);
                         }
+                    } else if struct_ref_vars.contains(name) {
+                        // 结构体变量的 back-edge 值是 struct 值（非 Reference）
+                        // 需要包装成 shared_var 指针以匹配 Phi incoming 类型
+                        let struct_val = final_value.clone();
+                        let heap_alloc = ctx.new_temp();
+                        ctx.add_statement(Statement::HeapAlloc {
+                            target: heap_alloc.clone(),
+                            size: *struct_sizes.get(name).unwrap_or(&8),
+                            object_type: "struct_copy".to_string(),
+                            span: *span,
+                        });
+                        ctx.add_statement(Statement::Store {
+                            target: heap_alloc.clone(),
+                            value: struct_val,
+                            span: *span,
+                        });
+                        let shared_alloc = ctx.new_temp();
+                        ctx.add_statement(Statement::HeapAlloc {
+                            target: shared_alloc.clone(),
+                            size: 8,
+                            object_type: "shared_var".to_string(),
+                            span: *span,
+                        });
+                        ctx.add_statement(Statement::Store {
+                            target: shared_alloc.clone(),
+                            value: heap_alloc,
+                            span: *span,
+                        });
+                        actual_backedge_values.insert(name.clone(), shared_alloc);
                     }
                 }
                 // 处理 continue 路径的 Reference 值
@@ -1171,6 +1224,34 @@ pub(crate) fn lower_expression(
                                 });
                                 actual_continue_values.insert((name.clone(), *source_block), derefed);
                             }
+                        } else if struct_ref_vars.contains(name) {
+                            // 结构体变量的 continue 路径值是 struct 值（非 Reference）
+                            // 需要包装成 shared_var 指针
+                            let heap_alloc = ctx.new_temp();
+                            ctx.add_statement(Statement::HeapAlloc {
+                                target: heap_alloc.clone(),
+                                size: *struct_sizes.get(name).unwrap_or(&8),
+                                object_type: "struct_copy".to_string(),
+                                span: body.span(),
+                            });
+                            ctx.add_statement(Statement::Store {
+                                target: heap_alloc.clone(),
+                                value: cont_value.clone(),
+                                span: body.span(),
+                            });
+                            let shared_alloc = ctx.new_temp();
+                            ctx.add_statement(Statement::HeapAlloc {
+                                target: shared_alloc.clone(),
+                                size: 8,
+                                object_type: "shared_var".to_string(),
+                                span: body.span(),
+                            });
+                            ctx.add_statement(Statement::Store {
+                                target: shared_alloc.clone(),
+                                value: heap_alloc,
+                                span: body.span(),
+                            });
+                            actual_continue_values.insert((name.clone(), *source_block), shared_alloc);
                         }
                     }
                 }
@@ -1191,6 +1272,33 @@ pub(crate) fn lower_expression(
                                 });
                                 actual_break_values.insert((name.clone(), *source_block), derefed);
                             }
+                        } else if struct_ref_vars.contains(name) {
+                            // 结构体变量的 break 路径值是 struct 值（非 Reference）
+                            let heap_alloc = ctx.new_temp();
+                            ctx.add_statement(Statement::HeapAlloc {
+                                target: heap_alloc.clone(),
+                                size: *struct_sizes.get(name).unwrap_or(&8),
+                                object_type: "struct_copy".to_string(),
+                                span: body.span(),
+                            });
+                            ctx.add_statement(Statement::Store {
+                                target: heap_alloc.clone(),
+                                value: break_value.clone(),
+                                span: body.span(),
+                            });
+                            let shared_alloc = ctx.new_temp();
+                            ctx.add_statement(Statement::HeapAlloc {
+                                target: shared_alloc.clone(),
+                                size: 8,
+                                object_type: "shared_var".to_string(),
+                                span: body.span(),
+                            });
+                            ctx.add_statement(Statement::Store {
+                                target: shared_alloc.clone(),
+                                value: heap_alloc,
+                                span: body.span(),
+                            });
+                            actual_break_values.insert((name.clone(), *source_block), shared_alloc);
                         }
                     }
                 }
@@ -1207,11 +1315,14 @@ pub(crate) fn lower_expression(
             // === 第五步：生成循环头（包含 phi 节点）===
             ctx.set_current_block(loop_head);
 
-            // 保存当前块，切换到 pre-header 块插入 Phi initial 的 Dereference
-            // 避免在 loop header 中插入 Dereference（会在 Phi 之前执行，污染 incoming）
-            let phi_pre_header = ctx.current_block();
-            ctx.set_current_block(pre_loop_block);
-
+            // === 第五步：创建 phi temp ===
+            // 在 pre_loop_block 中插入 basic_ref_vars 的 Dereference（避免在 loop_head 中执行）
+            // 然后切回 loop_head 构建 Phi
+            let mut phi_initials: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+            let has_basic_ref = !basic_ref_vars.is_empty();
+            if has_basic_ref {
+                ctx.set_current_block(pre_loop_block);
+            }
             for (name, initial_value, _loop_value) in &updated_vars {
                 let phi_temp = phi_values.get(name).unwrap().clone();
                 // 对于预转换的结构体变量，Phi incoming 使用 Reference 内部的 shared_var 指针
@@ -1223,7 +1334,7 @@ pub(crate) fn lower_expression(
                     }
                 } else if basic_ref_vars.contains(name) {
                     // 基本类型变量被闭包捕获：initial_value 是 Reference(shared_location)
-                    // Phi incoming 需要实际值，在 pre-header 中 Dereference
+                    // 在 pre_loop_block 中 Dereference 得到实际值
                     if let Value::Reference { value: inner, .. } = initial_value {
                         let derefed = ctx.new_temp();
                         ctx.add_statement(Statement::Dereference {
@@ -1238,6 +1349,14 @@ pub(crate) fn lower_expression(
                 } else {
                     initial_value.clone()
                 };
+                phi_initials.insert(name.clone(), phi_initial);
+            }
+            // 切回 loop_head 构建 Phi
+            ctx.set_current_block(loop_head);
+
+            for (name, initial_value, _loop_value) in &updated_vars {
+                let phi_temp = phi_values.get(name).unwrap().clone();
+                let phi_initial = phi_initials.get(name).unwrap().clone();
                 // 获取循环体正常结束后的值（优先使用解引用后的值）
                 let final_value = if let Some(actual) = actual_backedge_values.get(name) {
                     actual.clone()
@@ -1495,6 +1614,7 @@ pub(crate) fn lower_expression(
             // 切换到 saved_block（循环前的块），确保堆分配语句插入到正确位置
             ctx.set_current_block(saved_block);
             let mut struct_ref_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut struct_sizes: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
             let mut basic_ref_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
             for (name, initial_value, loop_value) in &mut updated_vars {
                 let is_struct = ctx.scopes.iter().rev()
@@ -1511,6 +1631,7 @@ pub(crate) fn lower_expression(
                     let struct_size = ctx.program.get_struct_type(&struct_name)
                         .map(|t| t.fields.len().max(1) * 8)
                         .unwrap_or(8);
+                    struct_sizes.insert(name.clone(), struct_size);
 
                     // 在 pre_loop_block 中插入堆分配（在 Goto loop_head 之前）
                     let heap_copy = ctx.new_temp();
@@ -1520,9 +1641,28 @@ pub(crate) fn lower_expression(
                         object_type: "struct_copy".to_string(),
                         span: *span,
                     });
+                    // initial_value 可能是 Reference(shared_location)
+                    // 结构体被闭包捕获后有双层间接：shared_var → struct_copy → struct value
+                    let actual_struct_value = if let Value::Reference { value: inner, .. } = initial_value {
+                        let derefed1 = ctx.new_temp();
+                        ctx.add_statement(Statement::Dereference {
+                            target: derefed1.clone(),
+                            reference: *inner.clone(),
+                            span: *span,
+                        });
+                        let derefed2 = ctx.new_temp();
+                        ctx.add_statement(Statement::Dereference {
+                            target: derefed2.clone(),
+                            reference: derefed1,
+                            span: *span,
+                        });
+                        derefed2
+                    } else {
+                        initial_value.clone()
+                    };
                     ctx.add_statement(Statement::Store {
                         target: heap_copy.clone(),
-                        value: initial_value.clone(),
+                        value: actual_struct_value,
                         span: *span,
                     });
 
@@ -1729,6 +1869,49 @@ pub(crate) fn lower_expression(
             // 记录循环体正常结束的块（用于 increment_block 的 phi）
             let normal_end_block = ctx.current_block();
 
+            // 在 normal_end_block 中为 struct_ref_vars 包装 struct 值
+            // 不能在 increment_block 中包装，因为 continue 路径不会经过 normal_end_block
+            let mut wrapped_normal_values: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+            ctx.set_current_block(normal_end_block);
+            for (name, _initial_value, _loop_value) in &updated_vars {
+                if struct_ref_vars.contains(name) {
+                    let normal_value = normal_end_bindings.get(name)
+                        .map(|(v, _)| v.clone())
+                        .unwrap_or_else(|| _initial_value.clone());
+                    let wrapped = if let Value::Reference { value: ref_target, .. } = &normal_value {
+                        ref_target.as_ref().clone()
+                    } else {
+                        // struct 值需要包装成 shared_var 指针
+                        let heap_alloc = ctx.new_temp();
+                        ctx.add_statement(Statement::HeapAlloc {
+                            target: heap_alloc.clone(),
+                            size: *struct_sizes.get(name).unwrap_or(&8),
+                            object_type: "struct_copy".to_string(),
+                            span: *span,
+                        });
+                        ctx.add_statement(Statement::Store {
+                            target: heap_alloc.clone(),
+                            value: normal_value,
+                            span: *span,
+                        });
+                        let shared_alloc = ctx.new_temp();
+                        ctx.add_statement(Statement::HeapAlloc {
+                            target: shared_alloc.clone(),
+                            size: 8,
+                            object_type: "shared_var".to_string(),
+                            span: *span,
+                        });
+                        ctx.add_statement(Statement::Store {
+                            target: shared_alloc.clone(),
+                            value: heap_alloc,
+                            span: *span,
+                        });
+                        shared_alloc
+                    };
+                    wrapped_normal_values.insert(name.clone(), wrapped);
+                }
+            }
+
             // === 第六步：生成递增块 ===
             ctx.set_current_block(increment_block);
 
@@ -1739,17 +1922,17 @@ pub(crate) fn lower_expression(
                 for (name, _initial_value, _loop_value) in &updated_vars {
                     let inc_phi_temp = ctx.new_temp();
                     // 正常结束路径的值
-                    let normal_value = normal_end_bindings.get(name)
-                        .map(|(v, _)| v.clone())
-                        .unwrap_or_else(|| _initial_value.clone());
-                    // 对 struct_ref_vars：从 Reference 中提取 shared_location 指针
+                    let normal_value = if let Some(wrapped) = wrapped_normal_values.get(name) {
+                        wrapped.clone()
+                    } else {
+                        normal_end_bindings.get(name)
+                            .map(|(v, _)| v.clone())
+                            .unwrap_or_else(|| _initial_value.clone())
+                    };
+                    // 对 struct_ref_vars 已在 normal_end_block 中包装
                     // 对基本类型 Reference：Dereference 获取实际值
                     let normal_value = if struct_ref_vars.contains(name) {
-                        if let Value::Reference { value: ref_target, .. } = &normal_value {
-                            ref_target.as_ref().clone()
-                        } else {
-                            normal_value
-                        }
+                        normal_value // 已包装
                     } else if let Value::Reference { value: ref_target, .. } = &normal_value {
                         let derefed = ctx.new_temp();
                         ctx.add_statement(Statement::Dereference {
@@ -1773,7 +1956,32 @@ pub(crate) fn lower_expression(
                             if let Value::Reference { value: ref_target, .. } = &cont_value {
                                 ref_target.as_ref().clone()
                             } else {
-                                cont_value
+                                // struct 值需要包装成 shared_var 指针
+                                let heap_alloc = ctx.new_temp();
+                                ctx.add_statement(Statement::HeapAlloc {
+                                    target: heap_alloc.clone(),
+                                    size: *struct_sizes.get(name).unwrap_or(&8),
+                                    object_type: "struct_copy".to_string(),
+                                    span: *span,
+                                });
+                                ctx.add_statement(Statement::Store {
+                                    target: heap_alloc.clone(),
+                                    value: cont_value,
+                                    span: *span,
+                                });
+                                let shared_alloc = ctx.new_temp();
+                                ctx.add_statement(Statement::HeapAlloc {
+                                    target: shared_alloc.clone(),
+                                    size: 8,
+                                    object_type: "shared_var".to_string(),
+                                    span: *span,
+                                });
+                                ctx.add_statement(Statement::Store {
+                                    target: shared_alloc.clone(),
+                                    value: heap_alloc,
+                                    span: *span,
+                                });
+                                shared_alloc
                             }
                         } else if let Value::Reference { value: ref_target, .. } = &cont_value {
                             // 基本类型变量：Dereference 获取实际值
@@ -1852,6 +2060,35 @@ pub(crate) fn lower_expression(
                             });
                             actual_backedge_values.insert(name.clone(), derefed);
                         }
+                    } else if struct_ref_vars.contains(name) {
+                        // 结构体变量的 back-edge 值是 struct 值（非 Reference）
+                        // 需要包装成 shared_var 指针以匹配 Phi incoming 类型
+                        let struct_val = final_value.clone();
+                        let heap_alloc = ctx.new_temp();
+                        ctx.add_statement(Statement::HeapAlloc {
+                            target: heap_alloc.clone(),
+                            size: *struct_sizes.get(name).unwrap_or(&8),
+                            object_type: "struct_copy".to_string(),
+                            span: *span,
+                        });
+                        ctx.add_statement(Statement::Store {
+                            target: heap_alloc.clone(),
+                            value: struct_val,
+                            span: *span,
+                        });
+                        let shared_alloc = ctx.new_temp();
+                        ctx.add_statement(Statement::HeapAlloc {
+                            target: shared_alloc.clone(),
+                            size: 8,
+                            object_type: "shared_var".to_string(),
+                            span: *span,
+                        });
+                        ctx.add_statement(Statement::Store {
+                            target: shared_alloc.clone(),
+                            value: heap_alloc,
+                            span: *span,
+                        });
+                        actual_backedge_values.insert(name.clone(), shared_alloc);
                     }
                 }
 
@@ -1961,12 +2198,37 @@ pub(crate) fn lower_expression(
                             let break_value = break_bindings.get(name)
                                 .cloned()
                                 .unwrap_or_else(|| normal_value.clone());
-                            // 对 struct_ref_vars：提取 shared_location 指针
+                            // 对 struct_ref_vars：提取 shared_location 指针或包装 struct 值
                             let break_phi_value = if struct_ref_vars.contains(name) {
                                 if let Value::Reference { value: ref_target, .. } = &break_value {
                                     ref_target.as_ref().clone()
                                 } else {
-                                    break_value
+                                    // struct 值需要包装成 shared_var 指针
+                                    let heap_alloc = ctx.new_temp();
+                                    ctx.add_statement(Statement::HeapAlloc {
+                                        target: heap_alloc.clone(),
+                                        size: *struct_sizes.get(name).unwrap_or(&8),
+                                        object_type: "struct_copy".to_string(),
+                                        span: *span,
+                                    });
+                                    ctx.add_statement(Statement::Store {
+                                        target: heap_alloc.clone(),
+                                        value: break_value,
+                                        span: *span,
+                                    });
+                                    let shared_alloc = ctx.new_temp();
+                                    ctx.add_statement(Statement::HeapAlloc {
+                                        target: shared_alloc.clone(),
+                                        size: 8,
+                                        object_type: "shared_var".to_string(),
+                                        span: *span,
+                                    });
+                                    ctx.add_statement(Statement::Store {
+                                        target: shared_alloc.clone(),
+                                        value: heap_alloc,
+                                        span: *span,
+                                    });
+                                    shared_alloc
                                 }
                             } else {
                                 break_value
@@ -2119,6 +2381,7 @@ pub(crate) fn lower_expression(
             // === 第 2.5 步：预转换结构体变量 ===
             ctx.set_current_block(saved_block);
             let mut struct_ref_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut struct_sizes: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
             let mut basic_ref_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
             for (name, initial_value, loop_value) in &mut updated_vars {
                 let is_struct = ctx.scopes.iter().rev()
@@ -2134,6 +2397,7 @@ pub(crate) fn lower_expression(
                     let struct_size = ctx.program.get_struct_type(&struct_name)
                         .map(|t| t.fields.len().max(1) * 8)
                         .unwrap_or(8);
+                    struct_sizes.insert(name.clone(), struct_size);
 
                     let heap_copy = ctx.new_temp();
                     ctx.add_statement(Statement::HeapAlloc {
@@ -2142,9 +2406,28 @@ pub(crate) fn lower_expression(
                         object_type: "struct_copy".to_string(),
                         span: *span,
                     });
+                    // initial_value 可能是 Reference(shared_location)
+                    // 结构体被闭包捕获后有双层间接：shared_var → struct_copy → struct value
+                    let actual_struct_value = if let Value::Reference { value: inner, .. } = initial_value {
+                        let derefed1 = ctx.new_temp();
+                        ctx.add_statement(Statement::Dereference {
+                            target: derefed1.clone(),
+                            reference: *inner.clone(),
+                            span: *span,
+                        });
+                        let derefed2 = ctx.new_temp();
+                        ctx.add_statement(Statement::Dereference {
+                            target: derefed2.clone(),
+                            reference: derefed1,
+                            span: *span,
+                        });
+                        derefed2
+                    } else {
+                        initial_value.clone()
+                    };
                     ctx.add_statement(Statement::Store {
                         target: heap_copy.clone(),
-                        value: initial_value.clone(),
+                        value: actual_struct_value,
                         span: *span,
                     });
 
@@ -2499,6 +2782,35 @@ pub(crate) fn lower_expression(
                             });
                             actual_backedge_values.insert(name.clone(), derefed);
                         }
+                    } else if struct_ref_vars.contains(name) {
+                        // 结构体变量的 back-edge 值是 struct 值（非 Reference）
+                        // 需要包装成 shared_var 指针以匹配 Phi incoming 类型
+                        let struct_val = final_value.clone();
+                        let heap_alloc = ctx.new_temp();
+                        ctx.add_statement(Statement::HeapAlloc {
+                            target: heap_alloc.clone(),
+                            size: *struct_sizes.get(name).unwrap_or(&8),
+                            object_type: "struct_copy".to_string(),
+                            span: *span,
+                        });
+                        ctx.add_statement(Statement::Store {
+                            target: heap_alloc.clone(),
+                            value: struct_val,
+                            span: *span,
+                        });
+                        let shared_alloc = ctx.new_temp();
+                        ctx.add_statement(Statement::HeapAlloc {
+                            target: shared_alloc.clone(),
+                            size: 8,
+                            object_type: "shared_var".to_string(),
+                            span: *span,
+                        });
+                        ctx.add_statement(Statement::Store {
+                            target: shared_alloc.clone(),
+                            value: heap_alloc,
+                            span: *span,
+                        });
+                        actual_backedge_values.insert(name.clone(), shared_alloc);
                     }
                 }
             }

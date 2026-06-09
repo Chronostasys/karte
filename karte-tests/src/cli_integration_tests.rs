@@ -8804,4 +8804,232 @@ fn main() -> number {
         let exit_code = compile_project_mode_code(code);
         assert_eq!(exit_code, 8, "closure returning closure: expected 8, got {}", exit_code);
     }
+
+    /// 回归测试：for-array + 闭包捕获基本类型变量
+    #[test]
+    fn test_for_array_closure_capture() {
+        let code = r#"
+fn main() -> number {
+    let sum = 0;
+    let f = || { sum };
+    let arr = [10, 20, 30];
+    for a in arr {
+        let sum = sum + a;
+    };
+    sum
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 60, "for-array closure capture: expected 60, got {}", exit_code);
+    }
+
+    /// 回归测试：while + 闭包 + break
+    #[test]
+    fn test_while_closure_break() {
+        let code = r#"
+fn main() -> number {
+    let sum = 0;
+    let f = || { sum };
+    let i = 0;
+    while i < 10 {
+        let sum = sum + i;
+        if i == 5 { break; };
+        let i = i + 1;
+    };
+    sum
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 15, "while closure break: expected 15, got {}", exit_code);
+    }
+
+    /// 回归测试：for-in + 闭包 + break
+    #[test]
+    fn test_for_in_closure_break() {
+        let code = r#"
+fn main() -> number {
+    let sum = 0;
+    let f = || { sum };
+    for i in 0..10 {
+        let sum = sum + i;
+        if i == 5 { break; };
+    };
+    sum
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 15, "for-in closure break: expected 15, got {}", exit_code);
+    }
+
+    /// 回归测试：多重变量闭包捕获 + 循环
+    #[test]
+    fn test_multi_capture_loop() {
+        let code = r#"
+fn main() -> number {
+    let x = 0;
+    let y = 0;
+    let f = || { x + y };
+    for i in 0..5 {
+        let x = x + i;
+        let y = y + i * 2;
+    };
+    x + y
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 30, "multi capture loop: expected 30, got {}", exit_code);
+    }
+
+    /// 回归测试：嵌套循环 + 闭包捕获
+    #[test]
+    fn test_nested_loop_closure() {
+        let code = r#"
+fn main() -> number {
+    let sum = 0;
+    let f = || { sum };
+    for i in 0..3 {
+        for j in 0..3 {
+            let sum = sum + i * 3 + j;
+        };
+    };
+    sum
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 36, "nested loop closure: expected 36, got {}", exit_code);
+    }
+
+    /// 回归测试：for-in + 闭包 + continue + break 混合
+    #[test]
+    fn test_for_in_closure_continue_break() {
+        let code = r#"
+fn main() -> number {
+    let sum = 0;
+    let f = || { sum };
+    for i in 0..10 {
+        if i == 3 { continue; };
+        let sum = sum + i;
+        if i == 7 { break; };
+    };
+    sum
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 25, "for-in closure continue break: expected 25, got {}", exit_code);
+    }
+
+    /// 回归测试：struct + 闭包 + while 循环
+    #[test]
+    fn test_struct_closure_while_loop() {
+        let code = r#"
+struct Counter { value: number }
+fn main() -> number {
+    let c = Counter { value: 0 };
+    let f = || { c };
+    let i = 0;
+    while i < 3 {
+        let c = Counter { value: c.value + 1 };
+        let i = i + 1;
+    };
+    c.value
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 3, "struct closure while loop: expected 3, got {}", exit_code);
+    }
+
+    /// 回归测试：struct + 闭包 + for-in 循环
+    #[test]
+    fn test_struct_closure_for_in_loop() {
+        let code = r#"
+struct Counter { value: number }
+fn main() -> number {
+    let c = Counter { value: 0 };
+    let f = || { c };
+    for i in 0..5 {
+        let c = Counter { value: c.value + i * 2 };
+    };
+    c.value
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 20, "struct closure for-in loop: expected 20, got {}", exit_code);
+    }
+
+    /// 回归测试：struct + 闭包 + for-in + continue
+    #[test]
+    fn test_struct_closure_for_in_continue() {
+        let code = r#"
+struct Counter { value: number }
+fn main() -> number {
+    let c = Counter { value: 0 };
+    let f = || { c };
+    for i in 0..5 {
+        if i == 2 { continue; };
+        let c = Counter { value: c.value + i };
+    };
+    c.value
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 8, "struct closure for-in continue: expected 8, got {}", exit_code);
+    }
+
+    /// 回归测试：struct + 闭包 + while + continue
+    #[test]
+    fn test_struct_closure_while_continue() {
+        let code = r#"
+struct Counter { value: number }
+fn main() -> number {
+    let c = Counter { value: 0 };
+    let f = || { c };
+    let i = 0;
+    while i < 5 {
+        let i = i + 1;
+        if i == 3 { continue; };
+        let c = Counter { value: c.value + i };
+    };
+    c.value
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 12, "struct closure while continue: expected 12, got {}", exit_code);
+    }
+
+    /// 回归测试：多字段 struct + 闭包 + for-in 循环
+    #[test]
+    fn test_multi_field_struct_closure_for_in() {
+        let code = r#"
+struct Pair { a: number, b: number }
+fn main() -> number {
+    let p = Pair { a: 0, b: 0 };
+    let f = || { p };
+    for i in 0..4 {
+        let p = Pair { a: p.a + i, b: p.b + i * 2 };
+    };
+    p.a + p.b
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 18, "multi field struct closure for-in: expected 18, got {}", exit_code);
+    }
+
+    /// 回归测试：struct + 闭包 + for-array 循环
+    #[test]
+    fn test_struct_closure_for_array() {
+        let code = r#"
+struct Accum { total: number }
+fn main() -> number {
+    let a = Accum { total: 0 };
+    let f = || { a };
+    let arr = [10, 20, 30];
+    for x in arr {
+        let a = Accum { total: a.total + x };
+    };
+    a.total
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 60, "struct closure for-array: expected 60, got {}", exit_code);
+    }
 }
