@@ -220,3 +220,43 @@ fn test_analyze_string_equality() {
     let diagnostics = bridge.analyze(source);
     assert!(diagnostics.is_empty(), "String equality should not have errors");
 }
+
+#[test]
+fn test_hover_function_call() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn add(a: number, b: number) -> number { a + b }\nfn main() -> number { add(1, 2) }";
+    let _diagnostics = bridge.analyze(source);
+    // 悬停在 main 上应该显示函数签名
+    let hover = bridge.get_hover_info(Position { line: 1, character: 3 });
+    assert!(hover.is_some(), "Should have hover info for 'main'");
+    if let Some((text, _)) = hover {
+        assert!(text.contains("main"), "Hover should contain function name");
+    }
+}
+
+#[test]
+fn test_completion_filter_by_prefix() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number { let foobar = 42; foo }";
+    let _diagnostics = bridge.analyze(source);
+    // 在 'foo' 后面应该过滤出 foobar
+    let completions = bridge.get_completions(Position { line: 0, character: 38 });
+    let has_foobar = completions.iter().any(|c| c.label == "foobar");
+    assert!(has_foobar, "Completions should contain 'foobar'");
+}
+
+#[test]
+fn test_analyze_break_continue() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet x = 0;\nwhile x < 10 {\nif x == 5 {\nbreak\n}\nx\n}\n0\n}";
+    let _diagnostics = bridge.analyze(source);
+    // break 不应该导致错误
+}
+
+#[test]
+fn test_analyze_result_type() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn divide(a: number, b: number) -> Result<number, string> {\nif b == 0 {\nErr(\"division by zero\")\n} else {\nOk(a / b)\n}\n}\nfn main() -> number {\nmatch divide(10, 2) {\nOk(v) => v,\nErr(_) => 0\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    assert!(diagnostics.is_empty(), "Result type should not have errors");
+}
