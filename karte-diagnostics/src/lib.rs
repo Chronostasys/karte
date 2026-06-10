@@ -272,7 +272,7 @@ impl Diagnostic {
                         span,
                         message: self.message,
                         src,
-                        help: Some("请检查函数签名和参数数量".to_string()),
+                        help: diag_help.or(Some("请检查函数签名和参数数量".to_string())),
                     }
                 } else if self.message.contains("Duplicate function") || self.message.contains("重复定义") {
                     let name = self.message
@@ -283,14 +283,14 @@ impl Diagnostic {
                         span,
                         name,
                         src,
-                        help: "此名称的函数已在此作用域中定义。请重命名或删除重复定义。".to_string(),
+                        help: diag_help.unwrap_or_else(|| "此名称的函数已在此作用域中定义。请重命名或删除重复定义。".to_string()),
                     }
                 } else if self.message.contains("Builtin function") || self.message.contains("内置函数") {
                     CompilerError::TypeError {
                         span,
                         message: self.message,
                         src,
-                        help: Some("请检查内置函数的参数类型".to_string()),
+                        help: diag_help.or(Some("请检查内置函数的参数类型".to_string())),
                     }
                 } else if self.message.contains("非穷尽 match") {
                     CompilerError::TypeError {

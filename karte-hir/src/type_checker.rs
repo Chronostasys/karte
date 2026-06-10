@@ -4573,6 +4573,31 @@ impl TypeChecker {
             TypeCheckError::NonExhaustiveMatch { missing_patterns, .. } => {
                 Some(format!("请添加缺少的模式: {}", missing_patterns.join(", ")))
             }
+            TypeCheckError::ArityMismatch { expected, found, .. } => {
+                if found < expected {
+                    Some(format!("请添加缺少的 {} 个参数", expected - found))
+                } else {
+                    Some(format!("请移除多余的 {} 个参数", found - expected))
+                }
+            }
+            TypeCheckError::UndefinedVariable { name, .. } => {
+                Some(format!("请确保 '{}' 在使用前已定义。可以使用 'let {} = ...' 来定义它", name, name))
+            }
+            TypeCheckError::DuplicateFunctionDefinition { name, .. } => {
+                Some(format!("请重命名其中一个 '{}' 函数，或删除重复的定义", name))
+            }
+            TypeCheckError::NotCallable { .. } => {
+                Some("只有函数和闭包可以被调用。请检查表达式是否为可调用类型".to_string())
+            }
+            TypeCheckError::InfiniteType { .. } => {
+                Some("类型推断出现了无限递归。请检查函数或表达式是否存在循环类型引用".to_string())
+            }
+            TypeCheckError::InvalidMainReturnType { .. } => {
+                Some("main 函数的返回类型必须是 number（或省略类型标注）".to_string())
+            }
+            TypeCheckError::InvalidPattern { message, .. } => {
+                Some(message.clone())
+            }
             _ => None,
         };
         self.diagnostics.add_error_with_help(message, span, help);
