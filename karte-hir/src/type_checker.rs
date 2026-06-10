@@ -2097,7 +2097,8 @@ impl TypeChecker {
                     let arm_type = self.infer_expr(&arm.body, &arm_env);
 
                     // 约束：所有分支的类型必须兼容
-                    self.add_constraint_with_context(result_type.clone(), arm_type, arm.body.span(), "match 分支类型不一致");
+                    self.add_constraint_with_context(result_type.clone(), arm_type.clone(), arm.body.span(), 
+                        format!("match 分支类型不一致: 期望 `{}`, 实际 `{}`", result_type, arm_type));
                 }
 
                 // 穷尽性检查：检查所有模式是否覆盖了所有可能的情况
