@@ -273,7 +273,7 @@ impl TypeChecker {
                         // 未使用的变量，发出警告
                         self.diagnostics.diagnostics.push(
                             karte_diagnostics::Diagnostic::warning(
-                                format!("未使用的变量: `{}`", name),
+                                format!("未使用的变量: `{}` (如果故意不使用，请添加下划线前缀: `_{})", name, name),
                                 karte_diagnostics::Span::new(span_key.0, span_key.1),
                             )
                         );
