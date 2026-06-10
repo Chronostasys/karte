@@ -43,7 +43,7 @@ fn test_type_check_struct_field_access() {
 }
 
 #[test]
-fn test_type_check_string_concat() {
+fn test_type_check_string_concat_v2() {
     check_no_errors("fn main() -> number {\n    let s = \"hello\" + \" world\";\n    0\n}");
 }
 
@@ -170,4 +170,54 @@ fn test_type_check_for_loop() {
 #[test]
 fn test_type_check_nested_struct() {
     check_no_errors("struct Point { x: number, y: number }\nstruct Line { start: Point, end: Point }\nfn main() -> number {\n    let l = Line { start: Point { x: 0, y: 0 }, end: Point { x: 1, y: 1 } };\n    l.start.x\n}");
+}
+
+#[test]
+fn test_type_check_function_parameter() {
+    check_no_errors("fn add(a: number, b: number) -> number {\n    a + b\n}\nfn main() -> number {\n    add(1, 2)\n}");
+}
+
+#[test]
+fn test_type_check_string_concat() {
+    check_no_errors("fn main() -> number {\n    let s = \"hello\" + \" world\";\n    0\n}");
+}
+
+#[test]
+fn test_type_check_bool_expression() {
+    check_no_errors("fn main() -> number {\n    let x = true && false;\n    let y = true || false;\n    let z = !x;\n    if z { 1 } else { 0 }\n}");
+}
+
+#[test]
+fn test_type_check_tuple() {
+    check_no_errors("fn main() -> number {\n    let t = (1, 2, 3);\n    0\n}");
+}
+
+#[test]
+fn test_type_check_nested_function() {
+    check_no_errors("fn outer(x: number) -> number {\n    fn inner(y: number) -> number {\n        x + y\n    }\n    inner(10)\n}\nfn main() -> number {\n    outer(5)\n}");
+}
+
+#[test]
+fn test_type_check_match_with_guard() {
+    check_no_errors("fn classify(x: number) -> number {\n    match x {\n        0 => 1,\n        _ => 2\n    }\n}\nfn main() -> number {\n    classify(42)\n}");
+}
+
+#[test]
+fn test_type_check_multiple_returns() {
+    check_no_errors("fn abs(x: number) -> number {\n    if x < 0 {\n        return 0 - x\n    } else {\n        x\n    }\n}\nfn main() -> number {\n    abs(5)\n}");
+}
+
+#[test]
+fn test_type_check_struct_field_access_v2() {
+    check_no_errors("struct Point { x: number, y: number }\nfn main() -> number {\n    let p = Point { x: 1, y: 2 };\n    p.x + p.y\n}");
+}
+
+#[test]
+fn test_type_check_enum_basic() {
+    check_no_errors("enum Direction { North, South, East, West }\nfn main() -> number {\n    let d = Direction::North;\n    match d {\n        Direction::North => 0,\n        Direction::South => 1,\n        Direction::East => 2,\n        Direction::West => 3\n    }\n}");
+}
+
+#[test]
+fn test_type_check_string_comparison() {
+    check_no_errors("fn main() -> number {\n    let a = \"hello\";\n    let b = \"world\";\n    if a == b { 1 } else { 0 }\n}");
 }
