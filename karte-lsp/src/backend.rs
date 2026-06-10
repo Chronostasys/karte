@@ -33,7 +33,12 @@ impl Backend {
     async fn publish_diagnostics(&self, uri: Url, diagnostics: Vec<LspDiagnostic>) {
         let lsp_diagnostics: Vec<Diagnostic> = diagnostics
             .into_iter()
-            .map(|diag| Diagnostic {
+            .map(|diag| {
+                let message = match &diag.help {
+                    Some(help) => format!("{}\n  💡 {}", diag.message, help),
+                    None => diag.message,
+                };
+                Diagnostic {
                 range: diag.range,
                 severity: Some(match diag.severity {
                     KarteDiagnosticSeverity::Error => DiagnosticSeverity::ERROR,
@@ -41,9 +46,10 @@ impl Backend {
                     KarteDiagnosticSeverity::Information => DiagnosticSeverity::INFORMATION,
                     KarteDiagnosticSeverity::Hint => DiagnosticSeverity::HINT,
                 }),
-                message: diag.message,
+                message,
                 source: Some("karte".to_string()),
                 ..Default::default()
+            }
             })
             .collect();
 
