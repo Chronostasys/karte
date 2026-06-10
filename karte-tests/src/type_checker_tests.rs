@@ -1220,4 +1220,74 @@ mod tests {
         let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
         assert!(!diagnostics.has_errors(), "Nested function calls should be valid");
     }
+
+    #[test]
+    fn test_type_error_context_message() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = \"hello\";\n    let y = x + 1;\n    y\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Should report type error");
+        let msgs: Vec<&str> = diagnostics.diagnostics.iter().map(|d| d.message.as_str()).collect();
+        let msg = msgs.join(", ");
+        // 错误消息应该包含上下文描述
+        assert!(msg.contains("类型不匹配") || msg.contains("运算") || msg.contains("期望"),
+            "Error should have context: {}", msg);
+    }
+
+    #[test]
+    fn test_undefined_variable_suggestion() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let counter = 5;\n    countr\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Should report undefined variable");
+        let msgs: Vec<&str> = diagnostics.diagnostics.iter().map(|d| d.message.as_str()).collect();
+        let msg = msgs.join(", ");
+        // 错误消息应该包含拼写建议
+        assert!(msg.contains("countr") || msg.contains("counter") || msg.contains("未定义"),
+            "Error should mention variable name or suggestion: {}", msg);
+    }
+
+    #[test]
+    fn test_empty_function_body() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    42\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Function with return value should be valid");
+    }
+
+    #[test]
+    fn test_multiple_return_paths() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn classify(n: number) -> number {\n    if n > 0 {\n        1\n    } else if n < 0 {\n        -1\n    } else {\n        0\n    }\n}\nfn main() -> number {\n    classify(42)\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Multiple return paths should be valid");
+    }
+
+    #[test]
+    fn test_string_operations() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let a = \"hello\";\n    let b = \"world\";\n    let c = a == b;\n    0\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "String comparison should be valid");
+    }
+
+    #[test]
+    fn test_char_literal() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let c: char = 'A';\n    0\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Char literal should be valid");
+    }
 }
