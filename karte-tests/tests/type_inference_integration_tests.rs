@@ -2818,3 +2818,53 @@ fn test_type_check_bool_value() {
 fn test_type_check_array_value() {
     check_no_errors("fn main() -> number {\nlet arr = [1, 2, 3];\narr[0]\n}");
 }
+
+#[test]
+fn test_type_check_simple_let_number() {
+    check_no_errors("fn f() -> number {\nlet x: number = 42;\nx\n}");
+}
+
+#[test]
+fn test_type_check_simple_let_string() {
+    check_no_errors("fn f() -> number {\nlet s: string = \"hello\";\nlen(s)\n}");
+}
+
+#[test]
+fn test_type_check_simple_let_bool() {
+    check_no_errors("fn f() -> number {\nlet b: bool = true;\nif b { 1 } else { 0 }\n}");
+}
+
+#[test]
+fn test_type_check_simple_let_struct() {
+    check_no_errors("struct Point { x: number, y: number }\nfn f() -> number {\nlet p: Point = Point { x: 1, y: 2 };\np.x\n}");
+}
+
+#[test]
+fn test_type_check_simple_closure_no_capture() {
+    check_no_errors("fn main() -> number {\nlet f = |x: number| -> number { x * 2 };\nf(21)\n}");
+}
+
+#[test]
+fn test_type_check_simple_closure_capture() {
+    check_no_errors("fn main() -> number {\nlet y = 10;\nlet f = |x: number| -> number { x + y };\nf(5)\n}");
+}
+
+#[test]
+fn test_type_check_simple_enum_def() {
+    check_no_errors("enum Color { Red, Green, Blue }\nfn f(c: Color) -> number {\nmatch c {\nColor::Red => 1\nColor::Green => 2\nColor::Blue => 3\n}\n}");
+}
+
+#[test]
+fn test_type_check_simple_struct_def() {
+    check_no_errors("struct Point { x: number, y: number }\nfn f(p: Point) -> number {\np.x + p.y\n}");
+}
+
+#[test]
+fn test_type_check_simple_fn_type_param() {
+    check_no_errors("fn apply(f: fn(number) -> number, x: number) -> number {\nf(x)\n}");
+}
+
+#[test]
+fn test_type_check_simple_reference() {
+    check_no_errors("fn main() -> number {\nlet x = 42;\nlet r = &x;\n*r\n}");
+}
