@@ -844,6 +844,16 @@ impl<'a> Parser<'a> {
                     // 没有分号，这是最终表达式
                     final_expr = Some(Box::new(expr));
                     break;
+                } else if matches!(
+                    expr,
+                    Expr::While { .. } | Expr::ForIn { .. } | Expr::ForArray { .. }
+                ) {
+                    // while/for 循环总是返回 Unit，后面可以跟其他语句
+                    let expr_span = expr.span();
+                    statements.push(Statement::Expression {
+                        expr,
+                        span: expr_span,
+                    });
                 } else {
                     return Err(ParseError::UnexpectedToken {
                         expected: "';' or '}'".to_string(),

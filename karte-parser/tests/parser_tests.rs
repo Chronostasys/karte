@@ -194,3 +194,17 @@ fn test_parse_generic_struct() {
     let diagnostics = parse_project(code);
     assert!(!diagnostics.has_errors(), "Generic struct should parse");
 }
+
+#[test]
+fn test_parse_while_then_expr() {
+    let code = "fn foo() -> number {\n    let x = 0;\n    while x < 10 {\n        let y = x + 1;\n        y\n    }\n    42\n}\nfn main() -> number { foo() }";
+    let diagnostics = parse_project(code);
+    assert!(!diagnostics.has_errors(), "While loop followed by expression should parse");
+}
+
+#[test]
+fn test_parse_for_then_expr() {
+    let code = "fn foo() -> number {\n    for i in 0..10 {\n        i\n    }\n    42\n}\nfn main() -> number { foo() }";
+    let diagnostics = parse_project(code);
+    assert!(!diagnostics.has_errors(), "For loop followed by expression should parse");
+}
