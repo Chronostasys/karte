@@ -1669,3 +1669,53 @@ fn test_type_check_nested_match_simple() {
 fn test_type_check_reference_v2() {
     check_no_errors("fn main() -> number {\nlet x = 42;\nlet r = &x;\n*r\n}");
 }
+
+#[test]
+fn test_type_check_char_literal_add() {
+    check_no_errors("fn main() -> number {\nlet c = 'A';\nc + 1\n}");
+}
+
+#[test]
+fn test_type_check_char_in_match() {
+    check_no_errors("fn f(c: number) -> number {\nmatch c {\n65 => 1\n66 => 2\n_ => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_char_compare() {
+    check_no_errors("fn f(c: number) -> bool {\nc > 64\n}");
+}
+
+#[test]
+fn test_type_check_string_concat_number() {
+    check_no_errors("fn f(n: number) -> string {\n\"value: \" + n\n}");
+}
+
+#[test]
+fn test_type_check_nested_if_else_chain() {
+    check_no_errors("fn classify(n: number) -> string {\nif n > 90 { \"A\" } else { if n > 80 { \"B\" } else { if n > 70 { \"C\" } else { \"D\" } } }\n}");
+}
+
+#[test]
+fn test_type_check_complex_let_binding() {
+    check_no_errors("fn main() -> number {\nlet a = 1;\nlet b = a + 1;\nlet c = b + a;\nc\n}");
+}
+
+#[test]
+fn test_type_check_assign_same_type() {
+    check_no_errors("fn main() -> number {\nlet x = 1;\nx = 2;\nx\n}");
+}
+
+#[test]
+fn test_type_check_assign_expression() {
+    check_no_errors("fn main() -> number {\nlet x = 1;\nx = x + 1;\nx\n}");
+}
+
+#[test]
+fn test_type_check_struct_field_assign() {
+    check_no_errors("struct Point { x: number, y: number }\nfn translate(p: Point, dx: number) -> Point {\nPoint { x: p.x + dx, y: p.y }\n}");
+}
+
+#[test]
+fn test_type_check_enum_default_match() {
+    check_no_errors("enum Option<T> { Some(T), None }\nfn unwrap_or(opt: Option<number>, default: number) -> number {\nmatch opt {\nSome(x) => x\nNone => default\n}\n}");
+}
