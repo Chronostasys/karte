@@ -1134,6 +1134,57 @@ impl LanguageServer for Backend {
             }))
         }
     }
+
+    async fn prepare_type_hierarchy(
+        &self,
+        params: TypeHierarchyPrepareParams,
+    ) -> Result<Option<Vec<TypeHierarchyItem>>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        let store = self.document_store.read().await;
+        let Some(document) = store.get(uri) else {
+            return Ok(None);
+        };
+        let source = &document.content;
+
+        let bridge = self.compiler_bridge.read().await;
+
+        if let Some(result) = bridge.get_cached_result() {
+            for sym in &result.symbols {
+                match sym.kind {
+                    crate::compiler_bridge::KarteSymbolKind::Struct
+                    | crate::compiler_bridge::KarteSymbolKind::Enum => {
+                        let range = crate::compiler_bridge::span_to_range(source, sym.span);
+                        if position.line >= range.start.line && position.line <= range.end.line {
+                            let name_range = if let Some(name_span) = sym.name_span {
+                                crate::compiler_bridge::span_to_range(source, name_span)
+                            } else {
+                                range.clone()
+                            };
+                            return Ok(Some(vec![TypeHierarchyItem {
+                                name: sym.name.clone(),
+                                kind: if sym.kind == crate::compiler_bridge::KarteSymbolKind::Struct {
+                                    SymbolKind::STRUCT
+                                } else {
+                                    SymbolKind::ENUM
+                                },
+                                tags: None,
+                                detail: sym.type_signature.clone(),
+                                uri: uri.clone(),
+                                range,
+                                selection_range: name_range,
+                                data: None,
+                            }]));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        Ok(None)
+    }
 }
 
 impl Backend {
