@@ -961,3 +961,71 @@ fn test_analyze_nested_struct2() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
 }
+
+#[test]
+fn test_completion_keywords() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nle\n}";
+    bridge.analyze(source);
+    let completions = bridge.get_completions(Position::new(1, 2));
+    let has_let = completions.iter().any(|c| c.label == "let");
+    assert!(has_let, "Should complete 'let' keyword");
+}
+
+#[test]
+fn test_completion_function_names() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn helper() -> number { 1 }\nfn main() -> number {\nhel\n}";
+    bridge.analyze(source);
+    let completions = bridge.get_completions(Position::new(2, 3));
+    let has_helper = completions.iter().any(|c| c.label == "helper");
+    assert!(has_helper, "Should complete 'helper' function");
+}
+
+#[test]
+fn test_hover_fn2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn add(a: number, b: number) -> number {\na + b\n}";
+    bridge.analyze(source);
+    let hover = bridge.get_hover_info(Position::new(0, 3));
+    assert!(hover.is_some(), "Should have hover info for function");
+    let (text, _) = hover.unwrap();
+    assert!(text.contains("add"), "Hover should contain function name");
+    assert!(text.contains("number"), "Hover should contain return type");
+}
+
+#[test]
+fn test_hover_struct() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point { x: number, y: number }\nfn main() -> number {\n0\n}";
+    bridge.analyze(source);
+    let hover = bridge.get_hover_info(Position::new(0, 7));
+    assert!(hover.is_some(), "Should have hover info for struct");
+    let (text, _) = hover.unwrap();
+    assert!(text.contains("Point"), "Hover should contain struct name");
+}
+
+#[test]
+fn test_hover_enum() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Color { Red, Green, Blue }\nfn main() -> number {\n0\n}";
+    bridge.analyze(source);
+    let hover = bridge.get_hover_info(Position::new(0, 5));
+    assert!(hover.is_some(), "Should have hover info for enum");
+    let (text, _) = hover.unwrap();
+    assert!(text.contains("Color"), "Hover should contain enum name");
+}
+
+#[test]
+fn test_doc_symbols2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn foo() -> number { 1 }\nfn bar() -> number { 2 }\nstruct Point { x: number }";
+    bridge.analyze(source);
+    let symbols = bridge.get_document_symbols();
+    let has_foo = symbols.iter().any(|s| s.name == "foo");
+    let has_bar = symbols.iter().any(|s| s.name == "bar");
+    let has_point = symbols.iter().any(|s| s.name == "Point");
+    assert!(has_foo, "Should have 'foo' in document symbols");
+    assert!(has_bar, "Should have 'bar' in document symbols");
+    assert!(has_point, "Should have 'Point' in document symbols");
+}
