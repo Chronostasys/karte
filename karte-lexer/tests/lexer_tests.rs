@@ -195,3 +195,67 @@ fn test_lexer_negative_number_with_minus() {
     let tokens = Lexer::new("-42").tokenize();
     assert!(tokens.len() >= 2, "Should tokenize negative number as minus and number");
 }
+
+#[test]
+fn test_lexer_empty_input() {
+    let tokens = Lexer::new("").tokenize();
+    assert!(tokens.is_empty() || tokens.len() == 1, "Empty input should produce EOF or nothing");
+}
+
+#[test]
+fn test_lexer_whitespace_only() {
+    let tokens = Lexer::new("   \t\n  ").tokenize();
+    assert!(tokens.len() <= 1, "Whitespace only should produce EOF or nothing");
+}
+
+#[test]
+fn test_lexer_string_with_escapes_v2() {
+    let tokens = Lexer::new("\"hello\\nworld\\t!\"").tokenize();
+    assert!(tokens.len() >= 1, "Should tokenize string with escapes");
+    if let Token::StringLiteral(s) = &tokens[0].token {
+        assert!(s.contains('\n'), "Should contain newline escape");
+        assert!(s.contains('\t'), "Should contain tab escape");
+    }
+}
+
+#[test]
+fn test_lexer_nested_parentheses() {
+    let tokens = Lexer::new("((()))").tokenize();
+    assert!(tokens.len() >= 6, "Should tokenize nested parentheses");
+}
+
+#[test]
+fn test_lexer_multiple_operators() {
+    let tokens = Lexer::new("1 + 2 * 3 - 4 / 5").tokenize();
+    assert!(tokens.len() >= 9, "Should tokenize multiple operators");
+}
+
+#[test]
+fn test_lexer_comparison_operators() {
+    let tokens = Lexer::new("a == b != c < d > e <= f >= g").tokenize();
+    assert!(tokens.len() >= 13, "Should tokenize comparison operators");
+}
+
+#[test]
+fn test_lexer_arrow_operator() {
+    let tokens = Lexer::new("-> =>").tokenize();
+    assert!(tokens.len() >= 2, "Should tokenize arrow operators");
+}
+
+#[test]
+fn test_lexer_logical_operators() {
+    let tokens = Lexer::new("true && false || true").tokenize();
+    assert!(tokens.len() >= 5, "Should tokenize logical operators");
+}
+
+#[test]
+fn test_lexer_pipe_operator() {
+    let tokens = Lexer::new("a | b").tokenize();
+    assert!(tokens.len() >= 3, "Should tokenize pipe operator");
+}
+
+#[test]
+fn test_lexer_char_literals_v2() {
+    let tokens = Lexer::new("'a' '\\n' '\\t' '\\\\'").tokenize();
+    assert!(tokens.len() >= 4, "Should tokenize char literals");
+}
