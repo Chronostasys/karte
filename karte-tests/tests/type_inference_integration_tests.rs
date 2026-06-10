@@ -2868,3 +2868,48 @@ fn test_type_check_simple_fn_type_param() {
 fn test_type_check_simple_reference() {
     check_no_errors("fn main() -> number {\nlet x = 42;\nlet r = &x;\n*r\n}");
 }
+
+#[test]
+fn test_type_check_simple_option_some() {
+    check_no_errors("fn f() -> Option<number> {\nSome(42)\n}");
+}
+
+#[test]
+fn test_type_check_simple_option_none() {
+    check_no_errors("fn f() -> Option<number> {\nNone\n}");
+}
+
+#[test]
+fn test_type_check_simple_result_ok() {
+    check_no_errors("fn f() -> Result<number, string> {\nOk(42)\n}");
+}
+
+#[test]
+fn test_type_check_simple_result_err() {
+    check_no_errors("fn f() -> Result<number, string> {\nErr(\"error\")\n}");
+}
+
+#[test]
+fn test_type_check_simple_array_access() {
+    check_no_errors("fn f() -> number {\nlet arr = [10, 20, 30];\narr[1]\n}");
+}
+
+#[test]
+fn test_type_check_simple_string_concat() {
+    check_no_errors("fn f() -> string {\n\"hello\" + \" \" + \"world\"\n}");
+}
+
+#[test]
+fn test_type_check_simple_number_concat() {
+    check_no_errors("fn f(n: number) -> string {\n\"value: \" + n\n}");
+}
+
+#[test]
+fn test_type_check_simple_if_else() {
+    check_no_errors("fn f(x: number) -> number {\nif x > 0 { x } else { 0 - x }\n}");
+}
+
+#[test]
+fn test_type_check_simple_match_number() {
+    check_no_errors("fn f(x: number) -> string {\nmatch x {\n0 => \"zero\"\n1 => \"one\"\n_ => \"other\"\n}\n}");
+}
