@@ -2865,7 +2865,8 @@ impl TypeChecker {
                     Type::Var(_) => {
                         let inner_type = Type::Var(self.fresh_type_var());
                         let expected_ref_type = Type::reference(inner_type.clone());
-                        self.add_constraint_with_context(expr_type, expected_ref_type, *span, "解引用类型不匹配");
+                        self.add_constraint_with_context(expr_type.clone(), expected_ref_type, *span, 
+                            format!("解引用操作要求引用类型 (&T), 但操作数为 `{}`", expr_type));
                         inner_type
                     }
                     _ => {
@@ -2873,9 +2874,9 @@ impl TypeChecker {
                         let expected_ref_type = Type::reference(Type::Unknown);
                         self.add_error(TypeCheckError::TypeMismatch {
                             expected: expected_ref_type,
-                            found: expr_type,
+                            found: expr_type.clone(),
                             span: *span,
-                            context: Some("解引用操作要求引用类型 (&T)".to_string()),
+                            context: Some(format!("解引用操作要求引用类型 (&T), 但操作数为 `{}`", expr_type)),
                         });
                         Type::Unknown
                     }
@@ -2895,9 +2896,9 @@ impl TypeChecker {
                         let expected = Type::reference(Type::Unknown);
                         self.add_error(TypeCheckError::TypeMismatch {
                             expected,
-                            found: pointer_type,
+                            found: pointer_type.clone(),
                             span: *span,
-                            context: Some("解引用操作要求引用类型 (&T)".to_string()),
+                            context: Some(format!("释放操作要求引用类型 (&T), 但操作数为 `{}`", pointer_type)),
                         });
                         Type::Unit
                     }
