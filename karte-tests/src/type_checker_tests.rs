@@ -1604,6 +1604,36 @@ mod tests {
         let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
         assert!(!diagnostics.has_errors(), "Large number literal should be valid");
     }
+
+    #[test]
+    fn test_error_recovery_undefined_function() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    undefined_func(42)\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(diagnostics.has_errors(), "Undefined function should report error");
+    }
+
+    #[test]
+    fn test_error_recovery_wrong_arity() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn add(a: number, b: number) -> number { a + b }\nfn main() -> number {\n    add(1)\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(diagnostics.has_errors(), "Wrong arity should report error");
+    }
+
+    #[test]
+    fn test_error_recovery_duplicate_definition() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn foo() -> number { 1 }\nfn foo() -> number { 2 }\nfn main() -> number { foo() }";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(diagnostics.has_errors(), "Duplicate function definition should report error");
+    }
 }
 
     #[test]
