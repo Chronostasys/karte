@@ -934,3 +934,30 @@ fn test_analyze_if_number_cond() {
     let diagnostics = bridge.analyze(source);
     let _ = diagnostics;
 }
+
+#[test]
+fn test_analyze_non_exhaustive_enum2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Color { Red, Green, Blue }\nfn f(c: Color) -> number {\nmatch c {\nColor::Red => 1\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let has_error = diagnostics.iter().any(|d| d.severity == KarteDiagnosticSeverity::Error);
+    assert!(has_error, "Should have error for non-exhaustive enum match");
+}
+
+#[test]
+fn test_analyze_valid_fn_sig2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn add(a: number, b: number) -> number {\na + b\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_nested_struct2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Inner { val: number }\nstruct Outer { inner: Inner }\nfn f(o: Outer) -> number {\no.inner.val\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
