@@ -1869,3 +1869,47 @@ fn test_type_error_call_non_function() {
 fn test_type_error_struct_missing_all_fields() {
     check_has_errors("struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point {};\n0\n}");
 }
+
+#[test]
+fn test_warning_true_condition() {
+    let source = r#"fn f() -> number {
+    if true { 1 } else { 0 }
+}"#;
+    check_has_warnings(source);
+}
+
+#[test]
+fn test_warning_false_condition() {
+    let source = r#"fn f() -> number {
+    if false { 1 } else { 0 }
+}"#;
+    check_has_warnings(source);
+}
+
+#[test]
+fn test_warning_number_condition() {
+    let source = r#"fn f() -> number {
+    if 42 { 1 } else { 0 }
+}"#;
+    check_has_warnings(source);
+}
+
+#[test]
+fn test_warning_bool_literal_condition() {
+    let source = r#"fn f(x: bool) -> number {
+    if true { 1 } else { 0 }
+}"#;
+    check_has_warnings(source);
+}
+
+#[test]
+fn test_warning_redundant_arm_number2() {
+    let source = r#"fn f(x: number) -> number {
+    match x {
+        0 => 1,
+        _ => 0,
+        1 => 2
+    }
+}"#;
+    check_has_warnings(source);
+}
