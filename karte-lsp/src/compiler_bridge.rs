@@ -769,16 +769,17 @@ impl CompilerBridge {
         refs
     }
 
-    /// 获取补全建议（上下文感知）
+    /// 获取补全建议（上下文感知，按相关度排序）
     pub fn get_completions(&self, position: Position) -> Vec<KarteCompletionItem> {
         let source = self.cached_source.as_ref().map(|s| s.as_str()).unwrap_or("");
         let offset = position_to_offset(source, position);
 
-        let mut items = Vec::new();
-
         // 获取当前位置的前缀（用于过滤）
         let before = if offset <= source.len() { &source[..offset] } else { "" };
         let prefix = Self::get_completion_prefix(before);
+
+        let mut keywords_items = Vec::new();
+        let mut symbol_items = Vec::new();
 
         // 关键词补全
         let keywords = [
@@ -796,8 +797,8 @@ impl CompilerBridge {
         ];
 
         for (kw, detail, snippet) in &keywords {
-            if kw.starts_with(prefix.as_str()) || prefix.is_empty() {
-                items.push(KarteCompletionItem {
+            if prefix.is_empty() || kw.starts_with(prefix.as_str()) {
+                keywords_items.push(KarteCompletionItem {
                     label: kw.to_string(),
                     kind: KarteCompletionKind::Keyword,
                     detail: Some(detail.to_string()),
@@ -806,10 +807,14 @@ impl CompilerBridge {
             }
         }
 
-        // 符号补全（函数、变量、类型等）
+        // 符号补全（按类型排序：变量/参数 > 函数 > 类型/枚举/struct > 模块）
         if let Some(result) = &self.cached_result {
             for sym in &result.symbols {
-                if !sym.name.starts_with(prefix.as_str()) && !prefix.is_empty() {
+                if !prefix.is_empty() && !sym.name.starts_with(prefix.as_str()) {
+                    continue;
+                }
+                // 避免重复的枚举变体全限定名（如 "Color::Red"）
+                if sym.name.contains("::") {
                     continue;
                 }
                 let kind = match sym.kind {
@@ -822,14 +827,37 @@ impl CompilerBridge {
                     KarteSymbolKind::EnumVariant => KarteCompletionKind::EnumVariant,
                     KarteSymbolKind::Module => KarteCompletionKind::Module,
                 };
-                items.push(KarteCompletionItem {
+                let sort_priority = match sym.kind {
+                    KarteSymbolKind::Parameter => 0,
+                    KarteSymbolKind::Variable => 1,
+                    KarteSymbolKind::Function => 2,
+                    KarteSymbolKind::Struct => 3,
+                    KarteSymbolKind::Enum => 3,
+                    KarteSymbolKind::EnumVariant => 4,
+                    KarteSymbolKind::Type => 5,
+                    KarteSymbolKind::Module => 6,
+                };
+                symbol_items.push((sort_priority, KarteCompletionItem {
                     label: sym.name.clone(),
                     kind,
                     detail: sym.type_signature.clone(),
                     insert_text: None,
-                });
+                }));
             }
         }
+
+        // 排序符号项：按优先级排序，同优先级按名称排序
+        symbol_items.sort_by(|a, b| {
+            a.0.cmp(&b.0).then_with(|| a.1.label.cmp(&b.1.label))
+        });
+
+        // 合并结果：符号 > 关键词
+        let mut items: Vec<KarteCompletionItem> = symbol_items.into_iter().map(|(_, item)| item).collect();
+        items.extend(keywords_items);
+
+        // 去重（同名符号只保留第一个）
+        let mut seen = std::collections::HashSet::new();
+        items.retain(|item| seen.insert(item.label.clone()));
 
         items
     }
