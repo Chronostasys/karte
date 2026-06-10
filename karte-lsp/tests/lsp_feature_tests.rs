@@ -569,3 +569,84 @@ fn test_analyze_wrong_arity_error() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(!errors.is_empty(), "Should have arity mismatch error");
 }
+
+#[test]
+fn test_hover_function_signature() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn add(a: number, b: number) -> number { a + b }\nfn main() -> number {\nadd(1, 2)\n}";
+    bridge.analyze(source);
+    // hover over "add" in function definition (position 3-6)
+    let hover = bridge.get_hover_info(Position::new(0, 5));
+    assert!(hover.is_some(), "Should have hover info for function 'add'");
+    let (info, _) = hover.unwrap();
+    assert!(info.contains("fn") || info.contains("number"), "Hover should contain function info: {}", info);
+}
+
+#[test]
+fn test_hover_let_variable() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet x = 42;\nx\n}";
+    bridge.analyze(source);
+    // hover over "x" in "let x" (position ~30)
+    let hover = bridge.get_hover_info(Position::new(1, 5));
+    assert!(hover.is_some(), "Should have hover info for variable 'x'");
+}
+
+#[test]
+fn test_goto_definition_function() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn add(a: number, b: number) -> number { a + b }\nfn main() -> number {\nadd(1, 2)\n}";
+    bridge.analyze(source);
+    // click on "add" in function call
+    let def = bridge.get_definition(Position::new(2, 1));
+    assert!(def.is_some(), "Should find definition for function 'add'");
+}
+
+#[test]
+fn test_goto_definition_variable() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet x = 42;\nx\n}";
+    bridge.analyze(source);
+    // click on "x" at the usage site
+    let def = bridge.get_definition(Position::new(2, 0));
+    assert!(def.is_some(), "Should find definition for variable 'x'");
+}
+
+#[test]
+fn test_find_refs_fn() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn add(a: number, b: number) -> number { a + b }\nfn main() -> number {\nadd(1, 2)\n}";
+    bridge.analyze(source);
+    // find references of "add" at definition site
+    let refs = bridge.find_references(Position::new(0, 3));
+    assert!(refs.len() >= 2, "Should find at least 2 references (definition + call) for 'add', found {}", refs.len());
+}
+
+#[test]
+fn test_completions_keywords() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nle\n}";
+    bridge.analyze(source);
+    let completions = bridge.get_completions(Position::new(1, 2));
+    let has_let = completions.iter().any(|c| c.label == "let");
+    assert!(has_let, "Should complete 'let' keyword");
+}
+
+#[test]
+fn test_completions_functions() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn add(a: number, b: number) -> number { a + b }\nfn main() -> number {\nad\n}";
+    bridge.analyze(source);
+    let completions = bridge.get_completions(Position::new(2, 2));
+    let has_add = completions.iter().any(|c| c.label == "add");
+    assert!(has_add, "Should complete 'add' function");
+}
+
+#[test]
+fn test_doc_symbols() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point { x: number, y: number }\nfn add(a: number, b: number) -> number { a + b }\nfn main() -> number {\nadd(1, 2)\n}";
+    bridge.analyze(source);
+    let symbols = bridge.get_document_symbols();
+    assert!(symbols.len() >= 2, "Should have at least 2 document symbols (Point, add, main)");
+}
