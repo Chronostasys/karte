@@ -817,6 +817,13 @@ impl CompilerBridge {
         let before = if offset <= source.len() { &source[..offset] } else { "" };
         let prefix = Self::get_completion_prefix(before);
 
+        // 🔧 检测是否是字段访问补全（expr. 的场景）
+        let dot_completion = Self::try_dot_completion(before, &self.cached_result);
+
+        if let Some(field_items) = dot_completion {
+            return field_items;
+        }
+
         let mut keywords_items = Vec::new();
         let mut symbol_items = Vec::new();
 
@@ -931,6 +938,103 @@ impl CompilerBridge {
             }
         }
         prefix.chars().rev().collect()
+    }
+
+    /// 检测是否是字段访问补全（expr. 或 expr.field_prefix 的场景）
+    fn try_dot_completion(before: &str, cached_result: &Option<AnalysisResult>) -> Option<Vec<KarteCompletionItem>> {
+        let result = cached_result.as_ref()?;
+
+        // 查找最后一个 '.' 的位置
+        let dot_pos = before.rfind('.')?;
+
+        // 获取 '.' 后面的前缀（可能为空）
+        let after_dot = &before[dot_pos + 1..];
+        let field_prefix: String = after_dot.chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+
+        // 获取 '.' 前面的标识符
+        let before_dot = &before[..dot_pos];
+        let ident: String = before_dot.chars().rev()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect::<String>()
+            .chars().rev()
+            .collect();
+
+        if ident.is_empty() {
+            return None;
+        }
+
+        // 在 identifier_type_strings 中查找该标识符的类型
+        // 先尝试通过 offset 定位标识符
+        let ident_start = before_dot.len() - ident.len();
+        let ident_end = before_dot.len();
+        let ident_type = result.identifier_type_strings
+            .get(&(ident_start, ident_end))
+            .cloned();
+
+        let type_name = ident_type.as_deref()?;
+
+        // 查找匹配的 struct 或 enum
+        let mut field_items = Vec::new();
+
+        for sym in &result.symbols {
+            if sym.kind == KarteSymbolKind::Struct && type_name.contains(&sym.name) {
+                // 从 type_signature 中提取字段名
+                if let Some(sig) = &sym.type_signature {
+                    // 格式: "{ field1: Type1, field2: Type2 }"
+                    if sig.starts_with('{') && sig.ends_with('}') {
+                        let inner = &sig[1..sig.len()-1];
+                        for field in inner.split(',') {
+                            let field = field.trim();
+                            if let Some(colon_pos) = field.find(':') {
+                                let field_name = field[..colon_pos].trim();
+                                let field_type = field[colon_pos + 1..].trim();
+                                if field_prefix.is_empty() || field_name.starts_with(&field_prefix) {
+                                    field_items.push(KarteCompletionItem {
+                                        label: field_name.to_string(),
+                                        kind: KarteCompletionKind::Field,
+                                        detail: Some(field_type.to_string()),
+                                        insert_text: Some(field_name.to_string()),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if sym.kind == KarteSymbolKind::Enum && type_name.contains(&sym.name) {
+                // 从 type_signature 中提取变体名
+                if let Some(sig) = &sym.type_signature {
+                    // 格式: "Variant1(Type) | Variant2 | Variant3(Type)"
+                    for variant in sig.split('|') {
+                        let variant = variant.trim();
+                        let variant_name = if let Some(paren) = variant.find('(') {
+                            &variant[..paren]
+                        } else {
+                            variant
+                        };
+                        let variant_name = variant_name.trim();
+                        if !variant_name.is_empty() {
+                            if field_prefix.is_empty() || variant_name.starts_with(&field_prefix) {
+                                field_items.push(KarteCompletionItem {
+                                    label: format!("{}::{}", sym.name, variant_name),
+                                    kind: KarteCompletionKind::EnumVariant,
+                                    detail: Some(variant.to_string()),
+                                    insert_text: Some(format!("{}::{}", sym.name, variant_name)),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if field_items.is_empty() {
+            None
+        } else {
+            Some(field_items)
+        }
     }
 
     /// 获取文档中的所有符号
