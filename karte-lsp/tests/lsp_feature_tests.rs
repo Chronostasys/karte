@@ -1719,3 +1719,75 @@ fn test_analyze_valid_early_return_fn() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors for early return: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_for_array() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet sum = 0;\nfor i in [1, 2, 3] {\nsum = sum + i\n};\nsum\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for for-array: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_for_range() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet sum = 0;\nfor i in 1..10 {\nsum = sum + i\n};\nsum\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for for-range: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_char_literal() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet c = 'A';\nc + 1\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for char literal: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_return_keyword() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn abs(x: number) -> number {\nif x < 0 { return 0 - x };\nx\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for return keyword: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_assignment() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn counter() -> number {\nlet x = 0;\nx = x + 1;\nx = x * 2;\nx\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for assignment: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_string_concat_chain2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(name: string, age: number) -> string {\n\"Name: \" + name + \", Age: \" + age\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for string concat chain: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_complex_arithmetic2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(a: number, b: number, c: number) -> number {\n(a + b) * c - (a / b) + (a % c)\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for complex arithmetic: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_leap_year() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn is_leap_year(year: number) -> bool {\n(year % 4 == 0) && ((year % 100 != 0) || (year % 400 == 0))\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for leap year: {:?}", errors);
+}
