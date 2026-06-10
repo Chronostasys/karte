@@ -17,6 +17,24 @@ fn check_has_errors(code: &str) {
     assert!(diagnostics.has_errors(), "Expected errors but got none");
 }
 
+fn check_has_warnings(code: &str) {
+    let tokens = Lexer::new(code).tokenize();
+    let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+    let has_warnings = diagnostics.diagnostics.iter().any(|d| {
+        matches!(d.level, karte_diagnostics::DiagnosticLevel::Warning)
+    });
+    assert!(has_warnings, "Expected warnings but got none. Diagnostics: {:?}", 
+        diagnostics.diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>());
+}
+
+fn check_error_contains(code: &str, substring: &str) {
+    let tokens = Lexer::new(code).tokenize();
+    let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+    let found = diagnostics.diagnostics.iter().any(|d| d.message.contains(substring));
+    assert!(found, "Expected to find '{}' in diagnostics: {:?}", substring,
+        diagnostics.diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>());
+}
+
 #[test]
 fn test_type_inference_let_binding() {
     check_no_errors("fn main() -> number {\n    let x = 42;\n    let y = x + 1;\n    y\n}");
@@ -799,3 +817,47 @@ fn test_type_error_not_callable() {
 fn test_type_error_dup_param() {
     check_has_errors("fn f(a: number, a: number) -> number { a }");
 }
+
+#[test]
+fn test_warning_self_assignment() {
+    check_has_warnings("fn main() -> number {\nlet x = 5;\nx = x;\n0\n}");
+}
+
+#[test]
+fn test_warning_number_as_condition() {
+    check_has_warnings("fn main() -> number {\nif 42 { 1 } else { 0 }\n}");
+}
+
+#[test]
+fn test_warning_while_false() {
+    check_has_warnings("fn main() -> number {\nwhile false { };\n0\n}");
+}
+
+#[test]
+fn test_warning_redundant_match_arm() {
+    check_has_warnings("enum Color { Red, Green, Blue }\nfn f(c: Color) -> number {\nmatch c {\nColor::Red => 1\nColor::Red => 2\nColor::Green => 3\nColor::Blue => 4\n}\n}");
+}
+
+#[test]
+fn test_warning_variable_shadowing() {
+    check_has_warnings("fn main() -> number {\nlet x = 5;\nlet x = 10;\nx\n}");
+}
+
+#[test]
+fn test_warning_if_assignment() {
+    check_has_warnings("fn main() -> number {\nlet x = 0;\nif x = 5 { 1 } else { 0 }\n}");
+}
+
+#[test]
+fn test_warning_always_true_condition() {
+    check_has_warnings("fn main() -> number {\nif true { 1 } else { 0 }\n}");
+}
+
+#[test]
+fn test_warning_always_false_condition() {
+    check_has_warnings("fn main() -> number {\nif false { 1 } else { 0 }\n}");
+}
+
+
+
+
