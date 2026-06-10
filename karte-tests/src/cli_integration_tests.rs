@@ -9221,6 +9221,28 @@ fn main() -> number {
         assert_eq!(exit_code, 3, "struct closure forarray break at last: expected 3, got {}", exit_code);
     }
 
+    /// 回归测试：嵌套 for-in + struct + closure + break
+    /// 修复 saved_struct_ref_values 收集时 .rev() 导致外层 scope 覆盖内层 scope
+    #[test]
+    fn test_struct_closure_nested_forin_break() {
+        let code = r#"
+struct S { v: number }
+fn main() -> number {
+    let s = S { v: 0 };
+    let f = || { s };
+    for i in 0..3 {
+        for j in 0..3 {
+            if j == 1 { break; };
+            let s = S { v: s.v + 1 };
+        };
+    };
+    s.v
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 3, "struct closure nested forin break: expected 3, got {}", exit_code);
+    }
+
     /// 回归测试：多个 struct 变量 + closure + for-in + break
     #[test]
     fn test_struct_closure_multi_struct_break() {

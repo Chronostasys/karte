@@ -1912,10 +1912,10 @@ pub(crate) fn lower_expression(
             });
 
             // 🔧 保存 struct_ref_vars 在循环体 lowering 前的正确 Reference 值。
-            // 循环体 Block 的 exit_scope(propagate=true) 可能将 continue/break 后
-            // 死块中的错误绑定传播到外层，覆盖正确的 Reference 值。
+            // ⚠️ 使用不带 .rev() 的迭代顺序（内层 scope 优先），避免外层 scope 覆盖内层 scope 的值。
+            // 这与 pre_loop_bindings 的收集方式一致（inner scope priority）。
             let saved_struct_ref_values: std::collections::HashMap<String, Value> =
-                ctx.scopes.iter().rev()
+                ctx.scopes.iter()
                     .flat_map(|scope| scope.bindings.iter())
                     .filter(|(name, _)| struct_ref_vars.contains(name.as_str()))
                     .filter_map(|(name, binding)| {
