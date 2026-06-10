@@ -673,4 +673,47 @@ mod tests {
         let msg = msg.join(", ");
         assert!(msg.contains("Blue") || msg.contains("穷尽"), "Error should mention missing Blue: {}", msg);
     }
+
+    #[test]
+    fn test_type_error_string_plus_number() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = \"hello\";\n    x + 1\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Should report type error");
+    }
+
+    #[test]
+    fn test_type_error_if_else_mismatch() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = 1;\n    if x > 0 {\n        \"positive\"\n    } else {\n        0\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Should report type error for if-else mismatch");
+    }
+
+    #[test]
+    fn test_type_error_undefined_variable_suggestion() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let count = 5;\n    counr\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Should report undefined variable");
+        let msg: Vec<&str> = diagnostics.diagnostics.iter().map(|d| d.message.as_str()).collect();
+        let msg = msg.join(", ");
+        assert!(msg.contains("counr") || msg.contains("count"), "Error should mention variable name: {}", msg);
+    }
+
+    #[test]
+    fn test_type_error_duplicate_function() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn foo() -> number { 1 }\nfn foo() -> number { 2 }\nfn main() -> number { foo() }";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Should report duplicate function");
+    }
 }
