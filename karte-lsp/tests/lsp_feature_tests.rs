@@ -1237,3 +1237,57 @@ fn test_analyze_valid_string_compare() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors for string compare: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_fib() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn fib(n: number) -> number {\nif n <= 1 { n } else { fib(n - 1) + fib(n - 2) }\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for fibonacci: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_string_ops() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(s: string) -> string {\ns + \"!\"\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for string concat: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_bool_ops() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(a: bool, b: bool) -> bool {\na && b || !a\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for bool ops: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_comparison_chain() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn in_range(x: number, lo: number, hi: number) -> bool {\nx >= lo && x <= hi\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for comparison chain: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_early_return_chain2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn classify(n: number) -> string {\nif n < 0 {\nreturn \"negative\"\n};\nif n == 0 {\nreturn \"zero\"\n};\n\"positive\"\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for early return chain: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_complex_match() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Expr { Lit(number), Add(number, number), Mul(number, number) }\nfn eval(e: Expr) -> number {\nmatch e {\nExpr::Lit(n) => n\nExpr::Add(a, b) => a + b\nExpr::Mul(a, b) => a * b\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for complex match: {:?}", errors);
+}
