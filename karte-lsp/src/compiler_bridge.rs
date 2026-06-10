@@ -870,11 +870,30 @@ impl CompilerBridge {
                     KarteSymbolKind::Type => 5,
                     KarteSymbolKind::Module => 6,
                 };
+                let (detail, insert_text) = match sym.kind {
+                    KarteSymbolKind::Function => {
+                        // 为函数生成 snippet 格式的参数占位符
+                        let insert = if let Some(sig) = &sym.type_signature {
+                            // 尝试从签名中提取参数数量来生成 snippet
+                            let param_count = sig.chars().filter(|c| *c == ',').count() + 1;
+                            if param_count > 0 && sig.contains("->") {
+                                let args: Vec<String> = (0..param_count).map(|i| format!("${}", i + 1)).collect();
+                                Some(format!("{}({})", sym.name, args.join(", ")))
+                            } else {
+                                Some(format!("{}($1)", sym.name))
+                            }
+                        } else {
+                            Some(format!("{}($1)", sym.name))
+                        };
+                        (sym.type_signature.clone(), insert)
+                    }
+                    _ => (sym.type_signature.clone(), None),
+                };
                 symbol_items.push((sort_priority, KarteCompletionItem {
                     label: sym.name.clone(),
                     kind,
-                    detail: sym.type_signature.clone(),
-                    insert_text: None,
+                    detail,
+                    insert_text,
                 }));
             }
         }
