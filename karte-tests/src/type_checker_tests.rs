@@ -1443,6 +1443,96 @@ mod tests {
         let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
         assert!(!diagnostics.has_errors(), "Match with wildcard should be valid");
     }
+
+    #[test]
+    fn test_option_match_some_none() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn unwrap_or(opt: number, default: number) -> number {\n    match opt {\n        0 => default,\n        _ => opt\n    }\n}\nfn main() -> number { unwrap_or(0, 42) }";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Option-like match should be valid");
+    }
+
+    #[test]
+    fn test_recursive_function_type_check() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn factorial(n: number) -> number {\n    if n <= 1 {\n        1\n    } else {\n        n * factorial(n - 1)\n    }\n}\nfn main() -> number { factorial(5) }";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Recursive function should be valid");
+    }
+
+    #[test]
+    fn test_mutual_recursion_type_error() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn is_even(n: number) -> number {\n    if n == 0 { 1 } else { is_odd(n - 1) }\n}\nfn is_odd(n: number) -> number {\n    if n == 0 { 0 } else { is_even(n - 1) }\n}\nfn main() -> number { is_even(4) }";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Mutual recursion should be valid");
+    }
+
+    #[test]
+    fn test_struct_method_call_syntax() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn abs(x: number) -> number {\n    if x < 0 { 0 - x } else { x }\n}\nfn main() -> number {\n    abs(-42)\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Function call should be valid");
+    }
+
+    #[test]
+    fn test_let_shadowing() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = 5;\n    let x = x + 1;\n    let x = x * 2;\n    x\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Let shadowing should be valid");
+    }
+
+    #[test]
+    fn test_string_concat_type_check() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let a = \"hello\";\n    let b = \"world\";\n    let c = a == b;\n    if c { 1 } else { 0 }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "String comparison should be valid");
+    }
+
+    #[test]
+    fn test_boolean_logic() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let a = true;\n    let b = false;\n    let c = a && b;\n    let d = a || b;\n    if c { 1 } else if d { 2 } else { 0 }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Boolean logic should be valid");
+    }
+
+    #[test]
+    fn test_nested_struct() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "struct Point { x: number, y: number }\nstruct Line { start: Point, end: Point }\nfn main() -> number {\n    let p1 = Point { x: 0, y: 0 };\n    let p2 = Point { x: 1, y: 1 };\n    let line = Line { start: p1, end: p2 };\n    line.start.x + line.end.y\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Nested struct should be valid");
+    }
+
+    #[test]
+    fn test_complex_match_patterns() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn classify(n: number) -> number {\n    match n {\n        0 => 0,\n        1 => 1,\n        2 => 4,\n        3 => 9,\n        _ => n * n\n    }\n}\nfn main() -> number { classify(4) }";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Complex match patterns should be valid");
+    }
 }
 
     #[test]
