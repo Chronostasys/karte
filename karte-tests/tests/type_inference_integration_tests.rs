@@ -2442,3 +2442,53 @@ fn test_type_check_result_map_v2() {
 fn test_type_check_midpoint_fn() {
     check_no_errors("struct Point { x: number, y: number }\nfn midpoint(a: Point, b: Point) -> Point {\nPoint { x: (a.x + b.x), y: (a.y + b.y) }\n}");
 }
+
+#[test]
+fn test_type_error_number_minus_string() {
+    check_has_errors("fn main() -> number {\n42 - \"hello\"\n}");
+}
+
+#[test]
+fn test_type_error_number_mul_string() {
+    check_has_errors("fn main() -> number {\n42 * \"hello\"\n}");
+}
+
+#[test]
+fn test_type_error_number_div_string() {
+    check_has_errors("fn main() -> number {\n42 / \"hello\"\n}");
+}
+
+#[test]
+fn test_type_error_number_mod_string() {
+    check_has_errors("fn main() -> number {\n42 % \"hello\"\n}");
+}
+
+#[test]
+fn test_type_error_bool_add_number() {
+    check_has_errors("fn main() -> number {\ntrue + 42\n}");
+}
+
+#[test]
+fn test_type_error_if_number_branch() {
+    check_has_errors("fn main() -> number {\nif true { 42 } else { \"hello\" };\n0\n}");
+}
+
+#[test]
+fn test_type_error_match_mixed_branch() {
+    check_has_errors("fn f(x: number) -> number {\nmatch x {\n0 => 42\n1 => \"hello\"\n_ => 0\n}\n}");
+}
+
+#[test]
+fn test_type_error_assign_different_type() {
+    check_has_errors("fn main() -> number {\nlet x = 42;\nx = \"hello\";\n0\n}");
+}
+
+#[test]
+fn test_type_error_fn_param_wrong_type() {
+    check_has_errors("fn add(a: number, b: number) -> number { a + b }\nfn main() -> number {\nadd(\"hello\", \"world\")\n}");
+}
+
+#[test]
+fn test_type_error_fn_return_wrong_type() {
+    check_has_errors("fn f() -> string {\n42\n}");
+}
