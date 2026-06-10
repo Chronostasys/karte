@@ -607,4 +607,70 @@ mod tests {
         // wildcard 总是穷尽
         assert!(diagnostics.is_empty());
     }
+
+    #[test]
+    fn test_exhaustiveness_option_some_none() {
+        use karte_lexer::Lexer;
+        use karte_parser::{Parser, ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = Some(42);\n    match x {\n        Some(n) => n,\n        None => 0\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Unexpected errors: {:?}", diagnostics);
+    }
+
+    #[test]
+    fn test_exhaustiveness_option_missing_none() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = Some(42);\n    match x {\n        Some(n) => n\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Should report non-exhaustive match");
+        let msg: Vec<&str> = diagnostics.diagnostics.iter().map(|d| d.message.as_str()).collect();
+        let msg = msg.join(", ");
+        assert!(msg.contains("None") || msg.contains("穷尽"), "Error should mention missing None: {}", msg);
+    }
+
+    #[test]
+    fn test_exhaustiveness_bool_true_false() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let b = true;\n    match b {\n        true => 1,\n        false => 0\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Unexpected errors: {:?}", diagnostics);
+    }
+
+    #[test]
+    fn test_exhaustiveness_bool_wildcard() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let b = true;\n    match b {\n        true => 1,\n        _ => 0\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Unexpected errors: {:?}", diagnostics);
+    }
+
+    #[test]
+    fn test_exhaustiveness_enum_all_variants() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "enum Color { Red, Green, Blue }\nfn main() -> number {\n    let c = Color::Red;\n    match c {\n        Color::Red => 1,\n        Color::Green => 2,\n        Color::Blue => 3\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Unexpected errors: {:?}", diagnostics);
+    }
+
+    #[test]
+    fn test_exhaustiveness_enum_missing_variant() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "enum Color { Red, Green, Blue }\nfn main() -> number {\n    let c = Color::Red;\n    match c {\n        Color::Red => 1,\n        Color::Green => 2\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Should report non-exhaustive match");
+        let msg: Vec<&str> = diagnostics.diagnostics.iter().map(|d| d.message.as_str()).collect();
+        let msg = msg.join(", ");
+        assert!(msg.contains("Blue") || msg.contains("穷尽"), "Error should mention missing Blue: {}", msg);
+    }
 }
