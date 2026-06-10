@@ -9014,6 +9014,46 @@ fn main() -> number {
         assert_eq!(exit_code, 3, "struct closure for-in full: expected 3, got {}", exit_code);
     }
 
+    /// 回归测试：struct + 闭包 + ForArray + break
+    /// 与 ForIn 同理，increment_block 不应引用 loop body 未初始化变量
+    #[test]
+    fn test_struct_closure_forarray_break() {
+        let code = r#"
+struct S { v: number }
+fn main() -> number {
+    let s = S { v: 0 };
+    let f = || { s };
+    let arr = [10, 20, 30];
+    for x in arr {
+        if x == 30 { break; };
+        let s = S { v: s.v + 1 };
+    };
+    s.v
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 2, "struct closure forarray break: expected 2, got {}", exit_code);
+    }
+
+    /// 回归测试：struct + 闭包 + ForArray 全量迭代
+    #[test]
+    fn test_struct_closure_forarray_full() {
+        let code = r#"
+struct S { v: number }
+fn main() -> number {
+    let s = S { v: 0 };
+    let f = || { s };
+    let arr = [10, 20, 30];
+    for x in arr {
+        let s = S { v: s.v + 1 };
+    };
+    s.v
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 3, "struct closure forarray full: expected 3, got {}", exit_code);
+    }
+
     /// 回归测试：struct + 闭包 + while + continue
     #[test]
     fn test_struct_closure_while_continue() {
