@@ -1594,3 +1594,28 @@ fn test_type_check_result_map() {
 fn test_type_check_nested_if_return_v2() {
     check_no_errors("fn classify(n: number) -> string {\nif n < 0 {\nreturn \"negative\"\n};\nif n == 0 {\nreturn \"zero\"\n};\n\"positive\"\n}");
 }
+
+#[test]
+fn test_type_error_assign_wrong_type() {
+    check_has_errors("fn main() -> number {\nlet x = 42;\nx = \"hello\";\nx\n}");
+}
+
+#[test]
+fn test_type_error_if_string_condition() {
+    check_has_errors("fn f(x: string) -> number {\nif x { 1 } else { 0 }\n}");
+}
+
+#[test]
+fn test_type_error_match_string_scrutinee() {
+    check_has_errors("fn f(s: string) -> number {\nmatch s {\n1 => 1\n_ => 0\n}\n}");
+}
+
+#[test]
+fn test_type_error_enum_variant_type() {
+    check_has_errors("fn f(c: Color) -> number {\nmatch c {\nColor::Red => 1\n}\n}\nenum Color { Red, Green, Blue }");
+}
+
+#[test]
+fn test_type_error_undefined_field() {
+    check_has_errors("struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point { x: 1, y: 2 };\np.z\n}");
+}
