@@ -1408,3 +1408,53 @@ fn test_type_check_comparison_chain() {
 fn test_type_check_ternary_like() {
     check_no_errors("fn f(n: number) -> number {\nif n > 0 { n } else { 0 - n }\n}");
 }
+
+#[test]
+fn test_type_check_tuple_index() {
+    check_no_errors("fn main() -> number {\nlet t = (10, 20, 30);\nt.1\n}");
+}
+
+#[test]
+fn test_type_check_tuple_destructure() {
+    check_no_errors("fn main() -> number {\nlet t = (1, 2);\nt.0 + t.1\n}");
+}
+
+#[test]
+fn test_type_check_nested_tuple_v2() {
+    check_no_errors("fn main() -> number {\nlet t = ((1, 2), (3, 4));\n0\n}");
+}
+
+#[test]
+fn test_type_check_string_method() {
+    check_no_errors("fn f(s: string) -> number {\nlen(s)\n}");
+}
+
+#[test]
+fn test_type_check_option_chain() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 { Some(x) } else { None }\n}");
+}
+
+#[test]
+fn test_type_check_result_chain() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 { Ok(x) } else { Err(\"negative\") }\n}");
+}
+
+#[test]
+fn test_type_check_match_range() {
+    check_no_errors("fn classify(n: number) -> string {\nif n < 0 { \"negative\" } else { if n > 0 { \"positive\" } else { \"zero\" } }\n}");
+}
+
+#[test]
+fn test_type_check_let_in_if2() {
+    check_no_errors("fn f(x: number) -> number {\nlet r = if x > 0 {\nlet y = x * 2;\ny\n} else {\n0\n};\nr\n}");
+}
+
+#[test]
+fn test_type_check_string_in_if_v2() {
+    check_no_errors("fn f(s: string) -> number {\nif s == \"hello\" { 1 } else { 0 }\n}");
+}
+
+#[test]
+fn test_type_check_multi_return() {
+    check_no_errors("fn abs(n: number) -> number {\nif n < 0 {\nreturn 0 - n\n};\nn\n}");
+}
