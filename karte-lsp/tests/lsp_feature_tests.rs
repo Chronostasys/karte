@@ -818,3 +818,84 @@ fn test_analyze_valid_full_program() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors for valid program: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_enum_match() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Color { Red, Green, Blue }\nfn main() -> number {\nlet c = Color::Red;\nmatch c {\nColor::Red => 1\nColor::Green => 2\nColor::Blue => 3\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for valid enum match: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_non_exhaustive_match() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Color { Red, Green, Blue }\nfn main() -> number {\nlet c = Color::Red;\nmatch c {\nColor::Red => 1\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let has_error = diagnostics.iter().any(|d| d.severity == KarteDiagnosticSeverity::Error);
+    assert!(has_error, "Should have error for non-exhaustive match");
+}
+
+#[test]
+fn test_analyze_duplicate_function() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn foo() -> number { 1 }\nfn foo() -> number { 2 }\nfn main() -> number { 0 }";
+    let diagnostics = bridge.analyze(source);
+    let has_error = diagnostics.iter().any(|d| d.severity == KarteDiagnosticSeverity::Error);
+    assert!(has_error, "Should have error for duplicate function");
+}
+
+#[test]
+fn test_analyze_struct_valid() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point { x: 1, y: 2 };\np.x + p.y\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for valid struct usage: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_empty_function() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\n0\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for simple function: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_let_binding() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet x = 42;\nlet y = x + 8;\ny\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for valid let bindings: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_closure2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet add = |a: number, b: number| -> number { a + b };\nadd(3, 4)\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for valid closure: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_nested_match2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Option<T> { Some(T), None }\nfn f(x: number) -> number {\nmatch x {\n0 => 1\n_ => 2\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for nested match: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_while_loop2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet x = 10;\nlet r = 0;\nwhile x > 0 {\nr = r + 1\n};\nr\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for valid while loop: {:?}", errors);
+}
