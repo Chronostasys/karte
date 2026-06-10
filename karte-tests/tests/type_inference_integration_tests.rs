@@ -579,3 +579,73 @@ fn test_type_check_struct_update() {
 fn test_type_check_multi_let_destructure() {
     check_no_errors("fn swap(a: number, b: number) -> number {\nlet temp = a;\nlet a = b;\nlet b = temp;\na + b\n}");
 }
+
+#[test]
+fn test_type_check_enum_with_data() {
+    check_no_errors("enum Shape { Circle(number), Rect(number, number) }\nfn area(s: Shape) -> number {\nmatch s {\nShape::Circle(r) => r * r\nShape::Rect(w, h) => w * h\n}\n}");
+}
+
+#[test]
+fn test_type_check_nested_enum_match() {
+    check_no_errors("enum Option<T> { Some(T), None }\nenum Result<T, E> { Ok(T), Err(E) }\nfn f(r: Result<number, number>) -> number {\nmatch r {\nResult::Ok(x) => x\nResult::Err(e) => e\n}\n}");
+}
+
+#[test]
+fn test_type_check_string_concat_valid() {
+    check_no_errors("fn main() -> number {\nlet s = \"hello\" + \" world\";\n0\n}");
+}
+
+#[test]
+fn test_type_check_struct_field_access() {
+    check_no_errors("struct Point { x: number, y: number }\nfn f(p: Point) -> number {\np.x + p.y\n}");
+}
+
+#[test]
+fn test_type_check_captured_variable() {
+    check_no_errors("fn main() -> number {\nlet x = 10;\nlet f = || { x };\nf()\n}");
+}
+
+#[test]
+fn test_type_check_multiple_return() {
+    check_no_errors("fn abs(x: number) -> number {\nif x < 0 { 0 - x } else { x }\n}");
+}
+
+#[test]
+fn test_type_check_bool_ops() {
+    check_no_errors("fn f(a: bool, b: bool) -> bool {\na && b || !a\n}");
+}
+
+#[test]
+fn test_type_check_string_cmp_valid() {
+    check_no_errors("fn f(a: string, b: string) -> bool {\na < b\n}");
+}
+
+#[test]
+fn test_type_check_enum_constructor_no_data() {
+    check_no_errors("enum Color { Red, Green, Blue }\nfn f(c: Color) -> number {\nmatch c {\nColor::Red => 1\nColor::Green => 2\nColor::Blue => 3\n}\n}");
+}
+
+#[test]
+fn test_type_check_let_binding_type_annotation() {
+    check_no_errors("fn main() -> number {\nlet x: number = 42;\nx\n}");
+}
+
+#[test]
+fn test_type_check_while_loop_unit() {
+    check_no_errors("fn main() -> number {\nlet x = 0;\nwhile x < 10 {\nlet x = x + 1; x\n}\n0\n}");
+}
+
+#[test]
+fn test_type_check_nested_let() {
+    check_no_errors("fn main() -> number {\nlet a = {\nlet x = 1;\nlet y = 2;\nx + y\n};\na\n}");
+}
+
+#[test]
+fn test_type_check_result_type() {
+    check_no_errors("fn div(a: number, b: number) -> number {\nif b == 0 { 0 } else { a / b }\n}");
+}
+
+#[test]
+fn test_type_check_method_call() {
+    check_no_errors("fn double(x: number) -> number { x * 2 }\nfn main() -> number {\n5.double()\n}");
+}
