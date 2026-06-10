@@ -187,14 +187,19 @@ impl<'a> Parser<'a> {
 
         // 尝试找到下一个安全的同步点
         while let Some(token) = self.peek() {
-            match token.token {
-                // 在这些token处可以安全地重新开始解析
-                Token::Plus
-                | Token::Minus
-                | Token::Multiply
-                | Token::Divide
-                | Token::LeftParen
-                | Token::RightParen => break,
+            match &token.token {
+                // 在这些 token 处可以安全地重新开始解析
+                Token::RightBrace => break,
+                Token::Semicolon => break,
+                // 关键字通过 Identifier 匹配，检查值
+                Token::Identifier(ref s)
+                    if matches!(
+                        s.as_str(),
+                        "fn" | "let" | "struct" | "enum" | "if" | "match" | "while" | "for" | "return"
+                    ) =>
+                {
+                    break
+                }
                 _ => self.advance(),
             }
         }
