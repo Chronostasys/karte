@@ -126,6 +126,8 @@ struct GenericTypeDef {
 struct FunctionSignature {
     param_types: Vec<Type>,
     return_type: Type,
+    /// 是否有显式的返回类型标注
+    has_explicit_return_type: bool,
 }
 
 impl Default for TypeChecker {
@@ -1016,6 +1018,7 @@ impl TypeChecker {
                         FunctionSignature {
                             param_types: param_types.clone(),
                             return_type: ret_ty.clone(),
+                            has_explicit_return_type: return_type.is_some(),
                         },
                     );
 

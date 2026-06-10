@@ -188,6 +188,16 @@ impl Diagnostic {
         }
     }
 
+    pub fn info(message: impl Into<String>, span: Span) -> Self {
+        Self {
+            level: DiagnosticLevel::Info,
+            message: message.into(),
+            span,
+            code: None,
+            source: None,
+        }
+    }
+
     pub fn with_code(mut self, code: impl Into<String>) -> Self {
         self.code = Some(code.into());
         self
