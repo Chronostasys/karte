@@ -2492,3 +2492,53 @@ fn test_type_error_fn_param_wrong_type() {
 fn test_type_error_fn_return_wrong_type() {
     check_has_errors("fn f() -> string {\n42\n}");
 }
+
+#[test]
+fn test_type_check_abs_builtin_fn() {
+    check_no_errors("fn magnitude(x: number) -> number {\nif x >= 0 { x } else { 0 - x }\n}");
+}
+
+#[test]
+fn test_type_check_clamp_fn() {
+    check_no_errors("fn clamp(x: number, lo: number, hi: number) -> number {\nif x < lo { lo } else { if x > hi { hi } else { x } }\n}");
+}
+
+#[test]
+fn test_type_check_swap_pattern() {
+    check_no_errors("enum Pair { P(number, number) }\nfn swap(p: Pair) -> Pair {\nmatch p {\nPair::P(a, b) => Pair::P(b, a)\n}\n}");
+}
+
+#[test]
+fn test_type_check_factorial_fn() {
+    check_no_errors("fn factorial(n: number) -> number {\nif n <= 1 { 1 } else { n * factorial(n - 1) }\n}");
+}
+
+#[test]
+fn test_type_check_fib_fn() {
+    check_no_errors("fn fib(n: number) -> number {\nif n <= 1 { n } else { fib(n - 1) + fib(n - 2) }\n}");
+}
+
+#[test]
+fn test_type_check_gcd_fn() {
+    check_no_errors("fn gcd(a: number, b: number) -> number {\nif b == 0 { a } else { gcd(b, a % b) }\n}");
+}
+
+#[test]
+fn test_type_check_power_fn() {
+    check_no_errors("fn power(base: number, exp: number) -> number {\nif exp == 0 { 1 } else { base * power(base, exp - 1) }\n}");
+}
+
+#[test]
+fn test_type_check_sum_to_n_fn() {
+    check_no_errors("fn sum_to_n(n: number) -> number {\nif n <= 0 { 0 } else { n + sum_to_n(n - 1) }\n}");
+}
+
+#[test]
+fn test_type_check_max_of_three_fn() {
+    check_no_errors("fn max_of_three(a: number, b: number, c: number) -> number {\nlet m = if a > b { a } else { b };\nif m > c { m } else { c }\n}");
+}
+
+#[test]
+fn test_type_check_is_palindrome_check() {
+    check_no_errors("fn is_between(x: number, lo: number, hi: number) -> bool {\nx >= lo && x <= hi\n}");
+}
