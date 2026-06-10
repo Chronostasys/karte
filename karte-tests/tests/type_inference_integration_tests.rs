@@ -1001,3 +1001,53 @@ fn test_type_check_early_return2() {
 fn test_type_error_if_branch_mismatch2() {
     check_has_errors("fn f() -> number {\nlet x = if true { 42 } else { \"hello\" };\n0\n}");
 }
+
+#[test]
+fn test_type_check_str_cmp3() {
+    check_no_errors("fn f(a: string, b: string) -> bool {\na == b\n}");
+}
+
+#[test]
+fn test_type_check_num_cmp() {
+    check_no_errors("fn f(a: number, b: number) -> bool {\na < b\n}");
+}
+
+#[test]
+fn test_type_check_bool_neg() {
+    check_no_errors("fn f(x: bool) -> bool {\n!x\n}");
+}
+
+#[test]
+fn test_type_check_sc_and() {
+    check_no_errors("fn f(a: bool, b: bool) -> bool {\na && b\n}");
+}
+
+#[test]
+fn test_type_check_sc_or() {
+    check_no_errors("fn f(a: bool, b: bool) -> bool {\na || b\n}");
+}
+
+#[test]
+fn test_type_check_str_eq() {
+    check_no_errors("fn f(s: string) -> bool {\ns == \"hello\"\n}");
+}
+
+#[test]
+fn test_type_check_num_eq() {
+    check_no_errors("fn f(n: number) -> bool {\nn == 42\n}");
+}
+
+#[test]
+fn test_type_check_let_block2() {
+    check_no_errors("fn main() -> number {\nlet a = {\nlet x = 1;\nlet y = 2;\nx + y\n};\na\n}");
+}
+
+#[test]
+fn test_type_check_block_expr2() {
+    check_no_errors("fn main() -> number {\nlet x = { 42 };\nx\n}");
+}
+
+#[test]
+fn test_type_check_nested_call2() {
+    check_no_errors("fn double(x: number) -> number { x * 2 }\nfn quad(x: number) -> number { double(double(x)) }\nfn main() -> number {\nquad(10)\n}");
+}
