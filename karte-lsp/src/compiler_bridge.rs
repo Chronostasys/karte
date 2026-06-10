@@ -4,7 +4,8 @@
 // 增强版：支持类型信息查询、符号定义位置、智能补全
 
 use karte_diagnostics::Span;
-use karte_hir::type_check;
+use karte_hir::type_check_for_lsp;
+use karte_hir::types::Type;
 use karte_lexer::Lexer;
 use karte_parser::{Parser, ParserMode};
 use tower_lsp::lsp_types::{Position, Range};
@@ -35,6 +36,10 @@ pub enum KarteSymbolKind {
 pub struct AnalysisResult {
     pub diagnostics: Vec<LspDiagnostic>,
     pub symbols: Vec<SymbolInfo>,
+    /// 标识符使用位置 -> 定义位置
+    pub identifier_uses: HashMap<Span, Span>,
+    /// 标识符位置 -> 类型字符串
+    pub identifier_type_strings: HashMap<(usize, usize), String>,
 }
 
 /// 补全项
@@ -100,6 +105,7 @@ impl CompilerBridge {
     fn full_analysis(&self, source: &str) -> AnalysisResult {
         let mut result = AnalysisResult::default();
 
+        // 1. 词法分析
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize();
         let lex_diagnostics = lexer.into_diagnostics();
@@ -116,6 +122,7 @@ impl CompilerBridge {
             return result;
         }
 
+        // 2. 语法分析
         let mut parser = Parser::new(&tokens).with_mode(ParserMode::Script);
         let parsed_program = parser.parse();
         let parse_diagnostics = parser.diagnostics();
@@ -134,9 +141,10 @@ impl CompilerBridge {
 
         let parsed_program = parsed_program.unwrap();
 
-        let (_ty, type_diagnostics) = type_check(&parsed_program.body);
+        // 3. 使用 LSP 专用类型检查，获取完整的类型信息
+        let type_info = type_check_for_lsp(&parsed_program.body);
 
-        for diag in &type_diagnostics.diagnostics {
+        for diag in &type_info.diagnostics.diagnostics {
             result.diagnostics.push(LspDiagnostic {
                 range: span_to_range(source, diag.span),
                 message: diag.message.clone(),
@@ -144,11 +152,16 @@ impl CompilerBridge {
             });
         }
 
+        // 4. 收集符号信息
         self.collect_symbols(&parsed_program.body, &mut result);
+
+        // 5. 收集标识符类型信息（用于悬停）
+        self.collect_identifier_types(&parsed_program.body, &type_info.expr_types, &mut result);
 
         result
     }
 
+    /// 收集符号定义信息
     fn collect_symbols(&self, expr: &karte_hir::Expr, result: &mut AnalysisResult) {
         use karte_hir::Expr;
         match expr {
@@ -180,7 +193,7 @@ impl CompilerBridge {
                     type_signature: Some(sig),
                 });
             }
-            Statement::Let { name, pattern, .. } => {
+            Statement::Let { name, pattern, span, .. } => {
                 let sym_name = if let Some(pat) = pattern {
                     if let karte_hir::Pattern::Variable { name: vn, .. } = pat.as_ref() {
                         vn.clone()
@@ -193,7 +206,7 @@ impl CompilerBridge {
                 result.symbols.push(SymbolInfo {
                     name: sym_name,
                     kind: KarteSymbolKind::Variable,
-                    span: stmt.span(),
+                    span: *span,
                     type_signature: None,
                 });
             }
@@ -220,11 +233,121 @@ impl CompilerBridge {
         }
     }
 
+    /// 收集标识符的类型信息（用于悬停提示）
+    fn collect_identifier_types(
+        &self,
+        expr: &karte_hir::Expr,
+        expr_types: &HashMap<usize, Type>,
+        result: &mut AnalysisResult,
+    ) {
+        use karte_hir::Expr;
+        let ptr = expr as *const Expr as usize;
+        if let Some(ty) = expr_types.get(&ptr) {
+            let type_str = format_type(ty);
+            result.identifier_type_strings.insert((expr.span().start, expr.span().end), type_str);
+        }
+
+        // 递归遍历子表达式
+        match expr {
+            Expr::Block { statements, final_expr, .. } => {
+                for stmt in statements {
+                    self.collect_stmt_types(stmt, expr_types, result);
+                }
+                if let Some(fe) = final_expr {
+                    self.collect_identifier_types(fe, expr_types, result);
+                }
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                self.collect_identifier_types(left, expr_types, result);
+                self.collect_identifier_types(right, expr_types, result);
+            }
+            Expr::UnaryOp { operand, .. } => {
+                self.collect_identifier_types(operand, expr_types, result);
+            }
+            Expr::FunctionCall { function, args, .. } => {
+                self.collect_identifier_types(function, expr_types, result);
+                for arg in args {
+                    self.collect_identifier_types(arg, expr_types, result);
+                }
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                self.collect_identifier_types(condition, expr_types, result);
+                self.collect_identifier_types(then_branch, expr_types, result);
+                if let Some(eb) = else_branch {
+                    self.collect_identifier_types(eb, expr_types, result);
+                }
+            }
+            Expr::While { condition, body, .. } => {
+                self.collect_identifier_types(condition, expr_types, result);
+                self.collect_identifier_types(body, expr_types, result);
+            }
+            Expr::Match { expr: scrutinee, arms, .. } => {
+                self.collect_identifier_types(scrutinee, expr_types, result);
+                for arm in arms {
+                    self.collect_identifier_types(&arm.body, expr_types, result);
+                }
+            }
+            Expr::Lambda { body, .. } => {
+                self.collect_identifier_types(body, expr_types, result);
+            }
+            Expr::Assignment { target, value, .. } => {
+                self.collect_identifier_types(target, expr_types, result);
+                self.collect_identifier_types(value, expr_types, result);
+            }
+            Expr::ArrayLiteral { elements, .. } => {
+                for elem in elements {
+                    self.collect_identifier_types(elem, expr_types, result);
+                }
+            }
+            Expr::Index { array, index, .. } => {
+                self.collect_identifier_types(array, expr_types, result);
+                self.collect_identifier_types(index, expr_types, result);
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_stmt_types(
+        &self,
+        stmt: &karte_hir::Statement,
+        expr_types: &HashMap<usize, Type>,
+        result: &mut AnalysisResult,
+    ) {
+        use karte_hir::Statement;
+        match stmt {
+            Statement::Expression { expr, .. } => {
+                self.collect_identifier_types(expr, expr_types, result);
+            }
+            Statement::Let { value, .. } => {
+                self.collect_identifier_types(value, expr_types, result);
+            }
+            Statement::FunctionDef { body, .. } => {
+                self.collect_identifier_types(body, expr_types, result);
+            }
+            _ => {}
+        }
+    }
+
+    /// 查找指定位置的悬停信息
     pub fn get_hover_info(&self, position: Position) -> Option<String> {
         let source = self.cached_source.as_ref()?;
         let result = self.cached_result.as_ref()?;
+
         let offset = position_to_offset(source, position);
 
+        // 优先查找标识符类型信息
+        for (&(start, end), type_str) in &result.identifier_type_strings {
+            if offset >= start && offset <= end {
+                return Some(type_str.clone());
+            }
+        }
+
+        // 查找符号定义
         for sym in &result.symbols {
             if offset >= sym.span.start && offset <= sym.span.end {
                 if let Some(sig) = &sym.type_signature {
@@ -237,9 +360,11 @@ impl CompilerBridge {
         None
     }
 
+    /// 查找指定位置的定义
     pub fn get_definition(&self, position: Position) -> Option<Span> {
         let source = self.cached_source.as_ref()?;
         let result = self.cached_result.as_ref()?;
+
         let offset = position_to_offset(source, position);
 
         for sym in &result.symbols {
@@ -251,6 +376,7 @@ impl CompilerBridge {
         None
     }
 
+    /// 获取补全建议
     pub fn get_completions(&self, _position: Position) -> Vec<KarteCompletionItem> {
         let mut items = Vec::new();
 
@@ -299,6 +425,7 @@ impl CompilerBridge {
         items
     }
 
+    /// 获取文档中的所有符号
     pub fn get_document_symbols(&self) -> Vec<SymbolInfo> {
         self.cached_result
             .as_ref()
@@ -310,6 +437,38 @@ impl CompilerBridge {
 impl Default for CompilerBridge {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// 格式化类型为可读字符串
+fn format_type(ty: &karte_hir::types::Type) -> String {
+    use karte_hir::types::Type;
+    match ty {
+        Type::Number => "number".to_string(),
+        Type::Bool => "bool".to_string(),
+        Type::String => "string".to_string(),
+        Type::Unit => "()".to_string(),
+        Type::Var(_) => "_".to_string(),
+        Type::Unknown => "unknown".to_string(),
+        Type::Function { params, return_type } => {
+            let param_strs: Vec<String> = params.iter().map(format_type).collect();
+            format!("fn({}) -> {}", param_strs.join(", "), format_type(return_type))
+        }
+        Type::Closure { params, return_type } => {
+            let param_strs: Vec<String> = params.iter().map(format_type).collect();
+            format!("closure({}) -> {}", param_strs.join(", "), format_type(return_type))
+        }
+        Type::Array { element } => format!("[{}]", format_type(element)),
+        Type::Sum { name, .. } => name.clone(),
+        Type::Struct { name, .. } => name.clone(),
+        Type::Tuple(types) => {
+            let type_strs: Vec<String> = types.iter().map(format_type).collect();
+            format!("({})", type_strs.join(", "))
+        }
+        Type::Reference { inner } => format!("&{}", format_type(inner)),
+        Type::Int(_) => "number".to_string(),
+        Type::Generic { name, .. } => name.clone(),
+        _ => format!("{:?}", ty),
     }
 }
 

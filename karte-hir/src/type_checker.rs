@@ -4149,6 +4149,28 @@ pub fn type_check_with_context_and_maps(
     (result_type, expr_types, checker.into_diagnostics())
 }
 
+/// LSP 专用类型检查，返回完整的分析结果
+pub fn type_check_for_lsp(expr: &Expr) -> LspTypeInfo {
+    let mut checker = TypeChecker::new();
+    let context = ModuleContext::default();
+    let result_type = checker.check_program_with_context(expr, &context);
+    let expr_types = checker.get_lambda_types();
+    let diagnostics = checker.into_diagnostics();
+
+    LspTypeInfo {
+        result_type,
+        expr_types,
+        diagnostics,
+    }
+}
+
+/// LSP 类型信息结果
+pub struct LspTypeInfo {
+    pub result_type: Type,
+    pub expr_types: HashMap<usize, Type>,
+    pub diagnostics: DiagnosticBag,
+}
+
 #[cfg(test)]
 mod assignment_type_check_tests {
     use super::*;
