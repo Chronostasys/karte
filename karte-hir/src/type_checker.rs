@@ -2978,6 +2978,17 @@ impl TypeChecker {
                 value,
                 span,
             } => {
+                // 🔧 检测无意义的自赋值 (x = x)
+                if let (Expr::Identifier { name: target_name, .. }, Expr::Identifier { name: value_name, .. }) = 
+                    (target.as_ref(), value.as_ref()) {
+                    if target_name == value_name {
+                        self.add_warning(
+                            format!("变量 `{}` 被赋值为自身, 这可能是无意义的操作", target_name),
+                            *span,
+                        );
+                    }
+                }
+
                 // 赋值表达式：检查目标是否可赋值，并统一类型
                 let target_type = self.infer_expr(target, env);
                 let value_type = self.infer_expr(value, env);
