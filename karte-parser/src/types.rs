@@ -186,8 +186,8 @@ impl fmt::Display for ParseError {
             } => {
                 write!(
                     f,
-                    "Missing operand for operator {} at {:?}",
-                    "运算符 '{}' 缺少操作数", operator
+                    "运算符 '{}' 缺少操作数",
+                    operator
                 )
             }
             ParseError::ExpressionTooDeep { max_depth, span: _ } => {
