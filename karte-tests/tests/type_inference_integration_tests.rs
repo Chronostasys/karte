@@ -2392,3 +2392,53 @@ fn test_type_check_option_default_value() {
 fn test_type_check_result_error_propagation() {
     check_no_errors("fn div_or_err(a: number, b: number) -> Result<number, string> {\nif b == 0 { Err(\"division by zero\") } else { Ok(a / b) }\n}\nfn safe_double_div(a: number, b: number, c: number) -> Result<number, string> {\nmatch div_or_err(a, b) {\nOk(ab) => div_or_err(ab, c)\nErr(e) => Err(e)\n}\n}");
 }
+
+#[test]
+fn test_type_check_chained_string_ops_v2() {
+    check_no_errors("fn f(s: string) -> string {\nlet a = s + \"!\";\nlet b = a + \"?\";\nb\n}");
+}
+
+#[test]
+fn test_type_check_multi_struct_fn_v2() {
+    check_no_errors("struct Point { x: number, y: number }\nfn distance_sq(a: Point, b: Point) -> number {\nlet dx = a.x - b.x;\nlet dy = a.y - b.y;\ndx * dx + dy * dy\n}");
+}
+
+#[test]
+fn test_type_check_bool_to_number_v2() {
+    check_no_errors("fn bool_to_int(b: bool) -> number {\nif b { 1 } else { 0 }\n}");
+}
+
+#[test]
+fn test_type_check_number_to_bool_v2() {
+    check_no_errors("fn is_positive(n: number) -> bool {\nn > 0\n}");
+}
+
+#[test]
+fn test_type_check_json_enum() {
+    check_no_errors("enum JSON { JNum(number), JStr(string), JBool(bool), JNull }\nfn json_type(j: JSON) -> string {\nmatch j {\nJSON::JNum(_) => \"number\"\nJSON::JStr(_) => \"string\"\nJSON::JBool(_) => \"bool\"\nJSON::JNull => \"null\"\n}\n}");
+}
+
+#[test]
+fn test_type_check_multi_let_binding_v2() {
+    check_no_errors("fn main() -> number {\nlet a = 1;\nlet b = 2;\nlet c = 3;\nlet d = a + b;\nlet e = c + d;\ne\n}");
+}
+
+#[test]
+fn test_type_check_nested_closure_call_v2() {
+    check_no_errors("fn main() -> number {\nlet add = |a: number, b: number| -> number { a + b };\nlet result = add(add(1, 2), 3);\nresult\n}");
+}
+
+#[test]
+fn test_type_check_option_map_v2() {
+    check_no_errors("fn map_option(opt: Option<number>) -> Option<number> {\nmatch opt {\nSome(x) => Some(x * 2)\nNone => None\n}\n}");
+}
+
+#[test]
+fn test_type_check_result_map_v2() {
+    check_no_errors("fn map_result(res: Result<number, string>) -> Result<number, string> {\nmatch res {\nOk(x) => Ok(x * 2)\nErr(e) => Err(e)\n}\n}");
+}
+
+#[test]
+fn test_type_check_midpoint_fn() {
+    check_no_errors("struct Point { x: number, y: number }\nfn midpoint(a: Point, b: Point) -> Point {\nPoint { x: (a.x + b.x), y: (a.y + b.y) }\n}");
+}
