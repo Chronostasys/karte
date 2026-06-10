@@ -4348,19 +4348,28 @@ pub fn type_check_for_lsp(expr: &Expr) -> LspTypeInfo {
     let context = ModuleContext::default();
     let result_type = checker.check_program_with_context(expr, &context);
     let expr_types = checker.get_lambda_types();
+    let function_signatures = checker.function_signatures.clone();
+    let function_schemes = checker.function_schemes.clone();
     let diagnostics = checker.into_diagnostics();
 
     LspTypeInfo {
         result_type,
         expr_types,
+        function_signatures,
+        function_schemes,
         diagnostics,
     }
 }
 
 /// LSP 类型信息结果
+#[derive(Debug)]
 pub struct LspTypeInfo {
     pub result_type: Type,
     pub expr_types: HashMap<usize, Type>,
+    /// 函数签名信息（函数名 -> 签名）
+    pub function_signatures: HashMap<String, FunctionSignature>,
+    /// 泛型函数的类型方案
+    pub function_schemes: HashMap<String, TypeScheme>,
     pub diagnostics: DiagnosticBag,
 }
 
