@@ -680,26 +680,35 @@ impl LanguageServer for Backend {
         };
         let source = &document.content;
 
-        let mut bridge = self.compiler_bridge.write().await;
-        // 确保 analysis 已完成
-        let _ = bridge.analyze(source);
-        let analysis = bridge.get_cached_result();
-
         let mut ranges = Vec::new();
 
-        if let Some(result) = analysis {
-            for sym in &result.symbols {
-                let range = crate::compiler_bridge::span_to_range(source, sym.span);
-                // 只折叠多行的符号（函数体、结构体定义等）
-                if range.start.line < range.end.line {
-                    ranges.push(FoldingRange {
-                        start_line: range.start.line,
-                        start_character: Some(range.start.character),
-                        end_line: range.end.line,
-                        end_character: Some(range.end.character),
-                        kind: Some(FoldingRangeKind::Region),
-                        collapsed_text: None,
-                    });
+        // 基于花括号的折叠
+        {
+            let mut brace_stack: Vec<(u32, u32)> = Vec::new(); // (line, col)
+            let mut line: u32 = 0;
+            let mut col: u32 = 0;
+            for ch in source.chars() {
+                if ch == '{' {
+                    brace_stack.push((line, col));
+                } else if ch == '}' {
+                    if let Some((start_line, start_col)) = brace_stack.pop() {
+                        if start_line < line {
+                            ranges.push(FoldingRange {
+                                start_line,
+                                start_character: Some(start_col),
+                                end_line: line,
+                                end_character: Some(col),
+                                kind: Some(FoldingRangeKind::Region),
+                                collapsed_text: None,
+                            });
+                        }
+                    }
+                }
+                if ch == '\n' {
+                    line += 1;
+                    col = 0;
+                } else {
+                    col += 1;
                 }
             }
         }
