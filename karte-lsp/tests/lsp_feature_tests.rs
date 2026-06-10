@@ -798,3 +798,23 @@ fn test_completions_variable() {
     let has_var = completions.iter().any(|c| c.label == "my_var");
     assert!(has_var, "Should complete 'my_var' variable");
 }
+
+#[test]
+fn test_analyze_invalid_enum_ctor() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Color { Red, Green, Blue }\nfn main() -> number {\nlet c = Color::Yellow;\n0\n}";
+    let diagnostics = bridge.analyze(source);
+    let has_error = diagnostics.iter().any(|d| 
+        d.severity == KarteDiagnosticSeverity::Error
+    );
+    assert!(has_error, "Should have error for invalid enum constructor");
+}
+
+#[test]
+fn test_analyze_valid_full_program() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point { x: number, y: number }\nfn distance(p: Point) -> number {\np.x + p.y\n}\nfn main() -> number {\nlet p = Point { x: 3, y: 4 };\ndistance(p)\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for valid program: {:?}", errors);
+}
