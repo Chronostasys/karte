@@ -471,27 +471,28 @@ impl LanguageServer for Backend {
         let mut prev_line: u32 = 0;
         let mut prev_char: u32 = 0;
 
-        // 首先基于 token 添加高亮（关键字、数字、字符串等）
+        // 收集所有 token 信息 (byte_pos, line, col, length, token_type)
+        // 使用统一的收集方式避免重叠
+        let mut raw_tokens: Vec<(usize, u32, u32, u32, u32)> = Vec::new();
+
+        // 构建 byte position -> (line, col) 映射
+        let mut byte_to_pos: std::collections::HashMap<usize, (u32, u32)> = std::collections::HashMap::new();
+        let mut current_line: u32 = 0;
+        let mut current_col: u32 = 0;
+        for (i, ch) in source.char_indices() {
+            byte_to_pos.insert(i, (current_line, current_col));
+            if ch == '\n' {
+                current_line += 1;
+                current_col = 0;
+            } else {
+                current_col += 1;
+            }
+        }
+        byte_to_pos.insert(source.len(), (current_line, current_col));
+
+        // 第一层: 基于 lexer token 的高亮（关键字、数字、字符串、运算符）
         {
             let (lexer_tokens, _) = karte_lexer::tokenize(source);
-            let mut byte_pos: usize = 0;
-            let mut line: u32 = 0;
-            let mut col: u32 = 0;
-
-            // 构建 byte position -> (line, col) 映射
-            let mut byte_to_pos: std::collections::HashMap<usize, (u32, u32)> = std::collections::HashMap::new();
-            let mut current_line: u32 = 0;
-            let mut current_col: u32 = 0;
-            for (i, ch) in source.char_indices() {
-                byte_to_pos.insert(i, (current_line, current_col));
-                if ch == '\n' {
-                    current_line += 1;
-                    current_col = 0;
-                } else {
-                    current_col += 1;
-                }
-            }
-            byte_to_pos.insert(source.len(), (current_line, current_col));
 
             for token in &lexer_tokens {
                 let token_type_opt: Option<u32> = match &token.token {
@@ -539,39 +540,19 @@ impl LanguageServer for Backend {
                     let length = if start_pos.0 == end_pos.0 {
                         end_pos.1.saturating_sub(start_pos.1).max(1)
                     } else {
-                        // 多行 token，取第一行长度
                         source.lines().nth(start_pos.0 as usize)
                             .map(|line| line.len() as u32 - start_pos.1)
                             .unwrap_or(1)
                     };
 
-                    let delta_line = start_pos.0 - prev_line;
-                    let delta_start = if delta_line == 0 {
-                        start_pos.1.saturating_sub(prev_char)
-                    } else {
-                        start_pos.1
-                    };
-
-                    tokens.push(SemanticToken {
-                        delta_line,
-                        delta_start,
-                        length: length.max(1),
-                        token_type,
-                        token_modifiers_bitset: 0,
-                    });
-
-                    prev_line = start_pos.0;
-                    prev_char = start_pos.1;
+                    raw_tokens.push((token.span.start, start_pos.0, start_pos.1, length.max(1), token_type));
                 }
             }
         }
 
-        // 然后添加基于符号的高亮（函数、变量、类型等）
+        // 第二层: 基于符号的高亮（函数、变量、类型等）——这些会覆盖 token 层
         if let Some(result) = analysis {
-            let mut sorted_symbols: Vec<_> = result.symbols.iter().collect();
-            sorted_symbols.sort_by_key(|sym| (sym.span.start, sym.span.end));
-
-            for sym in &sorted_symbols {
+            for sym in &result.symbols {
                 let range = crate::compiler_bridge::span_to_range(source, sym.span);
                 let token_type: u32 = match sym.kind {
                     KarteSymbolKind::Function => 5,
@@ -583,31 +564,51 @@ impl LanguageServer for Backend {
                     KarteSymbolKind::EnumVariant => 4,
                     KarteSymbolKind::Module => 0,
                 };
-                let delta_line = range.start.line - prev_line;
-                let delta_start = if delta_line == 0 {
-                    range.start.character - prev_char
-                } else {
-                    range.start.character
-                };
                 let length = if range.end.line == range.start.line {
-                    range.end.character - range.start.character
+                    range.end.character.saturating_sub(range.start.character).max(1)
                 } else {
                     source.lines().nth(range.start.line as usize)
                         .map(|line| line.len() as u32 - range.start.character)
                         .unwrap_or(1)
                 };
 
-                tokens.push(SemanticToken {
-                    delta_line,
-                    delta_start: delta_start.max(0),
-                    length: length.max(1),
-                    token_type,
-                    token_modifiers_bitset: 0,
-                });
-
-                prev_line = range.start.line;
-                prev_char = range.start.character;
+                raw_tokens.push((sym.span.start, range.start.line, range.start.character, length, token_type));
             }
+        }
+
+        // 排序并去重（符号层覆盖 token 层，相同 byte_pos 保留后面的）
+        raw_tokens.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.4.cmp(&b.4)));
+        // 去重：相同起始位置只保留最后一个（符号层）
+        let mut seen_positions: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut deduped_tokens: Vec<(usize, u32, u32, u32, u32)> = Vec::new();
+        // 从后往前遍历，保留高优先级的
+        for tok in raw_tokens.iter().rev() {
+            if !seen_positions.contains(&tok.0) {
+                seen_positions.insert(tok.0);
+                deduped_tokens.push(*tok);
+            }
+        }
+        deduped_tokens.reverse();
+
+        // 生成 delta 编码的 SemanticToken
+        for (byte_pos, line, col, length, token_type) in &deduped_tokens {
+            let delta_line = *line - prev_line;
+            let delta_start = if delta_line == 0 {
+                col.saturating_sub(prev_char)
+            } else {
+                *col
+            };
+
+            tokens.push(SemanticToken {
+                delta_line,
+                delta_start,
+                length: *length,
+                token_type: *token_type,
+                token_modifiers_bitset: 0,
+            });
+
+            prev_line = *line;
+            prev_char = *col;
         }
 
         let result = SemanticTokens {
