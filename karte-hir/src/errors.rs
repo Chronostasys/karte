@@ -107,19 +107,18 @@ impl fmt::Display for TypeCheckError {
         match self {
             TypeCheckError::UndefinedVariable { name, suggestion, .. } => {
                 if let Some(s) = suggestion {
-                    write!(f, "Undefined variable: {} (did you mean '{}'?)", name, s)
+                    write!(f, "未定义的变量: {} (你是否想输入 '{}'?)", name, s)
                 } else {
-                    write!(f, "Undefined variable: {}", name)
+                    write!(f, "未定义的变量: {}", name)
                 }
             }
             TypeCheckError::TypeMismatch {
                 expected, found, context, ..
             } => {
-                let base = format!("Type mismatch: expected `{}`, found `{}`", expected, found);
                 if let Some(ctx) = context {
-                    write!(f, "{} ({})", base, ctx)
+                    write!(f, "类型不匹配: 期望 `{}`, 实际 `{}` ({})", expected, found, ctx)
                 } else {
-                    write!(f, "{}", base)
+                    write!(f, "类型不匹配: 期望 `{}`, 实际 `{}`", expected, found)
                 }
             }
             TypeCheckError::ArityMismatch {
@@ -127,27 +126,27 @@ impl fmt::Display for TypeCheckError {
             } => {
                 write!(
                     f,
-                    "Arity mismatch: expected {} arguments, found {}",
+                    "参数数量不匹配: 期望 {} 个参数, 实际 {} 个",
                     expected, found
                 )
             }
             TypeCheckError::NotCallable { found_type, .. } => {
-                write!(f, "Cannot call value of type {}", found_type)
+                write!(f, "无法调用类型为 {} 的值", found_type)
             }
             TypeCheckError::CannotInferType { .. } => {
-                write!(f, "Cannot infer type")
+                write!(f, "无法推断类型")
             }
             TypeCheckError::InfiniteType { .. } => {
-                write!(f, "Infinite type")
+                write!(f, "无限类型（递归类型定义）")
             }
             TypeCheckError::InvalidConstructor { name, .. } => {
-                write!(f, "Invalid constructor: {}", name)
+                write!(f, "无效的构造器: {}", name)
             }
             TypeCheckError::InvalidPattern { message, .. } => {
-                write!(f, "Invalid pattern: {}", message)
+                write!(f, "无效的模式: {}", message)
             }
             TypeCheckError::EmptyMatch { .. } => {
-                write!(f, "Empty match expression")
+                write!(f, "空的 match 表达式")
             }
             TypeCheckError::MissingFields {
                 struct_name,
@@ -157,7 +156,7 @@ impl fmt::Display for TypeCheckError {
             } => {
                 write!(
                     f,
-                    "Struct {} missing fields: expected {} fields, found {}",
+                    "结构体 {} 缺少字段: 期望 {} 个字段, 实际 {} 个",
                     struct_name, expected, found
                 )
             }
@@ -166,35 +165,35 @@ impl fmt::Display for TypeCheckError {
                 field_name,
                 ..
             } => {
-                write!(f, "Unknown field {} in struct {}", field_name, struct_name)
+                write!(f, "结构体 {} 中不存在字段 {}", struct_name, field_name)
             }
             TypeCheckError::NotAStruct { name, .. } => {
-                write!(f, "{} is not a struct", name)
+                write!(f, "{} 不是结构体类型", name)
             }
             TypeCheckError::UndefinedType { name, .. } => {
-                write!(f, "Undefined type: {}", name)
+                write!(f, "未定义的类型: {}", name)
             }
             TypeCheckError::InvalidAssignmentTarget { .. } => {
-                write!(f, "Invalid assignment target")
+                write!(f, "无效的赋值目标")
             }
             TypeCheckError::ModuleInterfaceUnavailable { module, .. } => {
                 write!(
                     f,
-                    "Module `{}` is not available in this compilation unit",
+                    "模块 `{}` 在当前编译单元中不可用",
                     module
                 )
             }
             TypeCheckError::UndefinedModuleSymbol { module, symbol, .. } => {
-                write!(f, "Module `{}` does not export `{}`", module, symbol)
+                write!(f, "模块 `{}` 未导出 `{}`", module, symbol)
             }
             TypeCheckError::DuplicateFunctionDefinition { name, .. } => {
-                write!(f, "Duplicate function definition: {}", name)
+                write!(f, "重复的函数定义: {}", name)
             }
             TypeCheckError::IndexOutOfBounds { index, length, .. } => {
-                write!(f, "Index {} out of bounds (length {})", index, length)
+                write!(f, "索引 {} 超出范围 (长度 {})", index, length)
             }
             TypeCheckError::BuiltinFunctionError { function, message, .. } => {
-                write!(f, "Builtin function `{}`: {}", function, message)
+                write!(f, "内置函数 `{}`: {}", function, message)
             }
             TypeCheckError::InvalidMainReturnType { found, .. } => {
                 write!(f, "main 函数的返回类型不能是 `{}`，该类型无法作为退出码返回", found)

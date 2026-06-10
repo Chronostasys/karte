@@ -4368,10 +4368,10 @@ fn main() -> number {
             .collect();
         let has_dup_error = error_messages
             .iter()
-            .any(|msg| msg.contains("Duplicate function"));
+            .any(|msg| msg.contains("重复的函数定义"));
         assert!(
             has_dup_error,
-            "error messages should contain 'Duplicate function', actual: {:?}",
+            "error messages should contain '重复的函数定义', actual: {:?}",
             error_messages
         );
     }

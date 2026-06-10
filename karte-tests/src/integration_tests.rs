@@ -105,9 +105,9 @@ mod integration_tests {
             .find(|d| d.level == karte_diagnostics::DiagnosticLevel::Error);
         assert!(error.is_some());
         let msg = &error.unwrap().message;
-        assert!(msg.contains("Type mismatch"));
-        assert!(msg.contains("expected"));
-        assert!(msg.contains("found"));
+        assert!(msg.contains("类型不匹配"));
+        assert!(msg.contains("期望"));
+        assert!(msg.contains("实际"));
     }
 
     // #[test]

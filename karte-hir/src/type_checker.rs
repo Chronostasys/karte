@@ -4585,7 +4585,7 @@ mod assignment_type_check_tests {
             assert!(diagnostics
                 .diagnostics
                 .iter()
-                .any(|diag| diag.message.contains("does not export `missing`")));
+                .any(|diag| diag.message.contains("未导出 `missing`")));
         }
     }
     #[test]

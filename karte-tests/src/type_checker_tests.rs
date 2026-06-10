@@ -52,7 +52,7 @@ mod tests {
         assert_eq!(diagnostics.diagnostics.len(), 1);
         assert!(diagnostics.diagnostics[0]
             .message
-            .contains("Undefined variable: x"));
+            .contains("未定义的变量: x"));
     }
 
     #[test]
@@ -175,7 +175,7 @@ mod tests {
         assert!(diagnostics
             .diagnostics
             .iter()
-            .any(|d| d.message.contains("Arity mismatch")));
+            .any(|d| d.message.contains("参数数量不匹配")));
     }
 
     #[test]
@@ -235,7 +235,7 @@ mod tests {
         assert!(diagnostics
             .diagnostics
             .iter()
-            .any(|d| d.message.contains("Cannot call")));
+            .any(|d| d.message.contains("无法调用")));
     }
 
     // ========================================
@@ -269,7 +269,7 @@ mod tests {
         assert!(diagnostics
             .diagnostics
             .iter()
-            .any(|d| d.message.contains("Type mismatch")));
+            .any(|d| d.message.contains("类型不匹配")));
     }
 
     #[test]
@@ -462,7 +462,7 @@ mod tests {
         assert!(diagnostics
             .diagnostics
             .iter()
-            .any(|d| d.message.contains("Type mismatch")));
+            .any(|d| d.message.contains("类型不匹配")));
     }
 
     #[test]
