@@ -994,7 +994,7 @@ impl TypeChecker {
                     let mut param_names = std::collections::HashSet::new();
                     for param in params {
                         if param_names.contains(&param.name) {
-                            self.add_error(TypeCheckError::DuplicateFunctionDefinition {
+                            self.add_error(TypeCheckError::DuplicateParameterName {
                                 name: param.name.clone(),
                                 span: param.span,
                             });
@@ -4594,6 +4594,9 @@ impl TypeChecker {
             }
             TypeCheckError::DuplicateFunctionDefinition { name, .. } => {
                 Some(format!("请重命名其中一个 '{}' 函数，或删除重复的定义", name))
+            }
+            TypeCheckError::DuplicateParameterName { name, .. } => {
+                Some(format!("参数名 '{}' 重复，请使用不同的参数名", name))
             }
             TypeCheckError::NotCallable { .. } => {
                 Some("只有函数和闭包可以被调用。请检查表达式是否为可调用类型".to_string())

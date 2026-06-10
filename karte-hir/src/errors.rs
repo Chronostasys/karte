@@ -87,6 +87,11 @@ pub enum TypeCheckError {
         name: String,
         span: Span,
     },
+    /// 函数参数名重复
+    DuplicateParameterName {
+        name: String,
+        span: Span,
+    },
     /// 内建函数使用错误
     BuiltinFunctionError {
         function: String,
@@ -234,6 +239,9 @@ impl fmt::Display for TypeCheckError {
             TypeCheckError::DuplicateFunctionDefinition { name, .. } => {
                 write!(f, "重复的函数定义: `{}`（此名称已在此作用域中定义）", name)
             }
+            TypeCheckError::DuplicateParameterName { name, .. } => {
+                write!(f, "重复的参数名: `{}`", name)
+            }
             TypeCheckError::IndexOutOfBounds { index, length, .. } => {
                 write!(f, "索引 {} 超出范围（数组长度为 {}）", index, length)
             }
@@ -321,6 +329,7 @@ impl TypeCheckError {
             | TypeCheckError::ModuleInterfaceUnavailable { span, .. }
             | TypeCheckError::UndefinedModuleSymbol { span, .. }
             | TypeCheckError::DuplicateFunctionDefinition { span, .. }
+            | TypeCheckError::DuplicateParameterName { span, .. }
             | TypeCheckError::IndexOutOfBounds { span, .. }
             | TypeCheckError::BuiltinFunctionError { span, .. }
             | TypeCheckError::InvalidMainReturnType { span, .. }
