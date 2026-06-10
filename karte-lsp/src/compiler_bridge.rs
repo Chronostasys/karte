@@ -198,8 +198,14 @@ impl CompilerBridge {
         let type_info = type_check_for_lsp(&parsed_program.body);
 
         for diag in &type_info.diagnostics.diagnostics {
-            let severity = if diag.message.contains("warning") || diag.message.contains("redundant") {
+            let severity = if diag.message.contains("未使用")
+                || diag.message.contains("冗余")
+                || diag.message.contains("建议")
+                || diag.message.contains("警告")
+            {
                 KarteDiagnosticSeverity::Warning
+            } else if diag.message.contains("提示") || diag.message.contains("信息") {
+                KarteDiagnosticSeverity::Information
             } else {
                 KarteDiagnosticSeverity::Error
             };
