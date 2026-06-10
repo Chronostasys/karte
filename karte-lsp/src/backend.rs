@@ -133,6 +133,12 @@ impl LanguageServer for Backend {
                 code_lens_provider: Some(CodeLensOptions {
                     resolve_provider: Some(true),
                 }),
+                document_link_provider: Some(DocumentLinkOptions {
+                    resolve_provider: Some(true),
+                    work_done_progress_options: WorkDoneProgressOptions {
+                        work_done_progress: None,
+                    },
+                }),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -971,6 +977,68 @@ impl Backend {
         &self,
         params: CodeLens,
     ) -> Result<CodeLens> {
+        Ok(params)
+    }
+
+    async fn document_link(
+        &self,
+        params: DocumentLinkParams,
+    ) -> Result<Option<Vec<DocumentLink>>> {
+        let uri = &params.text_document.uri;
+        let store = self.document_store.read().await;
+        let Some(document) = store.get(uri) else {
+            return Ok(None);
+        };
+        let source = &document.content;
+
+        let mut links = Vec::new();
+
+        // 查找 import 语句中的模块路径，生成 document link
+        for (line_num, line) in source.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("import") {
+                // 提取模块路径
+                if let Some(path_start) = trimmed.find('"') {
+                    if let Some(path_end) = trimmed[path_start + 1..].find('"') {
+                        let module_path = &trimmed[path_start + 1..path_start + 1 + path_end];
+                        let link_range = Range::new(
+                            Position::new(line_num as u32, path_start as u32 + 1),
+                            Position::new(line_num as u32, path_start as u32 + 1 + path_end as u32),
+                        );
+
+                        // 生成文件 URI
+                        let file_path = if module_path.contains('.') {
+                            module_path.replace('.', "/") + ".karte"
+                        } else {
+                            module_path.to_string() + ".karte"
+                        };
+
+                        let target_uri = Url::parse(&format!("file:///{}", file_path)).ok();
+
+                        if let Some(target) = target_uri {
+                            links.push(DocumentLink {
+                                range: link_range,
+                                target: Some(target),
+                                tooltip: Some(format!("跳转到 {}", module_path)),
+                                data: None,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        if links.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(links))
+        }
+    }
+
+    async fn document_link_resolve(
+        &self,
+        params: DocumentLink,
+    ) -> Result<DocumentLink> {
         Ok(params)
     }
 }
