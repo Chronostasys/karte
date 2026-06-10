@@ -1308,3 +1308,53 @@ fn test_type_check_string_len_v2() {
 fn test_type_check_abs_builtin_v2() {
     check_no_errors("fn f(x: number) -> number {\nabs(x)\n}");
 }
+
+#[test]
+fn test_type_check_match_guard_v2() {
+    check_no_errors("fn f(n: number) -> number {\nmatch n {\nx if x > 0 => 1\n_ => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_match_multi_guard() {
+    check_no_errors("fn f(n: number) -> number {\nmatch n {\nx if x > 0 => 1\nx if x < 0 => -1\n_ => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_string_concat_auto() {
+    check_no_errors("fn f() -> string {\n\"hello\" + 42\n}");
+}
+
+#[test]
+fn test_type_check_builtin_min() {
+    check_no_errors("fn f(a: number, b: number) -> number {\nmin(a, b)\n}");
+}
+
+#[test]
+fn test_type_check_builtin_max() {
+    check_no_errors("fn f(a: number, b: number) -> number {\nmax(a, b)\n}");
+}
+
+#[test]
+fn test_type_check_negative_literal() {
+    check_no_errors("fn f() -> number {\n-42\n}");
+}
+
+#[test]
+fn test_type_check_double_negative() {
+    check_no_errors("fn f() -> number {\n-(-42)\n}");
+}
+
+#[test]
+fn test_type_check_complex_expr() {
+    check_no_errors("fn f(a: number, b: number, c: number) -> number {\n(a + b) * c - a / b\n}");
+}
+
+#[test]
+fn test_type_check_string_compare() {
+    check_no_errors("fn f(a: string, b: string) -> bool {\na < b\n}");
+}
+
+#[test]
+fn test_type_check_bool_not2() {
+    check_no_errors("fn f(x: bool) -> bool {\n!x\n}");
+}
