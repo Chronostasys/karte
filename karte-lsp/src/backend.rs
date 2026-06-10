@@ -100,6 +100,7 @@ impl LanguageServer for Backend {
                 document_symbol_provider: Some(OneOf::Left(true)),
                 workspace_symbol_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Left(true)),
+                folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -390,5 +391,44 @@ impl LanguageServer for Backend {
             document_changes: None,
             change_annotations: None,
         }))
+    }
+
+    async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
+        let uri = &params.text_document.uri;
+        let store = self.document_store.read().await;
+        let Some(document) = store.get(uri) else {
+            return Ok(None);
+        };
+        let source = &document.content;
+
+        let mut bridge = self.compiler_bridge.write().await;
+        // 确保 analysis 已完成
+        let _ = bridge.analyze(source);
+        let analysis = bridge.get_cached_result();
+
+        let mut ranges = Vec::new();
+
+        if let Some(result) = analysis {
+            for sym in &result.symbols {
+                let range = crate::compiler_bridge::span_to_range(source, sym.span);
+                // 只折叠多行的符号（函数体、结构体定义等）
+                if range.start.line < range.end.line {
+                    ranges.push(FoldingRange {
+                        start_line: range.start.line,
+                        start_character: Some(range.start.character),
+                        end_line: range.end.line,
+                        end_character: Some(range.end.character),
+                        kind: Some(FoldingRangeKind::Region),
+                        collapsed_text: None,
+                    });
+                }
+            }
+        }
+
+        if ranges.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(ranges))
+        }
     }
 }

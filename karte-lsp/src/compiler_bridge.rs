@@ -150,6 +150,11 @@ impl CompilerBridge {
         diagnostics
     }
 
+    /// 获取缓存的分析结果
+    pub fn get_cached_result(&self) -> Option<&AnalysisResult> {
+        self.cached_result.as_ref()
+    }
+
     fn full_analysis(&self, source: &str) -> AnalysisResult {
         let mut result = AnalysisResult::default();
 
