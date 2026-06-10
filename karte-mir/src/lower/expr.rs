@@ -2267,15 +2267,12 @@ pub(crate) fn lower_expression(
                         if let Some(break_value) = break_bindings.get(name) {
                             if let Value::Reference { value: ref_target, .. } = break_value {
                                 if struct_ref_vars.contains(name) {
-                                    // 🔧 关键修复：使用和 wrapped_normal_values 相同类型的值
-                                    // 如果 wrapped_normal_values 使用了 saved_struct_ref_values
-                                    // （即 ref_target == saved），说明两者来自同一个 shared_var，
-                                    // 不需要 exit Phi。使用 saved_struct_ref_values 的 ref_target。
-                                    if let Some(saved_ref) = saved_struct_ref_values.get(name) {
-                                        for_in_actual_break_values.insert((name.clone(), *source_block), saved_ref.clone());
-                                    } else {
-                                        for_in_actual_break_values.insert((name.clone(), *source_block), ref_target.as_ref().clone());
-                                    }
+                                    // 🔧 始终使用 break_bindings 中的实际 ref_target，
+                                    // 而非 saved_struct_ref_values（外层 header phi temp）。
+                                    // 嵌套循环中内层循环会更新 s 的 shared_var，
+                                    // break 值的 ref_target 是内层循环的最新结果，
+                                    // 而 saved 值是外层 header phi（已过时）。
+                                    for_in_actual_break_values.insert((name.clone(), *source_block), ref_target.as_ref().clone());
                                 }
                             }
                         }
@@ -2396,6 +2393,16 @@ pub(crate) fn lower_expression(
                         } else {
                             ctx.update_variable(name, exit_phi_temp, None);
                         }
+                    } else if struct_ref_vars.contains(name) {
+                        // 🔧 即使不需要 exit Phi，也要更新 struct_ref_vars 的绑定。
+                        // phi_values 恢复将绑定设为外层 header phi temp，
+                        // 但 break 路径上 header phi 已过时（被内层循环更新了）。
+                        // normal_value 来自 wrapped_normal_values（指向正确的 shared_var temp），
+                        // 需要包装为 Reference 更新绑定。
+                        ctx.update_variable(name, Value::Reference {
+                            value: Box::new(normal_value),
+                            ty: None,
+                        }, None);
                     }
                 }
             }

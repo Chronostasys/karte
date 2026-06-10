@@ -9243,6 +9243,29 @@ fn main() -> number {
         assert_eq!(exit_code, 3, "struct closure nested forin break: expected 3, got {}", exit_code);
     }
 
+    /// 回归测试：嵌套 for-in 外层 break + struct + closure
+    /// 修复 for_in_actual_break_values 使用 saved_struct_ref_values 覆盖实际值
+    /// 导致外层 break 时 struct 值来自过时的 header phi 而非内层循环的最新结果
+    #[test]
+    fn test_struct_closure_outer_forin_break() {
+        let code = r#"
+struct S { v: number }
+fn main() -> number {
+    let s = S { v: 0 };
+    let f = || { s };
+    for i in 0..5 {
+        for j in 0..3 {
+            let s = S { v: s.v + 1 };
+        };
+        if i == 1 { break; };
+    };
+    s.v
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 6, "struct closure outer forin break: expected 6, got {}", exit_code);
+    }
+
     /// 回归测试：多个 struct 变量 + closure + for-in + break
     #[test]
     fn test_struct_closure_multi_struct_break() {
