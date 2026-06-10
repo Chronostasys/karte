@@ -916,3 +916,53 @@ fn test_type_check_tuple_destr() {
 fn test_warning_unreachable_code() {
     check_has_warnings("fn f(x: number) -> number {\nreturn 42;\nx\n}");
 }
+
+#[test]
+fn test_type_check_curry2() {
+    check_no_errors("fn add(a: number) -> fn(number) -> number {\n|b| { a + b }\n}");
+}
+
+#[test]
+fn test_type_check_nested_closure3() {
+    check_no_errors("fn main() -> number {\nlet f = |x| { |y| { x + y } };\nlet g = f(10);\ng(32)\n}");
+}
+
+#[test]
+fn test_type_check_poly_first() {
+    check_no_errors("fn first(a, b) { a }\nfn main() -> number {\nfirst(1, true)\n}");
+}
+
+#[test]
+fn test_type_check_result_match2() {
+    check_no_errors("enum Result<T, E> { Ok(T), Err(E) }\nfn f(r: Result<number, number>) -> number {\nmatch r {\nResult::Ok(x) => x\nResult::Err(e) => e\n}\n}");
+}
+
+#[test]
+fn test_type_check_opt_string() {
+    check_no_errors("enum Option<T> { Some(T), None }\nfn f(opt: Option<string>) -> number {\nmatch opt {\nOption::Some(_) => 1\nOption::None => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_char_lit2() {
+    check_no_errors("fn main() -> number {\nlet c = 'A';\n0\n}");
+}
+
+#[test]
+fn test_type_check_ref2() {
+    check_no_errors("fn main() -> number {\nlet x = 42;\nlet r = &x;\n*r\n}");
+}
+
+#[test]
+fn test_type_check_unit_fn2() {
+    check_no_errors("fn greet(name: string) {\n0\n}\nfn main() -> number {\ngreet(\"world\");\n0\n}");
+}
+
+#[test]
+fn test_type_check_gen_struct_field() {
+    check_no_errors("struct Pair<T> { first: T, second: T }\nfn main() -> number {\nlet p = Pair { first: 1, second: 2 };\np.first + p.second\n}");
+}
+
+#[test]
+fn test_type_check_wildcard2() {
+    check_no_errors("enum Color { Red, Green, Blue }\nfn f(c: Color) -> number {\nmatch c {\n_ => 42\n}\n}");
+}
