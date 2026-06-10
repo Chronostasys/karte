@@ -1102,3 +1102,30 @@ fn test_analyze_valid_tuple() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors for tuple: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_tuple2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f() -> number {\nlet t = (1, 2, 3);\nt.0 + t.1 + t.2\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for tuple access: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_return() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn abs(n: number) -> number {\nif n < 0 {\nreturn 0 - n\n};\nn\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for early return: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_duplicate_param() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number, x: number) -> number {\nx\n}";
+    let diagnostics = bridge.analyze(source);
+    let has_error = diagnostics.iter().any(|d| d.severity == KarteDiagnosticSeverity::Error);
+    assert!(has_error, "Should have error for duplicate parameter");
+}
