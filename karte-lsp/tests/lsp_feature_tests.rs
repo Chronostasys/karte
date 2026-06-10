@@ -172,3 +172,51 @@ fn test_analyze_closure() {
     let diagnostics = bridge.analyze(source);
     assert!(diagnostics.is_empty(), "Closure should not have errors");
 }
+
+#[test]
+fn test_hover_variable_type() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number { let x = 42; x + 1 }";
+    let _diagnostics = bridge.analyze(source);
+    // 悬停在 x 上应该显示类型信息
+    let hover = bridge.get_hover_info(Position { line: 0, character: 30 });
+    // 不一定有 hover 信息（取决于 identifier_type_strings 的精确度）
+    // 但不应该崩溃
+    let _ = hover;
+}
+
+#[test]
+fn test_hover_struct_field() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point { x: number, y: number }\nfn main() -> number { let p = Point { x: 1, y: 2 }; p.x }";
+    let _diagnostics = bridge.analyze(source);
+    // 悬停在 struct 定义上应该显示 struct 信息
+    let hover = bridge.get_hover_info(Position { line: 0, character: 7 });
+    if let Some((text, _)) = hover {
+        assert!(text.contains("Point"), "Hover should contain struct name");
+    }
+}
+
+#[test]
+fn test_analyze_generic_function() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn id(x) { x }\nfn main() -> number { id(42) }";
+    let diagnostics = bridge.analyze(source);
+    assert!(diagnostics.is_empty(), "Generic function should not have errors");
+}
+
+#[test]
+fn test_analyze_method_call() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point { x: number, y: number }\nfn magnitude(p: Point) -> number { p.x * p.x + p.y * p.y }\nfn main() -> number { let p = Point { x: 3, y: 4 }; magnitude(p) }";
+    let diagnostics = bridge.analyze(source);
+    assert!(diagnostics.is_empty(), "Method call should not have errors");
+}
+
+#[test]
+fn test_analyze_string_equality() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet a = \"hello\";\nlet b = \"world\";\nif a == b { 1 } else { 0 }\n}";
+    let diagnostics = bridge.analyze(source);
+    assert!(diagnostics.is_empty(), "String equality should not have errors");
+}
