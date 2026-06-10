@@ -99,6 +99,69 @@ fn get_constructors(ty: &Type, custom_types: &HashMap<String, Type>) -> Vec<Cons
             },
         ],
         Type::Sum { name, variants } => {
+            // 特殊处理 Option<T> 和 Result<T,E>（其构造器名是标准的）
+            if name == "Option" {
+                // 从 variants 中提取 Some/None
+                let some_variant = variants.iter().find(|v| v.name == "Some");
+                let none_variant = variants.iter().find(|v| v.name == "None");
+                let mut result = Vec::new();
+                if let Some(some) = some_variant {
+                    result.push(ConstructorInfo {
+                        name: "Some".to_string(),
+                        arity: some.data_types.len(),
+                        sub_types: some.data_types.clone(),
+                    });
+                } else {
+                    // 默认 Some 构造器
+                    result.push(ConstructorInfo {
+                        name: "Some".to_string(),
+                        arity: 1,
+                        sub_types: vec![Type::Unknown],
+                    });
+                }
+                if none_variant.is_some() || some_variant.is_none() {
+                    result.push(ConstructorInfo {
+                        name: "None".to_string(),
+                        arity: 0,
+                        sub_types: vec![],
+                    });
+                }
+                return result;
+            }
+            if name == "Result" {
+                let ok_variant = variants.iter().find(|v| v.name == "Ok");
+                let err_variant = variants.iter().find(|v| v.name == "Err");
+                let mut result = Vec::new();
+                if let Some(ok) = ok_variant {
+                    result.push(ConstructorInfo {
+                        name: "Ok".to_string(),
+                        arity: ok.data_types.len(),
+                        sub_types: ok.data_types.clone(),
+                    });
+                } else {
+                    result.push(ConstructorInfo {
+                        name: "Ok".to_string(),
+                        arity: 1,
+                        sub_types: vec![Type::Unknown],
+                    });
+                }
+                if let Some(err) = err_variant {
+                    result.push(ConstructorInfo {
+                        name: "Err".to_string(),
+                        arity: err.data_types.len(),
+                        sub_types: err.data_types.clone(),
+                    });
+                } else {
+                    result.push(ConstructorInfo {
+                        name: "Err".to_string(),
+                        arity: 1,
+                        sub_types: vec![Type::Unknown],
+                    });
+                }
+                return result;
+            }
+
+            // 通用 Sum 类型处理
             if let Some(Type::Sum {
                 variants: full_variants,
                 ..
