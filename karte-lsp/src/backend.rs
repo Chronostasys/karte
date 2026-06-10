@@ -128,6 +128,7 @@ impl LanguageServer for Backend {
                     }),
                 ),
                 document_highlight_provider: Some(OneOf::Left(true)),
+                document_formatting_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -820,4 +821,83 @@ impl LanguageServer for Backend {
             Ok(Some(hints))
         }
     }
+
+    async fn formatting(
+        &self,
+        params: DocumentFormattingParams,
+    ) -> Result<Option<Vec<TextEdit>>> {
+        let uri = &params.text_document.uri;
+        let store = self.document_store.read().await;
+        let Some(document) = store.get(uri) else {
+            return Ok(None);
+        };
+        let source = &document.content;
+
+        let mut edits = Vec::new();
+        let mut indent_level: u32 = 0;
+        let indent_str = "    "; // 4 spaces
+
+        for (line_num, line) in source.lines().enumerate() {
+            let trimmed = line.trim();
+
+            // Skip empty lines
+            if trimmed.is_empty() {
+                // Normalize empty lines: keep at most one consecutive empty line
+                if line_num > 0 && source.lines().nth(line_num - 1).map(|l| l.trim().is_empty()).unwrap_or(false) {
+                    // Skip consecutive empty lines
+                    edits.push(TextEdit {
+                        range: Range::new(
+                            Position::new(line_num as u32, 0),
+                            Position::new(line_num as u32 + 1, 0),
+                        ),
+                        new_text: String::new(),
+                    });
+                }
+                continue;
+            }
+
+            // Decrease indent for closing braces
+            let trimmed_start = trimmed_start_braces(trimmed);
+            if trimmed_start {
+                if indent_level > 0 {
+                    indent_level -= 1;
+                }
+            }
+
+            // Build formatted line
+            let formatted = format!("{}{}", indent_str.repeat(indent_level as usize), trimmed);
+
+            // Check if line needs formatting
+            if formatted != line {
+                edits.push(TextEdit {
+                    range: Range::new(
+                        Position::new(line_num as u32, 0),
+                        Position::new(line_num as u32, line.len() as u32),
+                    ),
+                    new_text: formatted,
+                });
+            }
+
+            // Increase indent for opening braces
+            if trimmed_end_braces(trimmed) {
+                indent_level += 1;
+            }
+        }
+
+        if edits.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(edits))
+        }
+    }
+}
+
+/// Check if line starts with a closing brace
+fn trimmed_start_braces(line: &str) -> bool {
+    line.starts_with('}') || line.starts_with(')')
+}
+
+/// Check if line ends with an opening brace
+fn trimmed_end_braces(line: &str) -> bool {
+    line.ends_with('{') || line.ends_with('(')
 }
