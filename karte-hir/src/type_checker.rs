@@ -4563,6 +4563,27 @@ impl TypeChecker {
         let message = error.to_string();
         let span = error.span();
         let help = match &error {
+            TypeCheckError::TypeMismatch { expected, found, context, .. } => {
+                // 根据类型不匹配的上下文提供不同的帮助信息
+                if let Some(ctx) = context {
+                    Some(ctx.clone())
+                } else {
+                    // 根据类型给出通用建议
+                    let expected_str = format!("{:?}", expected);
+                    let found_str = format!("{:?}", found);
+                    if expected_str.contains("number") && found_str.contains("string") {
+                        Some("数字和字符串不能直接运算。如果需要拼接，可以使用 `+` 运算符".to_string())
+                    } else if expected_str.contains("string") && found_str.contains("number") {
+                        Some("数字不能直接用作字符串。可以使用 `\"\" + number` 转换为字符串".to_string())
+                    } else if expected_str.contains("bool") && found_str.contains("number") {
+                        Some("数字不能用作布尔值。请使用比较运算符 (如 `x > 0`) 代替".to_string())
+                    } else if expected_str.contains("number") && found_str.contains("bool") {
+                        Some("布尔值不能用作数字。可以使用 `if b { 1 } else { 0 }` 转换".to_string())
+                    } else {
+                        None
+                    }
+                }
+            }
             TypeCheckError::MissingFields { missing, expected, found, .. } => {
                 if !missing.is_empty() {
                     Some(format!("请添加缺少的字段: {}", missing.join(", ")))
