@@ -497,7 +497,10 @@ fn test_analyze_unknown_field_error() {
 #[test]
 fn test_analyze_type_mismatch_error() {
     let mut bridge = CompilerBridge::new();
-    let source = "foo + bar";
+    let source = "fn add(a: number, b: number) -> number { a + b }
+fn main() -> number {
+add(1)
+}";
     let diagnostics = bridge.analyze(source);
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(!errors.is_empty(), "Should have type mismatch error");
@@ -649,4 +652,40 @@ fn test_doc_symbols() {
     bridge.analyze(source);
     let symbols = bridge.get_document_symbols();
     assert!(symbols.len() >= 2, "Should have at least 2 document symbols (Point, add, main)");
+}
+
+#[test]
+fn test_code_action_fix_missing_field() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point { x: 1 };\n0\n}";
+    let diagnostics = bridge.analyze(source);
+    let has_missing_field_error = diagnostics.iter().any(|d| 
+        d.severity == KarteDiagnosticSeverity::Error && d.message.contains("缺少字段")
+    );
+    assert!(has_missing_field_error, "Should have missing field error for code action");
+}
+
+#[test]
+fn test_code_action_fix_non_exhaustive() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Color { Red, Green, Blue }\nfn main() -> number {\nmatch Color::Red {\nColor::Red => 1\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let has_non_exhaustive_error = diagnostics.iter().any(|d| 
+        d.severity == KarteDiagnosticSeverity::Error && d.message.contains("非穷尽")
+    );
+    assert!(has_non_exhaustive_error, "Should have non-exhaustive match error for code action");
+}
+
+#[test]
+fn test_code_action_fix_type_mismatch() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn add(a: number, b: number) -> number { a + b }
+fn main() -> number {
+add(1)
+}";
+    let diagnostics = bridge.analyze(source);
+    let has_type_error = diagnostics.iter().any(|d| 
+        d.severity == KarteDiagnosticSeverity::Error && (d.message.contains("参数数量") || d.message.contains("类型"))
+    );
+    assert!(has_type_error, "Should have type error for code action");
 }
