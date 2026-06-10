@@ -428,3 +428,53 @@ fn test_type_check_option_some_none() {
 fn test_type_check_result_ok_err() {
     check_no_errors("enum Result { Ok(number), Err(string) }\nfn get_value(r: Result) -> number {\nmatch r {\nResult::Ok(v) => v,\nResult::Err(_) => 0\n}\n}");
 }
+
+#[test]
+fn test_type_check_method_syntax() {
+    check_no_errors("fn double(n: number) -> number { n * 2 }\nfn main() -> number {\nlet x = 5;\nx.double()\n}");
+}
+
+#[test]
+fn test_type_check_array_length() {
+    check_no_errors("fn main() -> number {\nlet arr = [1, 2, 3, 4, 5];\nlen(arr)\n}");
+}
+
+#[test]
+fn test_type_check_string_len() {
+    check_no_errors("fn main() -> number {\nlet s = \"hello\";\nlen(s)\n}");
+}
+
+#[test]
+fn test_type_check_abs_builtin() {
+    check_no_errors("fn main() -> number {\nlet x = -42;\nabs(x)\n}");
+}
+
+#[test]
+fn test_type_check_min_max_builtin() {
+    check_no_errors("fn main() -> number {\nlet a = min(3, 5);\nlet b = max(3, 5);\na + b\n}");
+}
+
+#[test]
+fn test_type_check_for_range() {
+    check_no_errors("fn main() -> number {\nlet sum = 0;\nfor i in 1..10 {\nsum = sum + i\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_for_array() {
+    check_no_errors("fn main() -> number {\nlet sum = 0;\nfor x in [1, 2, 3] {\nsum = sum + x\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_nested_struct_access() {
+    check_no_errors("struct Inner { val: number }\nstruct Outer { inner: Inner }\nfn get_val(o: Outer) -> number { o.inner.val }");
+}
+
+#[test]
+fn test_type_check_complex_pattern() {
+    check_no_errors("enum Option { Some(number), None }\nfn f(o: Option) -> number {\nmatch o {\nOption::Some(x) => x * 2,\nOption::None => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_string_concat_in_expr() {
+    check_no_errors("fn main() -> number {\nlet s = \"hello\" + \" \" + \"world\";\nlen(s)\n}");
+}
