@@ -1156,3 +1156,55 @@ fn test_no_warning_specific_before_wildcard() {
 fn main() -> number { f(42) }"#;
     check_no_errors(source);
 }
+
+#[test]
+fn test_type_check_res_ok2() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 { Ok(x) } else { Err(\"negative\") }\n}");
+}
+
+#[test]
+fn test_type_check_opt_some2() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 { Some(x) } else { None }\n}");
+}
+
+#[test]
+fn test_type_check_opt_match2() {
+    check_no_errors("fn f(opt: Option<number>) -> number {\nmatch opt {\nSome(x) => x\nNone => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_res_match2() {
+    check_no_errors("fn f(res: Result<number, string>) -> number {\nmatch res {\nOk(x) => x\nErr(_) => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_nested_opt2() {
+    check_no_errors("fn f(opt: Option<number>) -> Option<number> {\nmatch opt {\nSome(x) => Some(x + 1)\nNone => None\n}\n}");
+}
+
+#[test]
+fn test_type_check_multi_param2() {
+    check_no_errors("fn add(a: number, b: number) -> number { a + b }\nfn main() -> number { add(1, 2) }");
+}
+
+#[test]
+fn test_type_check_recursive2() {
+    check_no_errors("fn fib(n: number) -> number {\nif n <= 1 { n } else { fib(n - 1) + fib(n - 2) }\n}");
+}
+
+#[test]
+fn test_type_check_str_ret2() {
+    check_no_errors("fn greet(name: string) -> string {\n\"Hello, \" + name\n}");
+}
+
+#[test]
+fn test_type_check_bool_ret2() {
+    check_no_errors("fn is_positive(n: number) -> bool {\nn > 0\n}");
+}
+
+#[test]
+fn test_type_check_void2() {
+    check_no_errors("fn print_num(n: number) {
+n
+}");
+}
