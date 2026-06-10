@@ -4560,8 +4560,14 @@ impl TypeChecker {
         let message = error.to_string();
         let span = error.span();
         let help = match &error {
-            TypeCheckError::MissingFields { missing, .. } if !missing.is_empty() => {
-                Some(format!("请添加缺少的字段: {}", missing.join(", ")))
+            TypeCheckError::MissingFields { missing, expected, found, .. } => {
+                if !missing.is_empty() {
+                    Some(format!("请添加缺少的字段: {}", missing.join(", ")))
+                } else if found > expected {
+                    Some(format!("请移除多余的 {} 个字段", found - expected))
+                } else {
+                    None
+                }
             }
             TypeCheckError::UnknownField { field_name, available_fields, .. } => {
                 // 查找最接近的字段名
