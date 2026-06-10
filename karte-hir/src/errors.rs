@@ -100,6 +100,11 @@ pub enum TypeCheckError {
         missing_patterns: Vec<String>,
         span: Span,
     },
+    /// 不可达代码（在 return/break/continue 后的代码）
+    UnreachableCode {
+        after_control_flow: String,
+        span: Span,
+    },
 }
 
 impl fmt::Display for TypeCheckError {
@@ -233,6 +238,9 @@ impl fmt::Display for TypeCheckError {
                     )
                 }
             }
+            TypeCheckError::UnreachableCode { after_control_flow, .. } => {
+                write!(f, "不可达代码: {} 后的代码永远不会执行", after_control_flow)
+            }
         }
     }
 }
@@ -260,7 +268,8 @@ impl TypeCheckError {
             | TypeCheckError::IndexOutOfBounds { span, .. }
             | TypeCheckError::BuiltinFunctionError { span, .. }
             | TypeCheckError::InvalidMainReturnType { span, .. }
-            | TypeCheckError::NonExhaustiveMatch { span, .. } => *span,
+            | TypeCheckError::NonExhaustiveMatch { span, .. }
+            | TypeCheckError::UnreachableCode { span, .. } => *span,
         }
     }
 }

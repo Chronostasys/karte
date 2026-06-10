@@ -1775,6 +1775,31 @@ impl TypeChecker {
                 // 🔧 Hoisting Pass: 预先收集函数定义，支持相互递归
                 self.collect_function_definitions(expr, &mut current_env);
 
+                // 检测死代码：在 return/break/continue 后的语句不可达
+                let mut found_control_flow = false;
+                for (i, stmt) in statements.iter().enumerate() {
+                    if found_control_flow {
+                        // 死代码警告
+                        let span = stmt.span();
+                        let msg = "不可达代码: return/break/continue 后的代码永远不会执行".to_string();
+                        self.add_warning(msg, span);
+                        break; // 只报告第一个死代码警告
+                    }
+                    // 检查当前语句是否是控制流表达式
+                    if let Statement::Expression { expr, .. } = stmt {
+                        if matches!(expr, Expr::Return { .. } | Expr::Break { .. } | Expr::Continue { .. }) {
+                            found_control_flow = true;
+                        }
+                    }
+                }
+                if found_control_flow && final_expr.is_some() {
+                    if let Some(fe) = final_expr {
+                        let span = fe.span();
+                        let msg = format!("不可达代码: {} 后的代码永远不会执行", "return/break/continue");
+                        self.add_warning(msg, span);
+                    }
+                }
+
                 // 推断所有语句
                 for stmt in statements {
                     self.infer_statement(stmt, &mut current_env);
