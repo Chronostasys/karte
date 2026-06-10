@@ -182,3 +182,65 @@ fn test_compiler_bridge_signature_help() {
     // 签名帮助可能不可用，只确保不会 panic
     let _ = sig;
 }
+
+#[test]
+fn test_semantic_tokens_basic() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\n    let x = 42;\n    x\n}";
+
+    let _diagnostics = bridge.analyze(source);
+
+    // semantic tokens 应该被正确生成
+    let result = bridge.get_cached_result();
+    assert!(result.is_some(), "Should have analysis result");
+    let result = result.unwrap();
+
+    // 应该有 main 函数和 x 变量符号
+    let names: Vec<&str> = result.symbols.iter().map(|s| s.name.as_str()).collect();
+    assert!(names.contains(&"main"), "Should have 'main' symbol");
+    assert!(names.contains(&"x"), "Should have 'x' symbol");
+}
+
+#[test]
+fn test_semantic_tokens_enum_variant() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Option { Some, None }\nfn main() -> number {\n    0\n}";
+
+    let _diagnostics = bridge.analyze(source);
+
+    let result = bridge.get_cached_result().unwrap();
+
+    // 应该有 Option 枚举和 Some/None 变体符号
+    let names: Vec<&str> = result.symbols.iter().map(|s| s.name.as_str()).collect();
+    assert!(names.contains(&"Option"), "Should have 'Option' enum: {:?}", names);
+}
+
+#[test]
+fn test_semantic_tokens_function_params() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn add(a: number, b: number) -> number {\n    a + b\n}";
+
+    let _diagnostics = bridge.analyze(source);
+
+    let result = bridge.get_cached_result().unwrap();
+
+    // 应该有 add 函数和 a, b 参数符号
+    let kinds: Vec<_> = result.symbols.iter().map(|s| (s.name.as_str(), s.kind)).collect();
+    assert!(kinds.iter().any(|(name, _)| *name == "add"), "Should have 'add' function");
+    assert!(kinds.iter().any(|(name, _)| *name == "a"), "Should have 'a' parameter");
+    assert!(kinds.iter().any(|(name, _)| *name == "b"), "Should have 'b' parameter");
+}
+
+#[test]
+fn test_semantic_tokens_struct_fields() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point { x: number, y: number }\nfn main() -> number {\n    0\n}";
+
+    let _diagnostics = bridge.analyze(source);
+
+    let result = bridge.get_cached_result().unwrap();
+
+    // 应该有 Point 结构体符号
+    let names: Vec<&str> = result.symbols.iter().map(|s| s.name.as_str()).collect();
+    assert!(names.contains(&"Point"), "Should have 'Point' struct: {:?}", names);
+}
