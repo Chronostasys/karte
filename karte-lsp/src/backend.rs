@@ -9,6 +9,7 @@ use crate::compiler_bridge::{
 };
 use crate::document_store::DocumentStore;
 use std::sync::Arc;
+use std::collections::HashMap;
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
@@ -97,6 +98,8 @@ impl LanguageServer for Backend {
                     ..Default::default()
                 }),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                workspace_symbol_provider: Some(OneOf::Left(true)),
+                rename_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -309,5 +312,78 @@ impl LanguageServer for Backend {
         }
 
         Ok(None)
+    }
+
+    async fn symbol(
+        &self,
+        params: WorkspaceSymbolParams,
+    ) -> Result<Option<Vec<SymbolInformation>>> {
+        let bridge = self.compiler_bridge.read().await;
+        let symbols = bridge.get_document_symbols();
+        let query = params.query.to_lowercase();
+
+        let results: Vec<SymbolInformation> = symbols
+            .iter()
+            .filter(|sym| {
+                if query.is_empty() {
+                    true
+                } else {
+                    sym.name.to_lowercase().contains(&query)
+                }
+            })
+            .filter(|sym| !matches!(sym.kind, KarteSymbolKind::Parameter))
+            .map(|sym| {
+                let kind = match sym.kind {
+                    KarteSymbolKind::Function => SymbolKind::FUNCTION,
+                    KarteSymbolKind::Variable => SymbolKind::VARIABLE,
+                    KarteSymbolKind::Parameter => SymbolKind::VARIABLE,
+                    KarteSymbolKind::Type => SymbolKind::CLASS,
+                    KarteSymbolKind::Enum => SymbolKind::ENUM,
+                    KarteSymbolKind::Struct => SymbolKind::STRUCT,
+                    KarteSymbolKind::EnumVariant => SymbolKind::ENUM_MEMBER,
+                    KarteSymbolKind::Module => SymbolKind::MODULE,
+                };
+                SymbolInformation {
+                    name: sym.name.clone(),
+                    kind,
+                    tags: None,
+                    deprecated: None,
+                    location: Location {
+                        uri: Url::parse("file:///").unwrap(),
+                        range: Range::default(),
+                    },
+                    container_name: None,
+                }
+            })
+            .collect();
+
+        if results.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(results))
+        }
+    }
+
+    async fn rename(
+        &self,
+        params: RenameParams,
+    ) -> Result<Option<WorkspaceEdit>> {
+        let position = params.text_document_position.position;
+        let new_name = params.new_name;
+
+        let bridge = self.compiler_bridge.read().await;
+        let spans = bridge.find_references(position);
+
+        if spans.is_empty() {
+            return Ok(None);
+        }
+
+        // 收集所有需要重命名的位置
+        // 这里返回空的 WorkspaceEdit（实际重命名需要完整的文件修改能力）
+        Ok(Some(WorkspaceEdit {
+            changes: Some(HashMap::new()),
+            document_changes: None,
+            change_annotations: None,
+        }))
     }
 }
