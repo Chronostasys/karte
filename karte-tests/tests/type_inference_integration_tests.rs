@@ -1508,3 +1508,39 @@ fn test_type_error_undefined_fn() {
 fn test_type_error_undefined_struct() {
     check_has_errors("fn main() -> number {\nlet p = UndefinedStruct { };\n0\n}");
 }
+
+#[test]
+fn test_warning_unreachable_after_return() {
+    let source = r#"fn f(x: number) -> number {
+    return x;
+    x + 1
+}
+fn main() -> number { f(42) }"#;
+    check_has_warnings(source);
+}
+
+#[test]
+fn test_warning_shadow_let() {
+    let source = r#"fn main() -> number {
+    let x = 10;
+    let x = x + 1;
+    x
+}"#;
+    check_has_warnings(source);
+}
+
+#[test]
+fn test_no_warning_simple_return() {
+    let source = r#"fn f(x: number) -> number {
+    x
+}"#;
+    check_no_errors(source);
+}
+
+#[test]
+fn test_no_warning_if_else_both_return() {
+    let source = r#"fn abs(x: number) -> number {
+    if x < 0 { 0 - x } else { x }
+}"#;
+    check_no_errors(source);
+}
