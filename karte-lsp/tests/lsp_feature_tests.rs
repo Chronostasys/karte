@@ -1129,3 +1129,39 @@ fn test_analyze_duplicate_param() {
     let has_error = diagnostics.iter().any(|d| d.severity == KarteDiagnosticSeverity::Error);
     assert!(has_error, "Should have error for duplicate parameter");
 }
+
+#[test]
+fn test_analyze_enum_all_variants() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Color { Red, Green, Blue }\nfn f(c: Color) -> number {\nmatch c {\nColor::Red => 1\nColor::Green => 2\nColor::Blue => 3\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for exhaustive enum match: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_recursive_fn2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn fib(n: number) -> number {\nif n <= 1 { n } else { fib(n - 1) + fib(n - 2) }\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for recursive function: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_tuple_access() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f() -> number {\nlet t = (10, 20, 30);\nt.0 + t.1 + t.2\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for tuple access: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_multi_fn_program() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn double(x: number) -> number { x * 2 }\nfn inc(x: number) -> number { x + 1 }\nfn main() -> number {\ndouble(inc(5))\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for multi-function program: {:?}", errors);
+}
