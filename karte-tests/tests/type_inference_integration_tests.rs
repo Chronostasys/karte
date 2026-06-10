@@ -2242,3 +2242,53 @@ fn test_type_check_complex_closure_capture() {
 fn test_type_check_fn_param_closure() {
     check_no_errors("fn apply(f: fn(number) -> number, x: number) -> number {\nf(x)\n}\nfn main() -> number {\nlet double = |n: number| -> number { n * 2 };\napply(double, 5)\n}");
 }
+
+#[test]
+fn test_type_error_undefined_fn_call() {
+    check_has_errors("fn main() -> number {\nfoo()\n}");
+}
+
+#[test]
+fn test_type_error_assign_wrong_type_v2() {
+    check_has_errors("fn main() -> number {\nlet x: number = \"hello\";\n0\n}");
+}
+
+#[test]
+fn test_type_error_if_condition_type() {
+    check_has_errors("fn main() -> number {\nif \"hello\" { 1 } else { 0 }\n}");
+}
+
+#[test]
+fn test_type_error_while_condition_type() {
+    check_has_errors("fn main() -> number {\nwhile \"hello\" {\n0\n};\n0\n}");
+}
+
+#[test]
+fn test_type_error_struct_undefined_field() {
+    check_has_errors("struct Point { x: number }\nfn main() -> number {\nlet p = Point { x: 1, y: 2 };\n0\n}");
+}
+
+#[test]
+fn test_type_error_enum_undefined_variant() {
+    check_has_errors("enum Color { Red, Green, Blue }\nfn f(c: Color) -> number {\nmatch c {\nColor::Yellow => 1\n_ => 0\n}\n}");
+}
+
+#[test]
+fn test_type_error_non_exhaustive_match_v2() {
+    check_has_errors("enum Color { Red, Green, Blue }\nfn f(c: Color) -> number {\nmatch c {\nColor::Red => 1\n}\n}");
+}
+
+#[test]
+fn test_type_error_duplicate_param_v2() {
+    check_has_errors("fn f(x: number, x: string) -> number {\n0\n}");
+}
+
+#[test]
+fn test_type_error_assign_to_undefined() {
+    check_has_errors("fn main() -> number {\nfoo = 42;\n0\n}");
+}
+
+#[test]
+fn test_type_error_use_before_define() {
+    check_has_errors("fn main() -> number {\nlet y = x + 1;\nlet x = 42;\ny\n}");
+}
