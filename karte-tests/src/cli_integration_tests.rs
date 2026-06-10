@@ -9345,4 +9345,34 @@ fn main() -> number {
         let exit_code = compile_project_mode_code(code);
         assert_eq!(exit_code, 60, "struct closure for-array: expected 60, got {}", exit_code);
     }
+
+    /// 回归测试：enum + struct + for-in + break（无闭包）
+    /// 修复 x86 compile_div/compile_mod 中 R9 被分配器分配后
+    /// 被 idiv 临时寄存器覆盖导致 SIGSEGV
+    #[test]
+    fn test_enum_struct_forin_break() {
+        let code = r#"
+enum E { A, B, C }
+struct S { v: number }
+fn main() -> number {
+    let s = S { v: 0 };
+    for i in 0..3 {
+        let e = match i % 3 {
+            0 => E::A,
+            1 => E::B,
+            _ => E::C,
+        };
+        let s = match e {
+            E::A => S { v: s.v + 1 },
+            E::B => S { v: s.v + 10 },
+            E::C => S { v: s.v + 100 },
+        };
+        if i == 1 { break; };
+    };
+    s.v
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 11, "enum struct forin break: expected 11, got {}", exit_code);
+    }
 }

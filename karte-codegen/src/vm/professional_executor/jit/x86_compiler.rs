@@ -283,10 +283,10 @@ impl X86Compiler {
         let dst_reg = self.get_physical_register(dst)?;
         let rax: u8 = 0; // RAX
         let rdx: u8 = 2; // RDX
-        // 临时寄存器选择：必须使用非分配寄存器（R9=return_address 或 R8=effect_tag），
-        // 因为 RCX 是可分配寄存器，可能持有跨 Div/Mod 指令的活跃变量
-        let r9: u8 = 9;  // R9 (return_address，非分配)
-        let r8: u8 = 8;  // R8 (effect_tag，非分配)
+        // 🔧 临时寄存器：R8/R9 可能被寄存器分配器分配给虚拟寄存器，
+        // 因此在使用前必须 push 保护，使用后 pop 恢复。
+        let r9: u8 = 9;
+        let r8: u8 = 8;
 
         // 先处理 src2（除数），因为它可能在 RDX 中，CQO 会覆盖 RDX
         let src1_reg = match src1 {
@@ -295,13 +295,16 @@ impl X86Compiler {
         };
 
         let div_src_reg: u8;
+        let mut temp_reg_used: Option<u8> = None;
         match src2 {
             Operand::Register { id } => {
                 let src2_reg = self.get_physical_register(id)?;
                 if src2_reg == rdx {
                     // src2 在 RDX 中，CQO 会覆盖它，需要保存到临时寄存器
-                    // 优先用 R9，如果 src1 占用 R9 则用 R8
                     let temp = if src1_reg == r9 { r8 } else { r9 };
+                    // push 临时寄存器保护其值
+                    self.emit_push(code_builder, temp);
+                    temp_reg_used = Some(temp);
                     self.emit_mov_reg_reg(code_builder, temp, rdx);
                     div_src_reg = temp;
                 } else {
@@ -309,8 +312,10 @@ impl X86Compiler {
                 }
             }
             Operand::Immediate { value } => {
-                // 立即数加载到非分配临时寄存器
+                // 立即数加载到临时寄存器
                 let temp = if src1_reg == r9 { r8 } else { r9 };
+                self.emit_push(code_builder, temp);
+                temp_reg_used = Some(temp);
                 self.emit_mov_reg_imm64(code_builder, temp, *value);
                 div_src_reg = temp;
             }
@@ -346,6 +351,11 @@ impl X86Compiler {
         if dst_reg != rax {
             self.emit_mov_reg_reg(code_builder, dst_reg, rax);
         }
+
+        // pop 恢复临时寄存器
+        if let Some(temp) = temp_reg_used {
+            self.emit_pop(code_builder, temp);
+        }
         Ok(())
     }
 
@@ -361,10 +371,10 @@ impl X86Compiler {
         let dst_reg = self.get_physical_register(dst)?;
         let rax: u8 = 0; // RAX
         let rdx: u8 = 2; // RDX
-        // 临时寄存器选择：必须使用非分配寄存器（R9=return_address 或 R8=effect_tag），
-        // 因为 RCX 是可分配寄存器，可能持有跨 Div/Mod 指令的活跃变量
-        let r9: u8 = 9;  // R9 (return_address，非分配)
-        let r8: u8 = 8;  // R8 (effect_tag，非分配)
+        // 🔧 临时寄存器：R8/R9 可能被寄存器分配器分配给虚拟寄存器，
+        // 因此在使用前必须 push 保护，使用后 pop 恢复。
+        let r9: u8 = 9;
+        let r8: u8 = 8;
 
         // 先处理 src2（除数），因为它可能在 RDX 中，CQO 会覆盖 RDX
         let src1_reg = match src1 {
@@ -373,12 +383,15 @@ impl X86Compiler {
         };
 
         let div_src_reg: u8;
+        let mut temp_reg_used: Option<u8> = None;
         match src2 {
             Operand::Register { id } => {
                 let src2_reg = self.get_physical_register(id)?;
                 if src2_reg == rdx {
                     // src2 在 RDX 中，CQO 会覆盖它，需要保存到临时寄存器
                     let temp = if src1_reg == r9 { r8 } else { r9 };
+                    self.emit_push(code_builder, temp);
+                    temp_reg_used = Some(temp);
                     self.emit_mov_reg_reg(code_builder, temp, rdx);
                     div_src_reg = temp;
                 } else {
@@ -386,8 +399,10 @@ impl X86Compiler {
                 }
             }
             Operand::Immediate { value } => {
-                // 立即数加载到非分配临时寄存器
+                // 立即数加载到临时寄存器
                 let temp = if src1_reg == r9 { r8 } else { r9 };
+                self.emit_push(code_builder, temp);
+                temp_reg_used = Some(temp);
                 self.emit_mov_reg_imm64(code_builder, temp, *value);
                 div_src_reg = temp;
             }
@@ -422,6 +437,11 @@ impl X86Compiler {
         // 余数在 RDX，移动到 dst
         if dst_reg != rdx {
             self.emit_mov_reg_reg(code_builder, dst_reg, rdx);
+        }
+
+        // pop 恢复临时寄存器
+        if let Some(temp) = temp_reg_used {
+            self.emit_pop(code_builder, temp);
         }
         Ok(())
     }
