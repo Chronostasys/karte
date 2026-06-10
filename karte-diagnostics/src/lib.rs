@@ -69,7 +69,7 @@ pub enum CompilerError {
     #[error("词法错误")]
     #[diagnostic(code(E001))]
     LexError {
-        #[label("Unexpected character")]
+        #[label("意外字符")]
         span: SourceSpan,
         #[source_code]
         src: NamedSource,
@@ -104,7 +104,7 @@ pub enum CompilerError {
     #[error("未定义的变量: {name}")]
     #[diagnostic(code(E004))]
     UndefinedVariable {
-        #[label("Variable '{name}' is not defined")]
+        #[label("变量 '{name}' 未定义")]
         span: SourceSpan,
         name: String,
         #[source_code]
@@ -128,7 +128,7 @@ pub enum CompilerError {
     #[error("重复的函数定义: {name}")]
     #[diagnostic(code(E006))]
     DuplicateFunctionDefinition {
-        #[label("Function '{name}' is already defined in this scope")]
+        #[label("函数 '{name}' 已在此作用域中定义")]
         span: SourceSpan,
         name: String,
         #[source_code]
