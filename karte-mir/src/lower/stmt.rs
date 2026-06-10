@@ -208,11 +208,53 @@ pub(crate) fn handle_assignment(
                     value: ref_target, ..
                 } = binding.value
                 {
-                    ctx.add_statement(Statement::Store {
-                        target: *ref_target,
-                        value: value_temp,
-                        span,
-                    });
+                    // 🔧 修复：赋值给被闭包捕获的 struct 变量时的安全指针更新
+                    //
+                    // shared_var 布局：shared_var → [ptr_to_struct_data]
+                    //
+                    // 直接 Store(shared_var, value_temp) 在 LIR 中会检测到 value_temp
+                    // 携带 struct layout → 逐字段复制到 shared_var 的 8 字节 slot
+                    // → 覆盖指针 → 后续 Dereference SIGSEGV。
+                    //
+                    // 修复策略：区分 value 来源。
+                    // 1. 函数调用返回值（Expr::Call/MethodCall）：
+                    //    value_temp 在 LIR 中是 HeapAlloc 指针（无 struct layout），
+                    //    Store 不做逐字段复制 → 直接 Store64 → 正确。
+                    // 2. 其他表达式（struct 字面量、match、if-else 等）：
+                    //    value_temp 在 LIR 中携带 struct layout → 需要包装：
+                    //    HeapAlloc 新 slot → Store(struct_data) → Store(shared_var, ptr)
+                    let is_call = matches!(value, Expr::FunctionCall { .. });
+                    if !is_call && binding.struct_name.is_some() {
+                        // struct 类型非函数调用：需要 HeapAlloc 包装
+                        let struct_name = binding.struct_name.as_ref().unwrap().clone();
+                        let struct_size = ctx.program.get_struct_type(&struct_name)
+                            .map(|st| st.fields.len() * 8)
+                            .unwrap_or(8);
+                        let new_alloc = ctx.new_temp();
+                        ctx.add_statement(Statement::HeapAlloc {
+                            target: new_alloc.clone(),
+                            size: struct_size,
+                            object_type: "struct_copy".to_string(),
+                            span,
+                        });
+                        ctx.add_statement(Statement::Store {
+                            target: new_alloc.clone(),
+                            value: value_temp,
+                            span,
+                        });
+                        ctx.add_statement(Statement::Store {
+                            target: *ref_target,
+                            value: new_alloc,
+                            span,
+                        });
+                    } else {
+                        // 函数调用或非 struct 类型：直接 Store
+                        ctx.add_statement(Statement::Store {
+                            target: *ref_target,
+                            value: value_temp,
+                            span,
+                        });
+                    }
                 } else {
                     if let Some(old_binding) =
                         ctx.update_variable(name, value_temp.clone(), ownership)
@@ -232,11 +274,36 @@ pub(crate) fn handle_assignment(
                     value: ref_target, ..
                 } = binding.value
                 {
-                    ctx.add_statement(Statement::Store {
-                        target: *ref_target,
-                        value: value_temp,
-                        span,
-                    });
+                    let is_call = matches!(value, Expr::FunctionCall { .. });
+                    if !is_call && binding.struct_name.is_some() {
+                        let struct_name = binding.struct_name.as_ref().unwrap().clone();
+                        let struct_size = ctx.program.get_struct_type(&struct_name)
+                            .map(|st| st.fields.len() * 8)
+                            .unwrap_or(8);
+                        let new_alloc = ctx.new_temp();
+                        ctx.add_statement(Statement::HeapAlloc {
+                            target: new_alloc.clone(),
+                            size: struct_size,
+                            object_type: "struct_copy".to_string(),
+                            span,
+                        });
+                        ctx.add_statement(Statement::Store {
+                            target: new_alloc.clone(),
+                            value: value_temp,
+                            span,
+                        });
+                        ctx.add_statement(Statement::Store {
+                            target: *ref_target,
+                            value: new_alloc,
+                            span,
+                        });
+                    } else {
+                        ctx.add_statement(Statement::Store {
+                            target: *ref_target,
+                            value: value_temp,
+                            span,
+                        });
+                    }
                 } else {
                     if let Some(old_binding) =
                         ctx.update_variable(name, value_temp.clone(), ownership)

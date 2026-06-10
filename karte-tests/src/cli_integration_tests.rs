@@ -9375,4 +9375,171 @@ fn main() -> number {
         let exit_code = compile_project_mode_code(code);
         assert_eq!(exit_code, 11, "enum struct forin break: expected 11, got {}", exit_code);
     }
+
+/// 回归测试：赋值（=）给被闭包捕获的 struct 变量
+/// 修复 LIR Store 逐字段复制覆盖 shared_var 指针导致 SIGSEGV
+#[test]
+fn test_assign_struct_literal_to_captured_var() {
+    let code = r#"
+struct S { v: number }
+fn main() -> number {
+    let s = S { v: 0 };
+    let f = || { s };
+    s = S { v: 1 };
+    s.v
+}
+"#;
+    let exit_code = compile_project_mode_code(code);
+    assert_eq!(exit_code, 1);
+}
+
+/// 回归测试：赋值函数调用返回值给被闭包捕获的 struct 变量
+/// 函数调用返回值在 LIR 中是 HeapAlloc 指针（无 struct layout），
+/// 直接 Store 到 shared_var 即可（不需要 HeapAlloc 包装）
+#[test]
+fn test_assign_func_result_to_captured_var() {
+    let code = r#"
+struct S { v: number }
+fn add_n(s: S, n: number) -> S {
+    S { v: s.v + n }
+}
+fn main() -> number {
+    let s = S { v: 0 };
+    let f = || { s };
+    s = add_n(s, 1);
+    s = add_n(s, 2);
+    s.v
+}
+"#;
+    let exit_code = compile_project_mode_code(code);
+    assert_eq!(exit_code, 3);
+}
+
+/// 回归测试：for-in + 赋值 + struct + closure + break
+/// struct 字面量赋值需要 HeapAlloc 包装，函数调用不需要
+#[test]
+fn test_forin_assign_struct_closure_break() {
+    let code = r#"
+struct S { v: number }
+fn main() -> number {
+    let s = S { v: 0 };
+    let f = || { s };
+    for i in 0..5 {
+        s = S { v: s.v + 1 };
+        if i == 2 { break; };
+    };
+    s.v
+}
+"#;
+    let exit_code = compile_project_mode_code(code);
+    assert_eq!(exit_code, 3);
+}
+
+/// 回归测试：for-in + 函数调用赋值 + struct + closure
+#[test]
+fn test_forin_assign_func_result_closure() {
+    let code = r#"
+struct S { v: number }
+fn add_n(s: S, n: number) -> S {
+    S { v: s.v + n }
+}
+fn main() -> number {
+    let s = S { v: 0 };
+    let f = || { s };
+    for i in 0..3 {
+        s = add_n(s, 1);
+    };
+    s.v
+}
+"#;
+    let exit_code = compile_project_mode_code(code);
+    assert_eq!(exit_code, 3);
+}
+
+/// 回归测试：match + 赋值 + struct + closure
+/// match/if-else 返回值在 LIR 中携带 struct layout，需要 HeapAlloc 包装
+#[test]
+fn test_assign_match_result_to_captured_var() {
+    let code = r#"
+struct S { v: number }
+enum E { A, B }
+fn main() -> number {
+    let s = S { v: 0 };
+    let f = || { s };
+    for i in 0..5 {
+        let e = if i % 2 == 0 { E::A } else { E::B };
+        s = match e {
+            E::A => S { v: s.v + 1 },
+            E::B => S { v: s.v + 10 },
+        };
+    };
+    s.v
+}
+"#;
+    let exit_code = compile_project_mode_code(code);
+    assert_eq!(exit_code, 23);
+}
+
+/// 回归测试：if-else + 赋值 + struct + closure
+#[test]
+fn test_assign_ifelse_result_to_captured_var() {
+    let code = r#"
+struct S { v: number }
+fn main() -> number {
+    let s = S { v: 0 };
+    let f = || { s };
+    for i in 0..5 {
+        s = if i % 2 == 0 {
+            S { v: s.v + 1 }
+        } else {
+            S { v: s.v + 10 }
+        };
+    };
+    s.v
+}
+"#;
+    let exit_code = compile_project_mode_code(code);
+    assert_eq!(exit_code, 23);
+}
+
+/// 回归测试：高阶函数 + 赋值 + struct + closure
+#[test]
+fn test_assign_higher_order_to_captured_var() {
+    let code = r#"
+struct S { v: number }
+fn apply(f: fn(S) -> S, s: S) -> S {
+    f(s)
+}
+fn main() -> number {
+    let s = S { v: 0 };
+    let f = || { s };
+    let inc = |x: S| { S { v: x.v + 1 } };
+    for i in 0..3 {
+        s = apply(inc, s);
+    };
+    s.v
+}
+"#;
+    let exit_code = compile_project_mode_code(code);
+    assert_eq!(exit_code, 3);
+}
+
+/// 回归测试：嵌套 struct 赋值 + closure
+#[test]
+fn test_assign_nested_struct_to_captured_var() {
+    let code = r#"
+struct Inner { x: number }
+struct Outer { inner: Inner }
+fn main() -> number {
+    let o = Outer { inner: Inner { x: 0 } };
+    let f = || { o };
+    for i in 0..3 {
+        o = Outer { inner: Inner { x: o.inner.x + 1 } };
+    };
+    o.inner.x
+}
+"#;
+    let exit_code = compile_project_mode_code(code);
+    assert_eq!(exit_code, 3);
+}
 }
