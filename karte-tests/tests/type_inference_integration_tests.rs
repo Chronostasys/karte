@@ -2292,3 +2292,53 @@ fn test_type_error_assign_to_undefined() {
 fn test_type_error_use_before_define() {
     check_has_errors("fn main() -> number {\nlet y = x + 1;\nlet x = 42;\ny\n}");
 }
+
+#[test]
+fn test_type_check_if_else_as_value() {
+    check_no_errors("fn max(a: number, b: number) -> number {\nlet result = if a > b { a } else { b };\nresult\n}");
+}
+
+#[test]
+fn test_type_check_match_as_value() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = match x {\n0 => 1\n_ => 2\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_block_as_value() {
+    check_no_errors("fn main() -> number {\nlet x = {\nlet a = 10;\nlet b = 20;\na + b\n};\nx\n}");
+}
+
+#[test]
+fn test_type_check_string_concat_chain2() {
+    check_no_errors("fn f(name: string, age: number) -> string {\n\"Name: \" + name + \", Age: \" + age\n}");
+}
+
+#[test]
+fn test_type_check_complex_struct_expr() {
+    check_no_errors("struct Point { x: number, y: number }\nfn midpoint(a: Point, b: Point) -> Point {\nPoint { x: (a.x + b.x), y: (a.y + b.y) }\n}");
+}
+
+#[test]
+fn test_type_check_nested_option() {
+    check_no_errors("fn safe_index(arr: number, idx: number) -> Option<number> {\nif idx >= 0 { Some(idx) } else { None }\n}");
+}
+
+#[test]
+fn test_type_check_nested_result() {
+    check_no_errors("fn checked_div(a: number, b: number) -> Result<number, string> {\nif b == 0 { Err(\"division by zero\") } else { Ok(a / b) }\n}");
+}
+
+#[test]
+fn test_type_check_complex_let_assignment() {
+    check_no_errors("fn counter(start: number) -> number {\nlet c = start;\nc = c + 1;\nc = c * 2;\nc\n}");
+}
+
+#[test]
+fn test_type_check_string_not() {
+    check_no_errors("fn f(x: bool) -> bool {\n!x\n}");
+}
+
+#[test]
+fn test_type_check_complex_bool_expr2() {
+    check_no_errors("fn is_leap_year(year: number) -> bool {\n(year % 4 == 0) && ((year % 100 != 0) || (year % 400 == 0))\n}");
+}
