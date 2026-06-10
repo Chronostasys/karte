@@ -1469,14 +1469,14 @@ impl TypeChecker {
                         // String + Number / Number + String: 仅 String 侧约束，Number 侧保持 Number（由 MIR lowering 自动插入 to_string）
                         match (&left_type, &right_type) {
                             (Type::String, Type::String) => {
-                                self.add_constraint(left_type.clone(), Type::String, left.span());
-                                self.add_constraint(right_type.clone(), Type::String, right.span());
+                                self.add_constraint_with_context(left_type.clone(), Type::String, left.span(), "字符串拼接要求 string 类型");
+                                self.add_constraint_with_context(right_type.clone(), Type::String, right.span(), "字符串拼接要求 string 类型");
                             }
                             (Type::String, _) => {
-                                self.add_constraint(left_type.clone(), Type::String, left.span());
+                                self.add_constraint_with_context(left_type.clone(), Type::String, left.span(), "字符串拼接要求 string 类型");
                             }
                             (_, Type::String) => {
-                                self.add_constraint(right_type.clone(), Type::String, right.span());
+                                self.add_constraint_with_context(right_type.clone(), Type::String, right.span(), "字符串拼接要求 string 类型");
                             }
                             _ => {
                                 self.add_constraint(left_type.clone(), Type::Number, left.span());
@@ -1498,8 +1498,8 @@ impl TypeChecker {
                     | BinaryOperator::ShiftLeft
                     | BinaryOperator::ShiftRight => {
                         // 数字运算、位运算：左右操作数都必须是数字类型
-                        self.add_constraint(left_type.clone(), Type::Number, left.span());
-                        self.add_constraint(right_type.clone(), Type::Number, right.span());
+                        self.add_constraint_with_context(left_type.clone(), Type::Number, left.span(), "算术运算要求 number 类型");
+                        self.add_constraint_with_context(right_type.clone(), Type::Number, right.span(), "算术运算要求 number 类型");
                     }
                     BinaryOperator::GreaterEqual
                     | BinaryOperator::LessEqual
@@ -1510,12 +1510,12 @@ impl TypeChecker {
                         // 否则两边都必须是 number
                         match (&left_type, &right_type) {
                             (Type::String, _) | (_, Type::String) => {
-                                self.add_constraint(left_type.clone(), Type::String, left.span());
-                                self.add_constraint(right_type.clone(), Type::String, right.span());
+                                self.add_constraint_with_context(left_type.clone(), Type::String, left.span(), "字符串比较要求 string 类型");
+                                self.add_constraint_with_context(right_type.clone(), Type::String, right.span(), "字符串比较要求 string 类型");
                             }
                             _ => {
-                                self.add_constraint(left_type.clone(), Type::Number, left.span());
-                                self.add_constraint(right_type.clone(), Type::Number, right.span());
+                                self.add_constraint_with_context(left_type.clone(), Type::Number, left.span(), "比较运算要求 number 类型");
+                                self.add_constraint_with_context(right_type.clone(), Type::Number, right.span(), "比较运算要求 number 类型");
                             }
                         }
                     }
