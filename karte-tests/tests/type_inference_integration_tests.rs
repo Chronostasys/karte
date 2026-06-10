@@ -1719,3 +1719,53 @@ fn test_type_check_struct_field_assign() {
 fn test_type_check_enum_default_match() {
     check_no_errors("enum Option<T> { Some(T), None }\nfn unwrap_or(opt: Option<number>, default: number) -> number {\nmatch opt {\nSome(x) => x\nNone => default\n}\n}");
 }
+
+#[test]
+fn test_type_check_complex_enum_data() {
+    check_no_errors("enum AST { Num(number), Add(number, number), Mul(number, number), Neg(number) }\nfn eval(e: AST) -> number {\nmatch e {\nAST::Num(n) => n\nAST::Add(a, b) => eval(AST::Num(a)) + eval(AST::Num(b))\nAST::Mul(a, b) => a * b\nAST::Neg(n) => 0 - n\n}\n}");
+}
+
+#[test]
+fn test_type_check_multiple_return_paths() {
+    check_no_errors("fn classify(n: number) -> string {\nif n < 0 {\nreturn \"neg\"\n};\nif n == 0 {\nreturn \"zero\"\n};\n\"pos\"\n}");
+}
+
+#[test]
+fn test_type_check_option_unwrap_or() {
+    check_no_errors("fn unwrap_or(opt: Option<number>, def: number) -> number {\nmatch opt {\nSome(x) => x\nNone => def\n}\n}");
+}
+
+#[test]
+fn test_type_check_result_map_err() {
+    check_no_errors("fn map_err(res: Result<number, string>) -> Result<number, string> {\nmatch res {\nOk(x) => Ok(x)\nErr(e) => Err(e + \"!\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_nested_struct_method() {
+    check_no_errors("struct Vec2 { x: number, y: number }\nfn length(v: Vec2) -> number {\nv.x * v.x + v.y * v.y\n}\nfn distance(a: Vec2, b: Vec2) -> number {\nlet dx = a.x - b.x;\nlet dy = a.y - b.y;\nlength(Vec2 { x: dx, y: dy })\n}");
+}
+
+#[test]
+fn test_type_check_higher_order_fn() {
+    check_no_errors("fn apply(f: fn(number) -> number, x: number) -> number {\nf(x)\n}");
+}
+
+#[test]
+fn test_type_check_string_len2() {
+    check_no_errors("fn f(s: string) -> number {\nlet n = len(s);\nn + 1\n}");
+}
+
+#[test]
+fn test_type_check_bool_logic_complex() {
+    check_no_errors("fn f(a: bool, b: bool, c: bool) -> bool {\n(a || b) && c\n}");
+}
+
+#[test]
+fn test_type_check_number_conversion() {
+    check_no_errors("fn f(b: bool) -> number {\nif b { 1 } else { 0 }\n}");
+}
+
+#[test]
+fn test_type_check_struct_self_ref() {
+    check_no_errors("struct Point { x: number, y: number }\nfn origin() -> Point {\nPoint { x: 0, y: 0 }\n}");
+}
