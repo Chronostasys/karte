@@ -11,13 +11,15 @@ use karte_parser::{Parser, ParserMode};
 use tower_lsp::lsp_types::{Position, Range, SignatureHelp};
 use std::collections::HashMap;
 
-/// 符号信息
+   /// 符号信息
 #[derive(Debug, Clone)]
 pub struct SymbolInfo {
-    pub name: String,
-    pub kind: KarteSymbolKind,
-    pub span: Span,
-    pub type_signature: Option<String>,
+   pub name: String,
+   pub kind: KarteSymbolKind,
+   pub span: Span,
+   pub type_signature: Option<String>,
+   /// 精确的名称范围（只覆盖符号名，用于 selection_range）
+   pub name_span: Option<Span>,
 }
 
 /// 符号类型
@@ -258,6 +260,7 @@ impl CompilerBridge {
                     kind: KarteSymbolKind::Function,
                     span: *span,
                     type_signature: Some(sig),
+                    name_span: None,
                 });
                 env.insert(name, def_pos);
                 result.definition_names.insert(def_pos, name.clone());
@@ -272,6 +275,7 @@ impl CompilerBridge {
                         kind: KarteSymbolKind::Parameter,
                         span: p.span,
                         type_signature: p.type_annotation.as_ref().map(|t| format!("{}: {}", p.name, t)),
+                        name_span: None,
                     });
                     result.definition_names.insert(p_pos, p.name.clone());
                 }
@@ -299,6 +303,7 @@ impl CompilerBridge {
                     kind: KarteSymbolKind::Variable,
                     span: *span,
                     type_signature: None,
+                    name_span: None,
                 });
             }
             Statement::TypeDef { name, variants, span, .. } => {
@@ -308,6 +313,7 @@ impl CompilerBridge {
                     kind: KarteSymbolKind::Enum,
                     span: *span,
                     type_signature: None,
+                    name_span: None,
                 });
                 env.insert(name, def_pos);
                 result.definition_names.insert(def_pos, name.clone());
@@ -319,6 +325,7 @@ impl CompilerBridge {
                         kind: KarteSymbolKind::EnumVariant,
                         span: *span,
                         type_signature: None,
+                        name_span: None,
                     });
                     env.insert(variant_name, def_pos);
                 }
@@ -333,6 +340,7 @@ impl CompilerBridge {
                     kind: KarteSymbolKind::Struct,
                     span: *span,
                     type_signature: Some(format!("struct {{ {} }}", field_strs.join(", "))),
+                    name_span: None,
                 });
                 env.insert(name, def_pos);
                 result.definition_names.insert(def_pos, name.clone());

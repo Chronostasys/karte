@@ -295,13 +295,18 @@ impl LanguageServer for Backend {
                         KarteSymbolKind::Module => SymbolKind::MODULE,
                     };
                     let range = crate::compiler_bridge::span_to_range(source, sym.span);
+                    let selection_range = if let Some(name_span) = sym.name_span {
+                        crate::compiler_bridge::span_to_range(source, name_span)
+                    } else {
+                        range
+                    };
                     DocumentSymbol {
                         name: sym.name,
                         kind,
                         detail: sym.type_signature,
                         deprecated: None,
                         range,
-                        selection_range: range,
+                        selection_range,
                         children: None,
                         tags: None,
                     }
