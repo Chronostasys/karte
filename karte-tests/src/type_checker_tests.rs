@@ -1393,4 +1393,54 @@ mod tests {
         let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
         assert!(!diagnostics.has_errors(), "abs() builtin should work");
     }
+
+    #[test]
+    fn test_type_error_string_subtraction() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = r#"let a = "hello"; let b = "world"; a - b"#;
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "String subtraction should report error");
+    }
+
+    #[test]
+    fn test_enum_qualified_match() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "enum Color { Red, Green, Blue }\nfn main() -> number {\n    let c = Color::Red;\n    match c {\n        Color::Red => 1,\n        Color::Green => 2,\n        Color::Blue => 3\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Qualified enum match should be valid");
+    }
+
+    #[test]
+    fn test_nested_match_valid() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn classify(n: number) -> number {\n    match n {\n        0 => 1,\n        _ => 2\n    }\n}\nfn main() -> number { classify(5) }";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Nested match should be valid");
+    }
+
+    #[test]
+    fn test_if_else_type_error() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = if true { 42 } else { \"hello\" };\n    0\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(diagnostics.has_errors(), "If-else type mismatch should report error");
+    }
+
+    #[test]
+    fn test_match_wildcard_exhaustive() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn test(n: number) -> number {\n    match n {\n        0 => 1,\n        1 => 2,\n        _ => 3\n    }\n}\nfn main() -> number { test(5) }";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Match with wildcard should be valid");
+    }
 }
