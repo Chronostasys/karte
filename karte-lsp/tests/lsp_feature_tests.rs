@@ -1390,3 +1390,75 @@ fn test_analyze_missing_struct_fields2() {
     let has_error = diagnostics.iter().any(|d| d.severity == KarteDiagnosticSeverity::Error);
     assert!(has_error, "Should detect missing struct fields");
 }
+
+#[test]
+fn test_analyze_valid_method_syntax() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point { x: number, y: number }\nfn x(p: Point) -> number { p.x }\nfn main() -> number {\nlet p = Point { x: 3, y: 4 };\nx(p)\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_generic_struct() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Pair<T> { first: T, second: T }\nfn main() -> number {\nlet p = Pair { first: 1, second: 2 };\np.first + p.second\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for generic struct: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_generic_enum() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Maybe<T> { Just(T), Nothing }\nfn unwrap_or(opt: Maybe<number>, def: number) -> number {\nmatch opt {\nMaybe::Just(x) => x\nMaybe::Nothing => def\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for generic enum: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_result_bind() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn div(a: number, b: number) -> Result<number, string> {\nif b == 0 { Err(\"division by zero\") } else { Ok(a / b) }\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for Result bind: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_closure_capture() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet x = 10;\nlet f = |y: number| -> number { x + y };\nf(5)\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for closure capture: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_nested_closure() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet add = |a: number| -> fn(number) -> number {\n|b: number| -> number { a + b }\n};\nlet add5 = add(5);\nadd5(3)\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for nested closure: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_string_concat_chain() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(a: string, b: string, c: string) -> string {\na + b + c\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for string concat chain: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_number_compare_chain() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn in_range(x: number, lo: number, hi: number) -> bool {\nx >= lo && x <= hi\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for number compare chain: {:?}", errors);
+}
