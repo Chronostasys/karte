@@ -724,3 +724,78 @@ fn test_type_no_error_nested_if() {
 fn test_type_no_error_string_ops() {
     check_no_errors("fn main() -> number {\nlet s = \"hello\";\nlet n = 0;\nn\n}");
 }
+
+#[test]
+fn test_type_check_recursive() {
+    check_no_errors("fn fib(n: number) -> number {\nif n <= 1 { n } else { fib(n-1) + fib(n-2) }\n}");
+}
+
+#[test]
+fn test_type_check_hof() {
+    check_no_errors("fn apply(f: fn(number) -> number, x: number) -> number { f(x) }\nfn double(n: number) -> number { n * 2 }\nfn main() -> number {\napply(double, 21)\n}");
+}
+
+#[test]
+fn test_type_check_closure_cap() {
+    check_no_errors("fn main() -> number {\nlet x = 10;\nlet f = || { x + 1 };\nf()\n}");
+}
+
+#[test]
+fn test_type_check_nested_struct2() {
+    check_no_errors("struct Point { x: number, y: number }\nstruct Line { start: Point, end: Point }\nfn f(l: Line) -> number {\nl.start.x + l.end.y\n}");
+}
+
+#[test]
+fn test_type_check_opt_match() {
+    check_no_errors("enum Option<T> { Some(T), None }\nfn unwrap_or(opt: Option<number>, default: number) -> number {\nmatch opt {\nOption::Some(x) => x\nOption::None => default\n}\n}");
+}
+
+#[test]
+fn test_type_check_fn_type_annot() {
+    check_no_errors("fn apply(f: fn(number) -> number, x: number) -> number {\nf(x)\n}");
+}
+
+#[test]
+fn test_type_check_generic_id() {
+    check_no_errors("fn id(x) { x }\nfn main() -> number {\nid(42)\n}");
+}
+
+#[test]
+fn test_type_check_multi_closure() {
+    check_no_errors("fn main() -> number {\nlet add = |a, b| { a + b };\nadd(1, 2)\n}");
+}
+
+#[test]
+fn test_type_check_classify() {
+    check_no_errors("fn classify(n: number) -> number {\nif n > 0 { 1 } else { if n < 0 { -1 } else { 0 } }\n}");
+}
+
+#[test]
+fn test_type_check_chain_method() {
+    check_no_errors("fn double(x: number) -> number { x * 2 }\nfn inc(x: number) -> number { x + 1 }\nfn main() -> number {\n5.double().inc()\n}");
+}
+
+#[test]
+fn test_type_error_ret_mismatch() {
+    check_has_errors("fn f() -> number { true }");
+}
+
+#[test]
+fn test_type_error_assign_type() {
+    check_has_errors("fn f() -> number {\nlet x: number = true;\n0\n}");
+}
+
+#[test]
+fn test_type_error_bad_comparison() {
+    check_has_errors("fn f() -> number {\n1 < true\n}");
+}
+
+#[test]
+fn test_type_error_not_callable() {
+    check_has_errors("fn f() -> number {\nlet x = 42;\nx()\n}");
+}
+
+#[test]
+fn test_type_error_dup_param() {
+    check_has_errors("fn f(a: number, a: number) -> number { a }");
+}
