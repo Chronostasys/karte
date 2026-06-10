@@ -649,3 +649,78 @@ fn test_type_check_result_type() {
 fn test_type_check_method_call() {
     check_no_errors("fn double(x: number) -> number { x * 2 }\nfn main() -> number {\n5.double()\n}");
 }
+
+#[test]
+fn test_type_error_wrong_arity() {
+    check_has_errors("fn add(a: number, b: number) -> number { a + b }\nfn main() -> number {\nadd(1)\n}");
+}
+
+#[test]
+fn test_type_error_wrong_param_type() {
+    check_has_errors("fn add(a: number, b: number) -> number { a + b }\nfn main() -> number {\nadd(1, true)\n}");
+}
+
+#[test]
+fn test_type_error_if_else_branch_mismatch() {
+    check_has_errors("fn main() -> number {\nlet x = if true { 42 } else { \"hello\" };\n0\n}");
+}
+
+#[test]
+fn test_type_error_undef_var() {
+    check_has_errors("fn main() -> number {\nfoo\n}");
+}
+
+#[test]
+fn test_type_error_missing_struct_field() {
+    check_has_errors("struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point { x: 1 };\n0\n}");
+}
+
+#[test]
+fn test_type_error_unknown_struct_field() {
+    check_has_errors("struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point { x: 1, z: 2 };\n0\n}");
+}
+
+#[test]
+fn test_type_error_non_exhaustive() {
+    check_has_errors("enum Color { Red, Green, Blue }\nfn main() -> number {\nmatch Color::Red {\nColor::Red => 1\n}\n}");
+}
+
+#[test]
+fn test_type_error_dup_fn() {
+    check_has_errors("fn f() -> number { 1 }\nfn f() -> number { 2 }");
+}
+
+#[test]
+fn test_type_error_fn_wrong_return() {
+    check_has_errors("fn f() -> number { true }");
+}
+
+#[test]
+fn test_type_error_arithmetic_type_mismatch() {
+    check_has_errors("fn main() -> number {\n1 + true\n}");
+}
+
+#[test]
+fn test_type_no_error_simple_add() {
+    check_no_errors("fn main() -> number { 1 + 2 }");
+}
+
+#[test]
+fn test_type_no_error_simple_if() {
+    check_no_errors("fn main() -> number { if true { 1 } else { 2 } }");
+}
+
+#[test]
+fn test_type_no_error_simple_match() {
+    check_no_errors("enum Bool { True, False }\nfn f(b: Bool) -> number {\nmatch b {\nBool::True => 1\nBool::False => 0\n}\n}");
+}
+
+#[test]
+fn test_type_no_error_nested_if() {
+    check_no_errors("fn main() -> number {\nif true {\nif false { 1 } else { 2 }\n} else {\n3\n}\n}");
+}
+
+#[test]
+fn test_type_no_error_string_ops() {
+    check_no_errors("fn main() -> number {\nlet s = \"hello\";\nlet n = 0;\nn\n}");
+}
