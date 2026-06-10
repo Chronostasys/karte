@@ -386,6 +386,14 @@ impl DiagnosticBag {
         self.add(diag);
     }
 
+    pub fn add_error_with_code(&mut self, message: impl Into<String>, span: Span, code: impl Into<String>, help: Option<String>) {
+        let mut diag = Diagnostic::error(message, span).with_code(code);
+        if let Some(h) = help {
+            diag.help = Some(h);
+        }
+        self.add(diag);
+    }
+
     pub fn add_warning(&mut self, message: impl Into<String>, span: Span) {
         self.add(Diagnostic::warning(message, span));
     }
