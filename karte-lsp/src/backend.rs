@@ -623,25 +623,38 @@ impl LanguageServer for Backend {
         &self,
         params: CodeActionParams,
     ) -> Result<Option<CodeActionResponse>> {
+        let uri = &params.text_document.uri;
         let mut actions = Vec::new();
 
         for diag in &params.context.diagnostics {
             // 检查是否是"未定义的变量"错误，提供拼写建议
             if diag.message.contains("未定义的变量") && diag.message.contains("你是否想输入") {
-                // 提取建议
-                if let Some(start) = diag.message.find("'") {
-                    if let Some(end) = diag.message[start + 1..].find("'") {
-                        let suggestion = &diag.message[start + 1..start + 1 + end];
-                        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                            title: format!("替换为 '{}'", suggestion),
-                            kind: Some(CodeActionKind::QUICKFIX),
-                            diagnostics: Some(vec![diag.clone()]),
-                            edit: None,
-                            is_preferred: Some(true),
-                            disabled: None,
-                            data: None,
-                            command: None,
-                        }));
+                // 提取建议 - 格式: "未定义的变量: xxx (你是否想输入 'yyy'?)"
+                if let Some(start) = diag.message.rfind("'") {
+                    // 找最后一个 ' 之前的建议
+                    let before_last_quote = &diag.message[..start];
+                    if let Some(second_quote) = before_last_quote.rfind("'") {
+                        let suggestion = &diag.message[second_quote + 1..start];
+                        if !suggestion.is_empty() {
+                            let edit = TextEdit {
+                                range: diag.range,
+                                new_text: suggestion.to_string(),
+                            };
+                            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                                title: format!("替换为 '{}'", suggestion),
+                                kind: Some(CodeActionKind::QUICKFIX),
+                                diagnostics: Some(vec![diag.clone()]),
+                                edit: Some(WorkspaceEdit {
+                                    changes: Some(vec![(uri.clone(), vec![edit])].into_iter().collect()),
+                                    document_changes: None,
+                                    change_annotations: None,
+                                }),
+                                is_preferred: Some(true),
+                                disabled: None,
+                                data: None,
+                                command: None,
+                            }));
+                        }
                     }
                 }
             }
@@ -651,11 +664,19 @@ impl LanguageServer for Backend {
                 if let Some(start) = diag.message.find('`') {
                     if let Some(end) = diag.message[start + 1..].find('`') {
                         let var_name = &diag.message[start + 1..start + 1 + end];
+                        let edit = TextEdit {
+                            range: diag.range,
+                            new_text: format!("_{}", var_name),
+                        };
                         actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                            title: format!("重命名为 '_{}'", var_name),
+                            title: format!("重命名为 '_{}'（标记为故意未使用）", var_name),
                             kind: Some(CodeActionKind::QUICKFIX),
                             diagnostics: Some(vec![diag.clone()]),
-                            edit: None,
+                            edit: Some(WorkspaceEdit {
+                                changes: Some(vec![(uri.clone(), vec![edit])].into_iter().collect()),
+                                document_changes: None,
+                                change_annotations: None,
+                            }),
                             is_preferred: Some(true),
                             disabled: None,
                             data: None,
@@ -663,6 +684,20 @@ impl LanguageServer for Backend {
                         }));
                     }
                 }
+            }
+
+            // 检查是否是"非穷尽 match"错误，提供添加通配符分支的建议
+            if diag.message.contains("非穷尽") || diag.message.contains("穷尽") {
+                actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                    title: "添加通配符分支 `_ => ()".to_string(),
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    diagnostics: Some(vec![diag.clone()]),
+                    edit: None,
+                    is_preferred: Some(false),
+                    disabled: None,
+                    data: None,
+                    command: None,
+                }));
             }
         }
 
