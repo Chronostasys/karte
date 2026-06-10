@@ -990,6 +990,18 @@ impl TypeChecker {
                     let mut param_types = Vec::new();
                     let mut parse_failed = false;
 
+                    // 检查参数名重复
+                    let mut param_names = std::collections::HashSet::new();
+                    for param in params {
+                        if param_names.contains(&param.name) {
+                            self.add_error(TypeCheckError::DuplicateFunctionDefinition {
+                                name: param.name.clone(),
+                                span: param.span,
+                            });
+                        }
+                        param_names.insert(param.name.clone());
+                    }
+
                     // 解析参数类型（严格模式）
                     for param in params {
                         let param_ty = if let Some(type_ann) = &param.type_annotation {
