@@ -2013,3 +2013,53 @@ fn test_type_check_fn_as_param2() {
 fn test_type_check_struct_param_passing() {
     check_no_errors("struct Point { x: number, y: number }\nfn translate(p: Point, dx: number, dy: number) -> Point {\nPoint { x: p.x + dx, y: p.y + dy }\n}");
 }
+
+#[test]
+fn test_type_error_duplicate_param_name_v2() {
+    check_has_errors("fn f(x: number, x: number) -> number {\nx + x\n}");
+}
+
+#[test]
+fn test_type_error_missing_field_constructor() {
+    check_has_errors("struct Point { x: number, y: number, z: number }\nfn main() -> number {\nlet p = Point { x: 1, y: 2 };\n0\n}");
+}
+
+#[test]
+fn test_type_error_wrong_field_type_v2() {
+    check_has_errors("struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point { x: 1, y: \"hello\" };\n0\n}");
+}
+
+#[test]
+fn test_type_error_extra_field_v2() {
+    check_has_errors("struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point { x: 1, y: 2, z: 3 };\n0\n}");
+}
+
+#[test]
+fn test_type_error_wrong_arg_count_v2() {
+    check_has_errors("fn add(a: number, b: number) -> number { a + b }\nfn main() -> number {\nadd(1)\n}");
+}
+
+#[test]
+fn test_type_error_wrong_arg_type_v2() {
+    check_has_errors("fn add(a: number, b: number) -> number { a + b }\nfn main() -> number {\nadd(1, \"hello\")\n}");
+}
+
+#[test]
+fn test_type_error_undefined_struct_v2() {
+    check_has_errors("fn main() -> number {\nlet p = Point { x: 1, y: 2 };\n0\n}");
+}
+
+#[test]
+fn test_type_error_string_minus() {
+    check_has_errors("fn main() -> number {\nlet x = \"a\" - \"b\";\n0\n}");
+}
+
+#[test]
+fn test_type_error_bool_arithmetic_v2() {
+    check_has_errors("fn main() -> number {\ntrue + false\n}");
+}
+
+#[test]
+fn test_type_error_return_mismatch_v2() {
+    check_has_errors("fn f() -> string {\n42\n}");
+}
