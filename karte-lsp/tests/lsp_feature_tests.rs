@@ -1791,3 +1791,75 @@ fn test_analyze_valid_leap_year() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors for leap year: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_option_map_fn() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn map_option(opt: Option<number>) -> Option<number> {\nmatch opt {\nSome(x) => Some(x * 2)\nNone => None\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for option map: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_result_map_fn() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn map_result(res: Result<number, string>) -> Result<number, string> {\nmatch res {\nOk(x) => Ok(x * 2)\nErr(e) => Err(e)\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for result map: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_json_enum() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum JSON { JNum(number), JStr(string), JBool(bool), JNull }\nfn json_type(j: JSON) -> string {\nmatch j {\nJSON::JNum(_) => \"number\"\nJSON::JStr(_) => \"string\"\nJSON::JBool(_) => \"bool\"\nJSON::JNull => \"null\"\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for JSON enum: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_bool_to_number() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn bool_to_int(b: bool) -> number {\nif b { 1 } else { 0 }\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for bool to number: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_number_to_bool() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn is_positive(n: number) -> bool {\nn > 0\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for number to bool: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_nested_closure_v2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet add = |a: number, b: number| -> number { a + b };\nlet result = add(add(1, 2), 3);\nresult\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for nested closure: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_multi_let_chain() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet a = 1;\nlet b = 2;\nlet c = 3;\nlet d = a + b;\nlet e = c + d;\ne\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for multi let chain: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_chained_string() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn exclaim(s: string) -> string {\ns + \"!\"\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for chained string: {:?}", errors);
+}
