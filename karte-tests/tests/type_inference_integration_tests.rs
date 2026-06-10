@@ -1358,3 +1358,53 @@ fn test_type_check_string_compare() {
 fn test_type_check_bool_not2() {
     check_no_errors("fn f(x: bool) -> bool {\n!x\n}");
 }
+
+#[test]
+fn test_type_check_for_in_array() {
+    check_no_errors("fn main() -> number {\nlet sum = 0;\nfor i in [1, 2, 3] {\nsum = sum + i\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_while_loop2() {
+    check_no_errors("fn main() -> number {\nlet x = 10;\nlet r = 0;\nwhile x > 0 {\nr = r + 1\n};\nr\n}");
+}
+
+#[test]
+fn test_type_check_nested_for() {
+    check_no_errors("fn main() -> number {\nlet sum = 0;\nfor i in [1, 2] {\nfor j in [3, 4] {\nsum = sum + i + j\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_match_option_nested() {
+    check_no_errors("fn f(opt: Option<number>) -> number {\nmatch opt {\nSome(x) => x + 1\nNone => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_method_call_v2() {
+    check_no_errors("fn abs_val(x: number) -> number {\nabs(x)\n}");
+}
+
+#[test]
+fn test_type_check_complex_match() {
+    check_no_errors("enum Expr { Lit(number), Add(number, number), Mul(number, number) }\nfn eval(e: Expr) -> number {\nmatch e {\nExpr::Lit(n) => n\nExpr::Add(a, b) => a + b\nExpr::Mul(a, b) => a * b\n}\n}");
+}
+
+#[test]
+fn test_type_check_string_ops() {
+    check_no_errors("fn f(s: string) -> string {\ns + \"!\"\n}");
+}
+
+#[test]
+fn test_type_check_bool_ops_v2() {
+    check_no_errors("fn f(a: bool, b: bool) -> bool {\na && b || !a\n}");
+}
+
+#[test]
+fn test_type_check_comparison_chain() {
+    check_no_errors("fn f(a: number, b: number, c: number) -> bool {\na < b && b < c\n}");
+}
+
+#[test]
+fn test_type_check_ternary_like() {
+    check_no_errors("fn f(n: number) -> number {\nif n > 0 { n } else { 0 - n }\n}");
+}
