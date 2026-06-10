@@ -9093,6 +9093,95 @@ fn main() -> number {
         assert_eq!(exit_code, 4, "struct closure forarray continue: expected 4, got {}", exit_code);
     }
 
+    /// 回归测试：While + struct + closure + 单次迭代 + break
+    /// 修复 exit Phi 中裸 struct 值包装 + actual_break_values 在 break 源块中创建
+    #[test]
+    fn test_struct_closure_while_single_iter_break() {
+        let code = r#"
+struct S { v: number }
+fn main() -> number {
+    let s = S { v: 0 };
+    let f = || { s };
+    let i = 0;
+    while i < 1 {
+        let i = i + 1;
+        let s = S { v: s.v + 1 };
+        break;
+    };
+    s.v
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 1, "struct closure while single break: expected 1, got {}", exit_code);
+    }
+
+    /// 回归测试：While + struct + closure + 最后一次迭代 break
+    #[test]
+    fn test_struct_closure_while_break_at_last() {
+        let code = r#"
+struct S { v: number }
+fn main() -> number {
+    let s = S { v: 0 };
+    let f = || { s };
+    let i = 0;
+    while i < 3 {
+        let i = i + 1;
+        let s = S { v: s.v + 1 };
+        if i == 3 { break; };
+    };
+    s.v
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 3, "struct closure while break at last: expected 3, got {}", exit_code);
+    }
+
+    /// 回归测试：While + 多个 struct + closure + break
+    #[test]
+    fn test_struct_closure_while_multi_struct_break() {
+        let code = r#"
+struct S { v: number }
+fn main() -> number {
+    let a = S { v: 0 };
+    let b = S { v: 100 };
+    let fa = || { a };
+    let fb = || { b };
+    let i = 0;
+    while i < 4 {
+        let i = i + 1;
+        if i == 3 { break; };
+        let a = S { v: a.v + 1 };
+        let b = S { v: b.v + 1 };
+    };
+    a.v + b.v
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 104, "struct closure while multi: expected 104, got {}", exit_code);
+    }
+
+    /// 回归测试：While + struct + closure + break + continue 混合
+    #[test]
+    fn test_struct_closure_while_break_continue_mix() {
+        let code = r#"
+struct S { v: number }
+fn main() -> number {
+    let s = S { v: 0 };
+    let f = || { s };
+    let i = 0;
+    while i < 6 {
+        let i = i + 1;
+        if i == 2 { continue; };
+        if i == 5 { break; };
+        let s = S { v: s.v + 1 };
+    };
+    s.v
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 3, "struct closure while mix: expected 3, got {}", exit_code);
+    }
+
     /// 回归测试：ForIn + struct + closure + 单次迭代 + break
     /// 修复 exit Phi 在 loop_exit block 中创建 shared_var 的 bug（incoming 值必须来自 predecessor）
     #[test]

@@ -1177,8 +1177,11 @@ pub(crate) fn lower_expression(
                             actual_backedge_values.insert(name.clone(), derefed);
                         }
                     } else if struct_ref_vars.contains(name) {
-                        // 结构体变量的 back-edge 值是 struct 值（非 Reference）
+                        // 结构体变量的 back-edge 值是裸 struct 值（非 Reference）
                         // 需要包装成 shared_var 指针以匹配 Phi incoming 类型
+                        // 在当前 block（可能是 break 死块或正常 block）中创建 HeapAlloc/Store
+                        // 如果当前 block 不可达（break-only），这些代码不会执行，但 Phi incoming
+                        // 引用了这些变量。LIR 不会为不可达 block 生成 Store。
                         let struct_val = final_value.clone();
                         let heap_alloc = ctx.new_temp();
                         ctx.add_statement(Statement::HeapAlloc {
@@ -1225,8 +1228,10 @@ pub(crate) fn lower_expression(
                                 actual_continue_values.insert((name.clone(), *source_block), derefed);
                             }
                         } else if struct_ref_vars.contains(name) {
-                            // 结构体变量的 continue 路径值是 struct 值（非 Reference）
-                            // 需要包装成 shared_var 指针
+                            // 结构体变量的 continue 路径值是裸 struct 值（非 Reference）
+                            // ⚠️ 必须在 continue 源块中创建 HeapAlloc/Store（不在 break 死块）
+                            let saved = ctx.current_block();
+                            ctx.set_current_block(*source_block);
                             let heap_alloc = ctx.new_temp();
                             ctx.add_statement(Statement::HeapAlloc {
                                 target: heap_alloc.clone(),
@@ -1251,6 +1256,7 @@ pub(crate) fn lower_expression(
                                 value: heap_alloc,
                                 span: body.span(),
                             });
+                            ctx.set_current_block(saved);
                             actual_continue_values.insert((name.clone(), *source_block), shared_alloc);
                         }
                     }
@@ -1273,7 +1279,10 @@ pub(crate) fn lower_expression(
                                 actual_break_values.insert((name.clone(), *source_block), derefed);
                             }
                         } else if struct_ref_vars.contains(name) {
-                            // 结构体变量的 break 路径值是 struct 值（非 Reference）
+                            // 结构体变量的 break 路径值是裸 struct 值（非 Reference）
+                            // ⚠️ 必须在 break 源块中创建 HeapAlloc/Store（不在 break 死块）
+                            let saved = ctx.current_block();
+                            ctx.set_current_block(*source_block);
                             let heap_alloc = ctx.new_temp();
                             ctx.add_statement(Statement::HeapAlloc {
                                 target: heap_alloc.clone(),
@@ -1298,6 +1307,7 @@ pub(crate) fn lower_expression(
                                 value: heap_alloc,
                                 span: body.span(),
                             });
+                            ctx.set_current_block(saved);
                             actual_break_values.insert((name.clone(), *source_block), shared_alloc);
                         }
                     }
@@ -1450,8 +1460,18 @@ pub(crate) fn lower_expression(
                     if need_phi {
                         // 在 loop_exit 中创建 Phi 节点
                         let exit_phi_temp = ctx.new_temp();
+                        // 对 struct_ref_vars：使用 shared_var 指针作为 Phi incoming
+                        let normal_phi_value = if struct_ref_vars.contains(name) {
+                            if let Value::Reference { value: ref_target, .. } = &normal_value {
+                                ref_target.as_ref().clone()
+                            } else {
+                                normal_value.clone()
+                            }
+                        } else {
+                            normal_value.clone()
+                        };
                         let mut incoming = vec![
-                            (loop_head, normal_value.clone()),
+                            (loop_head, normal_phi_value),
                         ];
                         for (source_block, break_bindings) in &while_break_sources {
                             let break_value = if let Some(actual) = actual_break_values.get(&(name.clone(), *source_block)) {
@@ -1461,7 +1481,50 @@ pub(crate) fn lower_expression(
                                     .cloned()
                                     .unwrap_or_else(|| normal_value.clone())
                             };
-                            incoming.push((*source_block, break_value));
+                            // 对 struct_ref_vars：处理 Phi incoming 值
+                            // 如果 actual_break_values 已经有值，说明裸 struct 值已经在 break 源块中包装成 shared_var
+                            // 直接使用它作为 Phi incoming，不再额外包装
+                            let break_phi_value = if struct_ref_vars.contains(name) {
+                                if actual_break_values.contains_key(&(name.clone(), *source_block)) {
+                                    // actual_break_values 中的值已经是 shared_var，直接使用
+                                    break_value.clone()
+                                } else if let Value::Reference { value: ref_target, .. } = &break_value {
+                                    ref_target.as_ref().clone()
+                                } else {
+                                    // 裸 struct 值：在 break 源块中包装成 shared_var
+                                    let saved = ctx.current_block();
+                                    ctx.set_current_block(*source_block);
+                                    let heap_alloc = ctx.new_temp();
+                                    ctx.add_statement(Statement::HeapAlloc {
+                                        target: heap_alloc.clone(),
+                                        size: *struct_sizes.get(name).unwrap_or(&8),
+                                        object_type: "struct_copy".to_string(),
+                                        span: *span,
+                                    });
+                                    ctx.add_statement(Statement::Store {
+                                        target: heap_alloc.clone(),
+                                        value: break_value,
+                                        span: *span,
+                                    });
+                                    let shared_alloc = ctx.new_temp();
+                                    ctx.add_statement(Statement::HeapAlloc {
+                                        target: shared_alloc.clone(),
+                                        size: 8,
+                                        object_type: "shared_var".to_string(),
+                                        span: *span,
+                                    });
+                                    ctx.add_statement(Statement::Store {
+                                        target: shared_alloc.clone(),
+                                        value: heap_alloc,
+                                        span: *span,
+                                    });
+                                    ctx.set_current_block(saved);
+                                    shared_alloc
+                                }
+                            } else {
+                                break_value
+                            };
+                            incoming.push((*source_block, break_phi_value));
                         }
                         ctx.add_statement(Statement::Phi {
                             target: exit_phi_temp.clone(),
@@ -1469,7 +1532,15 @@ pub(crate) fn lower_expression(
                             span: *span,
                         });
                         // 更新变量绑定指向 loop_exit 的 Phi 结果
-                        ctx.update_variable(name, exit_phi_temp, None);
+                        // 对 struct_ref_vars：Phi target 是 shared_var 指针，需要包装为 Reference
+                        if struct_ref_vars.contains(name) {
+                            ctx.update_variable(name, Value::Reference {
+                                value: Box::new(exit_phi_temp),
+                                ty: None,
+                            }, None);
+                        } else {
+                            ctx.update_variable(name, exit_phi_temp, None);
+                        }
                     }
                 }
             }
