@@ -1619,3 +1619,53 @@ fn test_type_error_enum_variant_type() {
 fn test_type_error_undefined_field() {
     check_has_errors("struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point { x: 1, y: 2 };\np.z\n}");
 }
+
+#[test]
+fn test_type_check_fn_type_param2() {
+    check_no_errors("fn apply(f: fn(number) -> number, x: number) -> number {\nf(x)\n}\nfn double(n: number) -> number { n * 2 }\nfn main() -> number {\napply(double, 5)\n}");
+}
+
+#[test]
+fn test_type_check_option_result_chain() {
+    check_no_errors("fn f(x: number) -> number {\nlet opt = Some(x);\nmatch opt {\nSome(v) => v\nNone => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_while_with_break_v2() {
+    check_no_errors("fn main() -> number {\nlet x = 10;\nlet r = 0;\nwhile x > 0 {\nr = r + x;\nif r > 20 {\nbreak\n}\n};\nr\n}");
+}
+
+#[test]
+fn test_type_check_for_range_v2() {
+    check_no_errors("fn main() -> number {\nlet sum = 0;\nfor i in [1, 2, 3, 4, 5] {\nsum = sum + i\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_multiple_structs_v2() {
+    check_no_errors("struct Point { x: number, y: number }\nstruct Line { start: Point, end: Point }\nfn length(l: Line) -> number {\nlet dx = l.start.x - l.end.x;\nlet dy = l.start.y - l.end.y;\ndx * dx + dy * dy\n}");
+}
+
+#[test]
+fn test_type_check_enum_with_struct_data() {
+    check_no_errors("struct Point { x: number, y: number }\nenum Shape { Dot(Point), Circle(Point, number) }\nfn area(s: Shape) -> number {\nmatch s {\nShape::Dot(_) => 0\nShape::Circle(_, r) => r * r * 3\n}\n}");
+}
+
+#[test]
+fn test_type_check_string_method_len() {
+    check_no_errors("fn f(s: string) -> number {\nlen(s)\n}");
+}
+
+#[test]
+fn test_type_check_early_return_chain() {
+    check_no_errors("fn classify(n: number) -> string {\nif n < 0 {\nreturn \"negative\"\n};\nif n == 0 {\nreturn \"zero\"\n};\n\"positive\"\n}");
+}
+
+#[test]
+fn test_type_check_nested_match_simple() {
+    check_no_errors("fn f(x: number, y: number) -> number {\nmatch x {\n0 => y\n_ => match y {\n0 => x\n_ => x + y\n}\n}\n}");
+}
+
+#[test]
+fn test_type_check_reference_v2() {
+    check_no_errors("fn main() -> number {\nlet x = 42;\nlet r = &x;\n*r\n}");
+}
