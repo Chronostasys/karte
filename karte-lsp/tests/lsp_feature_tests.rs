@@ -899,3 +899,38 @@ fn test_analyze_while_loop2() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors for valid while loop: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_string_concat2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f() -> string {\n\"hello\" + \" world\"\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for string concat: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_option_type3() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> Option<number> {\nif x > 0 {\nSome(x)\n} else {\nNone\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for Option type: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_chained_field() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point { x: number, y: number }\nfn magnitude(p: Point) -> number {\np.x * p.x + p.y * p.y\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for chained field access: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_if_number_cond() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f() -> number {\nif 42 { 1 } else { 0 }\n}";
+    let diagnostics = bridge.analyze(source);
+    let _ = diagnostics;
+}
