@@ -124,3 +124,73 @@ fn test_parse_enum_match() {
     let diagnostics = parse_project(code);
     assert!(!diagnostics.has_errors(), "Enum match should parse");
 }
+
+#[test]
+fn test_parse_nested_if() {
+    let code = "fn main() -> number {\n    if true {\n        if false { 1 } else { 2 }\n    } else {\n        3\n    }\n}";
+    let diagnostics = parse_project(code);
+    assert!(!diagnostics.has_errors(), "Nested if should parse");
+}
+
+#[test]
+fn test_parse_function_with_multiple_params() {
+    let code = "fn add(a: number, b: number, c: number) -> number { a + b + c }\nfn main() -> number { add(1, 2, 3) }";
+    let diagnostics = parse_project(code);
+    assert!(!diagnostics.has_errors(), "Function with multiple params should parse");
+}
+
+#[test]
+fn test_parse_string_operations() {
+    let code = "fn main() -> number {\n    let s = \"hello\";\n    0\n}";
+    let diagnostics = parse_project(code);
+    assert!(!diagnostics.has_errors(), "String operations should parse");
+}
+
+#[test]
+fn test_parse_reference_and_deref() {
+    let code = "fn main() -> number {\n    let x = 42;\n    let r = &x;\n    *r\n}";
+    let diagnostics = parse_project(code);
+    assert!(!diagnostics.has_errors(), "Reference and deref should parse");
+}
+
+#[test]
+fn test_parse_option_match() {
+    let code = "fn main() -> number {\n    let x = Some(42);\n    match x {\n        Some(v) => v,\n        None => 0\n    }\n}";
+    let diagnostics = parse_project(code);
+    assert!(!diagnostics.has_errors(), "Option match should parse");
+}
+
+#[test]
+fn test_parse_result_match() {
+    let code = "fn main() -> number {\n    let x = Ok(42);\n    match x {\n        Ok(v) => v,\n        Err(_) => 0\n    }\n}";
+    let diagnostics = parse_project(code);
+    assert!(!diagnostics.has_errors(), "Result match should parse");
+}
+
+#[test]
+fn test_parse_tuple() {
+    let code = "fn main() -> number {\n    let t = (1, 2, 3);\n    0\n}";
+    let diagnostics = parse_project(code);
+    assert!(!diagnostics.has_errors(), "Tuple should parse");
+}
+
+#[test]
+fn test_parse_array() {
+    let code = "fn main() -> number {\n    let a = [1, 2, 3];\n    0\n}";
+    let diagnostics = parse_project(code);
+    assert!(!diagnostics.has_errors(), "Array should parse");
+}
+
+#[test]
+fn test_parse_nested_struct() {
+    let code = "struct Point { x: number, y: number }\nstruct Line { start: Point, end: Point }\nfn main() -> number { 0 }";
+    let diagnostics = parse_project(code);
+    assert!(!diagnostics.has_errors(), "Nested struct should parse");
+}
+
+#[test]
+fn test_parse_generic_struct() {
+    let code = "struct Pair<T> { first: T, second: T }\nfn main() -> number { 0 }";
+    let diagnostics = parse_project(code);
+    assert!(!diagnostics.has_errors(), "Generic struct should parse");
+}
