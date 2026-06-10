@@ -554,3 +554,28 @@ fn test_type_check_deeply_nested_struct() {
 fn test_type_check_array_map_pattern() {
     check_no_errors("fn main() -> number {\nlet arr = [1, 2, 3, 4, 5];\nlet sum = 0;\nfor x in arr {\nsum = sum + x\n};\nsum\n}");
 }
+
+#[test]
+fn test_type_check_option_in_nested() {
+    check_no_errors("enum Option { Some(number), None }\nfn map(o: Option, f: fn(number) -> number) -> Option {\nmatch o {\nOption::Some(x) => Option::Some(f(x)),\nOption::None => Option::None\n}\n}");
+}
+
+#[test]
+fn test_type_check_chained_comparison() {
+    check_no_errors("fn between(x: number, lo: number, hi: number) -> bool {\nx >= lo && x <= hi\n}");
+}
+
+#[test]
+fn test_type_check_string_comparison_ops() {
+    check_no_errors("fn cmp(a: string, b: string) -> number {\nif a < b { -1 } else if a > b { 1 } else { 0 }\n}");
+}
+
+#[test]
+fn test_type_check_struct_update() {
+    check_no_errors("struct Point { x: number, y: number }\nfn translate(p: Point, dx: number, dy: number) -> Point {\nPoint { x: p.x + dx, y: p.y + dy }\n}");
+}
+
+#[test]
+fn test_type_check_multi_let_destructure() {
+    check_no_errors("fn swap(a: number, b: number) -> number {\nlet temp = a;\nlet a = b;\nlet b = temp;\na + b\n}");
+}
