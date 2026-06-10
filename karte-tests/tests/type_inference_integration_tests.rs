@@ -2592,3 +2592,73 @@ fn test_type_check_string_ops_chain() {
 fn test_type_check_struct_field_access_chain() {
     check_no_errors("struct Line { start_x: number, start_y: number, end_x: number, end_y: number }\nfn horizontal_length(l: Line) -> number {\nl.end_x - l.start_x\n}");
 }
+
+#[test]
+fn test_type_check_simple_add() {
+    check_no_errors("fn f() -> number {\n1 + 2\n}");
+}
+
+#[test]
+fn test_type_check_simple_sub() {
+    check_no_errors("fn f() -> number {\n10 - 3\n}");
+}
+
+#[test]
+fn test_type_check_simple_mul() {
+    check_no_errors("fn f() -> number {\n4 * 5\n}");
+}
+
+#[test]
+fn test_type_check_simple_div() {
+    check_no_errors("fn f() -> number {\n20 / 4\n}");
+}
+
+#[test]
+fn test_type_check_simple_mod() {
+    check_no_errors("fn f() -> number {\n10 % 3\n}");
+}
+
+#[test]
+fn test_type_check_simple_neg() {
+    check_no_errors("fn f() -> number {\n-42\n}");
+}
+
+#[test]
+fn test_type_check_simple_eq() {
+    check_no_errors("fn f(x: number) -> bool {\nx == 0\n}");
+}
+
+#[test]
+fn test_type_check_simple_neq() {
+    check_no_errors("fn f(x: number) -> bool {\nx != 0\n}");
+}
+
+#[test]
+fn test_type_check_simple_lt() {
+    check_no_errors("fn f(x: number) -> bool {\nx < 10\n}");
+}
+
+#[test]
+fn test_type_check_simple_gt() {
+    check_no_errors("fn f(x: number) -> bool {\nx > 0\n}");
+}
+
+#[test]
+fn test_type_check_simple_and() {
+    check_no_errors("fn f(a: bool, b: bool) -> bool {\na && b\n}");
+}
+
+#[test]
+fn test_type_check_simple_or() {
+    check_no_errors("fn f(a: bool, b: bool) -> bool {\na || b\n}");
+}
+
+#[test]
+fn test_type_check_simple_not() {
+    check_no_errors("fn f(x: bool) -> bool {\n!x\n}");
+}
+
+#[test]
+fn test_type_check_simple_string_eq() {
+    check_no_errors("fn f(s: string) -> bool {\ns == \"hello\"\n}");
+}
