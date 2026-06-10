@@ -791,6 +791,96 @@ impl LanguageServer for Backend {
         }
     }
 
+    async fn selection_range(
+        &self,
+        params: SelectionRangeParams,
+    ) -> Result<Option<Vec<SelectionRange>>> {
+        let uri = &params.text_document.uri;
+        let store = self.document_store.read().await;
+        let Some(document) = store.get(uri) else {
+            return Ok(None);
+        };
+        let source = &document.content;
+
+        let compiler_bridge = self.compiler_bridge.read().await;
+        let mut results = Vec::new();
+
+        for pos in &params.positions {
+            let offset = crate::compiler_bridge::position_to_offset(source, *pos);
+
+            // 从符号表中查找光标位置的表达式范围
+            let mut ranges = Vec::new();
+
+            if let Some(result) = compiler_bridge.get_cached_result() {
+                for sym in &result.symbols {
+                    if offset >= sym.span.start && offset <= sym.span.end {
+                        let range = crate::compiler_bridge::span_to_range(source, sym.span);
+                        ranges.push(SelectionRange {
+                            range,
+                            parent: None,
+                        });
+                    }
+                }
+            }
+
+            // 如果没有找到精确的符号，查找包含光标的最小范围
+            if ranges.is_empty() {
+                // 使用花括号栈来查找包含光标的最小花括号范围
+                let mut brace_stack: Vec<(usize, usize)> = Vec::new(); // (start, end offset)
+                let mut current_offset = 0;
+                for ch in source.chars() {
+                    if current_offset > offset {
+                        break;
+                    }
+                    if ch == '{' {
+                        brace_stack.push((current_offset, 0));
+                    } else if ch == '}' {
+                        if let Some((start, _)) = brace_stack.pop() {
+                            if start <= offset && current_offset >= offset {
+                                let range = crate::compiler_bridge::span_to_range(
+                                    source,
+                                    karte_diagnostics::Span::new(start, current_offset + 1),
+                                );
+                                ranges.push(SelectionRange {
+                                    range,
+                                    parent: None,
+                                });
+                            }
+                        }
+                    }
+                    current_offset += ch.len_utf8();
+                }
+            }
+
+            // 如果没有找到任何范围，返回光标所在的行范围
+            if ranges.is_empty() {
+                let line_start = source[..offset].rfind('\n').map(|p| p + 1).unwrap_or(0);
+                let line_end = source[offset..].find('\n').map(|p| offset + p).unwrap_or(source.len());
+                let range = crate::compiler_bridge::span_to_range(
+                    source,
+                    karte_diagnostics::Span::new(line_start, line_end),
+                );
+                ranges.push(SelectionRange {
+                    range,
+                    parent: None,
+                });
+            }
+
+            // 只返回最小（最内层）的范围
+            if let Some(smallest) = ranges.into_iter().min_by_key(|r| {
+                (r.range.end.line - r.range.start.line) * 1000 + r.range.end.character - r.range.start.character
+            }) {
+                results.push(smallest);
+            }
+        }
+
+        if results.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(results))
+        }
+    }
+
     async fn inlay_hint(
         &self,
         params: InlayHintParams,
