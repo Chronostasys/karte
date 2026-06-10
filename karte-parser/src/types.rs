@@ -166,7 +166,14 @@ impl fmt::Display for ParseError {
             ParseError::UnexpectedToken {
                 expected, found, ..
             } => {
-                write!(f, "期望 {}, 实际 {}", expected, found)
+                // 尝试提供拼写建议
+                let found_str = format!("{}", found);
+                let suggestion = Self::suggest_keyword(&found_str);
+                if let Some(sug) = suggestion {
+                    write!(f, "期望 {}, 实际 {}。你是否想写 '{}'?", expected, found, sug)
+                } else {
+                    write!(f, "期望 {}, 实际 {}", expected, found)
+                }
             }
             ParseError::UnexpectedEof { expected } => {
                 write!(f, "意外的输入结束, 期望 {}", expected)
@@ -198,5 +205,63 @@ impl fmt::Display for ParseError {
                 )
             }
         }
+    }
+}
+
+/// 关键字拼写建议
+impl ParseError {
+    /// 所有关键字列表
+    const KEYWORDS: &'static [&'static str] = &[
+        "fn", "let", "return", "if", "else", "while", "for", "in",
+        "match", "struct", "enum", "true", "false", "import", "from",
+        "pub", "number", "string", "bool", "char", "Some", "None",
+        "Ok", "Err", "Option", "Result", "Unit",
+    ];
+
+    /// 根据输入字符串建议可能的关键字
+    fn suggest_keyword(input: &str) -> Option<String> {
+        if input.len() < 2 || input.len() > 10 {
+            return None;
+        }
+        if input.chars().next().map(|c| !c.is_alphabetic()).unwrap_or(true) {
+            return None;
+        }
+
+        let mut best: Option<(&str, usize)> = None;
+        for keyword in Self::KEYWORDS {
+            let dist = Self::levenshtein(input, keyword);
+            if dist > 0 && dist <= input.len() / 2 + 1 {
+                if best.is_none() || dist < best.unwrap().1 {
+                    best = Some((*keyword, dist));
+                }
+            }
+        }
+
+        best.map(|(k, _)| k.to_string())
+    }
+
+    /// Levenshtein 编辑距离
+    fn levenshtein(a: &str, b: &str) -> usize {
+        let a_len = a.chars().count();
+        let b_len = b.chars().count();
+        if a_len == 0 { return b_len; }
+        if b_len == 0 { return a_len; }
+
+        let mut matrix = vec![vec![0; b_len + 1]; a_len + 1];
+        for (i, row) in matrix.iter_mut().enumerate() {
+            row[0] = i;
+        }
+        for j in 0..=b_len {
+            matrix[0][j] = j;
+        }
+        for (i, a_char) in a.chars().enumerate() {
+            for (j, b_char) in b.chars().enumerate() {
+                let cost = if a_char == b_char { 0 } else { 1 };
+                matrix[i + 1][j + 1] = (matrix[i][j + 1] + 1)
+                    .min(matrix[i + 1][j] + 1)
+                    .min(matrix[i][j] + cost);
+            }
+        }
+        matrix[a_len][b_len]
     }
 }
