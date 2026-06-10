@@ -2963,3 +2963,53 @@ fn test_type_error_undefined_var2() {
 fn test_type_error_undefined_fn2() {
     check_has_errors("fn main() -> number {\nbar()\n}");
 }
+
+#[test]
+fn test_type_check_simple_while_fn() {
+    check_no_errors("fn countdown(n: number) -> number {\nlet x = n;\nwhile x > 0 {\nx = x - 1\n};\nx\n}");
+}
+
+#[test]
+fn test_type_check_simple_for_fn() {
+    check_no_errors("fn sum_to(n: number) -> number {\nlet total = 0;\nfor i in 1..n {\ntotal = total + i\n};\ntotal\n}");
+}
+
+#[test]
+fn test_type_check_simple_return_fn() {
+    check_no_errors("fn abs(x: number) -> number {\nif x < 0 { return 0 - x };\nx\n}");
+}
+
+#[test]
+fn test_type_check_simple_recursion() {
+    check_no_errors("fn fact(n: number) -> number {\nif n <= 1 { 1 } else { n * fact(n - 1) }\n}");
+}
+
+#[test]
+fn test_type_check_simple_mutual_rec() {
+    check_no_errors("fn is_even(n: number) -> bool {\nif n == 0 { true } else { is_odd(n - 1) }\n}\nfn is_odd(n: number) -> bool {\nif n == 0 { false } else { is_even(n - 1) }\n}");
+}
+
+#[test]
+fn test_type_check_simple_higher_order() {
+    check_no_errors("fn apply(f: fn(number) -> number, x: number) -> number {\nf(x)\n}");
+}
+
+#[test]
+fn test_type_check_simple_method_call() {
+    check_no_errors("struct Counter { value: number }\nfn increment(c: Counter) -> Counter {\nCounter { value: c.value + 1 }\n}");
+}
+
+#[test]
+fn test_type_check_simple_enum_match2() {
+    check_no_errors("enum Direction { North, South, East, West }\nfn opposite(d: Direction) -> Direction {\nmatch d {\nDirection::North => Direction::South\nDirection::South => Direction::North\nDirection::East => Direction::West\nDirection::West => Direction::East\n}\n}");
+}
+
+#[test]
+fn test_type_check_simple_option_chain2() {
+    check_no_errors("fn safe_div(a: number, b: number) -> Option<number> {\nif b == 0 { None } else { Some(a / b) }\n}\nfn try_div(a: number, b: number) -> number {\nmatch safe_div(a, b) {\nSome(x) => x\nNone => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_simple_result_chain2() {
+    check_no_errors("fn parse(s: string) -> Result<number, string> {\nOk(42)\n}\nfn compute(s: string) -> number {\nmatch parse(s) {\nOk(n) => n * 2\nErr(_) => 0\n}\n}");
+}
