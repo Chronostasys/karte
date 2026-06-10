@@ -717,7 +717,14 @@ impl CompilerBridge {
                         KarteSymbolKind::EnumVariant => "variant",
                         KarteSymbolKind::Module => "module",
                     };
-                    let hover_text = format!("{} {}: {}", kind_name, sym.name, sig);
+
+                    // 查找符号上方的文档注释
+                    let doc_comment = Self::extract_doc_comment(source, sym.span.start);
+                    let mut hover_text = format!("{} {}: {}", kind_name, sym.name, sig);
+                    if let Some(doc) = doc_comment {
+                        hover_text = format!("{}\n\n{}", hover_text, doc);
+                    }
+
                     return Some((hover_text, range));
                 }
             }
@@ -735,6 +742,39 @@ impl CompilerBridge {
         }
 
         None
+    }
+
+    /// 提取符号上方的文档注释（// 开头的连续注释行）
+    fn extract_doc_comment(source: &str, symbol_start: usize) -> Option<String> {
+        // 找到符号所在的行的开始位置
+        let line_start = source[..symbol_start].rfind('\n').map(|p| p + 1).unwrap_or(0);
+
+        // 从符号所在行的上一行开始，收集连续的注释行
+        let before = &source[..line_start];
+        let lines: Vec<&str> = before.lines().rev().collect();
+
+        let mut comment_lines = Vec::new();
+        for line in lines {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") {
+                // 去除 // 前缀和可选的空格
+                let comment = trimmed[2..].trim_start();
+                comment_lines.push(comment.to_string());
+            } else if trimmed.is_empty() {
+                // 空行可以出现在注释和代码之间
+                continue;
+            } else {
+                break;
+            }
+        }
+
+        if comment_lines.is_empty() {
+            None
+        } else {
+            // 反转回原始顺序
+            comment_lines.reverse();
+            Some(comment_lines.join("\n"))
+        }
     }
 
     /// 查找指定位置的定义（支持标识符使用处 → 定义处跳转）
