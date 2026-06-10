@@ -1863,3 +1863,93 @@ fn test_analyze_valid_chained_string() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors for chained string: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_simple_add() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f() -> number { 1 + 2 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for simple add: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_sub() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f() -> number { 10 - 3 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for simple sub: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_mul() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f() -> number { 4 * 5 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for simple mul: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_eq() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> bool { x == 0 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for simple eq: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_lt() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> bool { x < 10 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for simple lt: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_and() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(a: bool, b: bool) -> bool { a && b }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for simple and: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_or() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(a: bool, b: bool) -> bool { a || b }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for simple or: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_not() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: bool) -> bool { !x }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for simple not: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_string_eq_v2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(s: string) -> bool { s == \"hello\" }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for string eq: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_leap_year_fn() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn is_leap_year(year: number) -> bool {\n(year % 4 == 0) && ((year % 100 != 0) || (year % 400 == 0))\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for leap year: {:?}", errors);
+}
