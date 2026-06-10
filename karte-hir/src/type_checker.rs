@@ -2276,6 +2276,17 @@ impl TypeChecker {
                     );
                 }
 
+                // 🔧 检测数字字面量作为 while 条件
+                if let Expr::Number { value: n, .. } = condition.as_ref() {
+                    if *n == 0 {
+                        self.add_warning(
+                            "while 条件是数字 0, 循环体永远不会被执行".to_string(),
+                            condition.span(),
+                        );
+                    }
+                    // 不警告 while 42，因为可能是有意的无限循环
+                }
+
                 // 条件可以是布尔或数字类型（非零为 true）
                 let condition_type = self.infer_expr(condition, env);
                 match condition_type {
