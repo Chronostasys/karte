@@ -957,4 +957,94 @@ mod tests {
         let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
         assert!(!diagnostics.has_errors(), "Number pattern with wildcard should be valid");
     }
+
+    #[test]
+    fn test_string_concatenation() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let s = \"hello\" + \" \" + \"world\";\n    0\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "String concatenation should be valid");
+    }
+
+    #[test]
+    fn test_nested_if_else() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = 5;\n    if x > 10 {\n        1\n    } else if x > 5 {\n        2\n    } else {\n        3\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Nested if-else should be valid");
+    }
+
+    #[test]
+    fn test_recursive_function() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn fib(n: number) -> number {\n    if n <= 1 {\n        n\n    } else {\n        fib(n - 1) + fib(n - 2)\n    }\n}\nfn main() -> number {\n    fib(10)\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Recursive function should be valid");
+    }
+
+    #[test]
+    fn test_while_loop() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = 0;\n    let i = 0;\n    while i < 10 {\n        x = x + i;\n        i = i + 1\n    };\n    x\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "While loop should be valid");
+    }
+
+    #[test]
+    fn test_for_loop() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let sum = 0;\n    for i in 0..10 {\n        sum = sum + i\n    };\n    sum\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "For loop should be valid");
+    }
+
+    #[test]
+    fn test_closure_capture() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = 10;\n    let add_x = |y| { y + x };\n    add_x(5)\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Closure capture should be valid");
+    }
+
+    #[test]
+    fn test_reference_type() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = 42;\n    let r = &x;\n    *r\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Reference type should be valid");
+    }
+
+    #[test]
+    fn test_result_type_ok() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let r = Ok(42);\n    match r {\n        Ok(v) => v,\n        Err(_) => 0\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Result type with Ok/Err should be valid");
+    }
+
+    #[test]
+    fn test_method_call_syntax() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = -5;\n    abs(x)\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "abs() built-in should be valid");
+    }
 }
