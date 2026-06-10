@@ -2163,9 +2163,9 @@ impl TypeChecker {
                         _ => {
                             self.add_constraint_with_context(
                                 then_type.clone(),
-                                else_type,
+                                else_type.clone(),
                                 else_branch.span(),
-                                format!("if-else 分支类型不一致"),
+                                format!("if-else 分支类型不一致: then 分支为 `{}`, else 分支为 `{}`", then_type, else_type),
                             );
                             then_type
                         }
