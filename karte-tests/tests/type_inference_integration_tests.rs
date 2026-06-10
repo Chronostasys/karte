@@ -1208,3 +1208,53 @@ fn test_type_check_void2() {
 n
 }");
 }
+
+#[test]
+fn test_type_check_fn_param2() {
+    check_no_errors("fn apply(f: fn(number) -> number, x: number) -> number {\nf(x)\n}\nfn double(n: number) -> number { n * 2 }\nfn main() -> number {\napply(double, 5)\n}");
+}
+
+#[test]
+fn test_type_check_closure_cap2() {
+    check_no_errors("fn main() -> number {\nlet x = 10;\nlet f = || { x + 1 };\nf()\n}");
+}
+
+#[test]
+fn test_type_check_nested_clos2() {
+    check_no_errors("fn main() -> number {\nlet add = |a: number, b: number| -> number { a + b };\nlet inc = |x: number| -> number { add(x, 1) };\ninc(41)\n}");
+}
+
+#[test]
+fn test_type_check_match_guard() {
+    check_no_errors("fn classify(n: number) -> number {\nmatch n {\n0 => 0\n_ => 1\n}\n}");
+}
+
+#[test]
+fn test_type_check_struct_upd2() {
+    check_no_errors("struct Point { x: number, y: number }\nfn translate(p: Point, dx: number) -> Point {\nPoint { x: p.x + dx, y: p.y }\n}");
+}
+
+#[test]
+fn test_type_check_arr_access2() {
+    check_no_errors("fn main() -> number {\nlet arr = [1, 2, 3];\n0\n}");
+}
+
+#[test]
+fn test_type_check_for_in2() {
+    check_no_errors("fn main() -> number {\nlet sum = 0;\nfor i in [1, 2, 3] {\nsum = sum + i\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_str_match2() {
+    check_no_errors("fn greet(s: string) -> number {\nif s == \"hello\" { 1 } else { 0 }\n}");
+}
+
+#[test]
+fn test_type_check_char_lit2_2() {
+    check_no_errors("fn f() -> number {\nlet c = 'a';\nc\n}");
+}
+
+#[test]
+fn test_type_check_neg_match2() {
+    check_no_errors("fn f(n: number) -> number {\nmatch n {\n-1 => 100\n0 => 0\n_ => n\n}\n}");
+}
