@@ -314,3 +314,46 @@ fn main() -> number {
     let refs = bridge.find_references(Position::new(2, 4));
     assert!(!refs.is_empty(), "Should find references to 'foo'");
 }
+
+#[test]
+fn test_compiler_bridge_multiple_functions() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn inc(x: number) -> number { x + 1 }
+fn double(x: number) -> number { x * 2 }
+fn main() -> number { double(inc(5)) }";
+    let diagnostics = bridge.analyze(source);
+    // 多函数程序不应有错误
+    let error_count = diagnostics.iter().filter(|d| format!("{:?}", d.severity).contains("Error")).count();
+    assert_eq!(error_count, 0, "Multi-function program should have no errors");
+}
+
+#[test]
+fn test_compiler_bridge_let_binding_type() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\n    let x = 42;\n    x\n}";
+    let _diagnostics = bridge.analyze(source);
+    let result = bridge.get_cached_result();
+    assert!(result.is_some(), "Should have cached result");
+    let result = result.unwrap();
+    // 检查 identifier_type_strings 是否包含 x 的类型
+    let has_type = result.identifier_type_strings.values().any(|t| t.contains("number"));
+    assert!(has_type, "Should have type information for identifiers");
+}
+
+#[test]
+fn test_compiler_bridge_struct_symbols() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point { x: number, y: number }\nfn main() -> number { 0 }";
+    let _diagnostics = bridge.analyze(source);
+    let symbols = bridge.get_document_symbols();
+    assert!(symbols.iter().any(|s| s.name == "Point"), "Should find 'Point' struct symbol");
+}
+
+#[test]
+fn test_compiler_bridge_enum_symbols() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Color { Red, Green, Blue }\nfn main() -> number { 0 }";
+    let _diagnostics = bridge.analyze(source);
+    let symbols = bridge.get_document_symbols();
+    assert!(symbols.iter().any(|s| s.name == "Color"), "Should find 'Color' enum symbol");
+}
