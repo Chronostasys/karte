@@ -91,6 +91,11 @@ impl LanguageServer for Backend {
                 definition_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                signature_help_provider: Some(SignatureHelpOptions {
+                    trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
+                    retrigger_characters: Some(vec![")".to_string()]),
+                    ..Default::default()
+                }),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
@@ -225,6 +230,20 @@ impl LanguageServer for Backend {
                 })
                 .collect();
             return Ok(Some(locations));
+        }
+
+        Ok(None)
+    }
+
+    async fn signature_help(
+        &self,
+        params: SignatureHelpParams,
+    ) -> Result<Option<SignatureHelp>> {
+        let position = params.text_document_position_params.position;
+
+        let bridge = self.compiler_bridge.read().await;
+        if let Some(sig_info) = bridge.get_signature_help(position) {
+            return Ok(Some(sig_info));
         }
 
         Ok(None)

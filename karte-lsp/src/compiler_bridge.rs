@@ -8,7 +8,7 @@ use karte_hir::type_check_for_lsp;
 use karte_hir::types::Type;
 use karte_lexer::Lexer;
 use karte_parser::{Parser, ParserMode};
-use tower_lsp::lsp_types::{Position, Range};
+use tower_lsp::lsp_types::{Position, Range, SignatureHelp};
 use std::collections::HashMap;
 
 /// 符号信息
@@ -854,6 +854,71 @@ impl CompilerBridge {
             .map(|r| r.symbols.clone())
             .unwrap_or_default()
     }
+
+    /// 获取 Signature Help 信息
+    /// 查找光标位置是否在函数调用内，返回函数签名和当前参数索引
+    pub fn get_signature_help(&self, position: Position) -> Option<SignatureHelp> {
+        use tower_lsp::lsp_types::{SignatureInformation, ParameterInformation};
+
+        let source = self.cached_source.as_ref()?;
+        let result = self.cached_result.as_ref()?;
+        let offset = position_to_offset(source, position);
+
+        // 查找光标位置附近的函数符号（用类型信息中的函数签名）
+        // 简化实现：在已缓存的符号中查找函数定义
+        let mut func_sigs: Vec<(String, String, usize)> = Vec::new(); // (name, sig, param_count)
+        for sym in &result.symbols {
+            if sym.kind == KarteSymbolKind::Function {
+                if let Some(sig) = &sym.type_signature {
+                    // 从签名中估计参数数量
+                    let param_count = count_params_in_sig(sig);
+                    func_sigs.push((sym.name.clone(), sig.clone(), param_count));
+                }
+            }
+        }
+
+        // 查找光标是否在某个函数名附近
+        // 简化：查找光标位置的标识符类型
+        for (&(start, end), type_str) in &result.identifier_type_strings {
+            if offset >= start && offset <= end {
+                // 检查类型是否是函数类型
+                if type_str.starts_with("fn(") || type_str.starts_with("closure(") {
+                    // 尝试匹配函数名
+                    let name = &source[start..end];
+                    let sig = func_sigs.iter()
+                        .find(|(n, _, _)| n == name)
+                        .map(|(_, s, _)| s.clone())
+                        .unwrap_or_else(|| type_str.clone());
+
+                    let param_count = count_params_in_sig(&sig);
+                    let params: Vec<ParameterInformation> = (0..param_count)
+                        .map(|i| ParameterInformation {
+                            label: tower_lsp::lsp_types::ParameterLabel::Simple(
+                                format!("arg{}", i)
+                            ),
+                            documentation: None,
+                        })
+                        .collect();
+
+                    // 简单估计当前参数索引（基于逗号数量）
+                    let active_param = estimate_active_param(source, offset, start);
+
+                    return Some(SignatureHelp {
+                        signatures: vec![SignatureInformation {
+                            label: sig,
+                            documentation: None,
+                            parameters: Some(params),
+                            active_parameter: Some(active_param as u32),
+                        }],
+                        active_signature: Some(0),
+                        active_parameter: Some(active_param as u32),
+                    });
+                }
+            }
+        }
+
+        None
+    }
 }
 
 impl Default for CompilerBridge {
@@ -943,4 +1008,52 @@ pub fn position_to_offset(source: &str, position: Position) -> usize {
     }
 
     offset
+}
+
+/// 从函数签名字符串中估计参数数量
+fn count_params_in_sig(sig: &str) -> usize {
+    // fn name(p1, p2) -> ret 或 fn(p1, p2) -> ret
+    let start = sig.find('(').unwrap_or(0);
+    let end = sig.find(')').unwrap_or(sig.len());
+    if start >= end {
+        return 0;
+    }
+    let params_str = &sig[start + 1..end];
+    if params_str.trim().is_empty() {
+        return 0;
+    }
+    params_str.split(',').count()
+}
+
+/// 估计光标在函数调用中的当前参数索引（基于逗号数量）
+fn estimate_active_param(source: &str, cursor_offset: usize, func_start: usize) -> usize {
+    // 从 func_start 开始找 '(' 然后数逗号
+    let mut depth = 0;
+    let mut comma_count = 0;
+    let mut found_open_paren = false;
+
+    for (i, ch) in source[func_start..].chars().enumerate() {
+        let abs_offset = func_start + i;
+        if abs_offset >= cursor_offset {
+            break;
+        }
+        match ch {
+            '(' => {
+                found_open_paren = true;
+                depth += 1;
+            }
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            ',' if depth == 1 && found_open_paren => {
+                comma_count += 1;
+            }
+            _ => {}
+        }
+    }
+
+    comma_count
 }
