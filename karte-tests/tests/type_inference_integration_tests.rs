@@ -2768,3 +2768,53 @@ fn test_type_check_fn_return_option() {
 fn test_type_check_fn_return_result() {
     check_no_errors("fn checked_div(a: number, b: number) -> Result<number, string> {\nif b == 0 { Err(\"zero\") } else { Ok(a / b) }\n}");
 }
+
+#[test]
+fn test_type_check_empty_main() {
+    check_no_errors("fn main() -> number {\n0\n}");
+}
+
+#[test]
+fn test_type_check_let_only() {
+    check_no_errors("fn main() -> number {\nlet x = 42;\nx\n}");
+}
+
+#[test]
+fn test_type_check_nested_let_v3() {
+    check_no_errors("fn main() -> number {\nlet a = 1;\nlet b = {\nlet c = a + 1;\nc * 2\n};\nb\n}");
+}
+
+#[test]
+fn test_type_check_if_value() {
+    check_no_errors("fn main() -> number {\nlet x = if true { 1 } else { 2 };\nx\n}");
+}
+
+#[test]
+fn test_type_check_match_value() {
+    check_no_errors("fn f(x: number) -> number {\nlet y = match x {\n0 => 10\n_ => 20\n};\ny\n}");
+}
+
+#[test]
+fn test_type_check_fn_call_value() {
+    check_no_errors("fn double(x: number) -> number { x * 2 }\nfn main() -> number {\nlet y = double(5);\ny\n}");
+}
+
+#[test]
+fn test_type_check_struct_value() {
+    check_no_errors("struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point { x: 1, y: 2 };\np.x + p.y\n}");
+}
+
+#[test]
+fn test_type_check_string_value() {
+    check_no_errors("fn f() -> string {\nlet s = \"hello\";\ns + \" world\"\n}");
+}
+
+#[test]
+fn test_type_check_bool_value() {
+    check_no_errors("fn main() -> bool {\nlet b = true;\n!b\n}");
+}
+
+#[test]
+fn test_type_check_array_value() {
+    check_no_errors("fn main() -> number {\nlet arr = [1, 2, 3];\narr[0]\n}");
+}
