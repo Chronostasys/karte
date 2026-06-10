@@ -796,4 +796,94 @@ mod tests {
         let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
         assert!(diagnostics.has_errors(), "Should report type error for !number");
     }
+
+    #[test]
+    fn test_array_element_type_consistency() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let arr = [1, true, 3];\n    arr[0]\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Should report type error for mixed array");
+    }
+
+    #[test]
+    fn test_nested_function_call_type() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn add(a: number, b: number) -> number { a + b }\nfn main() -> number {\n    add(1, true)\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Should report type error for wrong argument type");
+    }
+
+    #[test]
+    fn test_return_type_mismatch() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn foo() -> number { \"hello\" }";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Should report type error for return type mismatch");
+    }
+
+    #[test]
+    fn test_if_else_branch_consistency() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    if 1 > 0 {\n        42\n    } else {\n        \"hello\"\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Should report type error for if-else branch mismatch");
+    }
+
+    #[test]
+    fn test_for_loop_range_type() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let sum = 0;\n    for i in \"hello\" {\n        sum\n    }\n    sum\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Should report type error for non-number range");
+    }
+
+    #[test]
+    fn test_bitwise_operation_type() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = true;\n    let y = 10;\n    x bitand y\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Should report type error for bitwise on bool");
+    }
+
+    #[test]
+    fn test_string_comparison() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let a = \"hello\";\n    let b = \"world\";\n    if a > b {\n        1\n    } else {\n        0\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "String comparison should be valid");
+    }
+
+    #[test]
+    fn test_match_with_guard() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = 42;\n    match x {\n        n if n > 10 => 1,\n        _ => 0\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Match with guard should be valid");
+    }
+
+    #[test]
+    fn test_empty_struct() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "struct Empty {}\nfn main() -> number {\n    let e = Empty {};\n    0\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Empty struct should be valid");
+    }
 }
