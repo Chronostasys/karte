@@ -9777,4 +9777,123 @@ fn main() -> number {
         let exit_code = compile_project_mode_code(code);
         assert_eq!(exit_code, 11);
     }
+
+    #[test]
+    fn test_option_match_exhaustive() {
+        let code = "fn main() -> number {\n    let x = Some(42);\n    match x {\n        Some(n) => n,\n        None => 0\n    }\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 42);
+    }
+
+    #[test]
+    fn test_option_match_with_wildcard() {
+        let code = "fn main() -> number {\n    let x = Some(42);\n    match x {\n        Some(n) => n,\n        _ => 0\n    }\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 42);
+    }
+
+    #[test]
+    fn test_string_compare_operators() {
+        let code = "fn main() -> number {\n    let a = \"hello\";\n    let b = \"world\";\n    if a < b { 1 } else { 0 }\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 1);
+    }
+
+    #[test]
+    fn test_char_literal_in_match() {
+        let code = "fn main() -> number {\n    let c = 'A';\n    match c {\n        'A' => 1,\n        'B' => 2,\n        _ => 0\n    }\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 1);
+    }
+
+    #[test]
+    fn test_nested_function_calls() {
+        let code = "fn double(x: number) -> number { x * 2 }\nfn add_one(x: number) -> number { x + 1 }\nfn main() -> number {\n    double(add_one(5))\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 12);
+    }
+
+    #[test]
+    fn test_struct_field_access() {
+        let code = "struct Point { x: number, y: number }\nfn main() -> number {\n    let p = Point { x: 10, y: 20 };\n    p.x + p.y\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 30);
+    }
+
+    #[test]
+    fn test_tuple_access_operations() {
+        let code = "fn main() -> number {\n    let t = (10, 20, 30);\n    t.0 + t.1 + t.2\n}";
+        let (tokens, _) = tokenize(code);
+        let (parse_result, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(
+            !diagnostics.has_errors(),
+            "Parse/type errors: {:?}",
+            diagnostics
+        );
+        let parse_result = parse_result.expect("No parse result");
+        let ast = parse_result.expr();
+        let options = LoweringOptions {
+            known_functions: HashSet::new(),
+            module_context: None,
+            expr_types: parse_result.expr_types.clone(),
+        };
+        let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering failed");
+        promote_project_entry(&mut mir);
+        mir.functions.remove(SCRIPT_ENTRY_POINT);
+        let mut lir = lower_mir_to_lir(&mir).expect("LIR lowering failed");
+        let mut pipeline = OptimizationPipeline::new(OptimizationLevel::Balanced);
+        pipeline.optimize(&mut lir).expect("Optimization failed");
+        let mut executor = ProfessionalExecutor::new_with_jit(false).expect("Failed to create JIT executor");
+        let exit_code = executor.execute_with_jit(&lir).expect("JIT execution failed");
+        assert_eq!(exit_code, 60, "tuple access should return 60, got {}", exit_code);
+    }
+
+    #[test]
+    fn test_bitwise_operations_basic() {
+        let code = "fn main() -> number {\n    let a = 12;\n    let b = 10;\n    (a bitand b) + (a bitor b) + (a bitxor b)\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 8 + 14 + 6, "bitwise operations: 12&10=8, 12|10=14, 12^10=6");
+    }
+
+    #[test]
+    fn test_string_concat_and_len() {
+        let code = "fn main() -> number {\n    let s = \"hello\" + \" \" + \"world\";\n    len(s)\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 11);
+    }
+
+    #[test]
+    fn test_result_match_exhaustive() {
+        let code = "fn divide(a: number, b: number) -> Result {\n    if b == 0 {\n        Err(100)\n    } else {\n        Ok(a / b)\n    }\n}\nfn main() -> number {\n    let r = divide(10, 2);\n    match r {\n        Ok(v) => v,\n        Err(e) => e\n    }\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 5);
+    }
+
+    #[test]
+    fn test_result_match_err() {
+        let code = "fn divide(a: number, b: number) -> Result {\n    if b == 0 {\n        Err(999)\n    } else {\n        Ok(a / b)\n    }\n}\nfn main() -> number {\n    let r = divide(10, 0);\n    match r {\n        Ok(v) => v,\n        Err(e) => e\n    }\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 999);
+    }
+
+    #[test]
+    fn test_complex_enum_pattern_nested() {
+        let code = "enum Expr { Num(number), Add(Expr, Expr), Mul(Expr, Expr) }\nfn eval(e: Expr) -> number {\n    match e {\n        Expr::Num(n) => n,\n        Expr::Add(a, b) => eval(a) + eval(b),\n        Expr::Mul(a, b) => eval(a) * eval(b)\n    }\n}\nfn main() -> number {\n    let expr = Expr::Add(Expr::Num(2), Expr::Mul(Expr::Num(3), Expr::Num(4)));\n    eval(expr)\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 14, "2 + 3*4 = 14");
+    }
+
+    #[test]
+    fn test_closure_capture_and_call() {
+        let code = "fn main() -> number {\n    let x = 10;\n    let add_x = |y| { x + y };\n    add_x(5)\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 15);
+    }
+
+    #[test]
+    fn test_higher_order_function() {
+        let code = "fn apply(f: fn(number) -> number, x: number) -> number {\n    f(x)\n}\nfn double(n: number) -> number {\n    n * 2\n}\nfn main() -> number {\n    apply(double, 21)\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 42);
+    }
 }
