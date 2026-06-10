@@ -2342,3 +2342,53 @@ fn test_type_check_string_not() {
 fn test_type_check_complex_bool_expr2() {
     check_no_errors("fn is_leap_year(year: number) -> bool {\n(year % 4 == 0) && ((year % 100 != 0) || (year % 400 == 0))\n}");
 }
+
+#[test]
+fn test_type_check_complex_fn_composition_v2() {
+    check_no_errors("fn double(x: number) -> number { x * 2 }\nfn inc(x: number) -> number { x + 1 }\nfn apply(f: fn(number) -> number, x: number) -> number { f(x) }\nfn main() -> number { apply(double, apply(inc, 5)) }");
+}
+
+#[test]
+fn test_type_check_nested_option_result() {
+    check_no_errors("fn parse_int(s: string) -> Option<number> {\nSome(42)\n}\nfn safe_compute(s: string) -> Result<number, string> {\nmatch parse_int(s) {\nSome(n) => Ok(n * 2)\nNone => Err(\"parse error\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_mutual_recursive() {
+    check_no_errors("fn is_even(n: number) -> bool {\nif n == 0 { true } else { is_odd(n - 1) }\n}\nfn is_odd(n: number) -> bool {\nif n == 0 { false } else { is_even(n - 1) }\n}");
+}
+
+#[test]
+fn test_type_check_complex_pattern2() {
+    check_no_errors("enum List { Cons(number, number), Nil }\nfn sum(l: List) -> number {\nmatch l {\nList::Cons(a, b) => a + b\nList::Nil => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_string_operations_v2() {
+    check_no_errors("fn exclaim(s: string) -> string {\ns + \"!\"\n}\nfn whisper(s: string) -> string {\n\"(\" + s + \")\"\n}");
+}
+
+#[test]
+fn test_type_check_chained_comparison_v2() {
+    check_no_errors("fn in_range(x: number, lo: number, hi: number) -> bool {\nx >= lo && x <= hi && x != lo\n}");
+}
+
+#[test]
+fn test_type_check_destructuring_match() {
+    check_no_errors("enum Pair { MkPair(number, number) }\nfn fst(p: Pair) -> number {\nmatch p {\nPair::MkPair(a, _) => a\n}\n}\nfn snd(p: Pair) -> number {\nmatch p {\nPair::MkPair(_, b) => b\n}\n}");
+}
+
+#[test]
+fn test_type_check_nested_struct_field() {
+    check_no_errors("struct Line { x1: number, y1: number, x2: number, y2: number }\nfn length_sq(l: Line) -> number {\nlet dx = l.x2 - l.x1;\nlet dy = l.y2 - l.y1;\ndx * dx + dy * dy\n}");
+}
+
+#[test]
+fn test_type_check_option_default_value() {
+    check_no_errors("fn get_or_default(opt: Option<number>) -> number {\nmatch opt {\nSome(x) => x\nNone => 42\n}\n}");
+}
+
+#[test]
+fn test_type_check_result_error_propagation() {
+    check_no_errors("fn div_or_err(a: number, b: number) -> Result<number, string> {\nif b == 0 { Err(\"division by zero\") } else { Ok(a / b) }\n}\nfn safe_double_div(a: number, b: number, c: number) -> Result<number, string> {\nmatch div_or_err(a, b) {\nOk(ab) => div_or_err(ab, c)\nErr(e) => Err(e)\n}\n}");
+}
