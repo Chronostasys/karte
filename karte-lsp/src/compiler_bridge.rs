@@ -78,6 +78,7 @@ pub struct LspDiagnostic {
     pub range: Range,
     pub message: String,
     pub severity: KarteDiagnosticSeverity,
+    pub help: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,6 +169,7 @@ impl CompilerBridge {
                 range: span_to_range(source, diag.span),
                 message: diag.message.clone(),
                 severity: KarteDiagnosticSeverity::Error,
+                help: None,
             });
         }
 
@@ -185,6 +187,7 @@ impl CompilerBridge {
                 range: span_to_range(source, diag.span),
                 message: diag.message.clone(),
                 severity: KarteDiagnosticSeverity::Error,
+                help: None,
             });
         }
 
@@ -213,6 +216,7 @@ impl CompilerBridge {
                 range: span_to_range(source, diag.span),
                 message: diag.message.clone(),
                 severity,
+                help: diag.help.clone(),
             });
         }
 
