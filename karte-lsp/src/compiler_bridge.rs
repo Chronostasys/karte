@@ -80,7 +80,7 @@ pub struct LspDiagnostic {
     pub severity: KarteDiagnosticSeverity,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KarteDiagnosticSeverity {
     Error,
     Warning,

@@ -322,9 +322,8 @@ fn test_compiler_bridge_multiple_functions() {
 fn double(x: number) -> number { x * 2 }
 fn main() -> number { double(inc(5)) }";
     let diagnostics = bridge.analyze(source);
-    // 多函数程序不应有错误
-    let error_count = diagnostics.iter().filter(|d| format!("{:?}", d.severity).contains("Error")).count();
-    assert_eq!(error_count, 0, "Multi-function program should have no errors");
+    use karte_lsp::compiler_bridge::KarteDiagnosticSeverity;
+    assert!(!diagnostics.iter().any(|d| d.severity == KarteDiagnosticSeverity::Error));
 }
 
 #[test]
