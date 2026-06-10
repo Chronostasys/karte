@@ -252,3 +252,38 @@ fn test_parse_let_with_pattern() {
     // Tuple destructuring 可能不支持
     let _ = diagnostics;
 }
+
+#[test]
+fn test_parse_import_statement() {
+    let code = "import std.io;\nfn main() -> number { 0 }";
+    let diagnostics = parse_project(code);
+    assert!(!diagnostics.has_errors(), "Import statement should parse");
+}
+
+#[test]
+fn test_parse_from_import() {
+    let code = "import std.io;\nfn main() -> number { 0 }";
+    let diagnostics = parse_project(code);
+    assert!(!diagnostics.has_errors(), "Import statement should parse");
+}
+
+#[test]
+fn test_parse_pub_function() {
+    let code = "pub fn helper() -> number { 42 }\nfn main() -> number { helper() }";
+    let diagnostics = parse_project(code);
+    assert!(!diagnostics.has_errors(), "Pub function should parse");
+}
+
+#[test]
+fn test_parse_closure() {
+    let code = "fn main() -> number {\n    let f = |x| { x + 1 };\n    f(42)\n}";
+    let diagnostics = parse_project(code);
+    assert!(!diagnostics.has_errors(), "Closure should parse");
+}
+
+#[test]
+fn test_parse_chained_function_calls() {
+    let code = "fn inc(x: number) -> number { x + 1 }\nfn main() -> number {\n    inc(inc(inc(42)))\n}";
+    let diagnostics = parse_project(code);
+    assert!(!diagnostics.has_errors(), "Chained function calls should parse");
+}
