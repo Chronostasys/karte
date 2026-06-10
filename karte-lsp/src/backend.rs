@@ -129,6 +129,7 @@ impl LanguageServer for Backend {
                 ),
                 document_highlight_provider: Some(OneOf::Left(true)),
                 document_formatting_provider: Some(OneOf::Left(true)),
+                document_range_formatting_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -900,4 +901,77 @@ fn trimmed_start_braces(line: &str) -> bool {
 /// Check if line ends with an opening brace
 fn trimmed_end_braces(line: &str) -> bool {
     line.ends_with('{') || line.ends_with('(')
+}
+
+impl Backend {
+    async fn range_formatting(
+        &self,
+        params: DocumentRangeFormattingParams,
+    ) -> Result<Option<Vec<TextEdit>>> {
+        let uri = &params.text_document.uri;
+        let store = self.document_store.read().await;
+        let Some(document) = store.get(uri) else {
+            return Ok(None);
+        };
+        let source = &document.content;
+        let range = params.range;
+
+        let mut edits = Vec::new();
+        let indent_str = "    ";
+
+        // 计算选中范围内的缩进级别
+        let mut indent_level: u32 = 0;
+        for (i, line) in source.lines().enumerate() {
+            if i >= range.start.line as usize {
+                break;
+            }
+            for ch in line.chars() {
+                match ch {
+                    '{' | '(' => indent_level += 1,
+                    '}' | ')' => { if indent_level > 0 { indent_level -= 1; } }
+                    _ => {}
+                }
+            }
+        }
+
+        for (line_num, line) in source.lines().enumerate() {
+            let ln = line_num as u32;
+            if ln < range.start.line || ln > range.end.line {
+                continue;
+            }
+
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            let trimmed_start = trimmed.starts_with('}') || trimmed.starts_with(')');
+            if trimmed_start {
+                if indent_level > 0 {
+                    indent_level -= 1;
+                }
+            }
+
+            let formatted = format!("{}{}", indent_str.repeat(indent_level as usize), trimmed);
+            if formatted != line {
+                edits.push(TextEdit {
+                    range: Range::new(
+                        Position::new(ln, 0),
+                        Position::new(ln, line.len() as u32),
+                    ),
+                    new_text: formatted,
+                });
+            }
+
+            if trimmed.ends_with('{') || trimmed.ends_with('(') {
+                indent_level += 1;
+            }
+        }
+
+        if edits.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(edits))
+        }
+    }
 }
