@@ -130,14 +130,14 @@ impl<'a> Parser<'a> {
                     }
                 }
                 _ => Err(ParseError::UnexpectedToken {
-                    expected: "pattern".to_string(),
+                    expected: "模式".to_string(),
                     found: token.token.clone(),
                     span: token.span,
                 }),
             }
         } else {
             Err(ParseError::UnexpectedEof {
-                expected: "pattern".to_string(),
+                expected: "模式".to_string(),
             })
         }
     }
