@@ -384,7 +384,7 @@ impl fmt::Display for Type {
                     write!(f, "T{}", idx)
                 }
             }
-            Type::Unknown => write!(f, "unknown"),
+            Type::Unknown => write!(f, "<未知类型>"),
         }
     }
 }
