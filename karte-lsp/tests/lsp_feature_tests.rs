@@ -435,3 +435,39 @@ fn test_definition_lookup() {
     // foo 在 main 中被调用，应该能跳转到定义
     assert!(def.is_some(), "Should find definition of foo");
 }
+
+#[test]
+fn test_analyze_warning_self_assignment() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet x = 5;\nx = x;\nx\n}";
+    let diagnostics = bridge.analyze(source);
+    // 应该有自赋值警告
+    assert!(!diagnostics.is_empty(), "Should have self-assignment warning");
+}
+
+#[test]
+fn test_analyze_warning_assignment_in_if() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet x = 0;\nif x = 5 {\nx\n} else {\n0\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    // 应该有赋值操作警告
+    assert!(!diagnostics.is_empty(), "Should have assignment in if warning");
+}
+
+#[test]
+fn test_analyze_duplicate_param_error() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number, x: number) -> number { x }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(!errors.is_empty(), "Should have duplicate param error");
+}
+
+#[test]
+fn test_analyze_warning_shadow() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet x = 5;\nlet x = 10;\nx\n}";
+    let diagnostics = bridge.analyze(source);
+    // 应该有变量遮蔽警告
+    assert!(!diagnostics.is_empty(), "Should have shadow warning");
+}
