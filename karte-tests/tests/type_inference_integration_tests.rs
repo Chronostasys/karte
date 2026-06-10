@@ -221,3 +221,48 @@ fn test_type_check_enum_basic() {
 fn test_type_check_string_comparison() {
     check_no_errors("fn main() -> number {\n    let a = \"hello\";\n    let b = \"world\";\n    if a == b { 1 } else { 0 }\n}");
 }
+
+#[test]
+fn test_type_check_tuple_two_elements() {
+    check_no_errors("fn main() -> number {\n    let t = (1, 2);\n    0\n}");
+}
+
+#[test]
+fn test_type_check_tuple_nested() {
+    check_no_errors("fn main() -> number {\n    let t = (1, (2, 3), 4);\n    0\n}");
+}
+
+#[test]
+fn test_type_check_reference() {
+    check_no_errors("fn main() -> number {\n    let x = 42;\n    let r = &x;\n    *r\n}");
+}
+
+#[test]
+fn test_type_check_closure_basic() {
+    check_no_errors("fn main() -> number {\n    let f = |x| { x + 1 };\n    f(42)\n}");
+}
+
+#[test]
+fn test_type_check_closure_multi_param() {
+    check_no_errors("fn main() -> number {\n    let add = |a, b| { a + b };\n    add(1, 2)\n}");
+}
+
+#[test]
+fn test_type_check_string_operations() {
+    check_no_errors("fn main() -> number {\n    let s = \"hello\";\n    let len = len(s);\n    len\n}");
+}
+
+#[test]
+fn test_type_check_result_ok() {
+    check_no_errors("fn main() -> number {\n    let r = Ok(42);\n    match r {\n        Ok(v) => v,\n        Err(_) => 0\n    }\n}");
+}
+
+#[test]
+fn test_type_check_result_err() {
+    check_no_errors("fn main() -> number {\n    let r: Result<number, string> = Err(\"error\");\n    match r {\n        Ok(v) => v,\n        Err(_) => 0\n    }\n}");
+}
+
+#[test]
+fn test_type_check_enum_with_data() {
+    check_no_errors("enum Expr { Number(number), Add(Expr, Expr), Literal }\nfn main() -> number {\n    let e = Expr::Number(42);\n    match e {\n        Expr::Number(n) => n,\n        _ => 0\n    }\n}");
+}
