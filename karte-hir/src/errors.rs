@@ -49,6 +49,7 @@ pub enum TypeCheckError {
         struct_name: String,
         expected: usize,
         found: usize,
+        missing: Vec<String>,
         span: Span,
     },
     UnknownField {
@@ -167,13 +168,22 @@ impl fmt::Display for TypeCheckError {
                 struct_name,
                 expected,
                 found,
+                missing,
                 ..
             } => {
-                write!(
-                    f,
-                    "结构体 `{}` 缺少字段: 期望 {} 个字段, 实际 {} 个（请检查是否遗漏了字段）",
-                    struct_name, expected, found
-                )
+                if missing.is_empty() {
+                    write!(
+                        f,
+                        "结构体 `{}` 缺少字段: 期望 {} 个字段, 实际 {} 个",
+                        struct_name, expected, found
+                    )
+                } else {
+                    write!(
+                        f,
+                        "结构体 `{}` 缺少字段: {}（期望 {} 个字段, 实际 {} 个）",
+                        struct_name, missing.join(", "), expected, found
+                    )
+                }
             }
             TypeCheckError::UnknownField {
                 struct_name,

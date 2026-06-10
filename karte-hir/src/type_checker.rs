@@ -2206,10 +2206,22 @@ impl TypeChecker {
                     if let Type::Struct { fields: template_fields, .. } = &gen_def.template {
                         // 检查字段数量匹配
                         if fields.len() != template_fields.len() {
+                            // 计算缺少的字段
+                            let provided_names: Vec<&str> = fields.iter().map(|f| f.name.as_str()).collect();
+                            let missing: Vec<String> = template_fields.iter()
+                                .filter_map(|f| {
+                                    if !provided_names.contains(&f.name.as_str()) {
+                                        Some(f.name.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
                             self.add_error(TypeCheckError::MissingFields {
                                 struct_name: name.clone(),
                                 expected: template_fields.len(),
                                 found: fields.len(),
+                                missing,
                                 span: *span,
                             });
                             return Type::Unknown;
@@ -2259,10 +2271,22 @@ impl TypeChecker {
                         } => {
                             // 检查字段是否完整匹配
                             if fields.len() != field_defs.len() {
+                                // 计算缺少的字段
+                                let provided_names: Vec<&str> = fields.iter().map(|f| f.name.as_str()).collect();
+                                let missing: Vec<String> = field_defs.iter()
+                                    .filter_map(|f| {
+                                        if !provided_names.contains(&f.name.as_str()) {
+                                            Some(f.name.clone())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect();
                                 self.add_error(TypeCheckError::MissingFields {
                                     struct_name: struct_name.clone(),
                                     expected: field_defs.len(),
                                     found: fields.len(),
+                                    missing,
                                     span: *span,
                                 });
                                 return Type::Unknown;
