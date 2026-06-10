@@ -1290,4 +1290,107 @@ mod tests {
         let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
         assert!(!diagnostics.has_errors(), "Char literal should be valid");
     }
+
+    #[test]
+    fn test_lexer_error_unclosed_string() {
+        use karte_lexer::Lexer;
+        let code = r#"fn main() -> number { let x = "hello; 0 }"#;
+        let tokens = Lexer::new(code).tokenize();
+        // 应该能处理未关闭的字符串
+        assert!(tokens.len() > 0, "Should tokenize even with unclosed string");
+    }
+
+    #[test]
+    fn test_lexer_error_float_literal() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = 3.14;\n    0\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        // 浮点数字面量应该报错
+        assert!(diagnostics.has_errors(), "Float literal should report error");
+    }
+
+    #[test]
+    fn test_parser_error_missing_semicolon_in_struct() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "struct Point { x: number y: number }\nfn main() -> number { 0 }";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        // 缺少逗号分隔应该报错
+        assert!(diagnostics.has_errors(), "Missing comma in struct should report error");
+    }
+
+    #[test]
+    fn test_parser_error_missing_arrow() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() number { 42 }";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        // 缺少 -> 应该报错
+        assert!(diagnostics.has_errors(), "Missing arrow in function should report error");
+    }
+
+    #[test]
+    fn test_parser_error_unclosed_brace() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    42";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        // 缺少闭合花括号应该报错
+        assert!(diagnostics.has_errors(), "Unclosed brace should report error");
+    }
+
+        #[test]
+    fn test_type_inference_simple_binding() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "let x = 5; let y = x + 1; y";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Simple binding type inference should work");
+    }
+
+        #[test]
+    fn test_type_inference_chained_operations() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "let a = 3; let b = 4; let c = a * b + a; c";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Chained operations type inference should work");
+    }
+
+    #[test]
+    fn test_enum_constructor_pattern() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "enum Option { Some, None }\nfn unwrap(o) -> number {\n    match o {\n        Option::Some => 1,\n        Option::None => 0\n    }\n}\nfn main() -> number {\n    unwrap(Option::Some)\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Enum constructor pattern should be valid");
+    }
+
+    #[test]
+    fn test_builtin_function_len() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let s = \"hello\";\n    len(s)\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "len() builtin should work");
+    }
+
+    #[test]
+    fn test_builtin_function_abs() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    abs(-42)\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "abs() builtin should work");
+    }
 }
