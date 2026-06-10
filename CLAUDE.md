@@ -394,6 +394,17 @@ let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering
 ## Notable Recent Changes
 
 Recent work includes:
+- **Language Polish 2025 (2026-06-11)** — LSP 支持、类型推理、穷尽性检查、QOL 改进：
+  - **LSP 完整功能栈**: Go-to-definition（标识符使用→定义跳转）、Find-references、Signature Help（函数参数提示）、Workspace Symbols（工作区符号搜索）、Rename 声明、上下文感知补全（按相关度排序+去重）
+  - **穷尽性检查**: 支持布尔、枚举（Sum types）、Option<T>（Some/None）、Result<T,E>（Ok/Err）、通配符模式。非穷尽时提示缺失的构造器名称
+  - **冗余 arm 检测**: 当前面的 arms 已穷尽时，后续的 `_` 模式被标记为冗余（Warning 级别）
+  - **未使用变量警告**: 追踪变量/函数定义和使用，对未使用的 `let` 绑定发出 Warning（跳过 `_` 前缀变量、`main` 函数、有函数签名的定义）
+  - **TypeMismatch 上下文描述**: 29 个内置操作添加中文上下文描述（max/clamp/字符串操作/解引用/函数调用等）。Constraint 新增 context 字段，if-else/函数调用/闭包调用/函数返回值类型不匹配携带上下文
+  - **拼写建议**: 未定义变量时基于 Levenshtein 距离推荐可能的正确变量名
+  - **类型变量显示改进**: Type::Var 从 `t0`/`t1` 改为 `T`/`U`/`V` 显示
+  - **LspTypeInfo API**: type_check_for_lsp 返回函数签名和泛型类型方案信息
+  - **诊断级别保留**: parse_with_type_check 保留 Warning 级别（不再被转为 Error）
+  - **测试覆盖**: 993 测试（新增 20 个），包括穷尽性检查 6 个单元测试 + 14 个集成测试
 - **Karte char 字面量与 std 文件操作 (2026-06-07)** — 语言特性与标准库完善：
   - **`'a'` char 字面量**: Lexer 新增 `CharLiteral(i64)` token，支持转义 `\n` `\t` `\r` `\\` `\'` `\"` `\0`，parser 映射为 `Expr::Number`
   - **`char` 类型**: 类型注解 `char` 映射为 `Type::Number`（如 C 语言 char 即整数），`let c: char = 'A'` 和 `fn f(c: char) -> char` 均支持
