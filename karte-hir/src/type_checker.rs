@@ -2180,6 +2180,14 @@ impl TypeChecker {
             Expr::While {
                 condition, body, ..
             } => {
+                // 🔧 检测 while 条件中的赋值
+                if let Expr::Assignment { .. } = condition.as_ref() {
+                    self.add_warning(
+                        "while 条件中使用了赋值操作 (=)，请确认是否应该使用比较操作 (==)".to_string(),
+                        condition.span(),
+                    );
+                }
+
                 // 条件可以是布尔或数字类型（非零为 true）
                 let condition_type = self.infer_expr(condition, env);
                 match condition_type {
