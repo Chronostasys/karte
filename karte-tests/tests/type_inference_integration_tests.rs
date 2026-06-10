@@ -1819,3 +1819,53 @@ fn test_type_check_nested_function_call2() {
 fn test_type_check_string_empty() {
     check_no_errors("fn f() -> string {\n\"\"\n}");
 }
+
+#[test]
+fn test_type_error_missing_return() {
+    check_has_errors("fn f() -> number {\n}");
+}
+
+#[test]
+fn test_type_error_wrong_return_value() {
+    check_has_errors("fn f() -> number {\n\"hello\"\n}");
+}
+
+#[test]
+fn test_type_error_if_branch_type_mismatch() {
+    check_has_errors("fn f() -> number {\nlet x = if true { 42 } else { \"hello\" };\n0\n}");
+}
+
+#[test]
+fn test_type_error_match_branch_type_mismatch() {
+    check_has_errors("fn f(x: number) -> number {\nmatch x {\n0 => 1\n_ => \"hello\"\n}\n}");
+}
+
+#[test]
+fn test_type_error_undefined_enum_variant() {
+    check_has_errors("enum Color { Red, Green, Blue }\nfn f(c: Color) -> number {\nmatch c {\nColor::Yellow => 1\n_ => 0\n}\n}");
+}
+
+#[test]
+fn test_type_error_non_exhaustive_enum2() {
+    check_has_errors("enum Color { Red, Green, Blue }\nfn f(c: Color) -> number {\nmatch c {\nColor::Red => 1\n}\n}");
+}
+
+#[test]
+fn test_type_error_assign_undefined_var() {
+    check_has_errors("fn main() -> number {\nx = 42;\nx\n}");
+}
+
+#[test]
+fn test_type_error_use_undefined_var() {
+    check_has_errors("fn main() -> number {\nundefined_var\n}");
+}
+
+#[test]
+fn test_type_error_call_non_function() {
+    check_has_errors("fn main() -> number {\nlet x = 42;\nx()\n}");
+}
+
+#[test]
+fn test_type_error_struct_missing_all_fields() {
+    check_has_errors("struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point {};\n0\n}");
+}
