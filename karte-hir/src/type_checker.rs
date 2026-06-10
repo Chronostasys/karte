@@ -2152,10 +2152,13 @@ impl TypeChecker {
                 // 穷尽性检查：检查所有模式是否覆盖了所有可能的情况
                 {
                     let pattern_refs: Vec<&crate::ast::Pattern> = arms.iter().map(|arm| &arm.pattern).collect();
-                    let exhaust_result = crate::exhaustiveness::check_exhaustiveness(
+                    // 收集 guard 信息
+                    let has_guard: Vec<bool> = arms.iter().map(|arm| arm.guard.is_some()).collect();
+                    let exhaust_result = crate::exhaustiveness::check_exhaustiveness_with_guards(
                         &pattern_refs,
                         &expr_type,
                         &self.custom_types,
+                        &has_guard,
                     );
                     if !exhaust_result.is_exhaustive {
                         self.add_error(TypeCheckError::NonExhaustiveMatch {

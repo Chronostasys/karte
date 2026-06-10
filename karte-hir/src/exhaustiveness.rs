@@ -272,16 +272,42 @@ pub fn check_exhaustiveness(
     scrutinee_type: &Type,
     custom_types: &HashMap<String, Type>,
 ) -> ExhaustivenessResult {
+    check_exhaustiveness_with_guards(patterns, scrutinee_type, custom_types, &[])
+}
+
+/// 带 guard 信息的穷尽性检查
+/// `has_guard[i]` 为 true 表示第 i 个 arm 有 guard 条件
+pub fn check_exhaustiveness_with_guards(
+    patterns: &[&Pattern],
+    scrutinee_type: &Type,
+    custom_types: &HashMap<String, Type>,
+    has_guard: &[bool],
+) -> ExhaustivenessResult {
     let constructors = get_constructors(scrutinee_type, custom_types);
 
     // 即使没有有限的构造器列表，也可以检测冗余 arm（如 _ 后面的模式）
     let cols: Vec<PatternCol> = patterns.iter().map(|p| pattern_to_col(p)).collect();
 
     // 检测冗余 arm
+    // 当某个 arm 有 guard 时，它不能被认为穷尽了匹配值，
+    // 因此它后面的 arm 不应该被报告为冗余
     let mut redundant_arms = Vec::new();
+    // 跟踪是否存在带 guard 的 arm（从该位置开始，后续的 arm 可能不冗余）
+    let mut has_guard_before = false;
     for (i, col) in cols.iter().enumerate() {
-        if i > 0 && is_redundant(col, &cols[..i], &constructors) {
-            redundant_arms.push(i);
+        if i > 0 {
+            // 如果之前有带 guard 的 arm，则当前 arm 不算冗余
+            // 因为 guard 条件可能不满足，控制流会 fall through 到当前 arm
+            if has_guard_before {
+                continue;
+            }
+            if is_redundant(col, &cols[..i], &constructors) {
+                redundant_arms.push(i);
+            }
+        }
+        // 如果当前 arm 有 guard，标记后续 arm 不应被报告为冗余
+        if i < has_guard.len() && has_guard[i] {
+            has_guard_before = true;
         }
     }
 
