@@ -522,6 +522,7 @@ impl CompilerBridge {
     }
 
     /// 收集标识符的类型信息（用于悬停提示）
+    /// 只为 Identifier 表达式收集精确类型（其他表达式范围太大）
     fn collect_identifier_types(
         &self,
         expr: &karte_hir::Expr,
@@ -530,11 +531,19 @@ impl CompilerBridge {
     ) {
         use karte_hir::Expr;
         let ptr = expr as *const Expr as usize;
-        if let Some(ty) = expr_types.get(&ptr) {
-            let type_str = format_type(ty);
-            result.identifier_type_strings.insert((expr.span().start, expr.span().end), type_str);
+
+        // 只为精确的表达式类型收集类型信息
+        match expr {
+            Expr::Identifier { .. } => {
+                if let Some(ty) = expr_types.get(&ptr) {
+                    let type_str = format_type(ty);
+                    result.identifier_type_strings.insert((expr.span().start, expr.span().end), type_str);
+                }
+            }
+            _ => {}
         }
 
+        // 递归遍历子表达式
         match expr {
             Expr::Block { statements, final_expr, .. } => {
                 for stmt in statements {
