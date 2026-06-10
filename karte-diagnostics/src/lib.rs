@@ -137,6 +137,18 @@ pub enum CompilerError {
         help: String,
     },
 
+    #[error("Warning: {message}")]
+    #[diagnostic(code(W001), severity(Warning))]
+    Warning {
+        #[label("{message}")]
+        span: SourceSpan,
+        message: String,
+        #[source_code]
+        src: NamedSource,
+        #[help]
+        help: Option<String>,
+    },
+
     #[error("IO error")]
     #[diagnostic(code(E999))]
     IoError {
@@ -258,6 +270,14 @@ impl Diagnostic {
                         src,
                         help: None,
                     }
+                }
+            }
+            DiagnosticLevel::Warning => {
+                CompilerError::Warning {
+                    span,
+                    message: self.message,
+                    src,
+                    help: None,
                 }
             }
             _ => CompilerError::ParseError {

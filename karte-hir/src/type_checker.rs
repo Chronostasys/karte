@@ -1858,6 +1858,14 @@ impl TypeChecker {
                             span: *span,
                         });
                     }
+                    // 报告冗余 arm 警告
+                    for arm_idx in &exhaust_result.redundant_arms {
+                        let arm = &arms[*arm_idx];
+                        self.add_warning(
+                            format!("冗余的 match arm：该模式被之前的 arm 完全覆盖"),
+                            arm.pattern.span(),
+                        );
+                    }
                 }
 
                 result_type
@@ -4026,6 +4034,11 @@ impl TypeChecker {
         let message = error.to_string();
         let span = error.span();
         self.diagnostics.add_error(message, span);
+    }
+
+    /// 添加编译器警告
+    fn add_warning(&mut self, message: impl Into<String>, span: karte_diagnostics::Span) {
+        self.diagnostics.add_warning(message, span);
     }
 
     /// 获取诊断信息
