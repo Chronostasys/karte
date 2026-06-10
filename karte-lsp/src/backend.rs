@@ -1066,6 +1066,74 @@ impl LanguageServer for Backend {
             Ok(Some(edits))
         }
     }
+
+    async fn linked_editing_range(
+        &self,
+        params: LinkedEditingRangeParams,
+    ) -> Result<Option<LinkedEditingRanges>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        let store = self.document_store.read().await;
+        let Some(document) = store.get(uri) else {
+            return Ok(None);
+        };
+        let source = &document.content;
+
+        // 查找匹配的花括号范围
+        let offset = crate::compiler_bridge::position_to_offset(source, position);
+
+        // 检查光标是否在花括号附近
+        let nearby = source.chars()
+            .enumerate()
+            .skip(if offset > 2 { offset - 2 } else { 0 })
+            .take(5)
+            .collect::<Vec<_>>();
+
+        let is_near_brace = nearby.iter().any(|(_, ch)| *ch == '{' || *ch == '}');
+        if !is_near_brace {
+            return Ok(None);
+        }
+
+        // 查找匹配的花括号对
+        let mut ranges = Vec::new();
+
+        // 使用栈来匹配花括号
+        let mut brace_stack: Vec<usize> = Vec::new();
+        let mut current_offset = 0;
+        for ch in source.chars() {
+            if ch == '{' {
+                brace_stack.push(current_offset);
+            } else if ch == '}' {
+                if let Some(open_pos) = brace_stack.pop() {
+                    // 检查光标是否在这对花括号附近
+                    if (open_pos >= offset.saturating_sub(2) && open_pos <= offset + 2)
+                        || (current_offset >= offset.saturating_sub(2) && current_offset <= offset + 2) {
+                        let open_range = crate::compiler_bridge::span_to_range(
+                            source,
+                            karte_diagnostics::Span::new(open_pos, open_pos + 1),
+                        );
+                        let close_range = crate::compiler_bridge::span_to_range(
+                            source,
+                            karte_diagnostics::Span::new(current_offset, current_offset + 1),
+                        );
+                        ranges.push(open_range);
+                        ranges.push(close_range);
+                    }
+                }
+            }
+            current_offset += ch.len_utf8();
+        }
+
+        if ranges.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(LinkedEditingRanges {
+                ranges,
+                word_pattern: None,
+            }))
+        }
+    }
 }
 
 impl Backend {
