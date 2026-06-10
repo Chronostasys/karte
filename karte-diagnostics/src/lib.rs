@@ -297,7 +297,17 @@ impl Diagnostic {
                         span,
                         message: self.message,
                         src,
-                        help: Some("请为缺失的模式添加 match 分支，或使用通配符 `_` 来匹配剩余情况。".to_string()),
+                        help: diag_help.or(Some("请为缺失的模式添加 match 分支，或使用通配符 `_` 来匹配剩余情况。".to_string())),
+                    }
+                } else if self.message.contains("类型不匹配") || self.message.contains("Type mismatch") {
+                    CompilerError::TypeError {
+                        span,
+                        message: self.message,
+                        src,
+                        help: diag_help.or(Some(
+                            "值类型与此操作要求的类型不匹配。'期望' 显示要求的类型，'实际' 显示实际的类型。"
+                                .to_string(),
+                        )),
                     }
                 } else if self.message.contains("Expected") || self.message.contains("expected") || self.message.contains("期望") {
                     CompilerError::ParseError {
