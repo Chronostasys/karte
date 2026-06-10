@@ -340,28 +340,11 @@ impl fmt::Display for Type {
                     return_type
                 )
             }
-            Type::Sum { name, variants } => {
-                let variants_str = variants
-                    .iter()
-                    .map(|v| {
-                        if !v.data_types.is_empty() {
-                            let types_str = v.data_types.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", ");
-                            format!("{}({})", v.name, types_str)
-                        } else {
-                            v.name.clone()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" | ");
-                write!(f, "{} = {}", name, variants_str)
+            Type::Sum { name, variants: _ } => {
+                write!(f, "{}", name)
             }
-            Type::Struct { name, fields } => {
-                let fields_str = fields
-                    .iter()
-                    .map(|f| format!("{}: {}", f.name, f.field_type))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                write!(f, "{} = {{ {} }}", name, fields_str)
+            Type::Struct { name, fields: _ } => {
+                write!(f, "{}", name)
             }
             Type::Tuple(types) => {
                 let types_str = types
