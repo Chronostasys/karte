@@ -131,22 +131,22 @@ impl fmt::Display for TypeCheckError {
                 )
             }
             TypeCheckError::NotCallable { found_type, .. } => {
-                write!(f, "无法调用类型为 {} 的值", found_type)
+                write!(f, "无法调用类型为 `{}` 的值（只有函数和闭包可以被调用）", found_type)
             }
             TypeCheckError::CannotInferType { .. } => {
-                write!(f, "无法推断类型")
+                write!(f, "无法推断类型，请添加类型标注")
             }
             TypeCheckError::InfiniteType { .. } => {
-                write!(f, "无限类型（递归类型定义）")
+                write!(f, "无限类型：表达式的类型依赖于自身，请检查是否存在递归类型定义")
             }
             TypeCheckError::InvalidConstructor { name, .. } => {
-                write!(f, "无效的构造器: {}", name)
+                write!(f, "无效的构造器: `{}`（请检查构造器名称是否正确）", name)
             }
             TypeCheckError::InvalidPattern { message, .. } => {
                 write!(f, "无效的模式: {}", message)
             }
             TypeCheckError::EmptyMatch { .. } => {
-                write!(f, "空的 match 表达式")
+                write!(f, "空的 match 表达式，至少需要一个分支")
             }
             TypeCheckError::MissingFields {
                 struct_name,
@@ -174,7 +174,7 @@ impl fmt::Display for TypeCheckError {
                 write!(f, "未定义的类型: {}", name)
             }
             TypeCheckError::InvalidAssignmentTarget { .. } => {
-                write!(f, "无效的赋值目标")
+                write!(f, "无效的赋值目标（只能对变量或结构体字段赋值）")
             }
             TypeCheckError::ModuleInterfaceUnavailable { module, .. } => {
                 write!(
