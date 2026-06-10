@@ -1258,3 +1258,53 @@ fn test_type_check_char_lit2_2() {
 fn test_type_check_neg_match2() {
     check_no_errors("fn f(n: number) -> number {\nmatch n {\n-1 => 100\n0 => 0\n_ => n\n}\n}");
 }
+
+#[test]
+fn test_type_check_enum_field_access() {
+    check_no_errors("enum Shape { Circle(number), Rect(number, number) }\nfn area(s: Shape) -> number {\nmatch s {\nShape::Circle(r) => r * r * 3\nShape::Rect(w, h) => w * h\n}\n}");
+}
+
+#[test]
+fn test_type_check_enum_with_string_data() {
+    check_no_errors("enum Expr { Lit(number), Var(string) }\nfn eval(e: Expr) -> number {\nmatch e {\nExpr::Lit(n) => n\nExpr::Var(_) => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_nested_enum_match_v2() {
+    check_no_errors("enum Color { Red, Green, Blue }\nfn f(c: Color) -> number {\nmatch c {\nColor::Red => 1\nColor::Green => 2\nColor::Blue => 3\n}\n}");
+}
+
+#[test]
+fn test_type_check_bool_match() {
+    check_no_errors("fn f(b: bool) -> number {\nmatch b {\ntrue => 1\nfalse => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_option_none_match() {
+    check_no_errors("fn f(opt: Option<number>) -> number {\nmatch opt {\nSome(x) => x\nNone => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_nested_let_v2() {
+    check_no_errors("fn main() -> number {\nlet a = {\nlet x = 1;\nlet y = x + 1;\ny * 2\n};\na\n}");
+}
+
+#[test]
+fn test_type_check_tuple_return() {
+    check_no_errors("fn pair() -> (number, number) {\n(1, 2)\n}");
+}
+
+#[test]
+fn test_type_check_nested_tuple() {
+    check_no_errors("fn f() -> number {\nlet t = (1, 2, 3);\n0\n}");
+}
+
+#[test]
+fn test_type_check_string_len_v2() {
+    check_no_errors("fn f(s: string) -> number {\nlen(s)\n}");
+}
+
+#[test]
+fn test_type_check_abs_builtin_v2() {
+    check_no_errors("fn f(x: number) -> number {\nabs(x)\n}");
+}
