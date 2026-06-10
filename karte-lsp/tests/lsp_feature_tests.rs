@@ -1029,3 +1029,15 @@ fn test_doc_symbols2() {
     assert!(has_bar, "Should have 'bar' in document symbols");
     assert!(has_point, "Should have 'Point' in document symbols");
 }
+
+#[test]
+fn test_completion_all_keywords() {
+    let mut bridge = CompilerBridge::new();
+    bridge.analyze("fn main() -> number { 0 }");
+    let completions = bridge.get_completions(Position::new(0, 0));
+    let keywords = ["let", "fn", "if", "else", "while", "match", "enum", "struct", "return", "true", "false"];
+    for kw in keywords {
+        let has_kw = completions.iter().any(|c| c.label == *kw);
+        assert!(has_kw, "Should have '{}' in keyword completions", kw);
+    }
+}
