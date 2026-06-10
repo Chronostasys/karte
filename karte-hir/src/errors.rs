@@ -54,6 +54,7 @@ pub enum TypeCheckError {
     UnknownField {
         struct_name: String,
         field_name: String,
+        available_fields: Vec<String>,
         span: Span,
     },
     NotAStruct {
@@ -177,9 +178,29 @@ impl fmt::Display for TypeCheckError {
             TypeCheckError::UnknownField {
                 struct_name,
                 field_name,
+                available_fields,
                 ..
             } => {
-                write!(f, "结构体 `{}` 中不存在字段 `{}`（请检查字段名称是否正确）", struct_name, field_name)
+                // 尝试提供拼写建议
+                let suggestion = available_fields.iter()
+                    .filter_map(|f| {
+                        let dist = levenshtein(field_name, f);
+                        if dist > 0 && dist <= (field_name.len() / 2).max(2) {
+                            Some((f.clone(), dist))
+                        } else {
+                            None
+                        }
+                    })
+                    .min_by_key(|(_, d)| *d)
+                    .map(|(s, _)| s);
+
+                if let Some(sug) = suggestion {
+                    write!(f, "结构体 `{}` 中不存在字段 `{}`。你是否想输入 '{}'?", struct_name, field_name, sug)
+                } else if available_fields.is_empty() {
+                    write!(f, "结构体 `{}` 中不存在字段 `{}`", struct_name, field_name)
+                } else {
+                    write!(f, "结构体 `{}` 中不存在字段 `{}`。可用字段: {}", struct_name, field_name, available_fields.join(", "))
+                }
             }
             TypeCheckError::NotAStruct { name, .. } => {
                 write!(f, "`{}` 不是结构体类型，无法使用构造器语法", name)
@@ -243,6 +264,31 @@ impl fmt::Display for TypeCheckError {
             }
         }
     }
+}
+
+/// Levenshtein 编辑距离（用于拼写建议）
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a_len = a.chars().count();
+    let b_len = b.chars().count();
+    if a_len == 0 { return b_len; }
+    if b_len == 0 { return a_len; }
+
+    let mut matrix = vec![vec![0; b_len + 1]; a_len + 1];
+    for (i, row) in matrix.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for j in 0..=b_len {
+        matrix[0][j] = j;
+    }
+    for (i, a_char) in a.chars().enumerate() {
+        for (j, b_char) in b.chars().enumerate() {
+            let cost = if a_char == b_char { 0 } else { 1 };
+            matrix[i + 1][j + 1] = (matrix[i][j + 1] + 1)
+                .min(matrix[i + 1][j] + 1)
+                .min(matrix[i][j] + cost);
+        }
+    }
+    matrix[a_len][b_len]
 }
 
 impl TypeCheckError {

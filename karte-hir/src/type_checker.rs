@@ -2212,9 +2212,11 @@ impl TypeChecker {
                                     &mut inferred_args,
                                 );
                             } else {
+                                let available: Vec<String> = template_fields.iter().map(|f| f.name.clone()).collect();
                                 self.add_error(TypeCheckError::UnknownField {
                                     struct_name: name.clone(),
                                     field_name: field_init.name.clone(),
+                                    available_fields: available,
                                     span: field_init.span,
                                 });
                             }
@@ -2263,9 +2265,11 @@ impl TypeChecker {
                                     "结构体字段类型不匹配",
                                     );
                                 } else {
+                                    let available: Vec<String> = field_defs.iter().map(|f| f.name.clone()).collect();
                                     self.add_error(TypeCheckError::UnknownField {
                                         struct_name: struct_name.clone(),
                                         field_name: field_init.name.clone(),
+                                        available_fields: available,
                                         span: field_init.span,
                                     });
                                 }
@@ -2337,9 +2341,11 @@ impl TypeChecker {
                         if let Some(field_def) = fields.iter().find(|f| f.name == *field) {
                             field_def.field_type.clone()
                         } else {
+                            let available: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
                             self.add_error(TypeCheckError::UnknownField {
-                                struct_name: "unknown".to_string(), // 这里我们没有名字，用unknown代替
+                                struct_name: "unknown".to_string(),
                                 field_name: field.clone(),
+                                available_fields: available,
                                 span: *span,
                             });
                             Type::Unknown
