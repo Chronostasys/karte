@@ -266,3 +266,78 @@ fn test_type_check_result_err() {
 fn test_type_check_enum_with_data() {
     check_no_errors("enum Expr { Number(number), Add(Expr, Expr), Literal }\nfn main() -> number {\n    let e = Expr::Number(42);\n    match e {\n        Expr::Number(n) => n,\n        _ => 0\n    }\n}");
 }
+
+#[test]
+fn test_type_inference_nested_closure() {
+    check_no_errors("fn main() -> number {\nlet add = |x, y| { x + y };\nlet inc = |n| { add(n, 1) };\ninc(41)\n}");
+}
+
+#[test]
+fn test_type_inference_ternary_like() {
+    check_no_errors("fn main() -> number {\nlet x = 10;\nif x > 5 { x * 2 } else { x / 2 }\n}");
+}
+
+#[test]
+fn test_type_inference_bool_to_number() {
+    check_no_errors("fn main() -> number {\nlet x = 5;\nlet y = 10;\nif x < y { 1 } else { 0 }\n}");
+}
+
+#[test]
+fn test_type_inference_number_comparison() {
+    check_no_errors("fn main() -> number {\nlet a = 3;\nlet b = 5;\nif a >= b { a } else { b }\n}");
+}
+
+#[test]
+fn test_type_inference_multiple_returns() {
+    check_no_errors("fn classify(n: number) -> number {\nif n > 0 { 1 }\nelse if n < 0 { -1 }\nelse { 0 }\n}\nfn main() -> number { classify(42) + classify(-5) + classify(0) }");
+}
+
+#[test]
+fn test_type_inference_while_loop_sum() {
+    check_no_errors("fn main() -> number {\nlet sum = 0;\nlet i = 1;\nwhile i <= 10 {\nsum = sum + i;\ni = i + 1\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_inference_factorial_recursive() {
+    check_no_errors("fn fact(n: number) -> number {\nif n <= 1 { 1 }\nelse { n * fact(n - 1) }\n}\nfn main() -> number { fact(10) }");
+}
+
+#[test]
+fn test_type_inference_fibonacci() {
+    check_no_errors("fn fib(n: number) -> number {\nif n <= 1 { n }\nelse { fib(n - 1) + fib(n - 2) }\n}\nfn main() -> number { fib(10) }");
+}
+
+#[test]
+fn test_type_inference_nested_let() {
+    check_no_errors("fn main() -> number {\nlet a = 10;\nlet b = {\nlet c = a * 2;\nc + 5\n};\nb\n}");
+}
+
+#[test]
+fn test_type_inference_chained_comparison() {
+    check_no_errors("fn clamp(x: number, lo: number, hi: number) -> number {\nif x < lo { lo }\nelse if x > hi { hi }\nelse { x }\n}\nfn main() -> number { clamp(15, 0, 10) }");
+}
+
+#[test]
+fn test_type_inference_mutual_recursion() {
+    check_no_errors("fn is_even(n: number) -> number {\nif n == 0 { 1 }\nelse { is_odd(n - 1) }\n}\nfn is_odd(n: number) -> number {\nif n == 0 { 0 }\nelse { is_even(n - 1) }\n}\nfn main() -> number { is_even(10) + is_odd(7) }");
+}
+
+#[test]
+fn test_type_inference_nested_function() {
+    check_no_errors("fn outer(x: number) -> number {\nfn inner(y: number) -> number { y * 2 }\ninner(x) + 1\n}\nfn main() -> number { outer(21) }");
+}
+
+#[test]
+fn test_type_inference_higher_order() {
+    check_no_errors("fn apply(f: fn(number) -> number, x: number) -> number { f(x) }\nfn double(n: number) -> number { n * 2 }\nfn main() -> number { apply(double, 21) }");
+}
+
+#[test]
+fn test_type_inference_struct_with_methods() {
+    check_no_errors("struct Point { x: number, y: number }\nfn magnitude(p: Point) -> number { p.x * p.x + p.y * p.y }\nfn main() -> number { magnitude(Point { x: 3, y: 4 }) }");
+}
+
+#[test]
+fn test_type_inference_enum_match_complex() {
+    check_no_errors("enum Shape { Circle(number), Rectangle(number, number) }\nfn area(s: Shape) -> number {\nmatch s {\nShape::Circle(r) => 3 * r * r,\nShape::Rectangle(w, h) => w * h\n}\n}\nfn main() -> number { area(Shape::Circle(5)) + area(Shape::Rectangle(3, 4)) }");
+}
