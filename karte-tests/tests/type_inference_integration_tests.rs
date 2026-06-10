@@ -523,3 +523,34 @@ fn test_type_check_enum_with_multiple_data() {
 fn test_type_check_while_with_break() {
     check_no_errors("fn main() -> number {\nlet sum = 0;\nlet i = 0;\nwhile i < 10 {\nsum = sum + i;\ni = i + 1\n};\nsum\n}");
 }
+
+#[test]
+fn test_type_check_redundant_match_arm() {
+    // 冗余的 match arm 会产生警告，但不会产生错误
+    check_no_errors("fn f(x: number) -> number {\nmatch x {\n0 => 1,\n1 => 2,\n_ => 3,\n0 => 4\n}\n}");
+}
+
+#[test]
+fn test_type_check_wildcard_exhaustive() {
+    check_no_errors("fn f(x: number) -> number {\nmatch x {\n_ => 42\n}\n}");
+}
+
+#[test]
+fn test_type_check_bool_wildcard_exhaustive() {
+    check_no_errors("fn f(b: bool) -> number {\nmatch b {\ntrue => 1,\n_ => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_enum_wildcard_exhaustive() {
+    check_no_errors("enum Color { Red, Green, Blue }\nfn f(c: Color) -> number {\nmatch c {\nColor::Red => 1,\n_ => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_deeply_nested_struct() {
+    check_no_errors("struct A { val: number }\nstruct B { a: A }\nstruct C { b: B }\nfn get(c: C) -> number { c.b.a.val }");
+}
+
+#[test]
+fn test_type_check_array_map_pattern() {
+    check_no_errors("fn main() -> number {\nlet arr = [1, 2, 3, 4, 5];\nlet sum = 0;\nfor x in arr {\nsum = sum + x\n};\nsum\n}");
+}
