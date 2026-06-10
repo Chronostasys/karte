@@ -9675,4 +9675,106 @@ fn main() -> number {
     let exit_code = compile_project_mode_code(code);
     assert_eq!(exit_code, 6);
 }
+
+    #[test]
+    fn test_exhaustiveness_bool_complete() {
+        let code = r#"
+fn main() -> number {
+    let x = true;
+    match x {
+        true => 1,
+        false => 0
+    }
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 1);
+    }
+
+    #[test]
+    fn test_exhaustiveness_bool_with_wildcard() {
+        let code = r#"
+fn main() -> number {
+    let x = false;
+    match x {
+        true => 1,
+        _ => 0
+    }
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 0);
+    }
+
+    #[test]
+    fn test_exhaustiveness_enum_complete() {
+        let code = r#"
+enum Color { Red, Green, Blue }
+fn main() -> number {
+    let c = Color::Red;
+    match c {
+        Color::Red => 1,
+        Color::Green => 2,
+        Color::Blue => 3
+    }
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 1);
+    }
+
+    #[test]
+    fn test_exhaustiveness_enum_with_wildcard() {
+        let code = r#"
+enum Color { Red, Green, Blue }
+fn main() -> number {
+    let c = Color::Green;
+    match c {
+        Color::Red => 1,
+        _ => 0
+    }
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 0);
+    }
+
+    #[test]
+    fn test_exhaustiveness_option_complete() {
+        let code = r#"
+fn main() -> number {
+    let x = Some(42);
+    match x {
+        Some(n) => n,
+        None => 0
+    }
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 42);
+    }
+
+    #[test]
+    fn test_exhaustiveness_nested_match() {
+        let code = r#"
+enum Color { Red, Green, Blue }
+enum Shape { Circle(number), Square(number) }
+fn main() -> number {
+    let c = Color::Red;
+    let s = Shape::Circle(10);
+    let color_val = match c {
+        Color::Red => 1,
+        Color::Green => 2,
+        Color::Blue => 3
+    };
+    let shape_val = match s {
+        Shape::Circle(r) => r,
+        Shape::Square(w) => w * w
+    };
+    color_val + shape_val
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 11);
+    }
 }

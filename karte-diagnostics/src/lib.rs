@@ -256,7 +256,14 @@ impl Diagnostic {
                         src,
                         help: Some("Check the argument type for this built-in function".to_string()),
                     }
-                } else if self.message.contains("Unexpected") {
+                } else if self.message.contains("非穷尽 match") {
+                    CompilerError::TypeError {
+                        span,
+                        message: self.message,
+                        src,
+                        help: Some("Add a match arm for the missing pattern(s), or use a wildcard `_` to catch remaining cases.".to_string()),
+                    }
+                } else if self.message.contains("Expected") || self.message.contains("expected") {
                     CompilerError::ParseError {
                         span,
                         message: self.message,
