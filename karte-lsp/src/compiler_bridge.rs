@@ -881,12 +881,17 @@ impl CompilerBridge {
             ("if", "Conditional", "if $1 {\n    $0\n}"),
             ("else", "Else branch", "else {\n    $0\n}"),
             ("while", "While loop", "while $1 {\n    $0\n}"),
+            ("for", "For loop", "for $1 in $2 {\n    $0\n}"),
             ("match", "Pattern matching", "match $1 {\n    $2 => $0\n}"),
             ("enum", "Enum definition", "enum $1 {\n    $0\n}"),
             ("struct", "Struct definition", "struct $1 {\n    $0\n}"),
-            ("return", "Return value", "return $0;"),
+            ("return", "Return value", "return $0"),
             ("true", "Boolean true", "true"),
             ("false", "Boolean false", "false"),
+            ("Some", "Option Some", "Some($1)"),
+            ("None", "Option None", "None"),
+            ("Ok", "Result Ok", "Ok($1)"),
+            ("Err", "Result Err", "Err($1)"),
         ];
 
         for (kw, detail, snippet) in &keywords {
