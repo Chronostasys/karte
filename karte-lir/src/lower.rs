@@ -147,6 +147,68 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
         // 这确保了所有临时变量的栈分配都在函数开始处完成
         context.preallocate_temp_slots(mir_function);
 
+        // 🔧 关键修复：在函数入口处为所有 struct 类型参数生成深拷贝
+        // 根因：struct 参数的深拷贝在 lower_to_rvalue 中延迟生成并缓存到 stack_allocations。
+        // 但 match/if-else 等控制流会产生多个互斥的基本块（如 match 的 case 0 和 case 1）。
+        // 如果深拷贝只在 case 0 中生成，case 1 通过缓存复用拷贝地址，
+        // 但 case 1 不经过 case 0 的 Alloc/Store 指令 → 使用未初始化的内存 → 返回垃圾值。
+        // 修复：在函数入口处（所有基本块之前）为每个 struct 参数生成 Alloc + 逐字段拷贝，
+        // 这样所有基本块都能安全使用缓存的拷贝地址。
+        {
+            let span = karte_diagnostics::Span::dummy();
+            for (param_idx, param_name) in mir_function.params.iter().enumerate() {
+                // 跳过闭包的 __env 参数（不是用户参数，是环境指针）
+                if param_name == "__env" {
+                    continue;
+                }
+                if param_idx >= mir_function.param_types.len() {
+                    continue;
+                }
+                let param_ty = &mir_function.param_types[param_idx];
+                if let karte_hir::types::Type::Struct { name: struct_name, .. } = param_ty {
+                    if let Some(layout) = context.global_struct_types.get(struct_name).cloned() {
+                        let param_reg = Register::Virtual(param_idx + 1);
+                        // 分配拷贝空间
+                        let copy_reg = context.current_function_mut().new_register();
+                        context.add_instruction(Instruction::Alloc {
+                            dst: copy_reg,
+                            size: layout.total_size,
+                            alignment: layout.alignment,
+                            allocation_type: AllocationType::Stack,
+                            span,
+                        });
+                        // 逐字段从参数寄存器拷贝到新空间
+                        for field in &layout.fields {
+                            let field_val = context.current_function_mut().new_register();
+                            context.add_instruction(Instruction::Load64 {
+                                dst: field_val,
+                                addr: param_reg,
+                                offset: field.offset as i64,
+                                span,
+                            });
+                            context.add_instruction(Instruction::Store64 {
+                                addr: copy_reg,
+                                offset: field.offset as i64,
+                                src: Operand::Register { id: field_val },
+                                span,
+                            });
+                        }
+                        // 缓存到 stack_allocations，后续 lower_to_rvalue 直接返回
+                        let copy_key = format!("__struct_copy__{}", param_name);
+                        context.stack_allocations.insert(copy_key, copy_reg);
+                        // 注册 struct layout
+                        context.set_struct_layout_for_value(
+                            &Value::Variable {
+                                name: param_name.clone(),
+                                ty: Some(param_ty.clone()),
+                            },
+                            layout,
+                        );
+                    }
+                }
+            }
+        }
+
         // 预分配所有基本块的标签
         for &block_id in mir_function.basic_blocks.keys() {
             context.allocate_label_for_block(block_id);

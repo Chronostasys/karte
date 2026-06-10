@@ -116,7 +116,10 @@ impl<'a> LoweringContext<'a> {
         params: Vec<String>,
         param_types: Vec<Option<karte_hir::types::Type>>,
     ) {
-        let function = MirFunction::new(name.clone(), params.clone());
+        let mut function = MirFunction::new(name.clone(), params.clone());
+        // 🔧 修复：将参数类型信息保存到 MirFunction.param_types
+        // 这使得 LIR lowering 时能识别 struct 类型参数并正确处理深拷贝
+        function.param_types = param_types.iter().map(|t| t.clone().unwrap_or(karte_hir::types::Type::Unknown)).collect();
         let entry_block = function.entry_block;
 
         self.scopes.clear();
