@@ -820,8 +820,15 @@ impl CompilerBridge {
         // 🔧 检测是否是字段访问补全（expr. 的场景）
         let dot_completion = Self::try_dot_completion(before, &self.cached_result);
 
+        // 🔧 检测是否是枚举变体补全（TypeName:: 的场景）
+        let enum_completion = Self::try_enum_variant_completion(before, &self.cached_result);
+
         if let Some(field_items) = dot_completion {
             return field_items;
+        }
+
+        if let Some(enum_items) = enum_completion {
+            return enum_items;
         }
 
         let mut keywords_items = Vec::new();
@@ -1034,6 +1041,69 @@ impl CompilerBridge {
             None
         } else {
             Some(field_items)
+        }
+    }
+
+    /// 检测是否是枚举变体补全（TypeName:: 的场景）
+    fn try_enum_variant_completion(before: &str, cached_result: &Option<AnalysisResult>) -> Option<Vec<KarteCompletionItem>> {
+        let result = cached_result.as_ref()?;
+
+        // 查找最后一个 :: 的位置
+        let double_colon_pos = before.rfind("::")?;
+
+        // 获取 :: 前面的类型名
+        let before_colon = &before[..double_colon_pos];
+        let type_name: String = before_colon.chars().rev()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect::<String>()
+            .chars().rev()
+            .collect();
+
+        if type_name.is_empty() {
+            return None;
+        }
+
+        // 获取 :: 后面的前缀（可能为空）
+        let after_colon = &before[double_colon_pos + 2..];
+        let variant_prefix: String = after_colon.chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+
+        // 在符号表中查找匹配的枚举类型
+        let mut items = Vec::new();
+
+        for sym in &result.symbols {
+            if sym.kind == KarteSymbolKind::Enum && sym.name == type_name {
+                // 从 type_signature 中提取变体名
+                if let Some(sig) = &sym.type_signature {
+                    // 格式: "Variant1(Type) | Variant2 | Variant3(Type)"
+                    for variant in sig.split('|') {
+                        let variant = variant.trim();
+                        let variant_name = if let Some(paren) = variant.find('(') {
+                            &variant[..paren]
+                        } else {
+                            variant
+                        };
+                        let variant_name = variant_name.trim();
+                        if !variant_name.is_empty() {
+                            if variant_prefix.is_empty() || variant_name.starts_with(&variant_prefix) {
+                                items.push(KarteCompletionItem {
+                                    label: format!("{}::{}", type_name, variant_name),
+                                    kind: KarteCompletionKind::EnumVariant,
+                                    detail: Some(variant.to_string()),
+                                    insert_text: Some(variant_name.to_string()),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if items.is_empty() {
+            None
+        } else {
+            Some(items)
         }
     }
 
