@@ -2662,3 +2662,53 @@ fn test_type_check_simple_not() {
 fn test_type_check_simple_string_eq() {
     check_no_errors("fn f(s: string) -> bool {\ns == \"hello\"\n}");
 }
+
+#[test]
+fn test_type_check_simple_le() {
+    check_no_errors("fn f(x: number) -> bool {\nx <= 10\n}");
+}
+
+#[test]
+fn test_type_check_simple_ge() {
+    check_no_errors("fn f(x: number) -> bool {\nx >= 0\n}");
+}
+
+#[test]
+fn test_type_check_simple_bitand() {
+    check_no_errors("fn f(a: number, b: number) -> number {\na & b\n}");
+}
+
+#[test]
+fn test_type_check_simple_bitor() {
+    check_no_errors("fn f(a: number, b: number) -> number {\na | b\n}");
+}
+
+#[test]
+fn test_type_check_simple_bitxor() {
+    check_no_errors("fn f(a: number, b: number) -> number {\na ^ b\n}");
+}
+
+#[test]
+fn test_type_check_simple_shl() {
+    check_no_errors("fn f(a: number, b: number) -> number {\na << b\n}");
+}
+
+#[test]
+fn test_type_check_simple_shr() {
+    check_no_errors("fn f(a: number, b: number) -> number {\na >> b\n}");
+}
+
+#[test]
+fn test_type_check_simple_bitnot() {
+    check_no_errors("fn f(a: number) -> number {\nlet b = a ^ a;\nb\n}");
+}
+
+#[test]
+fn test_type_check_simple_string_lt() {
+    check_no_errors("fn f(a: string, b: string) -> bool {\na < b\n}");
+}
+
+#[test]
+fn test_type_check_simple_string_gt() {
+    check_no_errors("fn f(a: string, b: string) -> bool {\na > b\n}");
+}
