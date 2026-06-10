@@ -1575,3 +1575,75 @@ if n <= 0 { 0 } else { n + sum(n - 1) }
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors for recursive sum: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_shift_ops() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(a: number, b: number) -> number {\n(a << 2) >> 1\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for shift ops: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_modulo() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(a: number, b: number) -> number {\na % b\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for modulo: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_bitwise_xor() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(a: number, b: number) -> number {\na ^ b\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for bitwise xor: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_complex_let_chain() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet a = 1;\nlet b = a + 1;\nlet c = b + a;\nlet d = c + b;\nd\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for complex let chain: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_negative_number() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f() -> number {\n-42\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for negative number: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_parenthesized() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(a: number, b: number) -> number {\n((a + b) * (a - b))\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for parenthesized: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_string_eq() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(a: string, b: string) -> bool {\na == b\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for string eq: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_string_neq() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(a: string, b: string) -> bool {\na != b\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for string neq: {:?}", errors);
+}
