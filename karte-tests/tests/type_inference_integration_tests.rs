@@ -1913,3 +1913,53 @@ fn test_warning_redundant_arm_number2() {
 }"#;
     check_has_warnings(source);
 }
+
+#[test]
+fn test_type_check_while_with_condition() {
+    check_no_errors("fn countdown(n: number) -> number {\nlet x = n;\nwhile x > 0 {\nx = x - 1\n};\nx\n}");
+}
+
+#[test]
+fn test_type_check_complex_struct_usage() {
+    check_no_errors("struct Rect { width: number, height: number }\nfn area(r: Rect) -> number {\nr.width * r.height\n}\nfn perimeter(r: Rect) -> number {\n2 * (r.width + r.height)\n}");
+}
+
+#[test]
+fn test_type_check_enum_all_same_return() {
+    check_no_errors("enum Bool { True, False }\nfn to_number(b: Bool) -> number {\nmatch b {\nBool::True => 1\nBool::False => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_nested_match_expr() {
+    check_no_errors("fn f(x: number, y: number) -> number {\nlet result = match x {\n0 => y\n_ => match y {\n0 => x\n_ => x + y\n}\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_string_as_return() {
+    check_no_errors("fn greet(name: string) -> string {\n\"Hello, \" + name + \"!\"\n}");
+}
+
+#[test]
+fn test_type_check_multi_line_string() {
+    check_no_errors("fn f() -> string {\n\"hello\" + \" \" + \"world\"\n}");
+}
+
+#[test]
+fn test_type_check_builtin_abs2() {
+    check_no_errors("fn distance(a: number, b: number) -> number {\nabs(a - b)\n}");
+}
+
+#[test]
+fn test_type_check_complex_closure() {
+    check_no_errors("fn main() -> number {\nlet add = |a: number, b: number| -> number { a + b };\nlet mul = |a: number, b: number| -> number { a * b };\nadd(mul(3, 4), 5)\n}");
+}
+
+#[test]
+fn test_type_check_let_in_block_expr() {
+    check_no_errors("fn main() -> number {\nlet x = {\nlet a = 10;\nlet b = 20;\na + b\n};\nx\n}");
+}
+
+#[test]
+fn test_type_check_assign_after_let() {
+    check_no_errors("fn main() -> number {\nlet x = 1;\nlet y = 2;\nx = x + y;\nx\n}");
+}
