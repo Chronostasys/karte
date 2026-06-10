@@ -206,17 +206,36 @@ impl Diagnostic {
         match self.level {
             DiagnosticLevel::Error => {
                 if self.message.contains("Undefined variable") {
-                    // 提取变量名
+                    // 提取变量名和可能的建议
                     let name = self
                         .message
                         .strip_prefix("Undefined variable: ")
                         .unwrap_or("unknown")
+                        .split(" (did you mean")
+                        .next()
+                        .unwrap_or("unknown")
                         .to_string();
+                    
+                    let help = if self.message.contains("(did you mean") {
+                        // 提取建议 - 格式: "Undefined variable: xxx (did you mean 'yyy'?)"
+                        let after_mean = self.message.split("(did you mean '").nth(1)
+                            .unwrap_or("");
+                        // 取出建议名（到下一个 ' 为止）
+                        let suggestion = after_mean.split('\'').next().unwrap_or("");
+                        if suggestion.is_empty() {
+                            format!("Make sure '{}' is defined before use. You can define it with 'let {} = ...'", name.trim(), name.trim())
+                        } else {
+                            format!("Make sure '{}' is defined before use. Did you mean '{}'?", name.trim(), suggestion)
+                        }
+                    } else {
+                        format!("Make sure '{}' is defined before use. You can define it with 'let {} = ...'", name.trim(), name.trim())
+                    };
+                    
                     CompilerError::UndefinedVariable {
                         span,
-                        name: name.clone(),
+                        name: name.trim().to_string(),
                         src,
-                        help: format!("Make sure '{}' is defined before use. You can define it with 'let {} = ...'", name, name),
+                        help,
                     }
                 } else if self.message.contains("Type mismatch") {
                     CompilerError::TypeError {

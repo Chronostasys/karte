@@ -164,6 +164,75 @@ impl TypeChecker {
         var
     }
 
+    /// 计算两个字符串之间的编辑距离（Levenshtein distance）
+    fn levenshtein(a: &str, b: &str) -> usize {
+        let a_len = a.chars().count();
+        let b_len = b.chars().count();
+        if a_len == 0 { return b_len; }
+        if b_len == 0 { return a_len; }
+
+        let mut matrix = vec![vec![0; b_len + 1]; a_len + 1];
+        for (i, row) in matrix.iter_mut().enumerate() {
+            row[0] = i;
+        }
+        for j in 0..=b_len {
+            matrix[0][j] = j;
+        }
+
+        for (i, ca) in a.chars().enumerate() {
+            for (j, cb) in b.chars().enumerate() {
+                let cost = if ca == cb { 0 } else { 1 };
+                matrix[i + 1][j + 1] = (matrix[i][j + 1] + 1)
+                    .min(matrix[i + 1][j] + 1)
+                    .min(matrix[i][j] + cost);
+            }
+        }
+
+        matrix[a_len][b_len]
+    }
+
+    /// 为未定义的变量名找到最相似的已定义变量名
+    fn suggest_variable(&self, name: &str, env: &TypeEnvironment) -> Option<String> {
+        let mut best: Option<(String, usize)> = None;
+        let max_dist = (name.len() / 2).max(2); // 最大允许距离
+
+        for var_name in env.keys() {
+            // 跳过完全不同的长度
+            if var_name.len().abs_diff(name.len()) > max_dist {
+                continue;
+            }
+            let dist = Self::levenshtein(name, var_name);
+            if dist <= max_dist {
+                match &best {
+                    None => best = Some((var_name.clone(), dist)),
+                    Some((_, best_dist)) if dist < *best_dist => {
+                        best = Some((var_name.clone(), dist));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // 也检查函数名
+        for fn_name in self.function_signatures.keys() {
+            if fn_name.len().abs_diff(name.len()) > max_dist {
+                continue;
+            }
+            let dist = Self::levenshtein(name, fn_name);
+            if dist <= max_dist {
+                match &best {
+                    None => best = Some((fn_name.clone(), dist)),
+                    Some((_, best_dist)) if dist < *best_dist => {
+                        best = Some((fn_name.clone(), dist));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        best.map(|(name, _)| name)
+    }
+
     /// 实例化类型方案：将 bound_vars 替换为新的类型变量
     /// 每次调用泛型函数时，生成一组新的类型变量
     fn instantiate(&mut self, scheme: &TypeScheme) -> Type {
@@ -1221,9 +1290,11 @@ impl TypeChecker {
                 if let Some(ty) = env.get(name) {
                     ty.clone()
                 } else {
+                    let suggestion = self.suggest_variable(name, env);
                     self.add_error(TypeCheckError::UndefinedVariable {
                         name: name.clone(),
                         span: *span,
+                        suggestion,
                     });
                     Type::Unknown
                 }
@@ -2910,9 +2981,11 @@ impl TypeChecker {
                             env.insert(name.clone(), value_type);
                         } else {
                             // 变量不存在，报告错误（或者可以选择自动创建）
+                            let suggestion = self.suggest_variable(name, env);
                             self.add_error(TypeCheckError::UndefinedVariable {
                                 name: name.clone(),
                                 span: target.span(),
+                                suggestion,
                             });
                         }
                     }
@@ -2923,9 +2996,11 @@ impl TypeChecker {
                             self.add_constraint(target_type, value_type.clone(), target.span());
                             env.insert(name.clone(), value_type);
                         } else {
+                            let suggestion = self.suggest_variable(name, env);
                             self.add_error(TypeCheckError::UndefinedVariable {
                                 name: name.clone(),
                                 span: target.span(),
+                                suggestion,
                             });
                         }
                     }

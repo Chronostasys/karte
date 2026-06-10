@@ -8,6 +8,8 @@ pub enum TypeCheckError {
     UndefinedVariable {
         name: String,
         span: Span,
+        /// 拼写建议（最相似的已定义变量名）
+        suggestion: Option<String>,
     },
     TypeMismatch {
         expected: Type,
@@ -102,8 +104,12 @@ pub enum TypeCheckError {
 impl fmt::Display for TypeCheckError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TypeCheckError::UndefinedVariable { name, .. } => {
-                write!(f, "Undefined variable: {}", name)
+            TypeCheckError::UndefinedVariable { name, suggestion, .. } => {
+                if let Some(s) = suggestion {
+                    write!(f, "Undefined variable: {} (did you mean '{}'?)", name, s)
+                } else {
+                    write!(f, "Undefined variable: {}", name)
+                }
             }
             TypeCheckError::TypeMismatch {
                 expected, found, ..
@@ -220,7 +226,7 @@ impl fmt::Display for TypeCheckError {
 impl TypeCheckError {
     pub fn span(&self) -> Span {
         match self {
-            TypeCheckError::UndefinedVariable { span, .. }
+            TypeCheckError::UndefinedVariable { span, .. } => *span,
             | TypeCheckError::TypeMismatch { span, .. }
             | TypeCheckError::ArityMismatch { span, .. }
             | TypeCheckError::NotCallable { span, .. }
