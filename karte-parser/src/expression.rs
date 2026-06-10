@@ -963,7 +963,7 @@ impl<'a> Parser<'a> {
             }
         } else {
             Err(ParseError::UnexpectedEof {
-                expected: "expression".to_string(),
+                expected: "表达式".to_string(),
             })
         }
     }
@@ -1018,7 +1018,7 @@ impl<'a> Parser<'a> {
                         }
                     } else {
                         return Err(ParseError::UnexpectedEof {
-                            expected: "tag expression".to_string(),
+                            expected: "tag 表达式".to_string(),
                         });
                     };
                     if let Some(tok) = self.peek() {
@@ -1138,7 +1138,7 @@ impl<'a> Parser<'a> {
                         }
                     } else {
                         return Err(ParseError::UnexpectedEof {
-                            expected: "tag expression".to_string(),
+                            expected: "tag 表达式".to_string(),
                         });
                     };
                     if let Some(tok) = self.peek() {
@@ -1163,14 +1163,14 @@ impl<'a> Parser<'a> {
                             s2
                         } else {
                             return Err(ParseError::UnexpectedToken {
-                                expected: "identifier".to_string(),
+                                expected: "标识符".to_string(),
                                 found: tok.token.clone(),
                                 span: tok.span,
                             });
                         }
                     } else {
                         return Err(ParseError::UnexpectedEof {
-                            expected: "identifier".to_string(),
+                            expected: "标识符".to_string(),
                         });
                     };
                     if let Some(tok) = self.peek() {
@@ -1386,14 +1386,14 @@ impl<'a> Parser<'a> {
                                 s2
                             } else {
                                 return Err(ParseError::UnexpectedToken {
-                                    expected: "identifier".to_string(),
+                                    expected: "标识符".to_string(),
                                     found: tok.token.clone(),
                                     span: tok.span,
                                 });
                             }
                         } else {
                             return Err(ParseError::UnexpectedEof {
-                                expected: "identifier".to_string(),
+                                expected: "标识符".to_string(),
                             });
                         };
                         if let Some(tok) = self.peek() {
@@ -1510,7 +1510,7 @@ impl<'a> Parser<'a> {
                                                     }
                                                 } else {
                                                     return Err(ParseError::UnexpectedEof {
-                                                        expected: "expression or ')'".to_string(),
+                                                        expected: "表达式或 ')'".to_string(),
                                                     });
                                                 };
 
@@ -1565,14 +1565,14 @@ impl<'a> Parser<'a> {
                                         }
                                     } else {
                                         Err(ParseError::UnexpectedToken {
-                                            expected: "constructor name".to_string(),
+                                            expected: "构造器名".to_string(),
                                             found: constructor_token.token.clone(),
                                             span: constructor_token.span,
                                         })
                                     }
                                 } else {
                                     Err(ParseError::UnexpectedEof {
-                                        expected: "constructor name".to_string(),
+                                        expected: "构造器名".to_string(),
                                     })
                                 }
                             } else if matches!(next_token.token, Token::LeftParen)
@@ -1667,7 +1667,7 @@ impl<'a> Parser<'a> {
                                             }
                                         } else {
                                             return Err(ParseError::UnexpectedToken {
-                                                expected: "field name".to_string(),
+                                                expected: "字段名".to_string(),
                                                 found: token.token.clone(),
                                                 span: token.span,
                                             });
@@ -1913,7 +1913,7 @@ impl<'a> Parser<'a> {
             }
         } else {
             Err(ParseError::UnexpectedEof {
-                expected: "number, identifier, lambda, or '('".to_string(),
+                expected: "数字、标识符、lambda 或 '('".to_string(),
             })
         }?;
 
@@ -2035,21 +2035,21 @@ impl<'a> Parser<'a> {
                                     };
                                 } else {
                                     return Err(ParseError::UnexpectedToken {
-                                        expected: "non-negative tuple index".to_string(),
+                                        expected: "非负元组索引".to_string(),
                                         found: field_token.token.clone(),
                                         span: field_token.span,
                                     });
                                 }
                             } else {
                                 return Err(ParseError::UnexpectedToken {
-                                    expected: "field name or tuple index".to_string(),
+                                    expected: "字段名或元组索引".to_string(),
                                     found: field_token.token.clone(),
                                     span: field_token.span,
                                 });
                             }
                         } else {
                             return Err(ParseError::UnexpectedEof {
-                                expected: "field name or tuple index".to_string(),
+                                expected: "字段名或元组索引".to_string(),
                             });
                         }
                     }
@@ -2669,7 +2669,7 @@ impl<'a> Parser<'a> {
                 name.clone()
             } else {
                 return Err(ParseError::UnexpectedToken {
-                    expected: "identifier".to_string(),
+                    expected: "标识符".to_string(),
                     found: tok.token.clone(),
                     span: tok.span,
                 });
