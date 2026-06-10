@@ -1165,3 +1165,39 @@ fn test_analyze_multi_fn_program() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors for multi-function program: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_multi_fn() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn double(x: number) -> number { x * 2 }\nfn inc(x: number) -> number { x + 1 }\nfn main() -> number {\ndouble(inc(5))\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for multi-fn: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_nested_struct() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Inner { val: number }\nstruct Outer { inner: Inner }\nfn f(o: Outer) -> number {\no.inner.val\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for nested struct: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_enum_data_match2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Expr { Lit(number), Add(number, number) }\nfn eval(e: Expr) -> number {\nmatch e {\nExpr::Lit(n) => n\nExpr::Add(a, b) => a + b\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for enum data match: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_duplicate_param2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number, x: number) -> number {\nx\n}";
+    let diagnostics = bridge.analyze(source);
+    let has_error = diagnostics.iter().any(|d| d.severity == KarteDiagnosticSeverity::Error);
+    assert!(has_error, "Should detect duplicate parameter");
+}
