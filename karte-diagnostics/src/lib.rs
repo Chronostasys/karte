@@ -92,7 +92,7 @@ pub enum CompilerError {
     #[error("类型错误: {message}")]
     #[diagnostic(code(E003))]
     TypeError {
-        #[label("Type mismatch occurred here")]
+        #[label("类型不匹配发生在这里")]
         span: SourceSpan,
         message: String,
         #[source_code]
