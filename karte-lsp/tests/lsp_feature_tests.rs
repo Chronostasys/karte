@@ -1291,3 +1291,57 @@ fn test_analyze_valid_complex_match() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors for complex match: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_generic_fn2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn id(x) { x }\nfn main() -> number {\nid(42)\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for generic fn: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_char() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f() -> number {\nlet c = 'A';\nc + 1\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for char literal: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_option_chain2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> Option<number> {\nif x > 0 { Some(x) } else { None }\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for Option chain: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_result_chain2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> Result<number, string> {\nif x > 0 { Ok(x) } else { Err(\"negative\") }\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for Result chain: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_bitwise() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(a: number, b: number) -> number {\n(a & b) | (a ^ b)\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for bitwise ops: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_nested_fn() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn double(x: number) -> number { x * 2 }\nfn quad(x: number) -> number { double(double(x)) }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for nested fn: {:?}", errors);
+}
