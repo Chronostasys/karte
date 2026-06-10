@@ -104,6 +104,10 @@ pub struct TypeChecker {
     duplicate_function_spans: HashSet<(usize, usize)>,
     /// 追踪已在 hoisting pass 中处理过的函数 span，用于区分重复定义与二次遍历
     primary_function_spans: HashSet<(usize, usize)>,
+    /// 未使用变量/函数警告追踪：记录定义的变量 (span.start, span.end) -> name
+    defined_locals: Vec<HashMap<(usize, usize), String>>,
+    /// 记录已使用的定义 span
+    used_definitions: HashSet<(usize, usize)>,
 }
 
 /// 泛型类型定义模板
@@ -144,6 +148,8 @@ impl TypeChecker {
             function_schemes: HashMap::new(),
             duplicate_function_spans: HashSet::new(),
             primary_function_spans: HashSet::new(),
+            defined_locals: vec![HashMap::new()],
+            used_definitions: HashSet::new(),
         }
     }
 
@@ -162,6 +168,98 @@ impl TypeChecker {
         self.next_type_var += 1;
         self.unification_table.new_key(TypeValue(None));
         var
+    }
+
+    /// 记录变量定义
+    fn define_local(&mut self, name: &str, span: karte_diagnostics::Span) {
+        if let Some(scope) = self.defined_locals.last_mut() {
+            scope.insert((span.start, span.end), name.to_string());
+        }
+    }
+
+    /// 记录变量使用（通过变量名在所有作用域中查找）
+    fn mark_used_by_name(&mut self, name: &str) {
+        for scope in self.defined_locals.iter().rev() {
+            for (span_key, var_name) in scope.iter() {
+                if var_name == name {
+                    self.used_definitions.insert(*span_key);
+                    return;
+                }
+            }
+        }
+    }
+
+    /// 调试用：打印当前 defined_locals 的状态
+    #[allow(dead_code)]
+    fn debug_print_locals(&self, context: &str) {
+        eprintln!("[DEBUG defined_locals: {}]", context);
+        for (i, scope) in self.defined_locals.iter().enumerate() {
+            eprintln!("  scope[{}]: {:?}", i, scope);
+        }
+        eprintln!("  used: {:?}", self.used_definitions);
+    }
+
+    /// 从模式中提取变量定义
+    fn define_pattern_locals(&mut self, pattern: &crate::ast::Pattern) {
+        use crate::ast::Pattern;
+        match pattern {
+            Pattern::Variable { name, span } => {
+                self.define_local(name, *span);
+            }
+            Pattern::Constructor { args, .. } => {
+                for arg in args {
+                    self.define_pattern_locals(arg);
+                }
+            }
+            Pattern::QualifiedConstructor { args, .. } => {
+                for arg in args {
+                    self.define_pattern_locals(arg);
+                }
+            }
+            Pattern::Struct { fields, .. } => {
+                for field in fields {
+                    self.define_pattern_locals(&field.pattern);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// 进入新的作用域
+    fn push_local_scope(&mut self) {
+        self.defined_locals.push(HashMap::new());
+    }
+
+    /// 退出作用域，检查未使用的变量并发出警告
+    fn pop_local_scope(&mut self, suppress_warnings: bool) {
+        if let Some(scope) = self.defined_locals.pop() {
+            if !suppress_warnings {
+                for (span_key, name) in &scope {
+                    // 跳过以 _ 开头的变量（约定为 intentionally unused）
+                    if name.starts_with('_') {
+                        continue;
+                    }
+                    // 跳过 main 函数（入口点，不需要被使用）
+                    if name == "main" {
+                        continue;
+                    }
+                    // 跳过函数定义（函数可能只被其他模块引用）
+                    // TODO: 未来可以根据函数是否在同一模块中被引用来判断
+                    if self.function_signatures.contains_key(name.as_str()) {
+                        continue;
+                    }
+                    if !self.used_definitions.contains(span_key) {
+                        // 未使用的变量，发出警告
+                        self.diagnostics.diagnostics.push(
+                            karte_diagnostics::Diagnostic::warning(
+                                format!("未使用的变量: `{}`", name),
+                                karte_diagnostics::Span::new(span_key.0, span_key.1),
+                            )
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// 计算两个字符串之间的编辑距离（Levenshtein distance）
@@ -682,6 +780,11 @@ impl TypeChecker {
                     });
                 }
             }
+        }
+
+        // 检查顶层未使用的变量和函数（只在无编译错误时，避免噪音）
+        if !self.diagnostics.has_errors() {
+            self.pop_local_scope(false);
         }
 
         // 如果有错误且类型仍然是变量，返回 Unknown
@@ -1293,9 +1396,11 @@ impl TypeChecker {
                 }
                 // 优先检查泛型函数，若匹配则实例化
                 if let Some(scheme) = self.function_schemes.get(name).cloned() {
+                    self.mark_used_by_name(name);
                     return self.instantiate(&scheme);
                 }
                 if let Some(ty) = env.get(name) {
+                    self.mark_used_by_name(name);
                     ty.clone()
                 } else {
                     let suggestion = self.suggest_variable(name, env);
@@ -2869,6 +2974,8 @@ impl TypeChecker {
                     let value_type = self.infer_expr(value, env);
                     // 对解构模式进行类型检查，并绑定变量到 env
                     self.check_pattern(pat.as_ref(), &value_type, env);
+                    // 记录解构模式中的变量定义
+                    self.define_pattern_locals(pat.as_ref());
                 } else if let Expr::Lambda { .. } = value {
                     // 检查是否为递归闭包（let f = |...| { ... f ... }）
                     let rec_type_var = self.fresh_type_var();
@@ -2899,6 +3006,7 @@ impl TypeChecker {
                     }
 
                     env.insert(name.clone(), value_type);
+                    self.define_local(name, *span);
                 } else {
                     let value_type = self.infer_expr(value, env);
 
@@ -2914,6 +3022,7 @@ impl TypeChecker {
                     }
 
                     env.insert(name.clone(), value_type);
+                    self.define_local(name, *span);
                 }
             }
             Statement::Expression { expr, .. } => {
@@ -3083,22 +3192,28 @@ impl TypeChecker {
                     .cloned()
                     .expect("函数签名应该已在 collect_function_definitions 中缓存");
 
+                // 记录函数定义
+                self.define_local(name, *span);
+
+                // 为函数体创建新的局部作用域
+                self.push_local_scope();
+
                 // 1. 创建新的作用域
                 let mut func_env = env.clone();
 
                 // 2. 将参数及其类型添加到函数环境中（使用缓存的类型）
                 for (param, param_ty) in params.iter().zip(signature.param_types.iter()) {
                     func_env.insert(param.name.clone(), param_ty.clone());
+                    self.define_local(&param.name, param.span);
                 }
 
                 // 3. 推断函数体类型
                 let body_ty = self.infer_expr(body, &mut func_env);
 
                 // 4. 添加约束：函数体的类型必须与声明的返回类型一致
-                // 这是关键的检查点：确保函数体返回的值与类型标注匹配
                 self.add_constraint(signature.return_type.clone(), body_ty, *span);
 
-                // 5. 构造函数类型（使用缓存的签名）
+                // 5. 构造函数类型
                 let func_type = Type::Function {
                     params: signature.param_types.clone(),
                     return_type: Box::new(signature.return_type.clone()),
@@ -3107,9 +3222,7 @@ impl TypeChecker {
                 // 6. 将函数名加入当前环境
                 env.insert(name.clone(), func_type);
 
-                // 7. 检查是否需要 generalize（泛化）
-                // 只 generalize 含有自由类型变量的函数（即参数或返回类型未完全标注的函数）
-                // 有完整类型标注的函数不受影响
+                // 7. 检查是否需要 generalize
                 if let Some(sig) = self.function_signatures.get(name) {
                     let func_type = Type::Function {
                         params: sig.param_types.clone(),
@@ -3120,6 +3233,9 @@ impl TypeChecker {
                         self.function_schemes.insert(name.clone(), TypeScheme::new(free_vars, func_type));
                     }
                 }
+
+                // 退出函数体作用域（抑制参数未使用警告，函数参数可能不被使用）
+                self.pop_local_scope(true);
             }
         }
     }
