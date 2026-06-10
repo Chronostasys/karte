@@ -1248,6 +1248,43 @@ impl LanguageServer for Backend {
             Ok(Some(values))
         }
     }
+
+    async fn moniker(
+        &self,
+        params: MonikerParams,
+    ) -> Result<Option<Vec<Moniker>>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        let store = self.document_store.read().await;
+        let Some(document) = store.get(uri) else {
+            return Ok(None);
+        };
+        let source = &document.content;
+
+        let bridge = self.compiler_bridge.read().await;
+        let mut monikers = Vec::new();
+
+        if let Some(result) = bridge.get_cached_result() {
+            for sym in &result.symbols {
+                let range = crate::compiler_bridge::span_to_range(source, sym.span);
+                if position.line >= range.start.line && position.line <= range.end.line {
+                    monikers.push(Moniker {
+                        scheme: "karte".to_string(),
+                        identifier: sym.name.clone(),
+                        unique: UniquenessLevel::Document,
+                        kind: Some(MonikerKind::Export),
+                    });
+                }
+            }
+        }
+
+        if monikers.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(monikers))
+        }
+    }
 }
 
 impl Backend {
