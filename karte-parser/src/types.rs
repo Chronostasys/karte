@@ -166,39 +166,35 @@ impl fmt::Display for ParseError {
             ParseError::UnexpectedToken {
                 expected, found, ..
             } => {
-                write!(f, "Expected {}, found {}", expected, found)
+                write!(f, "期望 {}, 实际 {}", expected, found)
             }
             ParseError::UnexpectedEof { expected } => {
-                write!(f, "Unexpected end of input, expected {}", expected)
+                write!(f, "意外的输入结束, 期望 {}", expected)
             }
             ParseError::InvalidExpression { message, .. } => {
-                write!(f, "Invalid expression: {}", message)
+                write!(f, "无效的表达式: {}", message)
             }
             ParseError::MissingClosingParen {
-                opening_span,
-                current_span,
+                opening_span: _,
+                current_span: _,
             } => {
-                write!(
-                    f,
-                    "Missing closing parenthesis at {:?} (opened at {:?})",
-                    current_span, opening_span
-                )
+                write!(f, "缺少右括号")
             }
             ParseError::MissingOperand {
                 operator,
-                operator_span,
+                operator_span: _,
             } => {
                 write!(
                     f,
                     "Missing operand for operator {} at {:?}",
-                    operator, operator_span
+                    "运算符 '{}' 缺少操作数", operator
                 )
             }
-            ParseError::ExpressionTooDeep { max_depth, span } => {
+            ParseError::ExpressionTooDeep { max_depth, span: _ } => {
                 write!(
                     f,
-                    "Expression too deep (max depth: {}) at {:?}",
-                    max_depth, span
+                    "表达式嵌套过深 (最大深度: {})",
+                    max_depth
                 )
             }
         }
