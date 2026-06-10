@@ -177,7 +177,7 @@ impl<'a> Parser<'a> {
                     }
                 }
                 return Err(ParseError::UnexpectedToken {
-                    expected: "'fn', 'struct', or 'enum' after 'pub'".to_string(),
+                    expected: "'fn', 'struct', 或 'enum' (在 'pub' 之后)".to_string(),
                     found: self.peek().unwrap().token.clone(),
                     span: self.peek().unwrap().span,
                 });
@@ -419,14 +419,14 @@ impl<'a> Parser<'a> {
                                     break;
                                 } else {
                                     return Err(ParseError::UnexpectedToken {
-                                        expected: "',' or ')'".to_string(),
+                                        expected: "',' 或 ')'".to_string(),
                                         found: next.token.clone(),
                                         span: next.span,
                                     });
                                 }
                             } else {
                                 return Err(ParseError::UnexpectedEof {
-                                    expected: "',' or ')'".to_string(),
+                                    expected: "',' 或 ')'".to_string(),
                                 });
                             }
                         }
@@ -461,7 +461,7 @@ impl<'a> Parser<'a> {
                     break;
                 } else {
                     return Err(ParseError::UnexpectedToken {
-                        expected: "',' or '}'".to_string(),
+                        expected: "',' 或 '}'".to_string(),
                         found: token.token.clone(),
                         span: token.span,
                     });
@@ -519,14 +519,14 @@ impl<'a> Parser<'a> {
                 name
             } else {
                 return Err(ParseError::UnexpectedToken {
-                    expected: "struct name".to_string(),
+                    expected: "结构体名".to_string(),
                     found: token.token.clone(),
                     span: token.span,
                 });
             }
         } else {
             return Err(ParseError::UnexpectedEof {
-                expected: "struct name".to_string(),
+                expected: "结构体名".to_string(),
             });
         };
 
@@ -590,7 +590,7 @@ impl<'a> Parser<'a> {
                 }
             } else {
                 return Err(ParseError::UnexpectedToken {
-                    expected: "field name".to_string(),
+                    expected: "字段名".to_string(),
                     found: token.token.clone(),
                     span: token.span,
                 });
@@ -606,7 +606,7 @@ impl<'a> Parser<'a> {
                     break;
                 } else {
                     return Err(ParseError::UnexpectedToken {
-                        expected: "',' or '}'".to_string(),
+                        expected: "',' 或 '}'".to_string(),
                         found: token.token.clone(),
                         span: token.span,
                     });
@@ -664,14 +664,14 @@ impl<'a> Parser<'a> {
                 name
             } else {
                 return Err(ParseError::UnexpectedToken {
-                    expected: "function name".to_string(),
+                    expected: "函数名".to_string(),
                     found: token.token.clone(),
                     span: token.span,
                 });
             }
         } else {
             return Err(ParseError::UnexpectedEof {
-                expected: "function name".to_string(),
+                expected: "函数名".to_string(),
             });
         };
 
@@ -723,7 +723,7 @@ impl<'a> Parser<'a> {
                 }
             } else {
                 return Err(ParseError::UnexpectedToken {
-                    expected: "parameter name".to_string(),
+                    expected: "参数名".to_string(),
                     found: token.token.clone(),
                     span: token.span,
                 });
@@ -739,7 +739,7 @@ impl<'a> Parser<'a> {
                     break;
                 } else {
                     return Err(ParseError::UnexpectedToken {
-                        expected: "',' or ')'".to_string(),
+                        expected: "',' 或 ')'".to_string(),
                         found: token.token.clone(),
                         span: token.span,
                     });
