@@ -911,3 +911,8 @@ fn test_type_check_multi_field() {
 fn test_type_check_tuple_destr() {
     check_no_errors("fn main() -> number {\nlet t = (1, 2);\n0\n}");
 }
+
+#[test]
+fn test_warning_unreachable_code() {
+    check_has_warnings("fn f(x: number) -> number {\nreturn 42;\nx\n}");
+}
