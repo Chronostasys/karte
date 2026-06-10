@@ -215,7 +215,7 @@ impl Diagnostic {
 
         match self.level {
             DiagnosticLevel::Error => {
-                if self.message.contains("Undefined variable") {
+                if self.message.contains("未定义的变量") || self.message.contains("Undefined variable") {
                     // 提取变量名和可能的建议
                     let name = self
                         .message
@@ -233,12 +233,12 @@ impl Diagnostic {
                         // 取出建议名（到下一个 ' 为止）
                         let suggestion = after_mean.split('\'').next().unwrap_or("");
                         if suggestion.is_empty() {
-                            format!("Make sure '{}' is defined before use. You can define it with 'let {} = ...'", name.trim(), name.trim())
+                            format!("请确保 '{}' 在使用前已定义。可以使用 'let {} = ...' 来定义它", name.trim(), name.trim())
                         } else {
-                            format!("Make sure '{}' is defined before use. Did you mean '{}'?", name.trim(), suggestion)
+                            format!("请确保 '{}' 在使用前已定义。你是否想输入 '{}'？", name.trim(), suggestion)
                         }
                     } else {
-                        format!("Make sure '{}' is defined before use. You can define it with 'let {} = ...'", name.trim(), name.trim())
+                        format!("请确保 '{}' 在使用前已定义。可以使用 'let {} = ...' 来定义它", name.trim(), name.trim())
                     };
                     
                     CompilerError::UndefinedVariable {
@@ -247,19 +247,20 @@ impl Diagnostic {
                         src,
                         help,
                     }
-                } else if self.message.contains("Type mismatch") {
+                } else if self.message.contains("类型不匹配") || self.message.contains("Type mismatch") {
                     CompilerError::TypeError {
                         span,
                         message: self.message,
                         src,
                         help: Some(
-                            "The value type does not match what this operation requires. \
-                             'expected' shows the required type, 'found' shows the actual type."
+                            "值类型与此操作要求的类型不匹配。'期望' 显示要求的类型，'实际' 显示实际的类型。"
                                 .to_string(),
                         ),
                     }
                 } else if self.message.contains("Cannot call")
                     || self.message.contains("Arity mismatch")
+                    || self.message.contains("无法调用")
+                    || self.message.contains("参数数量")
                 {
                     CompilerError::CallError {
                         span,
@@ -267,7 +268,7 @@ impl Diagnostic {
                         src,
                         help: Some("请检查函数签名和参数数量".to_string()),
                     }
-                } else if self.message.contains("Duplicate function") {
+                } else if self.message.contains("Duplicate function") || self.message.contains("重复定义") {
                     let name = self.message
                         .strip_prefix("Duplicate function definition: ")
                         .unwrap_or("unknown")
@@ -276,9 +277,9 @@ impl Diagnostic {
                         span,
                         name,
                         src,
-                        help: "A function with this name is already defined in this scope. Rename or remove the duplicate.".to_string(),
+                        help: "此名称的函数已在此作用域中定义。请重命名或删除重复定义。".to_string(),
                     }
-                } else if self.message.contains("Builtin function") {
+                } else if self.message.contains("Builtin function") || self.message.contains("内置函数") {
                     CompilerError::TypeError {
                         span,
                         message: self.message,
@@ -290,14 +291,14 @@ impl Diagnostic {
                         span,
                         message: self.message,
                         src,
-                        help: Some("Add a match arm for the missing pattern(s), or use a wildcard `_` to catch remaining cases.".to_string()),
+                        help: Some("请为缺失的模式添加 match 分支，或使用通配符 `_` 来匹配剩余情况。".to_string()),
                     }
-                } else if self.message.contains("Expected") || self.message.contains("expected") {
+                } else if self.message.contains("Expected") || self.message.contains("expected") || self.message.contains("期望") {
                     CompilerError::ParseError {
                         span,
                         message: self.message,
                         src,
-                        help: Some("请检查表达式语法".to_string()),
+                        help: Some("请检查表达式语法是否正确".to_string()),
                     }
                 } else {
                     CompilerError::ParseError {
@@ -436,7 +437,7 @@ pub fn create_miette_error(
             span: source_span,
             message: message.to_string(),
             src,
-            help: Some("请检查表达式语法".to_string()),
+            help: Some("请检查表达式语法是否正确".to_string()),
         },
         "type" => CompilerError::TypeError {
             span: source_span,
