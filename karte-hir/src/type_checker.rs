@@ -2978,20 +2978,24 @@ impl TypeChecker {
                 match &**target {
                     Expr::Identifier { .. } => {
                         // 变量赋值：统一类型
-                        self.add_constraint_with_context(target_type, value_type, *span, "赋值类型不匹配");
+                        self.add_constraint_with_context(target_type.clone(), value_type.clone(), *span, 
+                            format!("赋值类型不匹配: 变量为 `{}`, 值为 `{}`", target_type, value_type));
                     }
                     Expr::Constructor { args, .. } if args.is_empty() => {
                         // 大写字母开头的变量被 parser 误解析为零参数 Constructor
                         // 在赋值目标位置应视为普通变量
-                        self.add_constraint_with_context(target_type, value_type, *span, "赋值类型不匹配");
+                        self.add_constraint_with_context(target_type.clone(), value_type.clone(), *span, 
+                            format!("赋值类型不匹配: 变量为 `{}`, 值为 `{}`", target_type, value_type));
                     }
                     Expr::FieldAccess { .. } => {
                         // 字段赋值：统一类型
-                        self.add_constraint_with_context(target_type, value_type, *span, "字段赋值类型不匹配");
+                        self.add_constraint_with_context(target_type.clone(), value_type.clone(), *span, 
+                            format!("字段赋值类型不匹配: 字段为 `{}`, 值为 `{}`", target_type, value_type));
                     }
                     Expr::Index { .. } => {
                         // 数组下标赋值：统一类型
-                        self.add_constraint_with_context(target_type, value_type, *span, "数组元素赋值类型不匹配");
+                        self.add_constraint_with_context(target_type.clone(), value_type.clone(), *span, 
+                            format!("数组元素赋值类型不匹配: 元素为 `{}`, 值为 `{}`", target_type, value_type));
                     }
                     _ => {
                         // 其他表达式不能作为赋值目标
