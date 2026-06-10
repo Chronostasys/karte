@@ -478,3 +478,48 @@ fn test_type_check_complex_pattern() {
 fn test_type_check_string_concat_in_expr() {
     check_no_errors("fn main() -> number {\nlet s = \"hello\" + \" \" + \"world\";\nlen(s)\n}");
 }
+
+#[test]
+fn test_type_check_empty_function_unit() {
+    check_no_errors("fn noop() {\n}");
+}
+
+#[test]
+fn test_type_check_unit_return() {
+    check_no_errors("fn main() {\nlet x = 42;\n}");
+}
+
+#[test]
+fn test_type_check_complex_enum_nested_match() {
+    check_no_errors("enum Expr { Num(number), Add(Expr, Expr) }\nfn eval(e: Expr) -> number {\nmatch e {\nExpr::Num(n) => n,\nExpr::Add(a, b) => eval(a) + eval(b)\n}\n}");
+}
+
+#[test]
+fn test_type_check_string_in_if() {
+    check_no_errors("fn greet(name: string) -> string {\nif name == \"\" {\n\"world\"\n} else {\nname\n}\n}");
+}
+
+#[test]
+fn test_type_check_bool_operations() {
+    check_no_errors("fn both(a: bool, b: bool) -> bool { a && b }\nfn either(a: bool, b: bool) -> bool { a || b }\nfn neg(a: bool) -> bool { !a }");
+}
+
+#[test]
+fn test_type_check_nested_let_in_block() {
+    check_no_errors("fn main() -> number {\nlet x = {\nlet a = 1;\nlet b = 2;\na + b\n};\nx\n}");
+}
+
+#[test]
+fn test_type_check_multiple_structs() {
+    check_no_errors("struct Point { x: number, y: number }\nstruct Vec2 { dx: number, dy: number }\nfn add(p: Point, v: Vec2) -> Point {\nPoint { x: p.x + v.dx, y: p.y + v.dy }\n}");
+}
+
+#[test]
+fn test_type_check_enum_with_multiple_data() {
+    check_no_errors("enum Shape { Circle(number), Rect(number, number), Triangle(number, number, number) }\nfn sides(s: Shape) -> number {\nmatch s {\nShape::Circle(_) => 0,\nShape::Rect(_, _) => 4,\nShape::Triangle(_, _, _) => 3\n}\n}");
+}
+
+#[test]
+fn test_type_check_while_with_break() {
+    check_no_errors("fn main() -> number {\nlet sum = 0;\nlet i = 0;\nwhile i < 10 {\nsum = sum + i;\ni = i + 1\n};\nsum\n}");
+}
