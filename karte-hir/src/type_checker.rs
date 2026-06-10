@@ -2272,7 +2272,7 @@ impl TypeChecker {
                     let element_type = self.infer_expr(&elements[0], env);
                     for element in &elements[1..] {
                         let current_type = self.infer_expr(element, env);
-                        self.add_constraint(element_type.clone(), current_type, element.span());
+                        self.add_constraint_with_context(element_type.clone(), current_type, element.span(), "数组元素类型不一致");
                     }
                     Type::array(element_type)
                 }
@@ -2354,7 +2354,7 @@ impl TypeChecker {
                     Type::Var(_) => {
                         let element_var = Type::Var(self.fresh_type_var());
                         let expected = Type::array(element_var);
-                        self.add_constraint(array_type, expected, array.span());
+                        self.add_constraint_with_context(array_type, expected, array.span(), "数组类型不匹配");
                         Type::Number
                     }
                     Type::Unknown => Type::Unknown,
@@ -2670,7 +2670,7 @@ impl TypeChecker {
                     Type::Var(_) => {
                         let element_var = Type::Var(self.fresh_type_var());
                         let expected = Type::array(element_var.clone());
-                        self.add_constraint(array_type, expected, array.span());
+                        self.add_constraint_with_context(array_type, expected, array.span(), "数组类型不匹配");
                         element_var
                     }
                     Type::Unknown => Type::Unknown,
@@ -2743,7 +2743,7 @@ impl TypeChecker {
                     Type::Var(_) => {
                         let inner_type = Type::Var(self.fresh_type_var());
                         let expected_ref_type = Type::reference(inner_type.clone());
-                        self.add_constraint(expr_type, expected_ref_type, *span);
+                        self.add_constraint_with_context(expr_type, expected_ref_type, *span, "解引用类型不匹配");
                         inner_type
                     }
                     _ => {
@@ -2916,7 +2916,7 @@ impl TypeChecker {
 
                 let handler_ty = self.infer_expr(handler, &handler_env);
                 // 约束 handler 的函数类型
-                self.add_constraint(expected_handler_ty, handler_ty, handler.span());
+                self.add_constraint_with_context(expected_handler_ty, handler_ty, handler.span(), "effect handler 类型不匹配");
 
                 // body 在原环境中检查，作为整体类型
                 self.infer_expr(body, env)
@@ -3176,7 +3176,7 @@ impl TypeChecker {
                         // 变量赋值：更新环境中的变量类型
                         if env.contains_key(name) {
                             // 变量已存在，统一类型
-                            self.add_constraint(target_type, value_type.clone(), target.span());
+                            self.add_constraint_with_context(target_type, value_type.clone(), target.span(), "let 绑定类型不匹配");
                             env.insert(name.clone(), value_type);
                         } else {
                             // 变量不存在，报告错误（或者可以选择自动创建）
@@ -3192,7 +3192,7 @@ impl TypeChecker {
                         // 大写字母开头的变量被 parser 误解析为零参数 Constructor
                         // 在赋值目标位置应视为普通变量
                         if env.contains_key(name) {
-                            self.add_constraint(target_type, value_type.clone(), target.span());
+                            self.add_constraint_with_context(target_type, value_type.clone(), target.span(), "let 绑定类型不匹配");
                             env.insert(name.clone(), value_type);
                         } else {
                             let suggestion = self.suggest_variable(name, env);
@@ -3311,16 +3311,16 @@ impl TypeChecker {
             }
             crate::ast::Pattern::Number { value: _, span } => {
                 // 数字模式必须匹配数字类型
-                self.add_constraint(expected_type.clone(), Type::Number, *span);
+                self.add_constraint_with_context(expected_type.clone(), Type::Number, *span, "期望 number 类型");
             }
             crate::ast::Pattern::Boolean { value: _, span } => {
                 // 布尔模式必须匹配布尔类型
-                self.add_constraint(expected_type.clone(), Type::bool(), *span);
+                self.add_constraint_with_context(expected_type.clone(), Type::bool(), *span, "期望 bool 类型");
             }
             crate::ast::Pattern::Constructor { name, args, span } => {
                 match name.as_str() {
                     "True" | "False" => {
-                        self.add_constraint(expected_type.clone(), Type::bool(), *span);
+                        self.add_constraint_with_context(expected_type.clone(), Type::bool(), *span, "期望 bool 类型");
                     }
                     "Some" => {
                         if let Some(arg_pattern) = args.get(0) {
@@ -3352,7 +3352,7 @@ impl TypeChecker {
                                     // 如果 expected_type 不是具体的 Option，创建一个约束
                                     let inner_type = Type::Var(self.fresh_type_var());
                                     let option_type = Type::option(inner_type.clone());
-                                    self.add_constraint(expected_type.clone(), option_type, *span);
+                                    self.add_constraint_with_context(expected_type.clone(), option_type, *span, "Option 类型不匹配");
                                     self.check_pattern(arg_pattern, &inner_type, env);
                                 }
                             }
@@ -3373,7 +3373,7 @@ impl TypeChecker {
                                 // 如果不是具体的 Option，创建约束
                                 let inner_type = Type::Var(self.fresh_type_var());
                                 let option_type = Type::option(inner_type);
-                                self.add_constraint(expected_type.clone(), option_type, *span);
+                                self.add_constraint_with_context(expected_type.clone(), option_type, *span, "Option 类型不匹配");
                             }
                         }
                     }
