@@ -55,10 +55,10 @@ pub enum DiagnosticLevel {
 impl fmt::Display for DiagnosticLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DiagnosticLevel::Error => write!(f, "error"),
-            DiagnosticLevel::Warning => write!(f, "warning"),
-            DiagnosticLevel::Info => write!(f, "info"),
-            DiagnosticLevel::Hint => write!(f, "hint"),
+            DiagnosticLevel::Error => write!(f, "错误"),
+            DiagnosticLevel::Warning => write!(f, "警告"),
+            DiagnosticLevel::Info => write!(f, "信息"),
+            DiagnosticLevel::Hint => write!(f, "提示"),
         }
     }
 }
@@ -66,7 +66,7 @@ impl fmt::Display for DiagnosticLevel {
 /// 美观的编译器错误 - 集成 miette
 #[derive(Error, Debug, MietteDiagnostic)]
 pub enum CompilerError {
-    #[error("Lexical error")]
+    #[error("词法错误")]
     #[diagnostic(code(E001))]
     LexError {
         #[label("Unexpected character")]
@@ -77,7 +77,7 @@ pub enum CompilerError {
         help: String,
     },
 
-    #[error("Parse error")]
+    #[error("语法错误")]
     #[diagnostic(code(E002))]
     ParseError {
         #[label("{message}")]
@@ -89,7 +89,7 @@ pub enum CompilerError {
         help: Option<String>,
     },
 
-    #[error("Type error: {message}")]
+    #[error("类型错误: {message}")]
     #[diagnostic(code(E003))]
     TypeError {
         #[label("Type mismatch occurred here")]
@@ -101,7 +101,7 @@ pub enum CompilerError {
         help: Option<String>,
     },
 
-    #[error("Undefined variable: {name}")]
+    #[error("未定义的变量: {name}")]
     #[diagnostic(code(E004))]
     UndefinedVariable {
         #[label("Variable '{name}' is not defined")]
@@ -113,7 +113,7 @@ pub enum CompilerError {
         help: String,
     },
 
-    #[error("Function call error")]
+    #[error("函数调用错误")]
     #[diagnostic(code(E005))]
     CallError {
         #[label("{message}")]
@@ -125,7 +125,7 @@ pub enum CompilerError {
         help: Option<String>,
     },
 
-    #[error("Duplicate function definition: {name}")]
+    #[error("重复的函数定义: {name}")]
     #[diagnostic(code(E006))]
     DuplicateFunctionDefinition {
         #[label("Function '{name}' is already defined in this scope")]
@@ -137,7 +137,7 @@ pub enum CompilerError {
         help: String,
     },
 
-    #[error("Warning: {message}")]
+    #[error("警告: {message}")]
     #[diagnostic(code(W001), severity(Warning))]
     Warning {
         #[label("{message}")]
@@ -149,7 +149,7 @@ pub enum CompilerError {
         help: Option<String>,
     },
 
-    #[error("IO error")]
+    #[error("IO 错误")]
     #[diagnostic(code(E999))]
     IoError {
         #[from]
@@ -255,7 +255,7 @@ impl Diagnostic {
                         span,
                         message: self.message,
                         src,
-                        help: Some("Check the function signature and argument count".to_string()),
+                        help: Some("请检查函数签名和参数数量".to_string()),
                     }
                 } else if self.message.contains("Duplicate function") {
                     let name = self.message
@@ -273,7 +273,7 @@ impl Diagnostic {
                         span,
                         message: self.message,
                         src,
-                        help: Some("Check the argument type for this built-in function".to_string()),
+                        help: Some("请检查内置函数的参数类型".to_string()),
                     }
                 } else if self.message.contains("非穷尽 match") {
                     CompilerError::TypeError {
@@ -287,7 +287,7 @@ impl Diagnostic {
                         span,
                         message: self.message,
                         src,
-                        help: Some("Check the syntax of your expression".to_string()),
+                        help: Some("请检查表达式语法".to_string()),
                     }
                 } else {
                     CompilerError::ParseError {
@@ -420,19 +420,19 @@ pub fn create_miette_error(
         "lex" => CompilerError::LexError {
             span: source_span,
             src,
-            help: "Check for invalid characters in your code".to_string(),
+            help: "请检查代码中的无效字符".to_string(),
         },
         "parse" => CompilerError::ParseError {
             span: source_span,
             message: message.to_string(),
             src,
-            help: Some("Check the syntax of your expression".to_string()),
+            help: Some("请检查表达式语法".to_string()),
         },
         "type" => CompilerError::TypeError {
             span: source_span,
             message: message.to_string(),
             src,
-            help: Some("Make sure the types match what's expected".to_string()),
+            help: Some("请确保类型匹配".to_string()),
         },
         _ => CompilerError::ParseError {
             span: source_span,
