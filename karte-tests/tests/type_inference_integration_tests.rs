@@ -2542,3 +2542,53 @@ fn test_type_check_max_of_three_fn() {
 fn test_type_check_is_palindrome_check() {
     check_no_errors("fn is_between(x: number, lo: number, hi: number) -> bool {\nx >= lo && x <= hi\n}");
 }
+
+#[test]
+fn test_type_check_string_len_fn() {
+    check_no_errors("fn f(s: string) -> number {\nlet n = len(s);\nn + 1\n}");
+}
+
+#[test]
+fn test_type_check_nested_match_data() {
+    check_no_errors("enum Tree { Leaf(number), Node(number, number) }\nfn sum_tree(t: Tree) -> number {\nmatch t {\nTree::Leaf(x) => x\nTree::Node(a, b) => a + b\n}\n}");
+}
+
+#[test]
+fn test_type_check_complex_option_chain() {
+    check_no_errors("fn safe_head(arr: number) -> Option<number> {\nSome(arr)\n}\nfn process(arr: number) -> number {\nmatch safe_head(arr) {\nSome(x) => x * 2\nNone => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_complex_result_chain() {
+    check_no_errors("fn parse(s: string) -> Result<number, string> {\nOk(42)\n}\nfn compute(s: string) -> number {\nmatch parse(s) {\nOk(n) => n * 2\nErr(_) => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_multi_match_arm() {
+    check_no_errors("fn classify_char(c: number) -> string {\nmatch c {\n65 => \"A\"\n66 => \"B\"\n67 => \"C\"\n_ => \"other\"\n}\n}");
+}
+
+#[test]
+fn test_type_check_struct_with_methods_v2() {
+    check_no_errors("struct Counter { value: number }\nfn increment(c: Counter) -> Counter {\nCounter { value: c.value + 1 }\n}\nfn get_value(c: Counter) -> number {\nc.value\n}");
+}
+
+#[test]
+fn test_type_check_bool_ops_complex() {
+    check_no_errors("fn f(a: bool, b: bool, c: bool) -> bool {\n(a && b) || (!a && c) || (b && !c)\n}");
+}
+
+#[test]
+fn test_type_check_number_ops_chain() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 1;\nlet b = a * 2;\nlet c = b - 3;\nlet d = c / 4;\nd\n}");
+}
+
+#[test]
+fn test_type_check_string_ops_chain() {
+    check_no_errors("fn f(s: string) -> string {\nlet a = s + \" world\";\nlet b = a + \"!\";\nb\n}");
+}
+
+#[test]
+fn test_type_check_struct_field_access_chain() {
+    check_no_errors("struct Line { start_x: number, start_y: number, end_x: number, end_y: number }\nfn horizontal_length(l: Line) -> number {\nl.end_x - l.start_x\n}");
+}
