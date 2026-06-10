@@ -1709,7 +1709,7 @@ impl TypeChecker {
                                 param_type.clone(),
                                 arg_type.clone(),
                                 *span,
-                                format!("函数调用第 {} 个参数类型不匹配", i + 1),
+                                format!("函数调用第 {} 个参数类型不匹配: 期望 `{}`, 实际 `{}`", i + 1, param_type, arg_type),
                             );
                         }
 
@@ -1734,7 +1734,7 @@ impl TypeChecker {
                                 param_type.clone(),
                                 arg_type.clone(),
                                 *span,
-                                format!("闭包调用第 {} 个参数类型不匹配", i + 1),
+                                format!("闭包调用第 {} 个参数类型不匹配: 期望 `{}`, 实际 `{}`", i + 1, param_type, arg_type),
                             );
                         }
 
