@@ -1051,3 +1051,33 @@ fn test_type_check_block_expr2() {
 fn test_type_check_nested_call2() {
     check_no_errors("fn double(x: number) -> number { x * 2 }\nfn quad(x: number) -> number { double(double(x)) }\nfn main() -> number {\nquad(10)\n}");
 }
+
+#[test]
+fn test_type_error_ret_string() {
+    check_has_errors("fn f() -> string {\n42\n}");
+}
+
+#[test]
+fn test_type_error_str_to_num() {
+    check_has_errors("fn main() -> number {\nlet x: number = \"hello\";\n0\n}");
+}
+
+#[test]
+fn test_type_error_bad_ctor() {
+    check_has_errors("enum Color { Red, Green, Blue }\nfn main() -> number {\nlet c = Color::Yellow;\n0\n}");
+}
+
+#[test]
+fn test_type_error_extra_field() {
+    check_has_errors("struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point { x: 1, y: 2, z: 3 };\n0\n}");
+}
+
+#[test]
+fn test_type_error_miss_field() {
+    check_has_errors("struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point { x: 1 };\n0\n}");
+}
+
+#[test]
+fn test_type_error_unk_field() {
+    check_has_errors("struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point { x: 1, z: 2 };\n0\n}");
+}
