@@ -479,6 +479,7 @@ impl TypeChecker {
                             expected,
                             found,
                             span,
+                            context: None,
                         });
                         Err(())
                     }
@@ -489,6 +490,7 @@ impl TypeChecker {
                         expected,
                         found,
                         span,
+                        context: None,
                     });
                     Err(())
                 }
@@ -507,6 +509,7 @@ impl TypeChecker {
                         expected,
                         found,
                         span,
+                        context: None,
                     });
                     return Err(());
                 }
@@ -542,6 +545,7 @@ impl TypeChecker {
                         expected,
                         found,
                         span,
+                        context: None,
                     });
                     return Err(());
                 }
@@ -558,6 +562,7 @@ impl TypeChecker {
                                 expected,
                                 found,
                                 span,
+                                context: None,
                             });
                             return Err(());
                         }
@@ -579,6 +584,7 @@ impl TypeChecker {
                         expected,
                         found,
                         span,
+                        context: None,
                     });
                     Err(())
                 }
@@ -600,6 +606,7 @@ impl TypeChecker {
                         expected,
                         found,
                         span,
+                        context: None,
                     });
                     return Err(());
                 }
@@ -613,6 +620,7 @@ impl TypeChecker {
                     expected,
                     found,
                     span,
+                    context: None,
                 });
                 Err(())
             }
@@ -2184,6 +2192,7 @@ impl TypeChecker {
                                     inner: Box::new(other),
                                 },
                                 span: *span,
+                                context: None,
                             });
                             Type::Unknown
                         }
@@ -2223,6 +2232,7 @@ impl TypeChecker {
                             expected: Type::Number,
                             found: other,
                             span: *span,
+                            context: None,
                         });
                         Type::Unknown
                     }
@@ -2237,6 +2247,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: left_type,
                         span: left.span(),
+                        context: None,
                     });
                     ok = false;
                 }
@@ -2245,6 +2256,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: right_type,
                         span: right.span(),
+                        context: None,
                     });
                     ok = false;
                 }
@@ -2259,6 +2271,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: left_type,
                         span: left.span(),
+                        context: None,
                     });
                     ok = false;
                 }
@@ -2267,6 +2280,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: right_type,
                         span: right.span(),
+                        context: None,
                     });
                     ok = false;
                 }
@@ -2282,6 +2296,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: value_type,
                         span: value.span(),
+                        context: None,
                     });
                     ok = false;
                 }
@@ -2290,6 +2305,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: min_type,
                         span: min_val.span(),
+                        context: None,
                     });
                     ok = false;
                 }
@@ -2298,6 +2314,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: max_type,
                         span: max_val.span(),
+                        context: None,
                     });
                     ok = false;
                 }
@@ -2312,6 +2329,7 @@ impl TypeChecker {
                         expected: Type::String,
                         found: string_type,
                         span: string.span(),
+                        context: None,
                     });
                     ok = false;
                 }
@@ -2320,6 +2338,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: index_type,
                         span: index.span(),
+                        context: None,
                     });
                     ok = false;
                 }
@@ -2334,6 +2353,7 @@ impl TypeChecker {
                         expected: Type::String,
                         found: string_type,
                         span: string.span(),
+                        context: None,
                     });
                     ok = false;
                 }
@@ -2342,6 +2362,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: index_type,
                         span: index.span(),
+                        context: None,
                     });
                     ok = false;
                 }
@@ -2357,6 +2378,7 @@ impl TypeChecker {
                         expected: Type::String,
                         found: string_type,
                         span: string.span(),
+                        context: None,
                     });
                     ok = false;
                 }
@@ -2365,6 +2387,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: start_type,
                         span: start.span(),
+                        context: None,
                     });
                     ok = false;
                 }
@@ -2373,6 +2396,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: length_type,
                         span: length.span(),
+                        context: None,
                     });
                     ok = false;
                 }
@@ -2387,6 +2411,7 @@ impl TypeChecker {
                         expected: Type::String,
                         found: string_type,
                         span: string.span(),
+                        context: None,
                     });
                     ok = false;
                 }
@@ -2395,6 +2420,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: char_code_type,
                         span: char_code.span(),
+                        context: None,
                     });
                     ok = false;
                 }
@@ -2409,6 +2435,7 @@ impl TypeChecker {
                         expected: Type::String,
                         found: string_type,
                         span: string.span(),
+                        context: None,
                     });
                     ok = false;
                 }
@@ -2417,6 +2444,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: sep_type,
                         span: separator.span(),
+                        context: None,
                     });
                     ok = false;
                 }
@@ -2429,6 +2457,7 @@ impl TypeChecker {
                         expected: Type::String,
                         found: string_type,
                         span: string.span(),
+                        context: None,
                     });
                     Type::Unknown
                 } else {
@@ -2443,6 +2472,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: expr_type,
                         span: expr.span(),
+                        context: None,
                     });
                     ok = false;
                 }
@@ -2456,6 +2486,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: expr_type,
                         span: expr.span(),
+                        context: None,
                     });
                     ok = false;
                 }
@@ -2477,6 +2508,7 @@ impl TypeChecker {
                                     inner: Box::new(other),
                                 },
                                 span: *span,
+                                context: None,
                             });
                             Type::Unknown
                         }
@@ -2493,6 +2525,7 @@ impl TypeChecker {
                             expected: Type::array(Type::Unknown),
                             found: other,
                             span: *span,
+                            context: None,
                         });
                         Type::Unknown
                     }
@@ -2566,6 +2599,7 @@ impl TypeChecker {
                             expected: expected_ref_type,
                             found: expr_type,
                             span: *span,
+                            context: None,
                         });
                         Type::Unknown
                     }
@@ -2587,6 +2621,7 @@ impl TypeChecker {
                             expected,
                             found: pointer_type,
                             span: *span,
+                            context: None,
                         });
                         Type::Unit
                     }
@@ -2603,6 +2638,7 @@ impl TypeChecker {
                             expected,
                             found: pointer_type,
                             span: *span,
+                            context: None,
                         });
                         Type::Unit
                     }
@@ -2616,6 +2652,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: addr_type,
                         span: *span,
+                        context: None,
                     });
                 }
                 Type::Number
@@ -2628,6 +2665,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: addr_type,
                         span: *span,
+                        context: None,
                     });
                 }
                 let val_type = self.infer_expr(value, env);
@@ -2636,6 +2674,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: val_type,
                         span: *span,
+                        context: None,
                     });
                 }
                 Type::Number
@@ -2744,6 +2783,7 @@ impl TypeChecker {
                                 expected: target_type.clone(),
                                 found: inner_type,
                                 span: *span,
+                                context: None,
                             }
                         );
                     }
@@ -2780,6 +2820,7 @@ impl TypeChecker {
                             expected: Type::array(Type::Unknown),
                             found: array_type,
                             span: array.span(),
+                            context: None,
                         });
                         Type::Number
                     }

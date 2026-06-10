@@ -15,6 +15,7 @@ pub enum TypeCheckError {
         expected: Type,
         found: Type,
         span: Span,
+        context: Option<String>,
     },
     ArityMismatch {
         expected: usize,
@@ -112,9 +113,14 @@ impl fmt::Display for TypeCheckError {
                 }
             }
             TypeCheckError::TypeMismatch {
-                expected, found, ..
+                expected, found, context, ..
             } => {
-                write!(f, "Type mismatch: expected `{}`, found `{}`", expected, found)
+                let base = format!("Type mismatch: expected `{}`, found `{}`", expected, found);
+                if let Some(ctx) = context {
+                    write!(f, "{} ({})", base, ctx)
+                } else {
+                    write!(f, "{}", base)
+                }
             }
             TypeCheckError::ArityMismatch {
                 expected, found, ..
