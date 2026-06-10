@@ -1041,3 +1041,28 @@ fn test_completion_all_keywords() {
         assert!(has_kw, "Should have '{}' in keyword completions", kw);
     }
 }
+
+#[test]
+fn test_hover_let_binding2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet x = 42;\nx\n}";
+    bridge.analyze(source);
+    let hover = bridge.get_hover_info(Position::new(1, 4));
+    if let Some((text, _)) = hover {
+        assert!(text.contains("x") || text.contains("number"), "Let binding hover should show info: got {}", text);
+    }
+}
+
+#[test]
+fn test_doc_symbols_struct_enum_fn() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point { x: number, y: number }\nenum Color { Red, Green, Blue }\nfn main() -> number { 0 }";
+    bridge.analyze(source);
+    let symbols = bridge.get_document_symbols();
+    let has_point = symbols.iter().any(|s| s.name == "Point");
+    let has_color = symbols.iter().any(|s| s.name == "Color");
+    let has_main = symbols.iter().any(|s| s.name == "main");
+    assert!(has_point, "Should have 'Point' struct in document symbols");
+    assert!(has_color, "Should have 'Color' enum in document symbols");
+    assert!(has_main, "Should have 'main' function in document symbols");
+}
