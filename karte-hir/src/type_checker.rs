@@ -1488,7 +1488,8 @@ impl TypeChecker {
                         }
                     }
                     BinaryOperator::Equal | BinaryOperator::NotEqual => {
-                        self.add_constraint_with_context(left_type.clone(), right_type.clone(), left.span(), "比较运算要求两边类型一致");
+                        self.add_constraint_with_context(left_type.clone(), right_type.clone(), left.span(), 
+                            format!("比较运算要求两边类型一致: 左侧为 `{}`, 右侧为 `{}`", left_type, right_type));
                     }
                     BinaryOperator::Subtract
                     | BinaryOperator::Multiply
@@ -1500,8 +1501,10 @@ impl TypeChecker {
                     | BinaryOperator::ShiftLeft
                     | BinaryOperator::ShiftRight => {
                         // 数字运算、位运算：左右操作数都必须是数字类型
-                        self.add_constraint_with_context(left_type.clone(), Type::Number, left.span(), "算术运算要求 number 类型");
-                        self.add_constraint_with_context(right_type.clone(), Type::Number, right.span(), "算术运算要求 number 类型");
+                        self.add_constraint_with_context(left_type.clone(), Type::Number, left.span(), 
+                            format!("算术运算要求 number 类型, 但左侧为 `{}`", left_type));
+                        self.add_constraint_with_context(right_type.clone(), Type::Number, right.span(), 
+                            format!("算术运算要求 number 类型, 但右侧为 `{}`", right_type));
                     }
                     BinaryOperator::GreaterEqual
                     | BinaryOperator::LessEqual
@@ -1512,12 +1515,16 @@ impl TypeChecker {
                         // 否则两边都必须是 number
                         match (&left_type, &right_type) {
                             (Type::String, _) | (_, Type::String) => {
-                                self.add_constraint_with_context(left_type.clone(), Type::String, left.span(), "字符串比较要求 string 类型");
-                                self.add_constraint_with_context(right_type.clone(), Type::String, right.span(), "字符串比较要求 string 类型");
+                                self.add_constraint_with_context(left_type.clone(), Type::String, left.span(), 
+                                    format!("字符串比较要求 string 类型, 但左侧为 `{}`", left_type));
+                                self.add_constraint_with_context(right_type.clone(), Type::String, right.span(), 
+                                    format!("字符串比较要求 string 类型, 但右侧为 `{}`", right_type));
                             }
                             _ => {
-                                self.add_constraint_with_context(left_type.clone(), Type::Number, left.span(), "比较运算要求 number 类型");
-                                self.add_constraint_with_context(right_type.clone(), Type::Number, right.span(), "比较运算要求 number 类型");
+                                self.add_constraint_with_context(left_type.clone(), Type::Number, left.span(), 
+                                    format!("比较运算要求 number 类型, 但左侧为 `{}`", left_type));
+                                self.add_constraint_with_context(right_type.clone(), Type::Number, right.span(), 
+                                    format!("比较运算要求 number 类型, 但右侧为 `{}`", right_type));
                             }
                         }
                     }
@@ -1525,12 +1532,16 @@ impl TypeChecker {
                         // 逻辑运算符接受 bool 或 number（与 if/while 条件一致）
                         match (&left_type, &right_type) {
                             (Type::Number, _) | (_, Type::Number) => {
-                                self.add_constraint_with_context(left_type.clone(), Type::Number, left.span(), "逻辑运算符要求 number 类型");
-                                self.add_constraint_with_context(right_type.clone(), Type::Number, right.span(), "逻辑运算符要求 number 类型");
+                                self.add_constraint_with_context(left_type.clone(), Type::Number, left.span(), 
+                                    format!("逻辑运算符要求 number 类型, 但左侧为 `{}`", left_type));
+                                self.add_constraint_with_context(right_type.clone(), Type::Number, right.span(), 
+                                    format!("逻辑运算符要求 number 类型, 但右侧为 `{}`", right_type));
                             }
                             _ => {
-                                self.add_constraint_with_context(left_type.clone(), Type::bool(), left.span(), "逻辑运算符 (&&/||) 要求 bool 类型");
-                                self.add_constraint_with_context(right_type.clone(), Type::bool(), right.span(), "逻辑运算符 (&&/||) 要求 bool 类型");
+                                self.add_constraint_with_context(left_type.clone(), Type::bool(), left.span(), 
+                                    format!("逻辑运算符 (&&/||) 要求 bool 类型, 但左侧为 `{}`", left_type));
+                                self.add_constraint_with_context(right_type.clone(), Type::bool(), right.span(), 
+                                    format!("逻辑运算符 (&&/||) 要求 bool 类型, 但右侧为 `{}`", right_type));
                             }
                         }
                     }
