@@ -2177,11 +2177,27 @@ impl<'a> Parser<'a> {
                 } else if matches!(token.token, Token::RightBrace) {
                     break;
                 } else {
-                    return Err(ParseError::UnexpectedToken {
-                        expected: "',' or '}'".to_string(),
-                        found: token.token.clone(),
-                        span: token.span,
-                    });
+                    // 尝试无逗号分隔符继续解析
+                    // 如果下一个 token 看起来像是 match arm 的开始（模式），则继续
+                    // 否则报错
+                    let looks_like_arm_start = matches!(token.token,
+                        Token::Identifier(_)
+                        | Token::Number(_)
+                        | Token::StringLiteral(_)
+                        | Token::CharLiteral(_)
+                        | Token::LeftParen
+                        | Token::Underscore
+                        | Token::Minus
+                    );
+                    if looks_like_arm_start {
+                        // 无逗号分隔符，继续解析下一个 arm
+                    } else {
+                        return Err(ParseError::UnexpectedToken {
+                            expected: "',' or '}'".to_string(),
+                            found: token.token.clone(),
+                            span: token.span,
+                        });
+                    }
                 }
             }
         }
