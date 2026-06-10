@@ -1444,3 +1444,42 @@ mod tests {
         assert!(!diagnostics.has_errors(), "Match with wildcard should be valid");
     }
 }
+
+    #[test]
+    fn test_constraint_context_binary_op() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = \"hello\" + 1;\n    x\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(diagnostics.has_errors(), "String + number should report error");
+        let msgs: Vec<&str> = diagnostics.diagnostics.iter().map(|d| d.message.as_str()).collect();
+        let msg = msgs.join(", ");
+        assert!(msg.contains("类型不匹配") || msg.contains("运算"),
+            "Error should have binary operation context: {}", msg);
+    }
+
+    #[test]
+    fn test_constraint_context_return_type() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    \"hello\"\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(diagnostics.has_errors(), "Wrong return type should report error");
+        let msgs: Vec<&str> = diagnostics.diagnostics.iter().map(|d| d.message.as_str()).collect();
+        let msg = msgs.join(", ");
+        assert!(msg.contains("类型不匹配") || msg.contains("返回"),
+            "Error should mention return type context: {}", msg);
+    }
+
+    #[test]
+    fn test_constraint_context_assignment() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x: number = \"hello\";\n    x\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(diagnostics.has_errors(), "Assignment type mismatch should report error");
+    
+}
