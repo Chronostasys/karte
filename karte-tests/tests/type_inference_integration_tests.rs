@@ -2192,3 +2192,53 @@ fn test_type_check_struct_update_pattern() {
 fn test_type_check_function_composition() {
     check_no_errors("fn compose(f: fn(number) -> number, g: fn(number) -> number, x: number) -> number {\nf(g(x))\n}");
 }
+
+#[test]
+fn test_type_check_complex_return_path() {
+    check_no_errors("fn f(x: number) -> number {\nif x > 0 {\nreturn x * 2\n};\nif x < 0 {\nreturn 0 - x\n};\n0\n}");
+}
+
+#[test]
+fn test_type_check_nested_if_return_v3() {
+    check_no_errors("fn f(x: number) -> number {\nif x > 10 {\nif x > 20 {\nreturn 3\n};\nreturn 2\n};\n1\n}");
+}
+
+#[test]
+fn test_type_check_match_with_guard_v2() {
+    check_no_errors("fn f(x: number) -> number {\nmatch x {\n0 => 0\n1 => 1\n_ if x > 0 => 2\n_ => 3\n}\n}");
+}
+
+#[test]
+fn test_type_check_enum_with_string_data_v2() {
+    check_no_errors("enum Message { Hello(string), Number(number), Quit }\nfn process(m: Message) -> number {\nmatch m {\nMessage::Hello(_) => 1\nMessage::Number(n) => n\nMessage::Quit => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_struct_with_string_field() {
+    check_no_errors("struct Person { name: string, age: number }\nfn greet(p: Person) -> string {\n\"Hello, \" + p.name\n}");
+}
+
+#[test]
+fn test_type_check_array_with_struct() {
+    check_no_errors("struct Point { x: number, y: number }\nfn sum_x(points: number) -> number {\n0\n}");
+}
+
+#[test]
+fn test_type_check_multi_return_fn() {
+    check_no_errors("fn classify(n: number) -> string {\nif n > 0 { \"positive\" } else { if n < 0 { \"negative\" } else { \"zero\" } }\n}");
+}
+
+#[test]
+fn test_type_check_string_comparison_v2() {
+    check_no_errors("fn cmp(a: string, b: string) -> number {\nif a == b { 0 } else { if a < b { -1 } else { 1 } }\n}");
+}
+
+#[test]
+fn test_type_check_complex_closure_capture() {
+    check_no_errors("fn main() -> number {\nlet x = 10;\nlet add_x = |y: number| -> number { x + y };\nadd_x(5)\n}");
+}
+
+#[test]
+fn test_type_check_fn_param_closure() {
+    check_no_errors("fn apply(f: fn(number) -> number, x: number) -> number {\nf(x)\n}\nfn main() -> number {\nlet double = |n: number| -> number { n * 2 };\napply(double, 5)\n}");
+}
