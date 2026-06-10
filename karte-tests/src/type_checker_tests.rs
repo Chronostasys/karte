@@ -716,4 +716,84 @@ mod tests {
         let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
         assert!(diagnostics.has_errors(), "Should report duplicate function");
     }
+
+    #[test]
+    fn test_struct_field_type_check() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "struct Point { x: number, y: number }\nfn main() -> number {\n    let p = Point { x: 1, y: true };\n    p.x\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Should report type mismatch for struct field");
+    }
+
+    #[test]
+    fn test_exhaustive_enum_matching() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "enum Color { Red, Green, Blue }\nfn main() -> number {\n    let c = Color::Red;\n    match c {\n        Color::Red => 1,\n        Color::Green => 2,\n        Color::Blue => 3\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Exhaustive match should not report errors");
+    }
+
+    #[test]
+    fn test_nested_match_exhaustiveness() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "enum Bool { True, False }\nfn main() -> number {\n    let b = Bool::True;\n    match b {\n        Bool::True => 1\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Non-exhaustive match should report error");
+        let msgs: Vec<&str> = diagnostics.diagnostics.iter().map(|d| d.message.as_str()).collect();
+        let msg = msgs.join(", ");
+        assert!(msg.contains("False") || msg.contains("穷尽"), "Should mention missing pattern: {}", msg);
+    }
+
+    #[test]
+    fn test_option_type_exhaustiveness() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = Some(42);\n    match x {\n        Some(v) => v\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Non-exhaustive Option match should report error");
+        let msgs: Vec<&str> = diagnostics.diagnostics.iter().map(|d| d.message.as_str()).collect();
+        let msg = msgs.join(", ");
+        assert!(msg.contains("None") || msg.contains("穷尽"), "Should mention missing None: {}", msg);
+    }
+
+    #[test]
+    fn test_result_type_exhaustiveness() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = Ok(42);\n    match x {\n        Ok(v) => v,\n        Err(e) => 0\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        if diagnostics.has_errors() {
+            let msgs: Vec<String> = diagnostics.diagnostics.iter().map(|d| format!("[{:?}] {}", d.level, d.message)).collect();
+            eprintln!("Unexpected errors: {:?}", msgs);
+        }
+        assert!(!diagnostics.has_errors(), "Exhaustive Result match should not report errors: {:?}", diagnostics.diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_unary_minus_type_error() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = true;\n    -x\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Should report type error for -bool");
+    }
+
+    #[test]
+    fn test_logical_not_type_error() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = 42;\n    !x\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Should report type error for !number");
+    }
 }
