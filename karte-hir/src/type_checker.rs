@@ -2192,7 +2192,7 @@ impl TypeChecker {
                                     inner: Box::new(other),
                                 },
                                 span: *span,
-                                context: None,
+                                context: Some("len() 的参数必须是数组或字符串".to_string()),
                             });
                             Type::Unknown
                         }
@@ -2232,7 +2232,7 @@ impl TypeChecker {
                             expected: Type::Number,
                             found: other,
                             span: *span,
-                            context: None,
+                            context: Some("abs() 的参数必须是 number 类型".to_string()),
                         });
                         Type::Unknown
                     }
@@ -2271,7 +2271,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: left_type,
                         span: left.span(),
-                        context: None,
+                        context: Some("max() 的左操作数必须是 number 类型".to_string()),
                     });
                     ok = false;
                 }
@@ -2280,7 +2280,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: right_type,
                         span: right.span(),
-                        context: None,
+                        context: Some("max() 的右操作数必须是 number 类型".to_string()),
                     });
                     ok = false;
                 }
@@ -2296,7 +2296,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: value_type,
                         span: value.span(),
-                        context: None,
+                        context: Some("clamp() 的值参数必须是 number 类型".to_string()),
                     });
                     ok = false;
                 }
@@ -2305,7 +2305,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: min_type,
                         span: min_val.span(),
-                        context: None,
+                        context: Some("clamp() 的最小值参数必须是 number 类型".to_string()),
                     });
                     ok = false;
                 }
@@ -2314,7 +2314,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: max_type,
                         span: max_val.span(),
-                        context: None,
+                        context: Some("clamp() 的最大值参数必须是 number 类型".to_string()),
                     });
                     ok = false;
                 }
@@ -2329,7 +2329,7 @@ impl TypeChecker {
                         expected: Type::String,
                         found: string_type,
                         span: string.span(),
-                        context: None,
+                        context: Some("字符串索引操作要求 string 类型".to_string()),
                     });
                     ok = false;
                 }
@@ -2338,7 +2338,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: index_type,
                         span: index.span(),
-                        context: None,
+                        context: Some("字符串索引要求 number 类型索引".to_string()),
                     });
                     ok = false;
                 }
@@ -2353,7 +2353,7 @@ impl TypeChecker {
                         expected: Type::String,
                         found: string_type,
                         span: string.span(),
-                        context: None,
+                        context: Some("charAt() 的字符串参数必须是 string 类型".to_string()),
                     });
                     ok = false;
                 }
@@ -2362,7 +2362,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: index_type,
                         span: index.span(),
-                        context: None,
+                        context: Some("charAt() 的索引参数必须是 number 类型".to_string()),
                     });
                     ok = false;
                 }
@@ -2378,7 +2378,7 @@ impl TypeChecker {
                         expected: Type::String,
                         found: string_type,
                         span: string.span(),
-                        context: None,
+                        context: Some("substring() 的字符串参数必须是 string 类型".to_string()),
                     });
                     ok = false;
                 }
@@ -2387,7 +2387,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: start_type,
                         span: start.span(),
-                        context: None,
+                        context: Some("substring() 的起始位置必须是 number 类型".to_string()),
                     });
                     ok = false;
                 }
@@ -2396,7 +2396,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: length_type,
                         span: length.span(),
-                        context: None,
+                        context: Some("substring() 的长度参数必须是 number 类型".to_string()),
                     });
                     ok = false;
                 }
@@ -2411,7 +2411,7 @@ impl TypeChecker {
                         expected: Type::String,
                         found: string_type,
                         span: string.span(),
-                        context: None,
+                        context: Some("字符串查找操作要求 string 类型".to_string()),
                     });
                     ok = false;
                 }
@@ -2420,7 +2420,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: char_code_type,
                         span: char_code.span(),
-                        context: None,
+                        context: Some("字符串查找的子串参数必须是 string 或 number 类型".to_string()),
                     });
                     ok = false;
                 }
@@ -2435,7 +2435,7 @@ impl TypeChecker {
                         expected: Type::String,
                         found: string_type,
                         span: string.span(),
-                        context: None,
+                        context: Some("字符串分割操作要求 string 类型".to_string()),
                     });
                     ok = false;
                 }
@@ -2444,7 +2444,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: sep_type,
                         span: separator.span(),
-                        context: None,
+                        context: Some("字符串分割的分隔符参数类型不匹配".to_string()),
                     });
                     ok = false;
                 }
@@ -2457,7 +2457,7 @@ impl TypeChecker {
                         expected: Type::String,
                         found: string_type,
                         span: string.span(),
-                        context: None,
+                        context: Some("trim() 的参数必须是 string 类型".to_string()),
                     });
                     Type::Unknown
                 } else {
@@ -2472,7 +2472,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: expr_type,
                         span: expr.span(),
-                        context: None,
+                        context: Some("char_to_string() 的参数必须是 number 类型（字符编码）".to_string()),
                     });
                     ok = false;
                 }
@@ -2486,7 +2486,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: expr_type,
                         span: expr.span(),
-                        context: None,
+                        context: Some("to_string() 的参数必须是 number 类型".to_string()),
                     });
                     ok = false;
                 }
@@ -2508,7 +2508,7 @@ impl TypeChecker {
                                     inner: Box::new(other),
                                 },
                                 span: *span,
-                                context: None,
+                                context: Some("数组元素类型访问：表达式必须是数组类型".to_string()),
                             });
                             Type::Unknown
                         }
@@ -2525,7 +2525,7 @@ impl TypeChecker {
                             expected: Type::array(Type::Unknown),
                             found: other,
                             span: *span,
-                            context: None,
+                            context: Some("数组元素类型访问：表达式必须是数组类型".to_string()),
                         });
                         Type::Unknown
                     }
@@ -2599,7 +2599,7 @@ impl TypeChecker {
                             expected: expected_ref_type,
                             found: expr_type,
                             span: *span,
-                            context: None,
+                            context: Some("解引用操作要求引用类型 (&T)".to_string()),
                         });
                         Type::Unknown
                     }
@@ -2621,7 +2621,7 @@ impl TypeChecker {
                             expected,
                             found: pointer_type,
                             span: *span,
-                            context: None,
+                            context: Some("解引用操作要求引用类型 (&T)".to_string()),
                         });
                         Type::Unit
                     }
@@ -2638,7 +2638,7 @@ impl TypeChecker {
                             expected,
                             found: pointer_type,
                             span: *span,
-                            context: None,
+                            context: Some("引用赋值操作要求引用类型 (&T)".to_string()),
                         });
                         Type::Unit
                     }
@@ -2652,7 +2652,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: addr_type,
                         span: *span,
-                        context: None,
+                        context: Some("unsafe_load 地址参数必须是 number 类型".to_string()),
                     });
                 }
                 Type::Number
@@ -2665,7 +2665,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: addr_type,
                         span: *span,
-                        context: None,
+                        context: Some("unsafe_store 地址参数必须是 number 类型".to_string()),
                     });
                 }
                 let val_type = self.infer_expr(value, env);
@@ -2674,7 +2674,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: val_type,
                         span: *span,
-                        context: None,
+                        context: Some("unsafe_store 值参数必须是 number 类型".to_string()),
                     });
                 }
                 Type::Number
@@ -2783,7 +2783,7 @@ impl TypeChecker {
                                 expected: target_type.clone(),
                                 found: inner_type,
                                 span: *span,
-                                context: None,
+                                context: Some("函数调用参数类型不匹配".to_string()),
                             }
                         );
                     }
@@ -2820,7 +2820,7 @@ impl TypeChecker {
                             expected: Type::array(Type::Unknown),
                             found: array_type,
                             span: array.span(),
-                            context: None,
+                            context: Some("函数返回值类型不匹配".to_string()),
                         });
                         Type::Number
                     }
