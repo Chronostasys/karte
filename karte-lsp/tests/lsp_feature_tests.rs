@@ -1345,3 +1345,48 @@ fn test_analyze_valid_nested_fn() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors for nested fn: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_undefined_fn2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nnonexistent()\n}";
+    let diagnostics = bridge.analyze(source);
+    let has_error = diagnostics.iter().any(|d| d.severity == KarteDiagnosticSeverity::Error);
+    assert!(has_error, "Should detect undefined function");
+}
+
+#[test]
+fn test_analyze_undefined_var2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nundefined_var\n}";
+    let diagnostics = bridge.analyze(source);
+    let has_error = diagnostics.iter().any(|d| d.severity == KarteDiagnosticSeverity::Error);
+    assert!(has_error, "Should detect undefined variable");
+}
+
+#[test]
+fn test_analyze_duplicate_fn() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn foo() -> number { 1 }\nfn foo() -> number { 2 }";
+    let diagnostics = bridge.analyze(source);
+    let has_error = diagnostics.iter().any(|d| d.severity == KarteDiagnosticSeverity::Error);
+    assert!(has_error, "Should detect duplicate function");
+}
+
+#[test]
+fn test_analyze_non_exhaustive_bool() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(b: bool) -> number {\nmatch b {\ntrue => 1\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let has_error = diagnostics.iter().any(|d| d.severity == KarteDiagnosticSeverity::Error);
+    assert!(has_error, "Should detect non-exhaustive bool match");
+}
+
+#[test]
+fn test_analyze_missing_struct_fields2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point { x: 1 };\n0\n}";
+    let diagnostics = bridge.analyze(source);
+    let has_error = diagnostics.iter().any(|d| d.severity == KarteDiagnosticSeverity::Error);
+    assert!(has_error, "Should detect missing struct fields");
+}
