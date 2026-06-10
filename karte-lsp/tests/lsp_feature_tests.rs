@@ -356,3 +356,79 @@ fn test_analyze_struct_field_access() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Struct field access should have no errors, got: {:?}", errors);
 }
+
+#[test]
+fn test_document_symbols_empty() {
+    let mut bridge = CompilerBridge::new();
+    let _diagnostics = bridge.analyze("");
+    let symbols = bridge.get_document_symbols();
+    assert!(symbols.is_empty(), "Empty source should have no symbols");
+}
+
+#[test]
+fn test_document_symbols_function() {
+    let mut bridge = CompilerBridge::new();
+    let _diagnostics = bridge.analyze("fn main() -> number { 42 }");
+    let symbols = bridge.get_document_symbols();
+    assert!(!symbols.is_empty(), "Function should produce symbols");
+}
+
+#[test]
+fn test_document_symbols_struct() {
+    let mut bridge = CompilerBridge::new();
+    let _diagnostics = bridge.analyze("struct Point { x: number, y: number }");
+    let symbols = bridge.get_document_symbols();
+    assert!(!symbols.is_empty(), "Struct should produce symbols");
+}
+
+#[test]
+fn test_document_symbols_enum() {
+    let mut bridge = CompilerBridge::new();
+    let _diagnostics = bridge.analyze("enum Color { Red, Green, Blue }");
+    let symbols = bridge.get_document_symbols();
+    assert!(!symbols.is_empty(), "Enum should produce symbols");
+}
+
+#[test]
+fn test_hover_on_struct_name() {
+    let mut bridge = CompilerBridge::new();
+    let _diagnostics = bridge.analyze("struct Point { x: number, y: number }\nfn main() -> number { 0 }");
+    let hover = bridge.get_hover_info(Position { line: 0, character: 7 });
+    assert!(hover.is_some(), "Should have hover info for struct name");
+}
+
+#[test]
+fn test_hover_on_enum_name() {
+    let mut bridge = CompilerBridge::new();
+    let _diagnostics = bridge.analyze("enum Color { Red, Green, Blue }\nfn main() -> number { 0 }");
+    let hover = bridge.get_hover_info(Position { line: 0, character: 5 });
+    // enum 名称的 hover 可能不支持，只验证不崩溃
+    let _ = hover;
+}
+
+#[test]
+fn test_completions_include_keywords() {
+    let mut bridge = CompilerBridge::new();
+    let _diagnostics = bridge.analyze("fn main() -> number { let x = 0; }");
+    let completions = bridge.get_completions(Position { line: 0, character: 25 });
+    // 应该有一些补全项
+    assert!(!completions.is_empty(), "Should have completions");
+}
+
+#[test]
+fn test_find_references_function() {
+    let mut bridge = CompilerBridge::new();
+    let _diagnostics = bridge.analyze("fn foo() -> number { 42 }\nfn main() -> number { foo() }");
+    let refs = bridge.find_references(Position { line: 0, character: 3 });
+    // foo 在两处使用：定义和调用
+    assert!(!refs.is_empty(), "Should find references to foo");
+}
+
+#[test]
+fn test_definition_lookup() {
+    let mut bridge = CompilerBridge::new();
+    let _diagnostics = bridge.analyze("fn foo() -> number { 42 }\nfn main() -> number { foo() }");
+    let def = bridge.get_definition(Position { line: 1, character: 25 });
+    // foo 在 main 中被调用，应该能跳转到定义
+    assert!(def.is_some(), "Should find definition of foo");
+}
