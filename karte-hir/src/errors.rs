@@ -115,10 +115,19 @@ impl fmt::Display for TypeCheckError {
             TypeCheckError::TypeMismatch {
                 expected, found, context, ..
             } => {
+                let suggestion = generate_type_suggestion(expected, found);
                 if let Some(ctx) = context {
-                    write!(f, "类型不匹配: 期望 `{}`, 实际 `{}` ({})", expected, found, ctx)
+                    if let Some(sug) = suggestion {
+                        write!(f, "类型不匹配: 期望 `{}`, 实际 `{}` ({})\n  提示: {}", expected, found, ctx, sug)
+                    } else {
+                        write!(f, "类型不匹配: 期望 `{}`, 实际 `{}` ({})", expected, found, ctx)
+                    }
                 } else {
-                    write!(f, "类型不匹配: 期望 `{}`, 实际 `{}`", expected, found)
+                    if let Some(sug) = suggestion {
+                        write!(f, "类型不匹配: 期望 `{}`, 实际 `{}`\n  提示: {}", expected, found, sug)
+                    } else {
+                        write!(f, "类型不匹配: 期望 `{}`, 实际 `{}`", expected, found)
+                    }
                 }
             }
             TypeCheckError::ArityMismatch {
@@ -253,5 +262,62 @@ impl TypeCheckError {
             | TypeCheckError::InvalidMainReturnType { span, .. }
             | TypeCheckError::NonExhaustiveMatch { span, .. } => *span,
         }
+    }
+}
+
+/// 根据期望类型和实际类型生成智能建议
+fn generate_type_suggestion(expected: &Type, found: &Type) -> Option<String> {
+    match (expected, found) {
+        // number vs bool: 可能是条件表达式忘记比较
+        (Type::Number, Type::Bool) => {
+            Some("布尔值不能用作数字，你可能需要添加比较运算符".to_string())
+        }
+        (Type::Bool, Type::Number) => {
+            Some("数字不能用作布尔值，你可能需要比较运算符（如 == 0, > 0）".to_string())
+        }
+        // number vs string: 可能是字面量类型错误
+        (Type::Number, Type::String) => {
+            Some("字符串不能用作数字，请检查是否需要类型转换".to_string())
+        }
+        (Type::String, Type::Number) => {
+            Some("数字不能用作字符串，如需转换为字符串请使用相关的转换函数".to_string())
+        }
+        // Unit vs 其他类型: 可能是缺少返回值
+        (Type::Unit, other) => {
+            Some(format!("表达式返回了 `{}`，但你期望的是空类型（Unit）。如果你需要返回值，请在函数末尾添加表达式", other))
+        }
+        (other, Type::Unit) => {
+            Some(format!("表达式返回了空类型（Unit），但你期望的是 `{}`。可能缺少返回值", other))
+        }
+        // 函数类型 vs 非函数: 可能忘记调用
+        (Type::Function { .. }, _) => {
+            Some("表达式是一个函数，你可能忘记调用它（添加参数列表）".to_string())
+        }
+        (_, Type::Function { .. }) => {
+            Some("这里需要一个值，但你提供了一个函数。你是否忘记调用它？".to_string())
+        }
+        // 闭包类型 vs 非闭包
+        (Type::Closure { .. }, _) => {
+            Some("表达式是一个闭包，你可能忘记调用它（添加参数列表）".to_string())
+        }
+        (_, Type::Closure { .. }) => {
+            Some("这里需要一个值，但你提供了一个闭包。你是否忘记调用它？".to_string())
+        }
+        // 引用 vs 内部类型
+        (Type::Reference { inner }, found) if inner.as_ref() == found => {
+            Some("你可能需要使用取地址运算符 `&` 来创建引用".to_string())
+        }
+        (found, Type::Reference { inner }) if inner.as_ref() == found => {
+            Some("你可能需要使用解引用运算符 `*` 来获取引用中的值".to_string())
+        }
+        // 数组 vs 元素类型
+        (Type::Array { element }, found) if element.as_ref() == found => {
+            Some("你需要将值放入数组中，使用 `[value]` 语法".to_string())
+        }
+        // 元组相关
+        (Type::Tuple(expected_types), Type::Tuple(found_types)) if expected_types.len() != found_types.len() => {
+            Some(format!("元组长度不匹配: 期望 {} 个元素, 实际 {} 个元素", expected_types.len(), found_types.len()))
+        }
+        _ => None,
     }
 }
