@@ -274,14 +274,7 @@ pub fn check_exhaustiveness(
 ) -> ExhaustivenessResult {
     let constructors = get_constructors(scrutinee_type, custom_types);
 
-    if constructors.is_empty() {
-        return ExhaustivenessResult {
-            is_exhaustive: true,
-            missing_patterns: vec![],
-            redundant_arms: vec![],
-        };
-    }
-
+    // 即使没有有限的构造器列表，也可以检测冗余 arm（如 _ 后面的模式）
     let cols: Vec<PatternCol> = patterns.iter().map(|p| pattern_to_col(p)).collect();
 
     // 检测冗余 arm
@@ -290,6 +283,16 @@ pub fn check_exhaustiveness(
         if i > 0 && is_redundant(col, &cols[..i], &constructors) {
             redundant_arms.push(i);
         }
+    }
+
+    if constructors.is_empty() {
+        // 对于没有有限构造器的类型（如 number），只能确认穷尽性（如果有通配符）
+        // 但冗余 arm 检测已经在上面完成了
+        return ExhaustivenessResult {
+            is_exhaustive: true,
+            missing_patterns: vec![],
+            redundant_arms,
+        };
     }
 
     // 如果有任何通配符模式，则一定穷尽
