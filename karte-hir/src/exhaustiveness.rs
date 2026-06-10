@@ -537,4 +537,74 @@ mod tests {
         let result = check_exhaustiveness(&[&pat], &Type::Number, &HashMap::new());
         assert!(result.is_exhaustive);
     }
+
+    #[test]
+    fn test_option_exhaustive_with_some_none() {
+        let option_ty = Type::sum(
+            "Option".to_string(),
+            vec![
+                SumVariant::with_data("Some".to_string(), Type::Number),
+                SumVariant::unit("None".to_string()),
+            ],
+        );
+
+        let some_pat = Pattern::Constructor {
+            name: "Some".to_string(),
+            args: vec![Pattern::Wildcard {
+                span: Span::dummy(),
+            }],
+            span: Span::dummy(),
+        };
+        let none_pat = Pattern::Constructor {
+            name: "None".to_string(),
+            args: vec![],
+            span: Span::dummy(),
+        };
+
+        let refs = [&some_pat, &none_pat];
+        let result = check_exhaustiveness(&refs, &option_ty, &HashMap::new());
+        assert!(result.is_exhaustive, "Option 的 Some + None 应该是穷尽的");
+    }
+
+    #[test]
+    fn test_option_non_exhaustive_only_some() {
+        let option_ty = Type::sum(
+            "Option".to_string(),
+            vec![
+                SumVariant::with_data("Some".to_string(), Type::Number),
+                SumVariant::unit("None".to_string()),
+            ],
+        );
+
+        let some_pat = Pattern::Constructor {
+            name: "Some".to_string(),
+            args: vec![Pattern::Wildcard {
+                span: Span::dummy(),
+            }],
+            span: Span::dummy(),
+        };
+
+        let refs = [&some_pat];
+        let result = check_exhaustiveness(&refs, &option_ty, &HashMap::new());
+        assert!(!result.is_exhaustive, "只有 Some 的 match 不穷尽");
+        assert!(result.missing_patterns.iter().any(|p| p.contains("None")),
+            "缺失的模式应该包含 None");
+    }
+
+    #[test]
+    fn test_wildcard_is_always_exhaustive() {
+        let wildcard = Pattern::Wildcard {
+            span: Span::dummy(),
+        };
+        let bool_ty = Type::Bool;
+        let result = check_exhaustiveness(&[&wildcard], &bool_ty, &HashMap::new());
+        assert!(result.is_exhaustive, "通配符模式总是穷尽的");
+    }
+
+    #[test]
+    fn test_number_wildcard_is_exhaustive() {
+        let wildcard = Pattern::Wildcard { span: Span::dummy() };
+        let result = check_exhaustiveness(&[&wildcard], &Type::Number, &HashMap::new());
+        assert!(result.is_exhaustive, "通配符匹配 number 类型应该是穷尽的");
+    }
 }
