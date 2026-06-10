@@ -1627,7 +1627,16 @@ impl TypeChecker {
             } => {
                 let mut new_env = env.clone();
                 let mut param_types = Vec::new();
+                // 检查闭包参数名重复
+                let mut seen_params = std::collections::HashSet::new();
                 for param in params {
+                    if seen_params.contains(&param.name) {
+                        self.add_error(TypeCheckError::DuplicateFunctionDefinition {
+                            name: param.name.clone(),
+                            span: param.span,
+                        });
+                    }
+                    seen_params.insert(param.name.clone());
                     let param_type = if let Some(ref type_ann) = param.type_annotation {
                         self.resolve_struct_field_from_parsed(type_ann)
                     } else {
