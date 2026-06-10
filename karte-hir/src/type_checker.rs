@@ -2190,6 +2190,21 @@ impl TypeChecker {
                     );
                 }
 
+                // 🔧 检测条件中的非零数字字面量（始终为 true）
+                if let Expr::Number { value: n, .. } = condition.as_ref() {
+                    if *n != 0 {
+                        self.add_warning(
+                            "if 条件是一个非零数字字面量, 始终为 true".to_string(),
+                            condition.span(),
+                        );
+                    } else {
+                        self.add_warning(
+                            "if 条件是数字 0, 始终为 false".to_string(),
+                            condition.span(),
+                        );
+                    }
+                }
+
                 // 🔧 检测始终为 true/false 的条件
                 if let Expr::Boolean { value, .. } = condition.as_ref() {
                     if *value {
