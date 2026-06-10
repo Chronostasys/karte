@@ -102,6 +102,7 @@ impl LanguageServer for Backend {
                 rename_provider: Some(OneOf::Left(true)),
                 folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+                inlay_hint_provider: Some(OneOf::Left(true)),
                 semantic_tokens_provider: Some(
                     SemanticTokensServerCapabilities::SemanticTokensOptions(SemanticTokensOptions {
                         work_done_progress_options: WorkDoneProgressOptions::default(),
@@ -717,6 +718,71 @@ impl LanguageServer for Backend {
             Ok(None)
         } else {
             Ok(Some(ranges))
+        }
+    }
+
+    async fn inlay_hint(
+        &self,
+        params: InlayHintParams,
+    ) -> Result<Option<Vec<InlayHint>>> {
+        let uri = &params.text_document.uri;
+        let store = self.document_store.read().await;
+        let Some(document) = store.get(uri) else {
+            return Ok(None);
+        };
+        let source = &document.content;
+
+        let mut bridge = self.compiler_bridge.write().await;
+        let _ = bridge.analyze(source);
+        let analysis = bridge.get_cached_result();
+
+        let mut hints = Vec::new();
+
+        if let Some(result) = analysis {
+            // 构建 byte position -> (line, col) 映射
+            let mut byte_to_pos: std::collections::HashMap<usize, (u32, u32)> = std::collections::HashMap::new();
+            let mut current_line: u32 = 0;
+            let mut current_col: u32 = 0;
+            for (i, ch) in source.char_indices() {
+                byte_to_pos.insert(i, (current_line, current_col));
+                if ch == '\n' {
+                    current_line += 1;
+                    current_col = 0;
+                } else {
+                    current_col += 1;
+                }
+            }
+
+            // 为每个有类型信息的标识符添加 inlay hint
+            for (&(start, end), type_str) in &result.identifier_type_strings {
+                // 只在视图范围内显示
+                if let Some(&(line, col)) = byte_to_pos.get(&start) {
+                    if line >= params.range.start.line && line <= params.range.end.line {
+                        // 在标识符后面显示类型
+                        if let Some(&(_end_line, end_col)) = byte_to_pos.get(&end) {
+                            // 跳过 number 和 string 等明显的类型
+                            if type_str != "number" && type_str != "string" && type_str != "bool" && type_str != "Unit" {
+                                hints.push(InlayHint {
+                                    position: Position::new(line, end_col),
+                                    label: InlayHintLabel::String(format!(": {}", type_str)),
+                                    kind: Some(InlayHintKind::TYPE),
+                                    text_edits: None,
+                                    tooltip: None,
+                                    padding_left: Some(true),
+                                    padding_right: None,
+                                    data: None,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if hints.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(hints))
         }
     }
 }
