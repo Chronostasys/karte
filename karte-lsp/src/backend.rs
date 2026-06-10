@@ -909,6 +909,40 @@ impl LanguageServer for Backend {
                     command: None,
                 }));
             }
+
+            // 检查是否是"缺少字段"错误，提供添加缺少字段的建议
+            if diag.message.contains("缺少字段") {
+                // 提取缺少的字段名 - 格式: "缺少字段: field1, field2"
+                if let Some(start) = diag.message.find("缺少字段:") {
+                    let fields_str = &diag.message[start + "缺少字段:".len()..];
+                    let fields_str = fields_str.split_whitespace().next().unwrap_or("");
+                    let fields: Vec<&str> = fields_str.split(',').map(|f| f.trim()).filter(|f| !f.is_empty()).collect();
+                    if !fields.is_empty() {
+                        let field_assignments: Vec<String> = fields.iter()
+                            .map(|f| format!("{}: 0", f))
+                            .collect();
+                        let insert_text = field_assignments.join(", ");
+                        let edit = TextEdit {
+                            range: diag.range,
+                            new_text: format!(", {}", insert_text),
+                        };
+                        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                            title: format!("添加缺少的字段: {}", insert_text),
+                            kind: Some(CodeActionKind::QUICKFIX),
+                            diagnostics: Some(vec![diag.clone()]),
+                            edit: Some(WorkspaceEdit {
+                                changes: Some(vec![(uri.clone(), vec![edit])].into_iter().collect()),
+                                document_changes: None,
+                                change_annotations: None,
+                            }),
+                            is_preferred: Some(true),
+                            disabled: None,
+                            data: None,
+                            command: None,
+                        }));
+                    }
+                }
+            }
         }
 
         if actions.is_empty() {
