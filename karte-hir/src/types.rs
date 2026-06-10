@@ -391,7 +391,16 @@ impl fmt::Display for Type {
                 }
                 Ok(())
             }
-            Type::Var(var) => write!(f, "t{}", var.0),
+            Type::Var(var) => {
+                // 显示为 T, U, V, ... 而非 t0, t1, t2
+                let names = "TUVWXYZABCDEFGHIJKLMNOPQRS";
+                let idx = var.0 as usize;
+                if idx < names.len() {
+                    write!(f, "{}", names.chars().nth(idx).unwrap())
+                } else {
+                    write!(f, "T{}", idx)
+                }
+            }
             Type::Unknown => write!(f, "unknown"),
         }
     }
