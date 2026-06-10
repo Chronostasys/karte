@@ -3507,7 +3507,7 @@ impl TypeChecker {
                         }
                         if found {
                             if let Some(ct) = matched_type {
-                                self.add_constraint_with_context(expected_type.clone(), ct, *span, "类型不匹配",
+                                self.add_constraint_with_context(expected_type.clone(), ct, *span, "match 分支类型与被匹配值不匹配",
                                 );
                             }
                             for (i, arg_pattern) in args.iter().enumerate() {
@@ -3550,7 +3550,7 @@ impl TypeChecker {
                         if let Some(variant) = variants.iter().find(|v| v.name == *constructor_name)
                         {
                             // 约束expected_type必须是这个sum type
-                            self.add_constraint_with_context(expected_type.clone(), sum_type.clone(), *span, "类型不匹配",
+                            self.add_constraint_with_context(expected_type.clone(), sum_type.clone(), *span, "条件表达式类型不匹配",
                             );
 
                             // 检查参数数量
@@ -3601,7 +3601,7 @@ impl TypeChecker {
                 Some(Type::Struct { name: _, fields: struct_fields }) => {
                     // 约束 expected_type 必须是此结构体类型
                     let full_type = Type::Struct { name: name.clone(), fields: struct_fields.clone() };
-                    self.add_constraint_with_context(expected_type.clone(), full_type, *span, "类型不匹配",
+                    self.add_constraint_with_context(expected_type.clone(), full_type, *span, "match 分支类型与被匹配值不匹配",
                     );
                     // 对每个字段模式进行类型检查
                     for field_pattern in fields {
