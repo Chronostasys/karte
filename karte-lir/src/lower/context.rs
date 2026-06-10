@@ -36,6 +36,7 @@ impl LirLoweringContext {
             returned_temp_ids: HashSet::new(),
             dereferenced_temp_ids: HashSet::new(),
             force_struct_heap: false,
+            temp_struct_names: HashMap::new(),
         }
     }
 
@@ -66,6 +67,7 @@ impl LirLoweringContext {
         self.returned_temp_ids = HashSet::new();
         self.dereferenced_temp_ids = HashSet::new();
         self.force_struct_heap = false;
+        self.temp_struct_names.clear();
         self.current_function_symbol = self
             .function_symbols
             .get(&name)

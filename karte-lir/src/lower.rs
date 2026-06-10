@@ -36,11 +36,16 @@ pub fn lower_mir_to_lir(mir_program: &MirProgram) -> Result<LirProgram, Vec<Stri
             .iter()
             .enumerate()
             .map(|(index, field)| {
+                // 🔧 检查字段类型是否是 struct（通过在 struct_types 中查找匹配的名称）
+                let struct_type_name = mir_program.struct_types.keys().find(|name| {
+                    field.field_type.starts_with(name.as_str())
+                }).cloned();
                 crate::StructField {
                     name: field.name.clone(),
                     offset: index * 8, // 简化：每个字段8字节，按顺序排列
                     size: 8,
                     alignment: 8,
+                    struct_type_name,
                 }
             })
             .collect();

@@ -65,6 +65,8 @@ pub(super) fn lower_statement(
             if let Value::Struct { name, .. } = source {
                 if name != "Closure" {
                     if let Value::Temp { id, .. } = target {
+                        // 🔧 始终记录 temp 的 struct 类型名（用于嵌套 struct 深拷贝判断）
+                        ctx.temp_struct_names.insert(id.0, name.clone());
                         if ctx.returned_temp_ids.contains(&id.0) {
                             log::debug!(
                                 "🔧 检测到 struct 返回逃逸: temp {:?} 将被返回，强制堆分配",

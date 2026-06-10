@@ -90,6 +90,7 @@ impl StructLayoutManager {
                 offset: aligned_offset,
                 size: field_size,
                 alignment: field_alignment,
+                struct_type_name: None,
             };
 
             struct_fields.push(lir_field);
@@ -323,12 +324,14 @@ mod tests {
                     offset: 0,
                     size: 1,
                     alignment: 1,
+                    struct_type_name: None,
                 },
                 StructField {
                     name: "b".to_string(),
                     offset: 8,
                     size: 8,
                     alignment: 8,
+                    struct_type_name: None,
                 },
             ],
             total_size: 16,
@@ -349,12 +352,14 @@ mod tests {
                     offset: 0,
                     size: 1,
                     alignment: 1,
+                    struct_type_name: None,
                 },
                 StructField {
                     name: "value".to_string(),
                     offset: 8,
                     size: 8,
                     alignment: 8,
+                    struct_type_name: None,
                 },
             ],
             total_size: 16,

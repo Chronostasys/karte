@@ -24,6 +24,8 @@ pub struct StructField {
     pub offset: usize,
     pub size: usize,
     pub alignment: usize,
+    /// 如果该字段是 struct 类型，记录其类型名（用于递归堆深拷贝）
+    pub struct_type_name: Option<String>,
 }
 
 /// 结构体布局信息

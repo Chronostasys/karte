@@ -9542,4 +9542,137 @@ fn main() -> number {
     let exit_code = compile_project_mode_code(code);
     assert_eq!(exit_code, 3);
 }
+
+/// 回归测试：嵌套 struct 类型注解解析顺序（Point 在 Rect 后定义也能正确解析字段类型）
+#[test]
+fn test_nested_struct_type_annotation_order() {
+    let code = r#"
+struct Point { x: number, y: number }
+struct Rect { w: number, h: number, tl: Point }
+fn get_tl_x(r: Rect) -> number { r.tl.x }
+fn main() -> number {
+    let r = Rect { w: 10, h: 5, tl: Point { x: 42, y: 7 } };
+    get_tl_x(r)
+}
+"#;
+    let exit_code = compile_project_mode_code(code);
+    assert_eq!(exit_code, 42);
+}
+
+/// 回归测试：元组在数组中的索引访问（__tuple_N 未注册到 MIR struct_types 导致垃圾值）
+#[test]
+fn test_tuple_in_array_access() {
+    let code = r#"
+fn main() -> number {
+    let items = [(10, 20), (30, 40)];
+    let a = items[0];
+    let b = items[1];
+    a.0 + a.1 + b.0 + b.1
+}
+"#;
+    let exit_code = compile_project_mode_code(code);
+    assert_eq!(exit_code, 100);
+}
+
+/// 回归测试：三层嵌套 struct 函数返回值 + 参数传递（内层 struct 栈地址在函数返回后无效）
+#[test]
+fn test_deep_nested_struct_fn_return() {
+    let code = r#"
+struct A { v: number }
+struct B { a: A }
+struct C { b: B }
+fn make_c(v: number) -> C { C { b: B { a: A { v: v } } } }
+fn get_v(c: C) -> number { c.b.a.v }
+fn main() -> number {
+    let c = make_c(99);
+    get_v(c)
+}
+"#;
+    let exit_code = compile_project_mode_code(code);
+    assert_eq!(exit_code, 99);
+}
+
+/// 回归测试：四层嵌套 struct 函数传参
+#[test]
+fn test_four_level_nested_struct() {
+    let code = r#"
+struct A { v: number }
+struct B { a: A }
+struct C { b: B }
+struct D { c: C }
+fn make_d(v: number) -> D { D { c: C { b: B { a: A { v: v } } } } }
+fn get_v(d: D) -> number { d.c.b.a.v }
+fn main() -> number {
+    let d = make_d(42);
+    get_v(d)
+}
+"#;
+    let exit_code = compile_project_mode_code(code);
+    assert_eq!(exit_code, 42);
+}
+
+/// 回归测试：元组类型注解 (Point, Point) 解析（resolve_struct_field_from_parsed 缺少 Type::Tuple 递归处理）
+#[test]
+fn test_tuple_type_annotation_with_struct() {
+    let code = r#"
+struct Point { x: number, y: number }
+fn sum_points(t: (Point, Point)) -> number {
+    t.0.x + t.1.x
+}
+fn main() -> number {
+    sum_points((Point { x: 10, y: 0 }, Point { x: 20, y: 0 }))
+}
+"#;
+    let exit_code = compile_project_mode_code(code);
+    assert_eq!(exit_code, 30);
+}
+
+/// 回归测试：嵌套 struct 修改后作为函数参数
+#[test]
+fn test_nested_struct_shift_via_function() {
+    let code = r#"
+struct Point { x: number, y: number }
+struct Rect { tl: Point, w: number, h: number }
+fn shift_right(r: Rect, dx: number) -> Rect {
+    Rect { tl: Point { x: r.tl.x + dx, y: r.tl.y }, w: r.w, h: r.h }
+}
+fn main() -> number {
+    let r = Rect { tl: Point { x: 0, y: 0 }, w: 10, h: 5 };
+    let i = 0;
+    while i < 5 {
+        r = shift_right(r, 1);
+        i = i + 1;
+    };
+    r.tl.x
+}
+"#;
+    let exit_code = compile_project_mode_code(code);
+    assert_eq!(exit_code, 5);
+}
+
+/// 回归测试：struct + enum + 数组组合
+#[test]
+fn test_struct_enum_array_combo() {
+    let code = r#"
+struct S { v: number }
+enum Op { Add, Mul }
+fn apply(s: S, op: Op, n: number) -> S {
+    match op {
+        Op::Add => S { v: s.v + n },
+        Op::Mul => S { v: s.v * n }
+    }
+}
+fn main() -> number {
+    let s = S { v: 1 };
+    let items = [(Op::Add, 5), (Op::Mul, 3), (Op::Add, 10)];
+    let first = items[0];
+    let op = first.0;
+    let n = first.1;
+    s = apply(s, op, n);
+    s.v
+}
+"#;
+    let exit_code = compile_project_mode_code(code);
+    assert_eq!(exit_code, 6);
+}
 }

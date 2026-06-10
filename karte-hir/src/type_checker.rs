@@ -1018,15 +1018,80 @@ impl TypeChecker {
 
     /// 处理收集到的结构体定义，解析字段类型并检测循环引用
     fn process_struct_definitions(&mut self, struct_defs: HashMap<String, Vec<FieldDef>>) {
-        // 先创建所有结构体的骨架（只有名字，没有字段）
+        // 🔧 修复：先创建所有结构体的完整骨架（只有名字，没有字段）
+        // 这样在解析字段类型时，至少能通过名字引用其他结构体
         for name in struct_defs.keys() {
             let placeholder_type = Type::struct_type(name.clone(), vec![]);
             self.custom_types.insert(name.clone(), placeholder_type);
         }
 
-        // 现在解析字段类型
+        // 🔧 修复：按依赖顺序解析字段类型
+        // 使用拓扑排序确保被依赖的 struct 先解析
+        // 对于简单情况（无循环依赖），按源码顺序解析即可
         let struct_defs_copy = struct_defs.clone();
-        for (name, fields) in struct_defs {
+
+        // 🔧 关键修复：多轮解析，每轮尝试解析尚未完成的结构体
+        // 直到没有新的结构体被解析为止
+        let mut resolved: HashMap<String, Vec<crate::types::StructField>> = HashMap::new();
+        let mut remaining: Vec<(String, Vec<FieldDef>)> = struct_defs.into_iter().collect();
+
+        // 最多迭代 remaining.len() 次（每次至少解析一个）
+        let max_iterations = remaining.len();
+        for _ in 0..max_iterations {
+            let mut next_remaining = Vec::new();
+            let mut progress = false;
+
+            for (name, fields) in remaining {
+                let mut struct_fields = Vec::new();
+                let mut all_resolved = true;
+
+                for field in &fields {
+                    let field_type = self.resolve_parsed_type(&field.field_type, &struct_defs_copy);
+
+                    // 检查字段类型是否还是空骨架（未完全解析）
+                    if let Type::Struct { name: ref type_name, fields: ref type_fields } = field_type {
+                        if type_fields.is_empty() && struct_defs_copy.contains_key(type_name) && type_name != &name {
+                            // 引用了其他尚未解析完成的 struct，跳过本轮
+                            all_resolved = false;
+                            break;
+                        }
+                    }
+
+                    struct_fields.push(crate::types::StructField {
+                        name: field.name.clone(),
+                        field_type,
+                    });
+                }
+
+                if all_resolved {
+                    // 检查是否有非法的递归
+                    if Self::has_illegal_recursion(&name, &struct_fields, &mut vec![]) {
+                        self.add_error(TypeCheckError::InvalidPattern {
+                            message: format!(
+                                "Illegal recursion in struct {}: recursive types must use references",
+                                name
+                            ),
+                            span: karte_diagnostics::Span::new(0, 0),
+                        });
+                    }
+                    resolved.insert(name.clone(), struct_fields);
+                    // 🔧 关键：解析完成后立即更新 custom_types，让后续 struct 能引用
+                    let struct_type = Type::struct_type(name.clone(), resolved[&name].clone());
+                    self.custom_types.insert(name, struct_type);
+                    progress = true;
+                } else {
+                    next_remaining.push((name, fields));
+                }
+            }
+
+            remaining = next_remaining;
+            if !progress || remaining.is_empty() {
+                break;
+            }
+        }
+
+        // 处理剩余无法解析的（循环依赖等情况）
+        for (name, fields) in remaining {
             let mut struct_fields = Vec::new();
             for field in &fields {
                 let field_type = self.resolve_parsed_type(&field.field_type, &struct_defs_copy);
@@ -1036,14 +1101,14 @@ impl TypeChecker {
                 });
             }
 
-            // 检查是否有非法的递归（没有通过引用的递归）
+            // 🔧 检查循环依赖是否为非法递归（没有通过引用的递归）
             if Self::has_illegal_recursion(&name, &struct_fields, &mut vec![]) {
                 self.add_error(TypeCheckError::InvalidPattern {
                     message: format!(
                         "Illegal recursion in struct {}: recursive types must use references",
                         name
                     ),
-                    span: karte_diagnostics::Span::new(0, 0), // 临时span
+                    span: karte_diagnostics::Span::new(0, 0),
                 });
             }
 
@@ -3597,6 +3662,14 @@ impl TypeChecker {
             Type::Generic { name, args } => {
                 // 实例化泛型类型
                 self.instantiate_generic_type(name, args)
+            }
+            // 🔧 修复：递归解析元组类型中的元素类型（如 (Point, Point) 中的 Point 骨架）
+            Type::Tuple(types) => {
+                let resolved: Vec<Type> = types
+                    .iter()
+                    .map(|t| self.resolve_struct_field_from_parsed(t))
+                    .collect();
+                Type::tuple(resolved)
             }
             _ => ty.clone(),
         }

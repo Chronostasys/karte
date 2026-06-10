@@ -57,4 +57,7 @@ pub struct LirLoweringContext {
     /// 强制下一个 struct 分配使用堆（由逃逸分析触发）
     /// 当 struct 值被赋给一个将通过 return 返回的 temp 时设置此标志
     pub(super) force_struct_heap: bool,
+    /// temp_id -> struct name 映射，记录哪些 temp 存储了 struct 值
+    /// 用于嵌套 struct 深拷贝时判断字段值是否是 struct
+    pub(super) temp_struct_names: HashMap<usize, String>,
 }

@@ -34,7 +34,15 @@ impl LirLoweringContext {
     pub(super) fn get_struct_layout_for_value(&self, value: &Value) -> Option<StructLayout> {
         match value {
             Value::Struct { name, .. } => self.global_struct_types.get(name).cloned(),
-            Value::Temp { .. } | Value::Variable { .. } => {
+            Value::Temp { id, .. } => {
+                // 🔧 修复：通过 temp_struct_names 查找 temp 对应的 struct 类型
+                if let Some(struct_name) = self.temp_struct_names.get(&id.0) {
+                    self.global_struct_types.get(struct_name).cloned()
+                } else {
+                    self.struct_value_layouts.get(&value_to_key(value)).cloned()
+                }
+            }
+            Value::Variable { .. } => {
                 self.struct_value_layouts.get(&value_to_key(value)).cloned()
             }
             _ => None,
@@ -46,6 +54,92 @@ impl LirLoweringContext {
     }
 
     /// 为值分配栈槽，可以选择是否生成alloc指令
+    /// 🔧 递归堆深拷贝 struct
+    /// 当外层 struct 是 Heap 分配时，内层 struct 字段也需要堆分配。
+    /// 递归处理嵌套的 struct 字段，确保所有层级都在堆上。
+    fn heap_deep_copy_struct(
+        &mut self,
+        field_value: &Value,
+        field_value_op: &Operand,
+    ) -> Option<Operand> {
+        let inner_layout = self.get_struct_layout_for_value(field_value)?;
+
+        // 在堆上分配空间
+        let heap_copy = self.current_function_mut().new_register();
+        self.add_instruction(Instruction::Alloc {
+            dst: heap_copy,
+            size: inner_layout.total_size,
+            alignment: inner_layout.alignment,
+            allocation_type: AllocationType::Heap,
+            span: karte_diagnostics::Span::dummy(),
+        });
+
+        // 获取源 struct 的基地址寄存器
+        let src_addr = match field_value_op {
+            Operand::Register { id } => *id,
+            _ => return None,
+        };
+
+        // 逐字段复制
+        for inner_field in &inner_layout.fields {
+            // 从源 struct 读取字段值
+            let field_temp = self.current_function_mut().new_register();
+            self.add_instruction(Instruction::Load64 {
+                dst: field_temp,
+                addr: src_addr,
+                offset: inner_field.offset as i64,
+                span: karte_diagnostics::Span::dummy(),
+            });
+
+            // 🔧 递归检查该字段是否也是 struct，如果是，也做堆深拷贝
+            let nested_name = inner_field.struct_type_name.clone();
+            let final_value = if let Some(nested_name) = nested_name {
+                if let Some(nested_layout) = self.global_struct_types.get(&nested_name).cloned() {
+                    // 该字段是嵌套 struct，递归创建堆拷贝
+                    let nested_heap = self.current_function_mut().new_register();
+                    self.add_instruction(Instruction::Alloc {
+                        dst: nested_heap,
+                        size: nested_layout.total_size,
+                        alignment: nested_layout.alignment,
+                        allocation_type: AllocationType::Heap,
+                        span: karte_diagnostics::Span::dummy(),
+                    });
+                    // 复制嵌套 struct 的字段
+                    for nested_field in &nested_layout.fields {
+                        let nested_temp = self.current_function_mut().new_register();
+                        self.add_instruction(Instruction::Load64 {
+                            dst: nested_temp,
+                            addr: field_temp,
+                            offset: nested_field.offset as i64,
+                            span: karte_diagnostics::Span::dummy(),
+                        });
+                        self.add_instruction(Instruction::Store64 {
+                            addr: nested_heap,
+                            offset: nested_field.offset as i64,
+                            src: Operand::Register { id: nested_temp },
+                            span: karte_diagnostics::Span::dummy(),
+                        });
+                    }
+                    Operand::Register { id: nested_heap }
+                } else {
+                    Operand::Register { id: field_temp }
+                }
+            } else {
+                Operand::Register { id: field_temp }
+            };
+
+            // 写入堆拷贝的对应位置
+            self.add_instruction(Instruction::Store64 {
+                addr: heap_copy,
+                offset: inner_field.offset as i64,
+                src: final_value,
+                span: karte_diagnostics::Span::dummy(),
+            });
+        }
+
+        Some(Operand::Register { id: heap_copy })
+    }
+
     pub(super) fn allocate_stack_slot_for_value_with_instruction(
         &mut self,
         value: &Value,
@@ -699,12 +793,14 @@ impl LirLoweringContext {
                             offset: 0,
                             size: 8,
                             alignment: 8,
+                            struct_type_name: None,
                         },
                         StructField {
                             name: "env_ptr".to_string(),
                             offset: 8,
                             size: 8,
                             alignment: 8,
+                            struct_type_name: None,
                         },
                     ];
 
@@ -724,6 +820,7 @@ impl LirLoweringContext {
                             offset: i * 8,
                             size: 8,
                             alignment: 8,
+                            struct_type_name: None,
                         })
                         .collect();
                     StructLayout {
@@ -745,13 +842,23 @@ impl LirLoweringContext {
         // 同理，任何通过 return 逃逸的 struct 也必须使用堆分配：
         // 如果 struct 值被赋给一个将被 return 返回的 temp，则 force_struct_heap 标志
         // 会在 stmt lowering 阶段被设置，确保此处使用堆分配。
-        let alloc_type = if name == "Closure" || self.force_struct_heap {
+        let is_heap_alloc = name == "Closure" || self.force_struct_heap;
+        let alloc_type = if is_heap_alloc {
             AllocationType::Heap
         } else {
             AllocationType::Stack
         };
         // 消费 force_struct_heap 标志
         self.force_struct_heap = false;
+
+        // 🔧 关键修复：如果外层 struct 是 Heap 分配（逃逸/返回值），
+        // 则所有嵌套的 struct 也必须 Heap 分配，因为嵌套 struct 的地址
+        // 存储在外层 struct 中，如果内层在栈上，函数返回后栈帧失效导致指针悬空
+        let prev_force_heap = self.force_struct_heap;
+        if is_heap_alloc {
+            self.force_struct_heap = true;
+        }
+
         let struct_ptr = self.current_function_mut().new_register();
         self.add_instruction(Instruction::Alloc {
             dst: struct_ptr,
@@ -764,7 +871,6 @@ impl LirLoweringContext {
         // 3. 填充字段：遍历MIR中提供的每个(field_name, field_expr)对
         for field_layout in &layout.fields {
             if let Some(field_value) = fields.get(&field_layout.name) {
-                // 递归调用lower_to_rvalue处理field_expr，得到表示字段值的Operand
                 let field_value_op = self.lower_to_rvalue(field_value);
 
                 log::debug!(
@@ -775,17 +881,30 @@ impl LirLoweringContext {
                     field_layout.offset
                 );
 
+                // 🔧 关键修复：如果外层 struct 是 Heap 分配（逃逸/返回值），
+                // 且字段值是另一个 struct 的地址，需要在堆上创建递归深拷贝。
+                // 否则函数返回后栈帧失效，外层 struct 中存储的内层地址变成悬空指针。
+                let final_field_op = if is_heap_alloc {
+                    self.heap_deep_copy_struct(field_value, &field_value_op)
+                        .unwrap_or(field_value_op.clone())
+                } else {
+                    field_value_op
+                };
+
                 // 修复：始终用struct_ptr作为基地址
                 self.add_instruction(Instruction::Store64 {
                     addr: struct_ptr,
                     offset: field_layout.offset as i64,
-                    src: field_value_op,
+                    src: final_field_op,
                     span: karte_diagnostics::Span::dummy(),
                 });
             }
         }
 
-        // 4. 返回地址：整个结构体初始化表达式的结果就是struct_ptr
+        // 4. 恢复 force_struct_heap 状态
+        self.force_struct_heap = prev_force_heap;
+
+        // 5. 返回地址：整个结构体初始化表达式的结果就是struct_ptr
         log::debug!("🔧 结构体初始化完成: {} -> {:?}", name, struct_ptr);
         Ok(struct_ptr)
     }

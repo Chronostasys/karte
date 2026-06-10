@@ -5,7 +5,7 @@
 // 调试打印宏：生产环境禁用，调试时取消注释 debug_println! 行
 macro_rules! debug_println {
     ($($arg:tt)*) => {
-        // 调试时取消注释: debug_println!($($arg)*);
+        // 调试时取消注释: eprintln!($($arg)*);
     };
 }
 

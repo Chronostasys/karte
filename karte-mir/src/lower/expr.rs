@@ -4372,6 +4372,20 @@ pub(crate) fn lower_expression(
             let n = elements.len();
             let struct_name = format!("__tuple_{}", n);
 
+            // 🔧 注册元组 struct 类型到 program.struct_types，确保 LIR 能查找 layout 信息
+            if ctx.program.struct_types.get(&struct_name).is_none() {
+                let mir_fields: Vec<crate::ir::MirStructField> = (0..n)
+                    .map(|i| crate::ir::MirStructField {
+                        name: format!("_{}", i),
+                        field_type: "number".to_string(),
+                    })
+                    .collect();
+                ctx.program.add_struct_type(crate::ir::MirStructType {
+                    name: struct_name.clone(),
+                    fields: mir_fields,
+                });
+            }
+
             let mut mir_fields = std::collections::BTreeMap::new();
             for (i, elem) in elements.iter().enumerate() {
                 let elem_value = lower_expression_to_temp(ctx, elem)?;
