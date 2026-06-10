@@ -2063,3 +2063,53 @@ fn test_type_error_bool_arithmetic_v2() {
 fn test_type_error_return_mismatch_v2() {
     check_has_errors("fn f() -> string {\n42\n}");
 }
+
+#[test]
+fn test_type_check_string_not_equal() {
+    check_no_errors("fn f(a: string, b: string) -> bool {\na != b\n}");
+}
+
+#[test]
+fn test_type_check_complex_bool_expr() {
+    check_no_errors("fn in_range(x: number, lo: number, hi: number) -> bool {\n(x >= lo) && (x <= hi)\n}");
+}
+
+#[test]
+fn test_type_check_ternary_like_if() {
+    check_no_errors("fn max(a: number, b: number) -> number {\nif a > b { a } else { b }\n}");
+}
+
+#[test]
+fn test_type_check_min_max_builtin_v2() {
+    check_no_errors("fn clamp(x: number, lo: number, hi: number) -> number {\nmin(max(x, lo), hi)\n}");
+}
+
+#[test]
+fn test_type_check_complex_while_loop() {
+    check_no_errors("fn gcd(a: number, b: number) -> number {\nlet x = a;\nlet y = b;\nwhile y != 0 {\nlet t = y;\ny = x % y;\nx = t\n};\nx\n}");
+}
+
+#[test]
+fn test_type_check_nested_if_assign() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nif x > 0 {\nresult = 1\n} else {\nresult = 2\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_multi_field_struct_access() {
+    check_no_errors("struct Student { name: string, age: number, grade: number }\nfn is_passing(s: Student) -> bool {\ns.grade >= 60\n}");
+}
+
+#[test]
+fn test_type_check_option_chain_v2() {
+    check_no_errors("fn safe_div(a: number, b: number) -> Option<number> {\nif b == 0 { None } else { Some(a / b) }\n}");
+}
+
+#[test]
+fn test_type_check_result_chain_v2() {
+    check_no_errors("fn checked_add(a: number, b: number) -> Result<number, string> {\nif a + b > 1000 { Err(\"overflow\") } else { Ok(a + b) }\n}");
+}
+
+#[test]
+fn test_type_check_enum_with_multiple_data_v3() {
+    check_no_errors("enum Shape { Circle(number), Rectangle(number, number), Triangle(number, number, number) }\nfn area(s: Shape) -> number {\nmatch s {\nShape::Circle(r) => r * r\nShape::Rectangle(w, h) => w * h\nShape::Triangle(b, h, _) => b * h\n}\n}");
+}
