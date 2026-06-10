@@ -1769,3 +1769,53 @@ fn test_type_check_number_conversion() {
 fn test_type_check_struct_self_ref() {
     check_no_errors("struct Point { x: number, y: number }\nfn origin() -> Point {\nPoint { x: 0, y: 0 }\n}");
 }
+
+#[test]
+fn test_type_check_builtin_functions() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = abs(x);\nlet b = min(x, 0);\nlet c = max(x, 100);\na + b + c\n}");
+}
+
+#[test]
+fn test_type_check_string_comparison_ops_v2() {
+    check_no_errors("fn f(a: string, b: string) -> bool {\na < b && a <= b && a > b && a >= b\n}");
+}
+
+#[test]
+fn test_type_check_number_bitwise_ops() {
+    check_no_errors("fn f(a: number, b: number) -> number {\n(a & b) | (a ^ b)\n}");
+}
+
+#[test]
+fn test_type_check_shift_ops() {
+    check_no_errors("fn f(a: number, b: number) -> number {\n(a << b) >> 1\n}");
+}
+
+#[test]
+fn test_type_check_modulo_op() {
+    check_no_errors("fn f(a: number, b: number) -> number {\na % b\n}");
+}
+
+#[test]
+fn test_type_check_unary_minus2() {
+    check_no_errors("fn f(x: number) -> number {\n-x\n}");
+}
+
+#[test]
+fn test_type_check_not_bool() {
+    check_no_errors("fn f(x: bool) -> bool {\n!x\n}");
+}
+
+#[test]
+fn test_type_check_complex_arithmetic() {
+    check_no_errors("fn f(a: number, b: number, c: number) -> number {\n(a + b) * c - (a / b) + (a % c)\n}");
+}
+
+#[test]
+fn test_type_check_nested_function_call2() {
+    check_no_errors("fn double(x: number) -> number { x * 2 }\nfn quad(x: number) -> number { double(double(x)) }\nfn oct(x: number) -> number { quad(double(x)) }\nfn main() -> number { oct(1) }");
+}
+
+#[test]
+fn test_type_check_string_empty() {
+    check_no_errors("fn f() -> string {\n\"\"\n}");
+}
