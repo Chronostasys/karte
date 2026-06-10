@@ -861,3 +861,53 @@ fn test_warning_always_false_condition() {
 
 
 
+
+#[test]
+fn test_type_check_str_len2() {
+    check_no_errors("fn main() -> number {\nlet s = \"hello\";\nlet n = 0;\nn\n}");
+}
+
+#[test]
+fn test_type_check_ref_type() {
+    check_no_errors("fn main() -> number {\nlet x = 42;\nlet r = &x;\n*r\n}");
+}
+
+#[test]
+fn test_type_check_empty_fn2() {
+    check_no_errors("fn noop() {}\nfn main() -> number {\nnoop();\n0\n}");
+}
+
+#[test]
+fn test_type_check_early_ret() {
+    check_no_errors("fn abs(x: number) -> number {\nif x < 0 { 0 - x } else { x }\n}");
+}
+
+#[test]
+fn test_type_check_cplx_match() {
+    check_no_errors("enum Option<T> { Some(T), None }\nfn f(opt: Option<number>) -> number {\nmatch opt {\nOption::Some(x) => if x > 0 { x } else { 0 - x }\nOption::None => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_gen_map() {
+    check_no_errors("fn map(f, x) { f(x) }\nfn double(n: number) -> number { n * 2 }\nfn main() -> number {\nmap(double, 21)\n}");
+}
+
+#[test]
+fn test_type_check_compose() {
+    check_no_errors("fn compose(f, g, x) { f(g(x)) }\nfn inc(x: number) -> number { x + 1 }\nfn double(x: number) -> number { x * 2 }\nfn main() -> number {\ncompose(double, inc, 20)\n}");
+}
+
+#[test]
+fn test_type_check_nested_closure2() {
+    check_no_errors("fn main() -> number {\nlet add = |a, b| { a + b };\nlet mul = |a, b| { a * b };\nadd(mul(3, 4), 5)\n}");
+}
+
+#[test]
+fn test_type_check_multi_field() {
+    check_no_errors("struct Person { name: string, age: number }\nfn f(p: Person) -> number {\np.age\n}");
+}
+
+#[test]
+fn test_type_check_tuple_destr() {
+    check_no_errors("fn main() -> number {\nlet t = (1, 2);\n0\n}");
+}
