@@ -139,6 +139,9 @@ impl LanguageServer for Backend {
                         work_done_progress: None,
                     },
                 }),
+                selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
+                call_hierarchy_provider: Some(CallHierarchyServerCapability::Simple(true)),
+                inline_value_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
