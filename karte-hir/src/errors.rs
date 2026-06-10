@@ -92,6 +92,11 @@ pub enum TypeCheckError {
         found: Type,
         span: Span,
     },
+    /// match 表达式非穷尽
+    NonExhaustiveMatch {
+        missing_patterns: Vec<String>,
+        span: Span,
+    },
 }
 
 impl fmt::Display for TypeCheckError {
@@ -182,6 +187,32 @@ impl fmt::Display for TypeCheckError {
             TypeCheckError::InvalidMainReturnType { found, .. } => {
                 write!(f, "main 函数的返回类型不能是 `{}`，该类型无法作为退出码返回", found)
             }
+            TypeCheckError::NonExhaustiveMatch { missing_patterns, .. } => {
+                if missing_patterns.len() == 1 {
+                    write!(f, "非穷尽 match: 缺少模式 `{}`", missing_patterns[0])
+                } else if missing_patterns.len() <= 3 {
+                    write!(
+                        f,
+                        "非穷尽 match: 缺少模式 {}",
+                        missing_patterns
+                            .iter()
+                            .map(|p| format!("`{}`", p))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                } else {
+                    write!(
+                        f,
+                        "非穷尽 match: 缺少 {} 个模式（{}, ...）",
+                        missing_patterns.len(),
+                        missing_patterns[..3]
+                            .iter()
+                            .map(|p| format!("`{}`", p))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                }
+            }
         }
     }
 }
@@ -208,7 +239,8 @@ impl TypeCheckError {
             | TypeCheckError::DuplicateFunctionDefinition { span, .. }
             | TypeCheckError::IndexOutOfBounds { span, .. }
             | TypeCheckError::BuiltinFunctionError { span, .. }
-            | TypeCheckError::InvalidMainReturnType { span, .. } => *span,
+            | TypeCheckError::InvalidMainReturnType { span, .. }
+            | TypeCheckError::NonExhaustiveMatch { span, .. } => *span,
         }
     }
 }

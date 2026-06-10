@@ -12,6 +12,7 @@
 
 pub mod ast;
 pub mod errors;
+pub mod exhaustiveness;
 pub mod type_checker;
 pub mod types;
 

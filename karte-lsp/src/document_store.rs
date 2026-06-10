@@ -8,9 +8,7 @@ use tower_lsp::lsp_types::Url;
 /// 文档信息
 #[derive(Debug, Clone)]
 pub struct Document {
-    /// 文档内容
     pub content: String,
-    /// 文档版本（每次修改递增）
     pub version: i32,
 }
 
@@ -33,12 +31,10 @@ impl DocumentStore {
         }
     }
 
-    /// 打开一个新文档
     pub fn open(&mut self, uri: Url, content: String, version: i32) {
         self.documents.insert(uri, Document::new(content, version));
     }
 
-    /// 更新文档内容
     pub fn update(&mut self, uri: &Url, content: String, version: i32) {
         if let Some(doc) = self.documents.get_mut(uri) {
             doc.content = content;
@@ -46,23 +42,24 @@ impl DocumentStore {
         }
     }
 
-    /// 关闭文档
     pub fn close(&mut self, uri: &Url) {
         self.documents.remove(uri);
     }
 
-    /// 获取文档内容
     pub fn get(&self, uri: &Url) -> Option<&Document> {
         self.documents.get(uri)
     }
 
-    /// 获取文档内容（可变引用）
     pub fn get_mut(&mut self, uri: &Url) -> Option<&mut Document> {
         self.documents.get_mut(uri)
     }
 
-    /// 检查文档是否存在
     pub fn contains(&self, uri: &Url) -> bool {
         self.documents.contains_key(uri)
+    }
+
+    /// 获取第一个文档的源码（用于 document_symbol 等需要源码的操作）
+    pub fn first_source(&self) -> Option<&str> {
+        self.documents.values().next().map(|d| d.content.as_str())
     }
 }

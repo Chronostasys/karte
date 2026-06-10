@@ -498,4 +498,113 @@ mod tests {
         // 不应该有错误
         assert!(diagnostics.is_empty());
     }
+
+    #[test]
+    fn test_exhaustiveness_bool_match_complete() {
+        use crate::dummy_span;
+        use karte_hir::*;
+
+        let expr = Expr::Match {
+            expr: Box::new(Expr::Boolean {
+                value: true,
+                span: dummy_span(),
+            }),
+            arms: vec![
+                MatchArm {
+                    pattern: Pattern::Boolean {
+                        value: true,
+                        span: dummy_span(),
+                    },
+                    guard: None,
+                    body: Expr::Number {
+                        value: 1,
+                        span: dummy_span(),
+                    },
+                    span: dummy_span(),
+                },
+                MatchArm {
+                    pattern: Pattern::Boolean {
+                        value: false,
+                        span: dummy_span(),
+                    },
+                    guard: None,
+                    body: Expr::Number {
+                        value: 0,
+                        span: dummy_span(),
+                    },
+                    span: dummy_span(),
+                },
+            ],
+            span: dummy_span(),
+        };
+
+        let (_, diagnostics) = type_check(&expr);
+        // bool 穷尽，不应该有 NonExhaustiveMatch 错误
+        assert!(diagnostics
+            .diagnostics
+            .iter()
+            .all(|d| !d.message.contains("非穷尽 match")));
+    }
+
+    #[test]
+    fn test_exhaustiveness_bool_match_incomplete() {
+        use crate::dummy_span;
+        use karte_hir::*;
+
+        let expr = Expr::Match {
+            expr: Box::new(Expr::Boolean {
+                value: true,
+                span: dummy_span(),
+            }),
+            arms: vec![MatchArm {
+                pattern: Pattern::Boolean {
+                    value: true,
+                    span: dummy_span(),
+                },
+                guard: None,
+                body: Expr::Number {
+                    value: 1,
+                    span: dummy_span(),
+                },
+                span: dummy_span(),
+            }],
+            span: dummy_span(),
+        };
+
+        let (_, diagnostics) = type_check(&expr);
+        // bool 非穷尽（缺少 false），应该报错
+        assert!(diagnostics
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("非穷尽 match")));
+    }
+
+    #[test]
+    fn test_exhaustiveness_wildcard_always_exhaustive() {
+        use crate::dummy_span;
+        use karte_hir::*;
+
+        let expr = Expr::Match {
+            expr: Box::new(Expr::Boolean {
+                value: true,
+                span: dummy_span(),
+            }),
+            arms: vec![MatchArm {
+                pattern: Pattern::Wildcard {
+                    span: dummy_span(),
+                },
+                guard: None,
+                body: Expr::Number {
+                    value: 1,
+                    span: dummy_span(),
+                },
+                span: dummy_span(),
+            }],
+            span: dummy_span(),
+        };
+
+        let (_, diagnostics) = type_check(&expr);
+        // wildcard 总是穷尽
+        assert!(diagnostics.is_empty());
+    }
 }

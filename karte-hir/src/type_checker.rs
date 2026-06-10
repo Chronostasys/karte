@@ -1844,6 +1844,22 @@ impl TypeChecker {
                     self.add_constraint(result_type.clone(), arm_type, arm.body.span());
                 }
 
+                // 穷尽性检查：检查所有模式是否覆盖了所有可能的情况
+                {
+                    let pattern_refs: Vec<&crate::ast::Pattern> = arms.iter().map(|arm| &arm.pattern).collect();
+                    let exhaust_result = crate::exhaustiveness::check_exhaustiveness(
+                        &pattern_refs,
+                        &expr_type,
+                        &self.custom_types,
+                    );
+                    if !exhaust_result.is_exhaustive {
+                        self.add_error(TypeCheckError::NonExhaustiveMatch {
+                            missing_patterns: exhaust_result.missing_patterns,
+                            span: *span,
+                        });
+                    }
+                }
+
                 result_type
             }
 
