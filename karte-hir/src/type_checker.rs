@@ -2231,10 +2231,11 @@ impl TypeChecker {
                                     field_defs.iter().find(|f| f.name == field_init.name)
                                 {
                                     let field_value_type = self.infer_expr(&field_init.value, env);
-                                    self.add_constraint(
+                                    self.add_constraint_with_context(
                                         field_def.field_type.clone(),
                                         field_value_type,
                                         field_init.span,
+                                    "结构体字段类型不匹配",
                                     );
                                 } else {
                                     self.add_error(TypeCheckError::UnknownField {
@@ -3208,11 +3209,11 @@ impl TypeChecker {
                     }
                     Expr::FieldAccess { .. } => {
                         // 字段赋值：统一类型
-                        self.add_constraint(target_type, value_type, target.span());
+                        self.add_constraint_with_context(target_type, value_type, target.span(), "赋值类型不匹配");
                     }
                     Expr::Index { .. } => {
                         // 数组下标赋值：统一类型
-                        self.add_constraint(target_type, value_type, target.span());
+                        self.add_constraint_with_context(target_type, value_type, target.span(), "赋值类型不匹配");
                     }
                     _ => {
                         // 其他表达式不能作为赋值目标
@@ -3403,7 +3404,8 @@ impl TypeChecker {
                                     let ok_type = Type::Var(self.fresh_type_var());
                                     let err_type = Type::Var(self.fresh_type_var());
                                     let result_type = Type::result(ok_type.clone(), err_type);
-                                    self.add_constraint(expected_type.clone(), result_type, *span);
+                                    self.add_constraint_with_context(expected_type.clone(), result_type, *span, "类型不匹配",
+                                    );
                                     self.check_pattern(arg_pattern, &ok_type, env);
                                 }
                             }
@@ -3437,7 +3439,8 @@ impl TypeChecker {
                                     let ok_type = Type::Var(self.fresh_type_var());
                                     let err_type = Type::Var(self.fresh_type_var());
                                     let result_type = Type::result(ok_type, err_type.clone());
-                                    self.add_constraint(expected_type.clone(), result_type, *span);
+                                    self.add_constraint_with_context(expected_type.clone(), result_type, *span, "类型不匹配",
+                                    );
                                     self.check_pattern(arg_pattern, &err_type, env);
                                 }
                             }
@@ -3504,7 +3507,8 @@ impl TypeChecker {
                         }
                         if found {
                             if let Some(ct) = matched_type {
-                                self.add_constraint(expected_type.clone(), ct, *span);
+                                self.add_constraint_with_context(expected_type.clone(), ct, *span, "类型不匹配",
+                                );
                             }
                             for (i, arg_pattern) in args.iter().enumerate() {
                                 if let Some(param_type) = arg_types.get(i) {
@@ -3546,7 +3550,8 @@ impl TypeChecker {
                         if let Some(variant) = variants.iter().find(|v| v.name == *constructor_name)
                         {
                             // 约束expected_type必须是这个sum type
-                            self.add_constraint(expected_type.clone(), sum_type.clone(), *span);
+                            self.add_constraint_with_context(expected_type.clone(), sum_type.clone(), *span, "类型不匹配",
+                            );
 
                             // 检查参数数量
                             if args.len() != variant.data_types.len() {
@@ -3596,7 +3601,8 @@ impl TypeChecker {
                 Some(Type::Struct { name: _, fields: struct_fields }) => {
                     // 约束 expected_type 必须是此结构体类型
                     let full_type = Type::Struct { name: name.clone(), fields: struct_fields.clone() };
-                    self.add_constraint(expected_type.clone(), full_type, *span);
+                    self.add_constraint_with_context(expected_type.clone(), full_type, *span, "类型不匹配",
+                    );
                     // 对每个字段模式进行类型检查
                     for field_pattern in fields {
                         if let Some(field_def) = struct_fields.iter().find(|f| f.name == field_pattern.field) {
