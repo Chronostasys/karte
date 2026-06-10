@@ -405,6 +405,7 @@ impl LanguageServer for Backend {
     ) -> Result<Option<WorkspaceEdit>> {
         let position = params.text_document_position.position;
         let new_name = params.new_name;
+        let uri = params.text_document_position.text_document.uri.clone();
 
         let bridge = self.compiler_bridge.read().await;
         let spans = bridge.find_references(position);
@@ -413,10 +414,33 @@ impl LanguageServer for Backend {
             return Ok(None);
         }
 
+        let store = self.document_store.read().await;
+        let Some(document) = store.get(&uri) else {
+            return Ok(None);
+        };
+        let source = &document.content;
+
         // 收集所有需要重命名的位置
-        // 这里返回空的 WorkspaceEdit（实际重命名需要完整的文件修改能力）
+        let mut changes = HashMap::new();
+        let edits: Vec<TextEdit> = spans
+            .iter()
+            .map(|span| {
+                let range = crate::compiler_bridge::span_to_range(source, *span);
+                TextEdit {
+                    range,
+                    new_text: new_name.clone(),
+                }
+            })
+            .collect();
+
+        if edits.is_empty() {
+            return Ok(None);
+        }
+
+        changes.insert(uri, edits);
+
         Ok(Some(WorkspaceEdit {
-            changes: Some(HashMap::new()),
+            changes: Some(changes),
             document_changes: None,
             change_annotations: None,
         }))
