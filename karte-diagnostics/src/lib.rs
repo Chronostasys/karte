@@ -305,7 +305,7 @@ impl Diagnostic {
                         span,
                         message: self.message,
                         src,
-                        help: None,
+                        help: Some("请检查错误位置的语法是否正确".to_string()),
                     }
                 }
             }
@@ -314,14 +314,14 @@ impl Diagnostic {
                     span,
                     message: self.message,
                     src,
-                    help: None,
+                    help: Some("请检查警告内容并考虑修复".to_string()),
                 }
             }
             _ => CompilerError::ParseError {
                 span,
                 message: format!("{}: {}", self.level, self.message),
                 src,
-                help: None,
+                help: Some("请检查代码语法是否正确".to_string()),
             },
         }
     }
@@ -449,7 +449,7 @@ pub fn create_miette_error(
             span: source_span,
             message: message.to_string(),
             src,
-            help: None,
+            help: Some("请检查该位置的词法是否正确".to_string()),
         },
     }
 }
