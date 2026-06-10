@@ -1544,3 +1544,53 @@ fn test_no_warning_if_else_both_return() {
 }"#;
     check_no_errors(source);
 }
+
+#[test]
+fn test_type_check_enum_all_variants() {
+    check_no_errors("enum Direction { North, South, East, West }\nfn opposite(d: Direction) -> Direction {\nmatch d {\nDirection::North => Direction::South\nDirection::South => Direction::North\nDirection::East => Direction::West\nDirection::West => Direction::East\n}\n}");
+}
+
+#[test]
+fn test_type_check_enum_return_same_type() {
+    check_no_errors("enum Color { Red, Green, Blue }\nfn next(c: Color) -> Color {\nmatch c {\nColor::Red => Color::Green\nColor::Green => Color::Blue\nColor::Blue => Color::Red\n}\n}");
+}
+
+#[test]
+fn test_type_check_enum_with_multiple_data_v2() {
+    check_no_errors("enum Expr { Lit(number), Add(number, number), Mul(number, number) }\nfn eval(e: Expr) -> number {\nmatch e {\nExpr::Lit(n) => n\nExpr::Add(a, b) => a + b\nExpr::Mul(a, b) => a * b\n}\n}");
+}
+
+#[test]
+fn test_type_check_complex_fn_composition() {
+    check_no_errors("fn double(x: number) -> number { x * 2 }\nfn inc(x: number) -> number { x + 1 }\nfn compose(x: number) -> number {\ndouble(inc(x))\n}");
+}
+
+#[test]
+fn test_type_check_recursive_data() {
+    check_no_errors("fn fib(n: number) -> number {\nif n <= 1 { n } else { fib(n - 1) + fib(n - 2) }\n}");
+}
+
+#[test]
+fn test_type_check_string_concat_chain() {
+    check_no_errors("fn greet(first: string, last: string) -> string {\nfirst + \" \" + last\n}");
+}
+
+#[test]
+fn test_type_check_number_comparison_chain() {
+    check_no_errors("fn in_range(x: number, lo: number, hi: number) -> bool {\nx >= lo && x <= hi\n}");
+}
+
+#[test]
+fn test_type_check_option_map() {
+    check_no_errors("fn map_opt(opt: Option<number>, f: fn(number) -> number) -> Option<number> {\nmatch opt {\nSome(x) => Some(f(x))\nNone => None\n}\n}");
+}
+
+#[test]
+fn test_type_check_result_map() {
+    check_no_errors("fn map_res(res: Result<number, string>, f: fn(number) -> number) -> Result<number, string> {\nmatch res {\nOk(x) => Ok(f(x))\nErr(e) => Err(e)\n}\n}");
+}
+
+#[test]
+fn test_type_check_nested_if_return_v2() {
+    check_no_errors("fn classify(n: number) -> string {\nif n < 0 {\nreturn \"negative\"\n};\nif n == 0 {\nreturn \"zero\"\n};\n\"positive\"\n}");
+}
