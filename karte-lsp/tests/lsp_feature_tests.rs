@@ -1066,3 +1066,39 @@ fn test_doc_symbols_struct_enum_fn() {
     assert!(has_color, "Should have 'Color' enum in document symbols");
     assert!(has_main, "Should have 'main' function in document symbols");
 }
+
+#[test]
+fn test_analyze_valid_generic_fn() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn id(x) { x }\nfn main() -> number {\nlet a = id(42);\na\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for generic function: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_match_bool() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(b: bool) -> number {\nmatch b {\ntrue => 1\nfalse => 0\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for bool match: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_enum_data_match() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Shape { Circle(number) }\nfn area(s: Shape) -> number {\nmatch s {\nShape::Circle(r) => r * r * 3\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for enum data match: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_tuple() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f() -> number {\nlet t = (1, 2);\n0\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for tuple: {:?}", errors);
+}
