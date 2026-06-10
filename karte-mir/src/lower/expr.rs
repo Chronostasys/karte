@@ -1135,8 +1135,6 @@ pub(crate) fn lower_expression(
 
             let temp_body_result = ctx.new_temp();
             lower_expression(ctx, body, &temp_body_result)?;
-
-            // 弹出循环上下文，取出 continue_sources 和 break_sources
             let popped_loop_ctx = ctx.loop_stack.pop().unwrap();
             let while_continue_sources = popped_loop_ctx.continue_sources;
             let while_break_sources = popped_loop_ctx.break_sources;
@@ -1913,10 +1911,24 @@ pub(crate) fn lower_expression(
                 break_sources: Vec::new(),
             });
 
+            // 🔧 保存 struct_ref_vars 在循环体 lowering 前的正确 Reference 值。
+            // 循环体 Block 的 exit_scope(propagate=true) 可能将 continue/break 后
+            // 死块中的错误绑定传播到外层，覆盖正确的 Reference 值。
+            let saved_struct_ref_values: std::collections::HashMap<String, Value> =
+                ctx.scopes.iter().rev()
+                    .flat_map(|scope| scope.bindings.iter())
+                    .filter(|(name, _)| struct_ref_vars.contains(name.as_str()))
+                    .filter_map(|(name, binding)| {
+                        if let Value::Reference { value: ref_target, .. } = &binding.value {
+                            Some((name.clone(), ref_target.as_ref().clone()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
             let temp_body_result = ctx.new_temp();
             lower_expression(ctx, body, &temp_body_result)?;
-
-            // 弹出循环上下文，取出 continue_sources 和 break_sources
             let popped_for_ctx = ctx.loop_stack.pop().unwrap();
             let for_continue_sources = popped_for_ctx.continue_sources;
             let for_break_sources = popped_for_ctx.break_sources;
@@ -1951,6 +1963,8 @@ pub(crate) fn lower_expression(
                         .unwrap_or_else(|| _initial_value.clone());
                     let wrapped = if let Value::Reference { value: ref_target, .. } = &normal_value {
                         ref_target.as_ref().clone()
+                    } else if let Some(Value::Reference { value: ref_target, .. }) = saved_struct_ref_values.get(name) {
+                        ref_target.as_ref().clone()
                     } else {
                         // struct 值需要包装成 shared_var 指针
                         let heap_alloc = ctx.new_temp();
@@ -1979,7 +1993,9 @@ pub(crate) fn lower_expression(
                         });
                         shared_alloc
                     };
-                    wrapped_normal_values.insert(name.clone(), wrapped);
+                    wrapped_normal_values.insert(name.clone(), wrapped.clone());
+                        if name == "a" {
+                        }
                 }
             }
 
@@ -2240,22 +2256,58 @@ pub(crate) fn lower_expression(
                 }
             }
 
+            // === for_in_actual_break_values 预处理 ===
+            // 对 struct_ref_vars 的 break 路径值提取 ref_target，
+            // 如果和 wrapped_normal_values 中的 ref_target 相同（都来自同一个 shared_var），
+            // 则不需要 exit Phi
+            let mut for_in_actual_break_values: std::collections::HashMap<(String, crate::BasicBlockId), Value> = std::collections::HashMap::new();
+            if !for_break_sources.is_empty() && !struct_ref_vars.is_empty() {
+                for (source_block, break_bindings) in &for_break_sources {
+                    for (name, _initial_value, _loop_value) in updated_vars.iter() {
+                        if let Some(break_value) = break_bindings.get(name) {
+                            if let Value::Reference { value: ref_target, .. } = break_value {
+                                if struct_ref_vars.contains(name) {
+                                    // 🔧 关键修复：使用和 wrapped_normal_values 相同类型的值
+                                    // 如果 wrapped_normal_values 使用了 saved_struct_ref_values
+                                    // （即 ref_target == saved），说明两者来自同一个 shared_var，
+                                    // 不需要 exit Phi。使用 saved_struct_ref_values 的 ref_target。
+                                    if let Some(saved_ref) = saved_struct_ref_values.get(name) {
+                                        for_in_actual_break_values.insert((name.clone(), *source_block), saved_ref.clone());
+                                    } else {
+                                        for_in_actual_break_values.insert((name.clone(), *source_block), ref_target.as_ref().clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // R7-2 修复：处理 for-in 循环 break 路径的 Phi 节点
             if !for_break_sources.is_empty() {
                 ctx.set_current_block(loop_exit);
 
                 for (name, _initial_value, _loop_value) in &updated_vars {
-                    // for-in 的正常退出值来自 loop_head 的 Phi temp
-                    let normal_value = phi_values.get(name)
-                        .map(|v| v.clone())
-                        .unwrap_or_else(|| _initial_value.clone());
+                    // for-in 的正常退出值来自 increment Phi 的 shared_var ptr
+                    let normal_value = if let Some(wrapped) = wrapped_normal_values.get(name) {
+                        wrapped.clone()
+                    } else {
+                        phi_values.get(name)
+                            .map(|v| v.clone())
+                            .unwrap_or_else(|| _initial_value.clone())
+                    };
 
                     // 检查是否有 break 路径值与正常退出值不同
                     let mut need_phi = false;
                     for (source_block, break_bindings) in &for_break_sources {
-                        let break_value = break_bindings.get(name)
-                            .cloned()
-                            .unwrap_or_else(|| normal_value.clone());
+                        let break_value = if let Some(actual) = for_in_actual_break_values.get(&(name.clone(), *source_block)) {
+                            actual.clone()
+                        } else {
+                            let bv = break_bindings.get(name)
+                                .cloned()
+                                .unwrap_or_else(|| normal_value.clone());
+                            bv
+                        };
                         if break_value != normal_value {
                             need_phi = true;
                             break;
@@ -2278,10 +2330,15 @@ pub(crate) fn lower_expression(
                             (loop_head, normal_phi_value),
                         ];
                         for (source_block, break_bindings) in &for_break_sources {
-                            let break_value = break_bindings.get(name)
-                                .cloned()
-                                .unwrap_or_else(|| normal_value.clone());
-                            // 对 struct_ref_vars：提取 shared_location 指针或包装 struct 值
+                            // 🔧 修复：对 struct_ref_vars 使用 for_in_actual_break_values 提取的 ref_target
+                            let break_value = if let Some(actual) = for_in_actual_break_values.get(&(name.clone(), *source_block)) {
+                                Value::Reference { value: Box::new(actual.clone()), ty: None }
+                            } else {
+                                break_bindings.get(name)
+                                    .cloned()
+                                    .unwrap_or_else(|| normal_value.clone())
+                            };
+                            // 对 struct_ref_vars：提取 shared_location 指针
                             let break_phi_value = if struct_ref_vars.contains(name) {
                                 if let Value::Reference { value: ref_target, .. } = &break_value {
                                     ref_target.as_ref().clone()
