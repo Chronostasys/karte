@@ -102,6 +102,30 @@ impl LanguageServer for Backend {
                 rename_provider: Some(OneOf::Left(true)),
                 folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+                semantic_tokens_provider: Some(
+                    SemanticTokensServerCapabilities::SemanticTokensOptions(SemanticTokensOptions {
+                        work_done_progress_options: WorkDoneProgressOptions::default(),
+                        legend: SemanticTokensLegend {
+                            token_types: vec![
+                                SemanticTokenType::NAMESPACE,    // 0 - module
+                                SemanticTokenType::TYPE,         // 1 - type/enum/struct
+                                SemanticTokenType::ENUM,         // 2 - enum
+                                SemanticTokenType::STRUCT,       // 3 - struct
+                                SemanticTokenType::ENUM_MEMBER,  // 4 - enum variant
+                                SemanticTokenType::FUNCTION,     // 5 - function
+                                SemanticTokenType::VARIABLE,     // 6 - variable
+                                SemanticTokenType::PARAMETER,    // 7 - parameter
+                                SemanticTokenType::NUMBER,       // 8 - number literal
+                                SemanticTokenType::STRING,       // 9 - string literal
+                                SemanticTokenType::KEYWORD,      // 10 - keyword
+                                SemanticTokenType::OPERATOR,     // 11 - operator
+                            ],
+                            token_modifiers: vec![],
+                        },
+                        range: None,
+                        full: Some(SemanticTokensFullOptions::Bool(true)),
+                    }),
+                ),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -392,6 +416,75 @@ impl LanguageServer for Backend {
             document_changes: None,
             change_annotations: None,
         }))
+    }
+
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> Result<Option<SemanticTokensResult>> {
+        let uri = &params.text_document.uri;
+        let store = self.document_store.read().await;
+        let Some(document) = store.get(uri) else {
+            return Ok(None);
+        };
+        let source = &document.content;
+
+        let mut bridge = self.compiler_bridge.write().await;
+        let _ = bridge.analyze(source);
+        let analysis = bridge.get_cached_result();
+
+        let mut tokens: Vec<SemanticToken> = Vec::new();
+        let mut prev_line: u32 = 0;
+        let mut prev_char: u32 = 0;
+
+        if let Some(result) = analysis {
+            let mut sorted_symbols: Vec<_> = result.symbols.iter().collect();
+            sorted_symbols.sort_by_key(|sym| (sym.span.start, sym.span.end));
+
+            for sym in &sorted_symbols {
+                let range = crate::compiler_bridge::span_to_range(source, sym.span);
+                let token_type: u32 = match sym.kind {
+                    KarteSymbolKind::Function => 5,
+                    KarteSymbolKind::Variable => 6,
+                    KarteSymbolKind::Parameter => 7,
+                    KarteSymbolKind::Type => 1,
+                    KarteSymbolKind::Enum => 2,
+                    KarteSymbolKind::Struct => 3,
+                    KarteSymbolKind::EnumVariant => 4,
+                    KarteSymbolKind::Module => 0,
+                };
+                let delta_line = range.start.line - prev_line;
+                let delta_start = if delta_line == 0 {
+                    range.start.character - prev_char
+                } else {
+                    range.start.character
+                };
+                let length = if range.end.line == range.start.line {
+                    range.end.character - range.start.character
+                } else {
+                    source.lines().nth(range.start.line as usize)
+                        .map(|line| line.len() as u32 - range.start.character)
+                        .unwrap_or(1)
+                };
+
+                tokens.push(SemanticToken {
+                    delta_line,
+                    delta_start: delta_start.max(0),
+                    length: length.max(1),
+                    token_type,
+                    token_modifiers_bitset: 0,
+                });
+
+                prev_line = range.start.line;
+                prev_char = range.start.character;
+            }
+        }
+
+        let result = SemanticTokens {
+            result_id: None,
+            data: tokens,
+        };
+        Ok(Some(SemanticTokensResult::Tokens(result)))
     }
 
     async fn code_action(
