@@ -1462,3 +1462,75 @@ fn test_analyze_valid_number_compare_chain() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors for number compare chain: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_reference_ops() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet x = 42;\nlet r = &x;\n*r\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for reference ops: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_early_return3() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn abs(x: number) -> number {\nif x < 0 { return 0 - x };\nx\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for early return: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_nested_struct2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Line { start: number, end: number }\nfn length(l: Line) -> number {\nif l.end > l.start { l.end - l.start } else { 0 }\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for nested struct: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_option_match2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn unwrap_or_default(opt: Option<number>) -> number {\nmatch opt {\nSome(x) => x\nNone => 0\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for option match: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_result_match2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn unwrap_or(res: Result<number, string>, def: number) -> number {\nmatch res {\nOk(x) => x\nErr(_) => def\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for result match: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_multi_param_fn() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn clamp(x: number, lo: number, hi: number) -> number {\nif x < lo { lo } else { if x > hi { hi } else { x } }\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for multi-param fn: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_recursive_fn() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn factorial(n: number) -> number {\nif n <= 1 { 1 } else { n * factorial(n - 1) }\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for recursive fn: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_mutual_recursion() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn is_even(n: number) -> bool {\nif n == 0 { true } else { is_odd(n - 1) }\n}\nfn is_odd(n: number) -> bool {\nif n == 0 { false } else { is_even(n - 1) }\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for mutual recursion: {:?}", errors);
+}
