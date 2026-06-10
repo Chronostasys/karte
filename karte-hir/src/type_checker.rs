@@ -15,6 +15,8 @@ pub struct Constraint {
     pub left: Type,
     pub right: Type,
     pub span: karte_diagnostics::Span,
+    /// 约束的上下文描述（用于改进错误消息）
+    pub context: Option<String>,
 }
 
 /// 模块上下文：携带 module/import 元信息
@@ -347,7 +349,18 @@ impl TypeChecker {
     ///
     /// 一般来说，期望的类型在左边，实际的类型在右边
     fn add_constraint(&mut self, left: Type, right: Type, span: karte_diagnostics::Span) {
-        self.constraints.push(Constraint { left, right, span });
+        self.constraints.push(Constraint { left, right, span, context: None });
+    }
+
+    /// 添加带上下文描述的约束条件
+    fn add_constraint_with_context(
+        &mut self,
+        left: Type,
+        right: Type,
+        span: karte_diagnostics::Span,
+        context: impl Into<String>,
+    ) {
+        self.constraints.push(Constraint { left, right, span, context: Some(context.into()) });
     }
 
     /// 统一两个类型
@@ -1669,8 +1682,13 @@ impl TypeChecker {
                         }
 
                         // 统一参数类型
-                        for (param_type, arg_type) in params.iter().zip(arg_types.iter()) {
-                            self.add_constraint(param_type.clone(), arg_type.clone(), *span);
+                        for (i, (param_type, arg_type)) in params.iter().zip(arg_types.iter()).enumerate() {
+                            self.add_constraint_with_context(
+                                param_type.clone(),
+                                arg_type.clone(),
+                                *span,
+                                format!("函数调用第 {} 个参数类型不匹配", i + 1),
+                            );
                         }
 
                         *return_type.clone()
@@ -1689,8 +1707,13 @@ impl TypeChecker {
                             return *return_type.clone();
                         }
 
-                        for (param_type, arg_type) in params.iter().zip(arg_types.iter()) {
-                            self.add_constraint(param_type.clone(), arg_type.clone(), *span);
+                        for (i, (param_type, arg_type)) in params.iter().zip(arg_types.iter()).enumerate() {
+                            self.add_constraint_with_context(
+                                param_type.clone(),
+                                arg_type.clone(),
+                                *span,
+                                format!("闭包调用第 {} 个参数类型不匹配", i + 1),
+                            );
                         }
 
                         *return_type.clone()
@@ -2081,7 +2104,12 @@ impl TypeChecker {
                         (Type::Unit, _) => else_type,
                         (_, Type::Unit) => then_type.clone(),
                         _ => {
-                            self.add_constraint(then_type.clone(), else_type, else_branch.span());
+                            self.add_constraint_with_context(
+                                then_type.clone(),
+                                else_type,
+                                else_branch.span(),
+                                format!("if-else 分支类型不一致"),
+                            );
                             then_type
                         }
                     }
@@ -3211,7 +3239,12 @@ impl TypeChecker {
                 let body_ty = self.infer_expr(body, &mut func_env);
 
                 // 4. 添加约束：函数体的类型必须与声明的返回类型一致
-                self.add_constraint(signature.return_type.clone(), body_ty, *span);
+                self.add_constraint_with_context(
+                    signature.return_type.clone(),
+                    body_ty,
+                    *span,
+                    format!("函数 `{}` 的返回值类型与函数体不一致", name),
+                );
 
                 // 5. 构造函数类型
                 let func_type = Type::Function {
@@ -3585,6 +3618,9 @@ impl TypeChecker {
                 &constraint.left,
                 &constraint.right,
             );
+            // Note: unify 内部已经处理了错误报告
+            // 如果需要将约束的上下文传递给错误消息，
+            // 需要修改 unify 的签名——这里暂不修改以避免大范围重构
         }
     }
 
