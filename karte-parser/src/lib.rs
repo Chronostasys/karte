@@ -300,16 +300,9 @@ pub fn parse_with_type_check(
         let (result_type, expr_types, type_diagnostics) =
             type_check_with_context_and_maps(&program.body, module_context.clone());
 
-        // 合并诊断信息（保留原始级别：Warning 仍然是 Warning）
+        // 合并诊断信息（保留原始级别和 help 字段）
         for diag in type_diagnostics.diagnostics {
-            match diag.level {
-                karte_diagnostics::DiagnosticLevel::Warning => {
-                    diagnostics.add_warning(diag.message, diag.span);
-                }
-                _ => {
-                    diagnostics.add_error(diag.message, diag.span);
-                }
-            }
+            diagnostics.add(diag);
         }
 
         match &result_type {

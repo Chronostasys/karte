@@ -217,6 +217,7 @@ impl Diagnostic {
     pub fn into_compiler_error(self, source_code: &str, filename: &str) -> CompilerError {
         let src = NamedSource::new(filename, source_code.to_string());
         let span = SourceSpan::from(self.span);
+        let diag_help = self.help.clone();
 
         match self.level {
             DiagnosticLevel::Error => {
@@ -303,14 +304,14 @@ impl Diagnostic {
                         span,
                         message: self.message,
                         src,
-                        help: Some("请检查表达式语法是否正确".to_string()),
+                        help: diag_help.or(Some("请检查表达式语法是否正确".to_string())),
                     }
                 } else {
                     CompilerError::ParseError {
                         span,
                         message: self.message,
                         src,
-                        help: Some("请检查错误位置的语法是否正确".to_string()),
+                        help: diag_help.or(Some("请检查错误位置的语法是否正确".to_string())),
                     }
                 }
             }
