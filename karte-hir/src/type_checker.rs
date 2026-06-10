@@ -201,6 +201,25 @@ impl TypeChecker {
         eprintln!("  used: {:?}", self.used_definitions);
     }
 
+    /// 描述类型不匹配的上下文
+    fn describe_type_mismatch(&self, expected: &Type, found: &Type) -> Option<String> {
+        match (expected, found) {
+            (Type::Number, Type::String) => Some("算术运算需要 number 类型，但得到了 string".to_string()),
+            (Type::String, Type::Number) => Some("期望 string 类型，但得到了 number".to_string()),
+            (Type::Number, Type::Bool) => Some("期望 number 类型，但得到了 bool".to_string()),
+            (Type::Bool, Type::Number) => Some("期望 bool 类型，但得到了 number".to_string()),
+            (Type::Number, Type::Unit) => Some("期望 number 类型，但得到了空值 (())".to_string()),
+            (Type::Function { .. }, Type::Number) => Some("期望函数类型，但得到了 number".to_string()),
+            (Type::Function { .. }, Type::String) => Some("期望函数类型，但得到了 string".to_string()),
+            (Type::Array { .. }, Type::Number) => Some("期望数组类型，但得到了 number".to_string()),
+            (Type::Array { .. }, Type::String) => Some("期望数组类型，但得到了 string".to_string()),
+            (Type::Sum { name, .. }, Type::Number) => Some(format!("期望 {} 类型，但得到了 number", name)),
+            (Type::Sum { name, .. }, Type::String) => Some(format!("期望 {} 类型，但得到了 string", name)),
+            (Type::Struct { name, .. }, Type::Number) => Some(format!("期望 struct {} 类型，但得到了 number", name)),
+            _ => None,
+        }
+    }
+
     /// 从模式中提取变量定义
     fn define_pattern_locals(&mut self, pattern: &crate::ast::Pattern) {
         use crate::ast::Pattern;
@@ -597,11 +616,12 @@ impl TypeChecker {
                 } else {
                     let expected = self.apply_substitution(orig_t1.clone());
                     let found = self.apply_substitution(orig_t2.clone());
+                    let context = self.describe_type_mismatch(&expected, &found);
                     self.add_error(TypeCheckError::TypeMismatch {
                         expected,
                         found,
                         span,
-                        context: None,
+                        context,
                     });
                     Err(())
                 }
