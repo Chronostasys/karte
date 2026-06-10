@@ -9054,6 +9054,45 @@ fn main() -> number {
         assert_eq!(exit_code, 3, "struct closure forarray full: expected 3, got {}", exit_code);
     }
 
+    /// 回归测试：struct + 闭包 + ForIn + continue
+    #[test]
+    fn test_struct_closure_forin_continue() {
+        let code = r#"
+struct S { v: number }
+fn main() -> number {
+    let s = S { v: 0 };
+    let f = || { s };
+    for x in 0..4 {
+        let s = S { v: s.v + 1 };
+        if x == 2 { continue; };
+    };
+    s.v
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 4, "struct closure forin continue: expected 4, got {}", exit_code);
+    }
+
+    /// 回归测试：struct + 闭包 + ForArray + continue
+    #[test]
+    fn test_struct_closure_forarray_continue() {
+        let code = r#"
+struct S { v: number }
+fn main() -> number {
+    let s = S { v: 0 };
+    let f = || { s };
+    let arr = [10, 20, 30, 40];
+    for x in arr {
+        let s = S { v: s.v + 1 };
+        if x == 30 { continue; };
+    };
+    s.v
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 4, "struct closure forarray continue: expected 4, got {}", exit_code);
+    }
+
     /// 回归测试：struct + 闭包 + while + continue
     #[test]
     fn test_struct_closure_while_continue() {

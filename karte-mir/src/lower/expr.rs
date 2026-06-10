@@ -1918,6 +1918,56 @@ pub(crate) fn lower_expression(
             // 如果有 continue 路径，需要在 increment_block 中为用户变量添加 phi
             // 合并正常结束路径和 continue 路径的变量值
             let mut inc_phi_values: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+
+            // ForArray 关键修复：为每个 continue 源块的 struct_ref_vars 预创建 wrapped 值
+            // 不能在 increment_block 中创建 HeapAlloc/Store（MIR block 顺序问题），
+            // 必须在对应的 continue 源块中创建
+            let mut wrapped_continue_values: std::collections::HashMap<(BasicBlockId, String), Value> = std::collections::HashMap::new();
+            {
+                let saved_block = ctx.current_block();
+                for (source_block, cont_bindings) in &for_continue_sources {
+                    ctx.set_current_block(*source_block);
+                    for (name, _initial_value, _loop_value) in &updated_vars {
+                        if struct_ref_vars.contains(name) {
+                            if let Some(cont_val) = cont_bindings.get(name).cloned() {
+                                // 如果是 Reference，提取 ref_target（不需要包装）
+                                if let Value::Reference { value: ref_target, .. } = cont_val {
+                                    wrapped_continue_values.insert((*source_block, name.clone()), ref_target.as_ref().clone());
+                                } else {
+                                    // 裸 struct 值：需要包装成 shared_var
+                                    let heap_alloc = ctx.new_temp();
+                                    ctx.add_statement(Statement::HeapAlloc {
+                                        target: heap_alloc.clone(),
+                                        size: *struct_sizes.get(name).unwrap_or(&8),
+                                        object_type: "struct_copy".to_string(),
+                                        span: *span,
+                                    });
+                                    ctx.add_statement(Statement::Store {
+                                        target: heap_alloc.clone(),
+                                        value: cont_val.clone(),
+                                        span: *span,
+                                    });
+                                    let shared_alloc = ctx.new_temp();
+                                    ctx.add_statement(Statement::HeapAlloc {
+                                        target: shared_alloc.clone(),
+                                        size: 8,
+                                        object_type: "shared_var".to_string(),
+                                        span: *span,
+                                    });
+                                    ctx.add_statement(Statement::Store {
+                                        target: shared_alloc.clone(),
+                                        value: heap_alloc,
+                                        span: *span,
+                                    });
+                                    wrapped_continue_values.insert((*source_block, name.clone()), shared_alloc);
+                                }
+                            }
+                        }
+                    }
+                }
+                ctx.set_current_block(saved_block);
+            }
+
             if !for_continue_sources.is_empty() {
                 for (name, _initial_value, _loop_value) in &updated_vars {
                     let inc_phi_temp = ctx.new_temp();
@@ -1952,36 +2002,12 @@ pub(crate) fn lower_expression(
                             .unwrap_or_else(|| _initial_value.clone());
                         // 处理 Reference 值
                         let cont_value = if struct_ref_vars.contains(name) {
-                            // 结构体变量：从 Reference 中提取 shared_location 指针
-                            if let Value::Reference { value: ref_target, .. } = &cont_value {
+                            if let Some(wrapped) = wrapped_continue_values.get(&(*source_block, name.clone())) {
+                                wrapped.clone()
+                            } else if let Value::Reference { value: ref_target, .. } = &cont_value {
                                 ref_target.as_ref().clone()
                             } else {
-                                // struct 值需要包装成 shared_var 指针
-                                let heap_alloc = ctx.new_temp();
-                                ctx.add_statement(Statement::HeapAlloc {
-                                    target: heap_alloc.clone(),
-                                    size: *struct_sizes.get(name).unwrap_or(&8),
-                                    object_type: "struct_copy".to_string(),
-                                    span: *span,
-                                });
-                                ctx.add_statement(Statement::Store {
-                                    target: heap_alloc.clone(),
-                                    value: cont_value,
-                                    span: *span,
-                                });
-                                let shared_alloc = ctx.new_temp();
-                                ctx.add_statement(Statement::HeapAlloc {
-                                    target: shared_alloc.clone(),
-                                    size: 8,
-                                    object_type: "shared_var".to_string(),
-                                    span: *span,
-                                });
-                                ctx.add_statement(Statement::Store {
-                                    target: shared_alloc.clone(),
-                                    value: heap_alloc,
-                                    span: *span,
-                                });
-                                shared_alloc
+                                cont_value
                             }
                         } else if let Value::Reference { value: ref_target, .. } = &cont_value {
                             // 基本类型变量：Dereference 获取实际值
@@ -2706,6 +2732,52 @@ pub(crate) fn lower_expression(
             ctx.set_current_block(increment_block);
 
             let mut inc_phi_values: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+
+            // ForArray 关键修复：为每个 continue 源块的 struct_ref_vars 预创建 wrapped 值
+            let mut wrapped_continue_values: std::collections::HashMap<(BasicBlockId, String), Value> = std::collections::HashMap::new();
+            {
+                let saved_block = ctx.current_block();
+                for (source_block, cont_bindings) in &for_continue_sources {
+                    ctx.set_current_block(*source_block);
+                    for (name, _initial_value, _loop_value) in &updated_vars {
+                        if struct_ref_vars.contains(name) {
+                            if let Some(cont_val) = cont_bindings.get(name).cloned() {
+                                if let Value::Reference { value: ref_target, .. } = cont_val {
+                                    wrapped_continue_values.insert((*source_block, name.clone()), ref_target.as_ref().clone());
+                                } else {
+                                    let heap_alloc = ctx.new_temp();
+                                    ctx.add_statement(Statement::HeapAlloc {
+                                        target: heap_alloc.clone(),
+                                        size: *struct_sizes.get(name).unwrap_or(&8),
+                                        object_type: "struct_copy".to_string(),
+                                        span: *span,
+                                    });
+                                    ctx.add_statement(Statement::Store {
+                                        target: heap_alloc.clone(),
+                                        value: cont_val.clone(),
+                                        span: *span,
+                                    });
+                                    let shared_alloc = ctx.new_temp();
+                                    ctx.add_statement(Statement::HeapAlloc {
+                                        target: shared_alloc.clone(),
+                                        size: 8,
+                                        object_type: "shared_var".to_string(),
+                                        span: *span,
+                                    });
+                                    ctx.add_statement(Statement::Store {
+                                        target: shared_alloc.clone(),
+                                        value: heap_alloc,
+                                        span: *span,
+                                    });
+                                    wrapped_continue_values.insert((*source_block, name.clone()), shared_alloc);
+                                }
+                            }
+                        }
+                    }
+                }
+                ctx.set_current_block(saved_block);
+            }
+
             if !for_continue_sources.is_empty() {
                 for (name, _initial_value, _loop_value) in &updated_vars {
                     let inc_phi_temp = ctx.new_temp();
@@ -2715,7 +2787,13 @@ pub(crate) fn lower_expression(
                     // 对 struct_ref_vars：从 Reference 中提取 shared_location 指针
                     // 对基本类型 Reference：Dereference 获取实际值
                     let normal_value = if struct_ref_vars.contains(name) {
-                        if let Value::Reference { value: ref_target, .. } = &normal_value {
+                        // ⚠️ ForArray 关键修复：使用 wrapped_normal_values 中预创建的 shared_var，
+                        // 而不是直接使用 normal_end_bindings 中的裸 struct 值。
+                        // 裸 struct 值引用了 loop body 中的临时变量，由于 MIR block 顺序问题
+                        // 在 increment_block 中执行时会读取未初始化的变量。
+                        if let Some(wrapped) = wrapped_normal_values.get(name) {
+                            wrapped.clone()
+                        } else if let Value::Reference { value: ref_target, .. } = &normal_value {
                             ref_target.as_ref().clone()
                         } else {
                             normal_value
@@ -2738,8 +2816,10 @@ pub(crate) fn lower_expression(
                             .unwrap_or_else(|| _initial_value.clone());
                         // 处理 Reference 值
                         let cont_value = if struct_ref_vars.contains(name) {
-                            // 结构体变量：从 Reference 中提取 shared_location 指针
-                            if let Value::Reference { value: ref_target, .. } = &cont_value {
+                            // ForArray 关键修复：使用 wrapped_continue_values 中预创建的 shared_var
+                            if let Some(wrapped) = wrapped_continue_values.get(&(*source_block, name.clone())) {
+                                wrapped.clone()
+                            } else if let Value::Reference { value: ref_target, .. } = &cont_value {
                                 ref_target.as_ref().clone()
                             } else {
                                 cont_value
