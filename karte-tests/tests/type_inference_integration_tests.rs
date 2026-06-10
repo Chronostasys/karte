@@ -388,3 +388,43 @@ fn test_type_check_closure_capture() {
 fn test_type_check_array_index() {
     check_no_errors("fn main() -> number {\nlet arr = [1, 2, 3];\narr[0]\n}");
 }
+
+#[test]
+fn test_exhaustive_enum_all_variants() {
+    check_no_errors("enum Direction { North, South, East, West }\nfn f(d: Direction) -> number {\nmatch d {\nDirection::North => 1,\nDirection::South => 2,\nDirection::East => 3,\nDirection::West => 4\n}\n}");
+}
+
+#[test]
+fn test_exhaustive_enum_with_wildcard() {
+    check_no_errors("enum Direction { North, South, East, West }\nfn f(d: Direction) -> number {\nmatch d {\nDirection::North => 1,\n_ => 0\n}\n}");
+}
+
+#[test]
+fn test_exhaustive_enum_with_data_all() {
+    check_no_errors("enum Shape { Circle(number), Rectangle(number, number), Triangle(number, number, number) }\nfn sides(s: Shape) -> number {\nmatch s {\nShape::Circle(_) => 0,\nShape::Rectangle(_, _) => 4,\nShape::Triangle(_, _, _) => 3\n}\n}");
+}
+
+#[test]
+fn test_exhaustive_bool_all() {
+    check_no_errors("fn f(b: bool) -> number {\nmatch b {\ntrue => 1,\nfalse => 0\n}\n}");
+}
+
+#[test]
+fn test_exhaustive_bool_with_wildcard() {
+    check_no_errors("fn f(b: bool) -> number {\nmatch b {\ntrue => 1,\n_ => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_complex_enum_match() {
+    check_no_errors("enum Expr { Number(number), Add(Expr, Expr), Mul(Expr, Expr) }\nfn eval(e: Expr) -> number {\nmatch e {\nExpr::Number(n) => n,\nExpr::Add(a, b) => eval(a) + eval(b),\nExpr::Mul(a, b) => eval(a) * eval(b)\n}\n}");
+}
+
+#[test]
+fn test_type_check_option_some_none() {
+    check_no_errors("enum Option { Some(number), None }\nfn unwrap(o: Option) -> number {\nmatch o {\nOption::Some(x) => x,\nOption::None => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_result_ok_err() {
+    check_no_errors("enum Result { Ok(number), Err(string) }\nfn get_value(r: Result) -> number {\nmatch r {\nResult::Ok(v) => v,\nResult::Err(_) => 0\n}\n}");
+}
