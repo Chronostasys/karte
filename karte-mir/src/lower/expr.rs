@@ -2062,33 +2062,19 @@ pub(crate) fn lower_expression(
                         }
                     } else if struct_ref_vars.contains(name) {
                         // 结构体变量的 back-edge 值是 struct 值（非 Reference）
-                        // 需要包装成 shared_var 指针以匹配 Phi incoming 类型
-                        let struct_val = final_value.clone();
-                        let heap_alloc = ctx.new_temp();
-                        ctx.add_statement(Statement::HeapAlloc {
-                            target: heap_alloc.clone(),
-                            size: *struct_sizes.get(name).unwrap_or(&8),
-                            object_type: "struct_copy".to_string(),
-                            span: *span,
-                        });
-                        ctx.add_statement(Statement::Store {
-                            target: heap_alloc.clone(),
-                            value: struct_val,
-                            span: *span,
-                        });
-                        let shared_alloc = ctx.new_temp();
-                        ctx.add_statement(Statement::HeapAlloc {
-                            target: shared_alloc.clone(),
-                            size: 8,
-                            object_type: "shared_var".to_string(),
-                            span: *span,
-                        });
-                        ctx.add_statement(Statement::Store {
-                            target: shared_alloc.clone(),
-                            value: heap_alloc,
-                            span: *span,
-                        });
-                        actual_backedge_values.insert(name.clone(), shared_alloc);
+                        //
+                        // ⚠️ for-in 关键修复：不在 increment_block 中重新包装 struct 值。
+                        // MIR block 顺序中 increment_block (bb3) 在 loop body (bb12) 之前，
+                        // LIR 按此顺序处理。在 increment_block 中创建的 HeapAlloc/Store
+                        // 会引用 loop body 中定义的变量，第一次迭代时这些变量未初始化。
+                        //
+                        // 修复：使用 wrapped_normal_values 中已创建的 shared_var。
+                        // wrapped_normal_values 在 normal_end_block (bb12) 中执行，
+                        // 已创建了正确的 HeapAlloc + Store + shared_var。
+                        // 使用这个 shared_var 作为 Phi back-edge incoming。
+                        if let Some(wrapped) = wrapped_normal_values.get(name) {
+                            actual_backedge_values.insert(name.clone(), wrapped.clone());
+                        }
                     }
                 }
 

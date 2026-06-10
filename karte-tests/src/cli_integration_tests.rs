@@ -8975,6 +8975,45 @@ fn main() -> number {
         assert_eq!(exit_code, 8, "struct closure for-in continue: expected 8, got {}", exit_code);
     }
 
+    /// 回归测试：struct + 闭包 + for-in + break
+    /// 修复了 MIR block 顺序导致的 increment_block 在 loop body 之前执行，
+    /// 导致读取未初始化变量的 bug
+    #[test]
+    fn test_struct_closure_for_in_break() {
+        let code = r#"
+struct S { v: number }
+fn main() -> number {
+    let s = S { v: 0 };
+    let f = || { s };
+    for x in 0..3 {
+        if x == 2 { break; };
+        let s = S { v: s.v + 1 };
+    };
+    s.v
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 2, "struct closure for-in break: expected 2, got {}", exit_code);
+    }
+
+    /// 回归测试：struct + 闭包 + for-in（无 break，全量迭代）
+    #[test]
+    fn test_struct_closure_for_in_full_iteration() {
+        let code = r#"
+struct S { v: number }
+fn main() -> number {
+    let s = S { v: 0 };
+    let f = || { s };
+    for x in 0..3 {
+        let s = S { v: s.v + 1 };
+    };
+    s.v
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 3, "struct closure for-in full: expected 3, got {}", exit_code);
+    }
+
     /// 回归测试：struct + 闭包 + while + continue
     #[test]
     fn test_struct_closure_while_continue() {
