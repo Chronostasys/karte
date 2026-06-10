@@ -126,6 +126,7 @@ impl LanguageServer for Backend {
                         full: Some(SemanticTokensFullOptions::Bool(true)),
                     }),
                 ),
+                document_highlight_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -416,6 +417,39 @@ impl LanguageServer for Backend {
             document_changes: None,
             change_annotations: None,
         }))
+    }
+
+    async fn document_highlight(
+        &self,
+        params: DocumentHighlightParams,
+    ) -> Result<Option<Vec<DocumentHighlight>>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        let store = self.document_store.read().await;
+        let Some(document) = store.get(uri) else {
+            return Ok(None);
+        };
+        let source = &document.content;
+
+        let bridge = self.compiler_bridge.read().await;
+        let references = bridge.find_references(position);
+
+        if references.is_empty() {
+            Ok(None)
+        } else {
+            let highlights: Vec<DocumentHighlight> = references
+                .iter()
+                .map(|span| {
+                    let range = crate::compiler_bridge::span_to_range(source, *span);
+                    DocumentHighlight {
+                        range,
+                        kind: Some(DocumentHighlightKind::TEXT),
+                    }
+                })
+                .collect();
+            Ok(Some(highlights))
+        }
     }
 
     async fn semantic_tokens_full(
