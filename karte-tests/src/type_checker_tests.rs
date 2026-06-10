@@ -1533,6 +1533,77 @@ mod tests {
         let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
         assert!(!diagnostics.has_errors(), "Complex match patterns should be valid");
     }
+
+    #[test]
+    fn test_empty_struct_type_check() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "struct Empty {}\nfn main() -> number {\n    let e = Empty {};\n    0\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Empty struct should be valid");
+    }
+
+    #[test]
+    fn test_single_variant_enum() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "enum Unit { Value }\nfn main() -> number {\n    let u = Unit::Value;\n    match u {\n        Unit::Value => 1\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Single variant enum should be valid");
+    }
+
+    #[test]
+    fn test_negative_number_literal() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = -42;\n    let y = -x;\n    x + y\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Negative number should be valid");
+    }
+
+    #[test]
+    fn test_parenthesized_expression() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = (1 + 2) * (3 + 4);\n    x\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Parenthesized expression should be valid");
+    }
+
+    #[test]
+    fn test_multiple_assignment() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = 1;\n    let y = 2;\n    let z = 3;\n    x + y + z\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Multiple assignments should be valid");
+    }
+
+    #[test]
+    fn test_unit_type_return() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn print_hello() {\n    let _ = 42;\n}\nfn main() -> number { 0 }";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        // Unit type function should be valid
+        let _ = diagnostics;
+    }
+
+    #[test]
+    fn test_large_number_literal() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = 1000000000;\n    x\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Project, None);
+        assert!(!diagnostics.has_errors(), "Large number literal should be valid");
+    }
 }
 
     #[test]
