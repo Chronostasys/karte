@@ -7912,7 +7912,7 @@ fn main() -> number {
     }
 
     #[test]
-    fn test_string_equality() {
+    fn test_string_eq_comparison() {
         let code = r#"
 fn main() -> number {
     let r = 0;
@@ -9895,5 +9895,89 @@ fn main() -> number {
         let code = "fn apply(f: fn(number) -> number, x: number) -> number {\n    f(x)\n}\nfn double(n: number) -> number {\n    n * 2\n}\nfn main() -> number {\n    apply(double, 21)\n}";
         let exit_code = compile_project_mode_code(code);
         assert_eq!(exit_code, 42);
+    }
+
+    #[test]
+    fn test_fibonacci_recursive() {
+        let code = "fn fib(n: number) -> number {\n    if n <= 1 {\n        return n;\n    };\n    fib(n - 1) + fib(n - 2)\n}\nfn main() -> number {\n    fib(10)\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 55);
+    }
+
+    #[test]
+    fn test_nested_if_else() {
+        let code = "fn main() -> number {\n    let x = 5;\n    let y = 0;\n    if x > 3 {\n        if y > 0 {\n            x * y\n        } else {\n            x + y\n        }\n    } else {\n        x - y\n    }\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 5);
+    }
+
+    #[test]
+    fn test_recursive_list_sum() {
+        let code = "enum List { Nil, Cons(number, List) }\nfn sum(l: List) -> number {\n    match l {\n        List::Nil => 0,\n        List::Cons(h, t) => h + sum(t)\n    }\n}\nfn main() -> number {\n    let l = List::Cons(1, List::Cons(2, List::Cons(3, List::Nil)));\n    sum(l)\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 6);
+    }
+
+    #[test]
+    fn test_struct_value_passing() {
+        let code = "struct Pair { first: number, second: number }\nfn swap(p: Pair) -> Pair {\n    Pair { first: p.second, second: p.first }\n}\nfn main() -> number {\n    let p = Pair { first: 10, second: 20 };\n    let s = swap(p);\n    s.first + s.second\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 30);
+    }
+
+    #[test]
+    fn test_for_in_array_sum() {
+        let code = "fn main() -> number {\n    let arr = [10, 20, 30];\n    let sum = 0;\n    for item in arr {\n        let sum = sum + item;\n    };\n    sum\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 60);
+    }
+
+    #[test]
+    fn test_string_equality() {
+        let code = "fn main() -> number {\n    let a = \"hello\";\n    let b = \"hello\";\n    if a == b { 1 } else { 0 }\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 1);
+    }
+
+    #[test]
+    fn test_negative_number_arithmetic() {
+        let code = "fn main() -> number {\n    let a = -10;\n    let b = -5;\n    a + b\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, -15);
+    }
+
+    #[test]
+    fn test_complex_match_with_guard() {
+        let code = "fn classify(n: number) -> number {\n    match n {\n        0 => 0,\n        _ => if n > 0 { 1 } else { -1 }\n    }\n}\nfn main() -> number {\n    classify(5) + classify(-3) + classify(0)\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 0);
+    }
+
+    #[test]
+    fn test_enum_with_data_pattern() {
+        let code = "enum Shape { Circle(number), Rectangle(number, number) }\nfn area(s: Shape) -> number {\n    match s {\n        Shape::Circle(r) => 3 * r * r,\n        Shape::Rectangle(w, h) => w * h\n    }\n}\nfn main() -> number {\n    let c = Shape::Circle(5);\n    let r = Shape::Rectangle(3, 4);\n    area(c) + area(r)\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 75 + 12);
+    }
+
+    #[test]
+    fn test_while_loop_with_condition() {
+        let code = "fn main() -> number {\n    let n = 10;\n    let result = 1;\n    let i = 1;\n    while i <= n {\n        let result = result * i;\n        let i = i + 1;\n    };\n    result\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 3628800);
+    }
+
+    #[test]
+    fn test_nested_closures() {
+        let code = "fn main() -> number {\n    let make_adder = |x| { |y| { x + y } };\n    let add5 = make_adder(5);\n    add5(10)\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 15);
+    }
+
+    #[test]
+    fn test_multi_param_lambda() {
+        let code = "fn main() -> number {\n    let add = |a, b| { a + b };\n    let mul = |a, b| { a * b };\n    add(3, 4) + mul(5, 6)\n}";
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 37);
     }
 }
