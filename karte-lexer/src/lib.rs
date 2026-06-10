@@ -497,10 +497,18 @@ impl<'a> Lexer<'a> {
                     }
                 }
                 Err(_) => {
-                    self.diagnostics.add_error(
-                        format!("意外的字符: '{}'", self.lexer.slice()),
-                        span,
-                    );
+                    let slice = self.lexer.slice();
+                    // 检测常见的错误模式
+                    let msg = if slice.starts_with('"') {
+                        "未终止的字符串字面量".to_string()
+                    } else if slice.starts_with("/*") {
+                        "未终止的块注释".to_string()
+                    } else if slice.starts_with('\'') {
+                        "未终止的字符字面量".to_string()
+                    } else {
+                        format!("意外的字符: '{}'", slice)
+                    };
+                    self.diagnostics.add_error(msg, span);
                 }
             }
         }
