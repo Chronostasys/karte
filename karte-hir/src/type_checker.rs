@@ -253,7 +253,7 @@ impl TypeChecker {
         self.defined_locals.push(HashMap::new());
     }
 
-    /// 退出作用域，检查未使用的变量并发出警告
+    /// 退出作用域，检查未使用的变量和函数并发出警告
     fn pop_local_scope(&mut self, suppress_warnings: bool) {
         if let Some(scope) = self.defined_locals.pop() {
             if !suppress_warnings {
@@ -266,19 +266,24 @@ impl TypeChecker {
                     if name == "main" {
                         continue;
                     }
-                    // 跳过函数定义（函数可能只被其他模块引用）
-                    // TODO: 未来可以根据函数是否在同一模块中被引用来判断
-                    if self.function_signatures.contains_key(name.as_str()) {
-                        continue;
-                    }
                     if !self.used_definitions.contains(span_key) {
-                        // 未使用的变量，发出警告
-                        self.diagnostics.diagnostics.push(
-                            karte_diagnostics::Diagnostic::warning(
-                                format!("未使用的变量: `{}` (如果故意不使用，请添加下划线前缀: `_{})", name, name),
-                                karte_diagnostics::Span::new(span_key.0, span_key.1),
-                            )
-                        );
+                        if self.function_signatures.contains_key(name.as_str()) {
+                            // 未使用的函数，发出警告
+                            self.diagnostics.diagnostics.push(
+                                karte_diagnostics::Diagnostic::warning(
+                                    format!("未使用的函数: `{}` (如果故意不使用，请添加下划线前缀: `_{}`)", name, name),
+                                    karte_diagnostics::Span::new(span_key.0, span_key.1),
+                                )
+                            );
+                        } else {
+                            // 未使用的变量，发出警告
+                            self.diagnostics.diagnostics.push(
+                                karte_diagnostics::Diagnostic::warning(
+                                    format!("未使用的变量: `{}` (如果故意不使用，请添加下划线前缀: `_{})", name, name),
+                                    karte_diagnostics::Span::new(span_key.0, span_key.1),
+                                )
+                            );
+                        }
                     }
                 }
             }

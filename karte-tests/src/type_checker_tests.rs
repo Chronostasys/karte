@@ -362,8 +362,8 @@ mod tests {
 
         let (_, diagnostics) = type_check(&expr);
 
-        // 不应该有错误
-        assert!(diagnostics.is_empty());
+        // 不应该有错误（可能有未使用函数的警告，这是正常的）
+        assert!(!diagnostics.has_errors(), "Should have no errors");
     }
 
     #[test]
