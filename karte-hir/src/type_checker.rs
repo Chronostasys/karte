@@ -2253,6 +2253,14 @@ impl TypeChecker {
                     );
                 }
 
+                // 🔧 检测 while false（循环体永远不会执行）
+                if let Expr::Boolean { value: false, .. } = condition.as_ref() {
+                    self.add_warning(
+                        "while 条件始终为 false, 循环体永远不会被执行".to_string(),
+                        condition.span(),
+                    );
+                }
+
                 // 条件可以是布尔或数字类型（非零为 true）
                 let condition_type = self.infer_expr(condition, env);
                 match condition_type {
