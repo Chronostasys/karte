@@ -3078,9 +3078,11 @@ impl TypeChecker {
             } => {
                 // start 和 end 必须是数字类型
                 let start_type = self.infer_expr(start, env);
-                self.add_constraint_with_context(start_type, Type::Number, start.span(), "for 循环范围必须是 number 类型");
+                self.add_constraint_with_context(start_type.clone(), Type::Number, start.span(), 
+                    format!("for 循环范围起始必须是 number 类型, 实际为 `{}`", start_type));
                 let end_type = self.infer_expr(end, env);
-                self.add_constraint_with_context(end_type, Type::Number, end.span(), "for 循环范围必须是 number 类型");
+                self.add_constraint_with_context(end_type.clone(), Type::Number, end.span(), 
+                    format!("for 循环范围结束必须是 number 类型, 实际为 `{}`", end_type));
 
                 // 循环变量是数字类型
                 let mut loop_env = env.clone();
@@ -3099,9 +3101,9 @@ impl TypeChecker {
                     _ => {
                         self.add_error(TypeCheckError::TypeMismatch {
                             expected: Type::array(Type::Unknown),
-                            found: array_type,
+                            found: array_type.clone(),
                             span: array.span(),
-                            context: Some("函数返回值类型不匹配".to_string()),
+                            context: Some(format!("for 循环的迭代对象必须是数组类型, 实际为 `{}`", array_type)),
                         });
                         Type::Number
                     }
