@@ -130,6 +130,9 @@ impl LanguageServer for Backend {
                 document_highlight_provider: Some(OneOf::Left(true)),
                 document_formatting_provider: Some(OneOf::Left(true)),
                 document_range_formatting_provider: Some(OneOf::Left(true)),
+                code_lens_provider: Some(CodeLensOptions {
+                    resolve_provider: Some(true),
+                }),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -914,6 +917,61 @@ impl LanguageServer for Backend {
         } else {
             Ok(Some(edits))
         }
+    }
+}
+
+impl Backend {
+    async fn code_lens(
+        &self,
+        params: CodeLensParams,
+    ) -> Result<Option<Vec<CodeLens>>> {
+        let uri = &params.text_document.uri;
+        let store = self.document_store.read().await;
+        let Some(document) = store.get(uri) else {
+            return Ok(None);
+        };
+        let source = &document.content;
+
+        let bridge = self.compiler_bridge.read().await;
+        let symbols = bridge.get_document_symbols();
+
+        let mut lenses = Vec::new();
+
+        for sym in &symbols {
+            // 为函数符号添加类型签名 code lens
+            if sym.kind == KarteSymbolKind::Function {
+                let range = crate::compiler_bridge::span_to_range(source, sym.span);
+                let name = &sym.name;
+
+                // 获取函数类型签名
+                let type_str = bridge.get_cached_result()
+                    .and_then(|r| r.identifier_type_strings.get(&(sym.span.start, sym.span.end)));
+                if let Some(type_str) = type_str {
+                    lenses.push(CodeLens {
+                        range,
+                        command: Some(Command {
+                            title: format!("fn {}: {}", name, type_str),
+                            command: String::new(),
+                            arguments: None,
+                        }),
+                        data: None,
+                    });
+                }
+            }
+        }
+
+        if lenses.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(lenses))
+        }
+    }
+
+    async fn code_lens_resolve(
+        &self,
+        params: CodeLens,
+    ) -> Result<CodeLens> {
+        Ok(params)
     }
 }
 
