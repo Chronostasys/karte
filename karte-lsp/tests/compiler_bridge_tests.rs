@@ -244,3 +244,73 @@ fn test_semantic_tokens_struct_fields() {
     let names: Vec<&str> = result.symbols.iter().map(|s| s.name.as_str()).collect();
     assert!(names.contains(&"Point"), "Should have 'Point' struct: {:?}", names);
 }
+
+#[test]
+fn test_folding_range_braces() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {
+    let x = 42;
+    if x > 0 {
+        x
+    } else {
+        0
+    }
+}";
+
+    let _diagnostics = bridge.analyze(source);
+    let _result = bridge.get_cached_result();
+}
+
+#[test]
+fn test_hover_on_function_param() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn add(a: number, b: number) -> number {
+    a + b
+}";
+
+    let _diagnostics = bridge.analyze(source);
+    let hover = bridge.get_hover_info(Position::new(1, 4));
+    let _ = hover;
+}
+
+#[test]
+fn test_completion_with_partial_name() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn hello() -> number { 1 }
+fn helper() -> number { 2 }
+fn main() -> number {
+    hel
+}";
+
+    let _diagnostics = bridge.analyze(source);
+    let completions = bridge.get_completions(Position::new(3, 7));
+    let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
+    assert!(labels.iter().any(|l| l.starts_with("hel")),
+        "Completions should contain functions starting with 'hel': {:?}", labels);
+}
+
+#[test]
+fn test_goto_definition_in_function() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn foo() -> number { 42 }
+fn main() -> number {
+    foo()
+}";
+
+    let _diagnostics = bridge.analyze(source);
+    let def = bridge.get_definition(Position::new(2, 4));
+    assert!(def.is_some(), "Should find definition of 'foo'");
+}
+
+#[test]
+fn test_references_to_function() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn foo() -> number { 42 }
+fn main() -> number {
+    foo()
+}";
+
+    let _diagnostics = bridge.analyze(source);
+    let refs = bridge.find_references(Position::new(2, 4));
+    assert!(!refs.is_empty(), "Should find references to 'foo'");
+}
