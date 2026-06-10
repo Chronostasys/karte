@@ -1131,3 +1131,28 @@ fn test_type_check_modulo() {
 fn test_type_check_bitwise_and() {
     check_no_errors("fn main() -> number {\n12 & 10\n}");
 }
+
+#[test]
+fn test_warning_redundant_after_wildcard_number() {
+    let source = r#"fn f(x: number) -> number {
+    match x {
+        _ => 0,
+        1 => 1
+    }
+}
+fn main() -> number { f(42) }"#;
+    check_has_warnings(source);
+}
+
+#[test]
+fn test_no_warning_specific_before_wildcard() {
+    let source = r#"fn f(x: number) -> number {
+    match x {
+        0 => 1,
+        1 => 2,
+        _ => 0
+    }
+}
+fn main() -> number { f(42) }"#;
+    check_no_errors(source);
+}
