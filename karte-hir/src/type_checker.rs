@@ -2133,6 +2133,14 @@ impl TypeChecker {
                 else_branch,
                 span: _,
             } => {
+                // 🔧 检测 if 条件中的赋值（常见错误: if x = 5 而非 if x == 5）
+                if let Expr::Assignment { .. } = condition.as_ref() {
+                    self.add_warning(
+                        "if 条件中使用了赋值操作 (=)，请确认是否应该使用比较操作 (==)".to_string(),
+                        condition.span(),
+                    );
+                }
+
                 // 推断条件的类型，条件可以是布尔或数字类型（非零为 true）
                 let condition_type = self.infer_expr(condition, env);
                 // 允许 number 和 bool 作为条件
