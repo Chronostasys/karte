@@ -402,8 +402,11 @@ fn test_hover_on_enum_name() {
     let mut bridge = CompilerBridge::new();
     let _diagnostics = bridge.analyze("enum Color { Red, Green, Blue }\nfn main() -> number { 0 }");
     let hover = bridge.get_hover_info(Position { line: 0, character: 5 });
-    // enum 名称的 hover 可能不支持，只验证不崩溃
-    let _ = hover;
+    assert!(hover.is_some(), "Should have hover info for enum name");
+    if let Some((text, _)) = hover {
+        assert!(text.contains("enum"), "Enum hover should contain 'enum'");
+        assert!(text.contains("Red"), "Enum hover should contain variant names");
+    }
 }
 
 #[test]
