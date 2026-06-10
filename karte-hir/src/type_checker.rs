@@ -2247,7 +2247,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: left_type,
                         span: left.span(),
-                        context: None,
+                        context: Some("min() 的左操作数必须是 number 类型".to_string()),
                     });
                     ok = false;
                 }
@@ -2256,7 +2256,7 @@ impl TypeChecker {
                         expected: Type::Number,
                         found: right_type,
                         span: right.span(),
-                        context: None,
+                        context: Some("min() 的右操作数必须是 number 类型".to_string()),
                     });
                     ok = false;
                 }
