@@ -1693,7 +1693,8 @@ impl TypeChecker {
                         "abs" => {
                             if args.len() == 1 {
                                 let arg_type = self.infer_expr(&args[0], env);
-                                self.add_constraint_with_context(Type::Number, arg_type, *span, "abs() 要求 number 类型参数");
+                                self.add_constraint_with_context(Type::Number, arg_type.clone(), *span, 
+                                    format!("abs() 要求 number 类型参数, 实际为 `{}`", arg_type));
                                 return Type::Number;
                             }
                         }
@@ -1701,8 +1702,10 @@ impl TypeChecker {
                             if args.len() == 2 {
                                 let t1 = self.infer_expr(&args[0], env);
                                 let t2 = self.infer_expr(&args[1], env);
-                                self.add_constraint_with_context(Type::Number, t1, *span, "min()/max() 要求 number 类型参数");
-                                self.add_constraint_with_context(Type::Number, t2, *span, "min()/max() 要求 number 类型参数");
+                                self.add_constraint_with_context(Type::Number, t1.clone(), *span, 
+                                    format!("min()/max() 要求 number 类型参数, 第一个参数为 `{}`", t1));
+                                self.add_constraint_with_context(Type::Number, t2.clone(), *span, 
+                                    format!("min()/max() 要求 number 类型参数, 第二个参数为 `{}`", t2));
                                 return Type::Number;
                             }
                         }
@@ -1711,9 +1714,12 @@ impl TypeChecker {
                                 let t1 = self.infer_expr(&args[0], env);
                                 let t2 = self.infer_expr(&args[1], env);
                                 let t3 = self.infer_expr(&args[2], env);
-                                self.add_constraint_with_context(Type::Number, t1, *span, "clamp() 要求 number 类型参数");
-                                self.add_constraint_with_context(Type::Number, t2, *span, "clamp() 要求 number 类型参数");
-                                self.add_constraint_with_context(Type::Number, t3, *span, "clamp() 要求 number 类型参数");
+                                self.add_constraint_with_context(Type::Number, t1.clone(), *span, 
+                                    format!("clamp() 要求 number 类型参数, 第一个参数为 `{}`", t1));
+                                self.add_constraint_with_context(Type::Number, t2.clone(), *span, 
+                                    format!("clamp() 要求 number 类型参数, 第二个参数为 `{}`", t2));
+                                self.add_constraint_with_context(Type::Number, t3.clone(), *span, 
+                                    format!("clamp() 要求 number 类型参数, 第三个参数为 `{}`", t3));
                                 return Type::Number;
                             }
                         }
@@ -2770,7 +2776,8 @@ impl TypeChecker {
             Expr::Index { array, index, span } => {
                 let array_type = self.infer_expr(array, env);
                 let index_type = self.infer_expr(index, env);
-                self.add_constraint_with_context(index_type, Type::Number, index.span(), "数组索引必须是 number 类型");
+                self.add_constraint_with_context(index_type.clone(), Type::Number, index.span(), 
+                    format!("数组索引必须是 number 类型, 实际为 `{}`", index_type));
 
                 match array_type {
                     Type::Array { element } => *element,
