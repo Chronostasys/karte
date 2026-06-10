@@ -1534,3 +1534,44 @@ fn test_analyze_valid_mutual_recursion() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors for mutual recursion: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_block_expr() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet x = {\nlet a = 10;\na + 20\n};\nx\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for block expr: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_chained_calls() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn double(x: number) -> number { x * 2 }\nfn inc(x: number) -> number { x + 1 }\nfn main() -> number {\ndouble(inc(5))\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for chained calls: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_generic_fn3() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn id(x) { x }
+fn main() -> number {
+id(42)
+}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for generic fn: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_recursive_sum() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn sum(n: number) -> number {
+if n <= 0 { 0 } else { n + sum(n - 1) }
+}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for recursive sum: {:?}", errors);
+}
