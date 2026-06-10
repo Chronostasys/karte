@@ -107,3 +107,78 @@ fn main() -> number {
     let diagnostics = bridge.analyze(source);
     assert!(diagnostics.is_empty(), "Expected no diagnostics, got: {:?}", diagnostics);
 }
+
+#[test]
+fn test_compiler_bridge_enum_match() {
+    let mut bridge = CompilerBridge::new();
+    let source = r#"enum Color { Red, Green, Blue }
+fn main() -> number {
+    let c = Color::Red;
+    match c {
+        Color::Red => 1,
+        Color::Green => 2,
+        Color::Blue => 3
+    }
+}"#;
+
+    let diagnostics = bridge.analyze(source);
+    assert!(diagnostics.is_empty(), "Expected no diagnostics, got: {:?}", diagnostics);
+}
+
+#[test]
+fn test_compiler_bridge_non_exhaustive_match() {
+    let mut bridge = CompilerBridge::new();
+    let source = r#"enum Color { Red, Green, Blue }
+fn main() -> number {
+    let c = Color::Red;
+    match c {
+        Color::Red => 1
+    }
+}"#;
+
+    let diagnostics = bridge.analyze(source);
+    assert!(!diagnostics.is_empty(), "Expected diagnostics for non-exhaustive match");
+    let msgs: Vec<&str> = diagnostics.iter().map(|d| d.message.as_str()).collect();
+    let msg = msgs.join(", ");
+    assert!(msg.contains("Green") || msg.contains("Blue") || msg.contains("穷尽"),
+        "Error should mention missing patterns: {}", msg);
+}
+
+#[test]
+fn test_compiler_bridge_unused_variable_warning() {
+    let mut bridge = CompilerBridge::new();
+    let source = r#"fn main() -> number {
+    let unused_var = 42;
+    let used = 10;
+    used
+}"#;
+
+    let _diagnostics = bridge.analyze(source);
+    // 只确保不会 panic
+}
+
+#[test]
+fn test_compiler_bridge_find_references() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\n    let x = 42;\n    x\n}";
+
+    let _diagnostics = bridge.analyze(source);
+
+    // 测试查找引用
+    // position: 行 2, 列 4 (指向 'x' 的某个位置)
+    let refs = bridge.find_references(Position::new(2, 4));
+    assert!(!refs.is_empty(), "Should find references to 'x'");
+}
+
+#[test]
+fn test_compiler_bridge_signature_help() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn add(a: number, b: number) -> number { a + b }\nfn main() -> number {\n    add(\n}";
+
+    let _diagnostics = bridge.analyze(source);
+
+    // 测试签名帮助
+    let sig = bridge.get_signature_help(Position::new(2, 8));
+    // 签名帮助可能不可用，只确保不会 panic
+    let _ = sig;
+}
