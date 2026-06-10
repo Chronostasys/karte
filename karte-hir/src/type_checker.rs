@@ -2478,13 +2478,13 @@ impl TypeChecker {
                 }
 
                 match actual_type {
-                    Type::Struct { fields, .. } => {
+                    Type::Struct { name: struct_name, fields } => {
                         if let Some(field_def) = fields.iter().find(|f| f.name == *field) {
                             field_def.field_type.clone()
                         } else {
                             let available: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
                             self.add_error(TypeCheckError::UnknownField {
-                                struct_name: "unknown".to_string(),
+                                struct_name: struct_name.clone(),
                                 field_name: field.clone(),
                                 available_fields: available,
                                 span: *span,
