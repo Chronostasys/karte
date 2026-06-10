@@ -4559,7 +4559,23 @@ impl TypeChecker {
     fn add_error(&mut self, error: TypeCheckError) {
         let message = error.to_string();
         let span = error.span();
-        self.diagnostics.add_error(message, span);
+        let help = match &error {
+            TypeCheckError::MissingFields { missing, .. } if !missing.is_empty() => {
+                Some(format!("请添加缺少的字段: {}", missing.join(", ")))
+            }
+            TypeCheckError::UnknownField { field_name, available_fields, .. } => {
+                // 查找最接近的字段名
+                let suggestion = available_fields.iter()
+                    .filter(|f| Self::levenshtein(field_name, f) <= 3)
+                    .min_by_key(|f| Self::levenshtein(field_name, f));
+                suggestion.map(|s| format!("你是否想使用 `{}`?", s))
+            }
+            TypeCheckError::NonExhaustiveMatch { missing_patterns, .. } => {
+                Some(format!("请添加缺少的模式: {}", missing_patterns.join(", ")))
+            }
+            _ => None,
+        };
+        self.diagnostics.add_error_with_help(message, span, help);
     }
 
     /// 添加编译器警告

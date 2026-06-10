@@ -165,6 +165,8 @@ pub struct Diagnostic {
     pub span: Span,
     pub code: Option<String>,
     pub source: Option<String>,
+    #[serde(default)]
+    pub help: Option<String>,
 }
 
 impl Diagnostic {
@@ -175,6 +177,7 @@ impl Diagnostic {
             span,
             code: None,
             source: None,
+            help: None,
         }
     }
 
@@ -185,6 +188,7 @@ impl Diagnostic {
             span,
             code: None,
             source: None,
+            help: None,
         }
     }
 
@@ -195,6 +199,7 @@ impl Diagnostic {
             span,
             code: None,
             source: None,
+            help: None,
         }
     }
 
@@ -330,10 +335,14 @@ impl Diagnostic {
 impl fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(code) = &self.code {
-            write!(f, "{} [{}]: {}", self.level, code, self.message)
+            write!(f, "{} [{}]: {}", self.level, code, self.message)?;
         } else {
-            write!(f, "{}: {}", self.level, self.message)
+            write!(f, "{}: {}", self.level, self.message)?;
         }
+        if let Some(help) = &self.help {
+            write!(f, "\n  帮助: {}", help)?;
+        }
+        Ok(())
     }
 }
 
@@ -356,6 +365,14 @@ impl DiagnosticBag {
 
     pub fn add_error(&mut self, message: impl Into<String>, span: Span) {
         self.add(Diagnostic::error(message, span));
+    }
+
+    pub fn add_error_with_help(&mut self, message: impl Into<String>, span: Span, help: Option<String>) {
+        let mut diag = Diagnostic::error(message, span);
+        if let Some(h) = help {
+            diag.help = Some(h);
+        }
+        self.add(diag);
     }
 
     pub fn add_warning(&mut self, message: impl Into<String>, span: Span) {
