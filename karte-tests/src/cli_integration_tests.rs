@@ -9093,6 +9093,89 @@ fn main() -> number {
         assert_eq!(exit_code, 4, "struct closure forarray continue: expected 4, got {}", exit_code);
     }
 
+    /// 回归测试：ForIn + struct + closure + 单次迭代 + break
+    /// 修复 exit Phi 在 loop_exit block 中创建 shared_var 的 bug（incoming 值必须来自 predecessor）
+    #[test]
+    fn test_struct_closure_forin_single_iter_break() {
+        let code = r#"
+struct S { v: number }
+fn main() -> number {
+    let s = S { v: 0 };
+    let f = || { s };
+    for x in 0..1 {
+        let s = S { v: s.v + 1 };
+        break;
+    };
+    s.v
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 1, "struct closure forin single break: expected 1, got {}", exit_code);
+    }
+
+    /// 回归测试：ForArray + struct + closure + 最后一次迭代 break
+    /// 修复 exit Phi 裸 struct 值未包装成 shared_var 导致 SIGSEGV
+    #[test]
+    fn test_struct_closure_forarray_break_at_last() {
+        let code = r#"
+struct S { v: number }
+fn main() -> number {
+    let s = S { v: 0 };
+    let f = || { s };
+    for x in [10, 20, 30] {
+        let s = S { v: s.v + 1 };
+        if x == 30 { break; };
+    };
+    s.v
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 3, "struct closure forarray break at last: expected 3, got {}", exit_code);
+    }
+
+    /// 回归测试：嵌套 for-in + struct + closure + break
+    #[test]
+    fn test_struct_closure_nested_forin_break() {
+        let code = r#"
+struct S { v: number }
+fn main() -> number {
+    let s = S { v: 0 };
+    let f = || { s };
+    for i in 0..3 {
+        for j in 0..3 {
+            if j == 1 { break; };
+            let s = S { v: s.v + 1 };
+        };
+    };
+    s.v
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 3, "struct closure nested forin break: expected 3, got {}", exit_code);
+    }
+
+    /// 回归测试：多个 struct 变量 + closure + for-in + break
+    #[test]
+    fn test_struct_closure_multi_struct_break() {
+        let code = r#"
+struct S { v: number }
+fn main() -> number {
+    let a = S { v: 0 };
+    let b = S { v: 0 };
+    let fa = || { a };
+    let fb = || { b };
+    for x in 0..3 {
+        if x == 2 { break; };
+        let a = S { v: a.v + 1 };
+        let b = S { v: b.v + 10 };
+    };
+    a.v + b.v
+}
+"#;
+        let exit_code = compile_project_mode_code(code);
+        assert_eq!(exit_code, 22, "struct closure multi struct break: expected 22, got {}", exit_code);
+    }
+
     /// 回归测试：struct + 闭包 + while + continue
     #[test]
     fn test_struct_closure_while_continue() {

@@ -2215,7 +2215,13 @@ pub(crate) fn lower_expression(
                                 if let Value::Reference { value: ref_target, .. } = &break_value {
                                     ref_target.as_ref().clone()
                                 } else {
-                                    // struct 值需要包装成 shared_var 指针
+                                    // struct 值需要在 break 源块中包装成 shared_var
+                                    // ⚠️ 关键修复：不能在 loop_exit block 中创建 HeapAlloc/Store，
+                                    // 因为 exit Phi 的 incoming 值必须来自 predecessor block。
+                                    // LIR 在 predecessor terminator 之前生成 Store64，
+                                    // 如果 incoming 是 Phi 所在 block 的变量 → SIGSEGV
+                                    let saved = ctx.current_block();
+                                    ctx.set_current_block(*source_block);
                                     let heap_alloc = ctx.new_temp();
                                     ctx.add_statement(Statement::HeapAlloc {
                                         target: heap_alloc.clone(),
@@ -2240,6 +2246,7 @@ pub(crate) fn lower_expression(
                                         value: heap_alloc,
                                         span: *span,
                                     });
+                                    ctx.set_current_block(saved);
                                     shared_alloc
                                 }
                             } else {
@@ -2999,7 +3006,37 @@ pub(crate) fn lower_expression(
                                 if let Value::Reference { value: ref_target, .. } = &break_value {
                                     ref_target.as_ref().clone()
                                 } else {
-                                    break_value
+                                    // ⚠️ ForArray exit Phi 修复：裸 struct 值需要包装成 shared_var。
+                                    // 在 break 源块中创建 HeapAlloc/Store，不能在 loop_exit block 中
+                                    // （因为 exit Phi 的 incoming 值必须来自 predecessor block）。
+                                    let saved = ctx.current_block();
+                                    ctx.set_current_block(*source_block);
+                                    let heap_alloc = ctx.new_temp();
+                                    ctx.add_statement(Statement::HeapAlloc {
+                                        target: heap_alloc.clone(),
+                                        size: *struct_sizes.get(name).unwrap_or(&8),
+                                        object_type: "struct_copy".to_string(),
+                                        span: *span,
+                                    });
+                                    ctx.add_statement(Statement::Store {
+                                        target: heap_alloc.clone(),
+                                        value: break_value,
+                                        span: *span,
+                                    });
+                                    let shared_alloc = ctx.new_temp();
+                                    ctx.add_statement(Statement::HeapAlloc {
+                                        target: shared_alloc.clone(),
+                                        size: 8,
+                                        object_type: "shared_var".to_string(),
+                                        span: *span,
+                                    });
+                                    ctx.add_statement(Statement::Store {
+                                        target: shared_alloc.clone(),
+                                        value: heap_alloc,
+                                        span: *span,
+                                    });
+                                    ctx.set_current_block(saved);
+                                    shared_alloc
                                 }
                             } else {
                                 break_value
