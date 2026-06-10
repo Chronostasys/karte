@@ -471,6 +471,102 @@ impl LanguageServer for Backend {
         let mut prev_line: u32 = 0;
         let mut prev_char: u32 = 0;
 
+        // 首先基于 token 添加高亮（关键字、数字、字符串等）
+        {
+            let (lexer_tokens, _) = karte_lexer::tokenize(source);
+            let mut byte_pos: usize = 0;
+            let mut line: u32 = 0;
+            let mut col: u32 = 0;
+
+            // 构建 byte position -> (line, col) 映射
+            let mut byte_to_pos: std::collections::HashMap<usize, (u32, u32)> = std::collections::HashMap::new();
+            let mut current_line: u32 = 0;
+            let mut current_col: u32 = 0;
+            for (i, ch) in source.char_indices() {
+                byte_to_pos.insert(i, (current_line, current_col));
+                if ch == '\n' {
+                    current_line += 1;
+                    current_col = 0;
+                } else {
+                    current_col += 1;
+                }
+            }
+            byte_to_pos.insert(source.len(), (current_line, current_col));
+
+            for token in &lexer_tokens {
+                let token_type_opt: Option<u32> = match &token.token {
+                    karte_lexer::Token::Identifier(ident) => {
+                        match ident.as_str() {
+                            "let" | "match" | "enum" | "struct" | "true" | "false"
+                            | "if" | "else" | "while" | "fn" => Some(10), // keyword
+                            _ => None, // 其他标识符由符号层处理
+                        }
+                    }
+                    karte_lexer::Token::KwFor | karte_lexer::Token::KwIn
+                    | karte_lexer::Token::KwReturn | karte_lexer::Token::KwContinue
+                    | karte_lexer::Token::KwBreak | karte_lexer::Token::KwPerform
+                    | karte_lexer::Token::KwResume | karte_lexer::Token::KwHandle => Some(10),
+                    karte_lexer::Token::Number(_) => Some(8),   // number
+                    karte_lexer::Token::StringLiteral(_) => Some(9),  // string
+                    karte_lexer::Token::CharLiteral(_) => Some(8),    // char (as number)
+                    karte_lexer::Token::Plus | karte_lexer::Token::Minus
+                    | karte_lexer::Token::Multiply | karte_lexer::Token::Divide
+                    | karte_lexer::Token::Percent | karte_lexer::Token::Equal
+                    | karte_lexer::Token::EqualEqual | karte_lexer::Token::NotEqual
+                    | karte_lexer::Token::Less | karte_lexer::Token::Greater
+                    | karte_lexer::Token::LessEqual | karte_lexer::Token::GreaterEqual
+                    | karte_lexer::Token::LogicalAnd | karte_lexer::Token::LogicalOr
+                    | karte_lexer::Token::LogicalNot
+                    | karte_lexer::Token::Ampersand | karte_lexer::Token::Pipe
+                    | karte_lexer::Token::Caret | karte_lexer::Token::Arrow
+                    | karte_lexer::Token::FatArrow | karte_lexer::Token::Dot
+                    | karte_lexer::Token::DoubleDot | karte_lexer::Token::DoubleColon
+                    | karte_lexer::Token::Tilde
+                    | karte_lexer::Token::PlusEqual | karte_lexer::Token::MinusEqual
+                    | karte_lexer::Token::StarEqual | karte_lexer::Token::SlashEqual
+                    | karte_lexer::Token::PercentEqual
+                    | karte_lexer::Token::ShiftLeftSym | karte_lexer::Token::ShiftRightSym
+                    | karte_lexer::Token::ShiftLeftEqual | karte_lexer::Token::ShiftRightEqual
+                    | karte_lexer::Token::PipeEqual | karte_lexer::Token::AmpersandEqual
+                    | karte_lexer::Token::CaretEqual => Some(11), // operator
+                    _ => None,
+                };
+
+                if let Some(token_type) = token_type_opt {
+                    let start_pos = byte_to_pos.get(&token.span.start).copied().unwrap_or((0, 0));
+                    let end_pos = byte_to_pos.get(&token.span.end).copied().unwrap_or((0, 0));
+
+                    let length = if start_pos.0 == end_pos.0 {
+                        end_pos.1.saturating_sub(start_pos.1).max(1)
+                    } else {
+                        // 多行 token，取第一行长度
+                        source.lines().nth(start_pos.0 as usize)
+                            .map(|line| line.len() as u32 - start_pos.1)
+                            .unwrap_or(1)
+                    };
+
+                    let delta_line = start_pos.0 - prev_line;
+                    let delta_start = if delta_line == 0 {
+                        start_pos.1.saturating_sub(prev_char)
+                    } else {
+                        start_pos.1
+                    };
+
+                    tokens.push(SemanticToken {
+                        delta_line,
+                        delta_start,
+                        length: length.max(1),
+                        token_type,
+                        token_modifiers_bitset: 0,
+                    });
+
+                    prev_line = start_pos.0;
+                    prev_char = start_pos.1;
+                }
+            }
+        }
+
+        // 然后添加基于符号的高亮（函数、变量、类型等）
         if let Some(result) = analysis {
             let mut sorted_symbols: Vec<_> = result.symbols.iter().collect();
             sorted_symbols.sort_by_key(|sym| (sym.span.start, sym.span.end));
