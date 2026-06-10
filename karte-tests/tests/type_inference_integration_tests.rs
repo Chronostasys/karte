@@ -1081,3 +1081,53 @@ fn test_type_error_miss_field() {
 fn test_type_error_unk_field() {
     check_has_errors("struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point { x: 1, z: 2 };\n0\n}");
 }
+
+#[test]
+fn test_type_check_empty_struct() {
+    check_no_errors("struct Empty {}\nfn main() -> number {\nlet e = Empty {};\n0\n}");
+}
+
+#[test]
+fn test_type_check_struct_in_match() {
+    check_no_errors("struct Point { x: number, y: number }\nfn f(p: Point) -> number {\nmatch p.x {\n0 => p.y\n_ => p.x\n}\n}");
+}
+
+#[test]
+fn test_type_check_bool_comparison() {
+    check_no_errors("fn main() -> number {\nlet x = true == false;\nif x { 1 } else { 0 }\n}");
+}
+
+#[test]
+fn test_type_check_nested_if_return() {
+    check_no_errors("fn classify(n: number) -> number {\nif n > 0 { 1 } else { if n < 0 { -1 } else { 0 } }\n}");
+}
+
+#[test]
+fn test_type_check_str_concat3() {
+    check_no_errors("fn main() -> number {\nlet s = \"hello\" + \" world\";\n0\n}");
+}
+
+#[test]
+fn test_type_check_neg_num() {
+    check_no_errors("fn main() -> number {\nlet x = -42;\nx\n}");
+}
+
+#[test]
+fn test_type_check_arith_prec() {
+    check_no_errors("fn main() -> number {\n2 + 3 * 4\n}");
+}
+
+#[test]
+fn test_type_check_parens2() {
+    check_no_errors("fn main() -> number {\n(2 + 3) * 4\n}");
+}
+
+#[test]
+fn test_type_check_modulo() {
+    check_no_errors("fn main() -> number {\n10 % 3\n}");
+}
+
+#[test]
+fn test_type_check_bitwise_and() {
+    check_no_errors("fn main() -> number {\n12 & 10\n}");
+}
