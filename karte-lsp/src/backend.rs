@@ -1138,6 +1138,70 @@ impl LanguageServer for Backend {
         }
     }
 
+    async fn on_type_formatting(
+        &self,
+        params: DocumentOnTypeFormattingParams,
+    ) -> Result<Option<Vec<TextEdit>>> {
+        let trigger = &params.ch;
+
+        // 只在 } 后触发格式化
+        if trigger != "}" {
+            return Ok(None);
+        }
+
+        let uri = &params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+
+        let store = self.document_store.read().await;
+        let Some(document) = store.get(uri) else {
+            return Ok(None);
+        };
+        let source = &document.content;
+
+        let offset = crate::compiler_bridge::position_to_offset(source, position);
+
+        // 找到当前行
+        let line_start = source[..offset].rfind('\n').map(|p| p + 1).unwrap_or(0);
+        let line_end = source[line_start..].find('\n').map(|p| line_start + p).unwrap_or(source.len());
+        let line = &source[line_start..line_end];
+        let current_indent = line.chars().take_while(|c| *c == ' ').count();
+        let trimmed = line.trim();
+
+        if !trimmed.starts_with('}') {
+            return Ok(None);
+        }
+
+        // 计算匹配 { 的缩进
+        let mut brace_count = 1isize;
+        let mut target_indent = 0usize;
+        for prev_line in source[..line_start].lines().rev() {
+            let prev_trimmed = prev_line.trim();
+            if prev_trimmed.is_empty() {
+                continue;
+            }
+            for ch in prev_trimmed.chars().rev() {
+                if ch == '}' { brace_count += 1; }
+                else if ch == '{' { brace_count -= 1; }
+            }
+            if brace_count <= 0 {
+                target_indent = prev_line.chars().take_while(|c| *c == ' ').count();
+                break;
+            }
+        }
+
+        if current_indent != target_indent {
+            return Ok(Some(vec![TextEdit {
+                range: Range {
+                    start: Position { line: position.line, character: 0 },
+                    end: Position { line: position.line, character: current_indent as u32 },
+                },
+                new_text: " ".repeat(target_indent),
+            }]));
+        }
+
+        Ok(None)
+    }
+
     async fn prepare_type_hierarchy(
         &self,
         params: TypeHierarchyPrepareParams,
