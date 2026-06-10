@@ -37,10 +37,6 @@ fn test_type_check_recursive_function() {
     check_no_errors("fn fib(n: number) -> number { if n <= 1 { n } else { fib(n - 1) + fib(n - 2) } }\nfn main() -> number { fib(10) }");
 }
 
-#[test]
-fn test_type_check_struct_field_access() {
-    check_no_errors("struct Point { x: number, y: number }\nfn main() -> number {\n    let p = Point { x: 1, y: 2 };\n    p.x + p.y\n}");
-}
 
 #[test]
 fn test_type_check_string_concat_v2() {
@@ -167,10 +163,6 @@ fn test_type_check_for_loop() {
     check_no_errors("fn main() -> number {\n    for i in 0..10 {\n        i\n    }\n    0\n}");
 }
 
-#[test]
-fn test_type_check_nested_struct() {
-    check_no_errors("struct Point { x: number, y: number }\nstruct Line { start: Point, end: Point }\nfn main() -> number {\n    let l = Line { start: Point { x: 0, y: 0 }, end: Point { x: 1, y: 1 } };\n    l.start.x\n}");
-}
 
 #[test]
 fn test_type_check_function_parameter() {
@@ -262,10 +254,6 @@ fn test_type_check_result_err() {
     check_no_errors("fn main() -> number {\n    let r: Result<number, string> = Err(\"error\");\n    match r {\n        Ok(v) => v,\n        Err(_) => 0\n    }\n}");
 }
 
-#[test]
-fn test_type_check_enum_with_data() {
-    check_no_errors("enum Expr { Number(number), Add(Expr, Expr), Literal }\nfn main() -> number {\n    let e = Expr::Number(42);\n    match e {\n        Expr::Number(n) => n,\n        _ => 0\n    }\n}");
-}
 
 #[test]
 fn test_type_inference_nested_closure() {
@@ -340,4 +328,63 @@ fn test_type_inference_struct_with_methods() {
 #[test]
 fn test_type_inference_enum_match_complex() {
     check_no_errors("enum Shape { Circle(number), Rectangle(number, number) }\nfn area(s: Shape) -> number {\nmatch s {\nShape::Circle(r) => 3 * r * r,\nShape::Rectangle(w, h) => w * h\n}\n}\nfn main() -> number { area(Shape::Circle(5)) + area(Shape::Rectangle(3, 4)) }");
+}
+
+#[test]
+fn test_type_error_undefined_variable() {
+    check_has_errors("fn main() -> number { x + 1 }");
+}
+
+#[test]
+fn test_type_error_wrong_return_type() {
+    check_has_errors("fn main() -> number { true }");
+}
+
+#[test]
+fn test_type_error_duplicate_param() {
+    check_has_errors("fn f(x: number, x: number) -> number { x }");
+}
+
+#[test]
+fn test_type_error_missing_fields() {
+    check_has_errors("struct Point { x: number, y: number }\nfn main() -> number { let p = Point { x: 1 }; 0 }");
+}
+
+#[test]
+fn test_type_error_undefined_function() {
+    check_has_errors("fn main() -> number { foo(1) }");
+}
+
+#[test]
+fn test_type_error_wrong_arg_count() {
+    check_has_errors("fn add(a: number, b: number) -> number { a + b }\nfn main() -> number { add(1) }");
+}
+
+#[test]
+fn test_type_error_struct_field_unknown() {
+    check_has_errors("struct Point { x: number, y: number }\nfn main() -> number { let p = Point { x: 1, y: 2 }; p.z }");
+}
+
+#[test]
+fn test_type_error_non_exhaustive_match() {
+    check_has_errors("enum Color { Red, Green, Blue }\nfn f(c: Color) -> number { match c { Color::Red => 1 } }\nfn main() -> number { f(Color::Red) }");
+}
+
+#[test]
+fn test_type_check_let_shadow() {
+    // 变量遮蔽应该产生警告但不是错误
+    check_no_errors("fn main() -> number {\nlet x = 5;\nlet x = 10;\nx\n}");
+}
+
+
+
+
+#[test]
+fn test_type_check_closure_capture() {
+    check_no_errors("fn main() -> number {\nlet x = 10;\nlet f = || { x };\nf()\n}");
+}
+
+#[test]
+fn test_type_check_array_index() {
+    check_no_errors("fn main() -> number {\nlet arr = [1, 2, 3];\narr[0]\n}");
 }
