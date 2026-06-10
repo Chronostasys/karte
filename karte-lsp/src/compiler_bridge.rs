@@ -693,18 +693,7 @@ impl CompilerBridge {
         let result = self.cached_result.as_ref()?;
         let offset = position_to_offset(source, position);
 
-        // 优先查找标识符类型信息
-        for (&(start, end), type_str) in &result.identifier_type_strings {
-            if offset >= start && offset <= end {
-                let range = Range {
-                    start: offset_to_position(source, start),
-                    end: offset_to_position(source, end),
-                };
-                return Some((type_str.clone(), range));
-            }
-        }
-
-        // 查找符号定义
+        // 优先查找符号定义（函数签名更丰富）
         for sym in &result.symbols {
             if offset >= sym.span.start && offset <= sym.span.end {
                 if let Some(sig) = &sym.type_signature {
@@ -712,8 +701,30 @@ impl CompilerBridge {
                         start: offset_to_position(source, sym.span.start),
                         end: offset_to_position(source, sym.span.end),
                     };
-                    return Some((sig.clone(), range));
+                    let kind_name = match sym.kind {
+                        KarteSymbolKind::Function => "fn",
+                        KarteSymbolKind::Struct => "struct",
+                        KarteSymbolKind::Enum => "enum",
+                        KarteSymbolKind::Variable => "let",
+                        KarteSymbolKind::Type => "type",
+                        KarteSymbolKind::Parameter => "param",
+                        KarteSymbolKind::EnumVariant => "variant",
+                        KarteSymbolKind::Module => "module",
+                    };
+                    let hover_text = format!("{} {}: {}", kind_name, sym.name, sig);
+                    return Some((hover_text, range));
                 }
+            }
+        }
+
+        // 查找标识符类型信息
+        for (&(start, end), type_str) in &result.identifier_type_strings {
+            if offset >= start && offset <= end {
+                let range = Range {
+                    start: offset_to_position(source, start),
+                    end: offset_to_position(source, end),
+                };
+                return Some((format!(": {}", type_str), range));
             }
         }
 
