@@ -101,6 +101,7 @@ impl LanguageServer for Backend {
                 workspace_symbol_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Left(true)),
                 folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
+                code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -391,6 +392,60 @@ impl LanguageServer for Backend {
             document_changes: None,
             change_annotations: None,
         }))
+    }
+
+    async fn code_action(
+        &self,
+        params: CodeActionParams,
+    ) -> Result<Option<CodeActionResponse>> {
+        let mut actions = Vec::new();
+
+        for diag in &params.context.diagnostics {
+            // 检查是否是"未定义的变量"错误，提供拼写建议
+            if diag.message.contains("未定义的变量") && diag.message.contains("你是否想输入") {
+                // 提取建议
+                if let Some(start) = diag.message.find("'") {
+                    if let Some(end) = diag.message[start + 1..].find("'") {
+                        let suggestion = &diag.message[start + 1..start + 1 + end];
+                        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                            title: format!("替换为 '{}'", suggestion),
+                            kind: Some(CodeActionKind::QUICKFIX),
+                            diagnostics: Some(vec![diag.clone()]),
+                            edit: None,
+                            is_preferred: Some(true),
+                            disabled: None,
+                            data: None,
+                            command: None,
+                        }));
+                    }
+                }
+            }
+
+            // 检查是否是"未使用的变量"警告，提供添加下划线前缀的建议
+            if diag.message.contains("未使用的变量") {
+                if let Some(start) = diag.message.find('`') {
+                    if let Some(end) = diag.message[start + 1..].find('`') {
+                        let var_name = &diag.message[start + 1..start + 1 + end];
+                        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                            title: format!("重命名为 '_{}'", var_name),
+                            kind: Some(CodeActionKind::QUICKFIX),
+                            diagnostics: Some(vec![diag.clone()]),
+                            edit: None,
+                            is_preferred: Some(true),
+                            disabled: None,
+                            data: None,
+                            command: None,
+                        }));
+                    }
+                }
+            }
+        }
+
+        if actions.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(actions))
+        }
     }
 
     async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
