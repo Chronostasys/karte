@@ -741,3 +741,60 @@ fn test_analyze_empty_source() {
     // Empty source should not crash
     assert!(true);
 }
+
+#[test]
+fn test_goto_definition_struct() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point { x: number, y: number }\nfn f(p: Point) -> number {\np.x + p.y\n}";
+    bridge.analyze(source);
+    let def = bridge.get_definition(Position::new(1, 6));
+    assert!(def.is_some(), "Should find definition for struct 'Point'");
+}
+
+#[test]
+fn test_hover_struct_definition() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point { x: 1, y: 2 };\np.x\n}";
+    bridge.analyze(source);
+    let hover = bridge.get_hover_info(Position::new(0, 8));
+    assert!(hover.is_some(), "Should have hover info for struct 'Point'");
+}
+
+#[test]
+fn test_hover_enum_definition() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Color { Red, Green, Blue }\nfn main() -> number {\n0\n}";
+    bridge.analyze(source);
+    let hover = bridge.get_hover_info(Position::new(0, 5));
+    assert!(hover.is_some(), "Should have hover info for enum 'Color'");
+}
+
+#[test]
+fn test_completions_struct_type() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point { x: number, y: number }\nfn main() -> number {\nPoi\n}";
+    bridge.analyze(source);
+    let completions = bridge.get_completions(Position::new(2, 3));
+    let has_point = completions.iter().any(|c| c.label == "Point");
+    assert!(has_point, "Should complete 'Point' struct");
+}
+
+#[test]
+fn test_completions_enum_type() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Color { Red, Green, Blue }\nfn main() -> number {\nCol\n}";
+    bridge.analyze(source);
+    let completions = bridge.get_completions(Position::new(1, 3));
+    let has_color = completions.iter().any(|c| c.label == "Color");
+    assert!(has_color, "Should complete 'Color' enum");
+}
+
+#[test]
+fn test_completions_variable() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet my_var = 42;\nmy_\n}";
+    bridge.analyze(source);
+    let completions = bridge.get_completions(Position::new(2, 3));
+    let has_var = completions.iter().any(|c| c.label == "my_var");
+    assert!(has_var, "Should complete 'my_var' variable");
+}
