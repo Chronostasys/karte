@@ -2142,3 +2142,53 @@ fn test_no_warning_main_function() {
     let source = r#"fn main() -> number { 42 }"#;
     check_no_errors(source);
 }
+
+#[test]
+fn test_type_check_complex_pattern_match() {
+    check_no_errors("enum Expr { Lit(number), Add(number, number) }\nfn eval(e: Expr) -> number {\nmatch e {\nExpr::Lit(n) => n\nExpr::Add(a, b) => a + b\n}\n}");
+}
+
+#[test]
+fn test_type_check_wildcard_pattern() {
+    check_no_errors("fn f(x: number) -> number {\nmatch x {\n0 => 1\n_ => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_sequential_function_def() {
+    check_no_errors("fn double(x: number) -> number { x * 2 }\nfn main() -> number { double(21) }");
+}
+
+#[test]
+fn test_type_check_early_return_in_if() {
+    check_no_errors("fn abs(x: number) -> number {\nif x < 0 { return 0 - x };\nx\n}");
+}
+
+#[test]
+fn test_type_check_multiple_early_returns() {
+    check_no_errors("fn classify(n: number) -> number {\nif n < 0 { return 1 };\nif n == 0 { return 2 };\n3\n}");
+}
+
+#[test]
+fn test_type_check_while_with_break_like() {
+    check_no_errors("fn countdown(n: number) -> number {\nlet x = n;\nwhile x > 0 {\nx = x - 1\n};\nx\n}");
+}
+
+#[test]
+fn test_type_check_string_concat_with_number() {
+    check_no_errors("fn f(n: number) -> string {\n\"value: \" + n\n}");
+}
+
+#[test]
+fn test_type_check_complex_enum_match2() {
+    check_no_errors("enum Color { Red, Green, Blue }\nfn to_number(c: Color) -> number {\nmatch c {\nColor::Red => 0\nColor::Green => 1\nColor::Blue => 2\n}\n}");
+}
+
+#[test]
+fn test_type_check_struct_update_pattern() {
+    check_no_errors("struct Point { x: number, y: number }\nfn move_point(p: Point, dx: number, dy: number) -> Point {\nPoint { x: p.x + dx, y: p.y + dy }\n}");
+}
+
+#[test]
+fn test_type_check_function_composition() {
+    check_no_errors("fn compose(f: fn(number) -> number, g: fn(number) -> number, x: number) -> number {\nf(g(x))\n}");
+}
