@@ -1479,14 +1479,13 @@ impl TypeChecker {
                                 self.add_constraint_with_context(right_type.clone(), Type::String, right.span(), "字符串拼接要求 string 类型");
                             }
                             _ => {
-                                self.add_constraint(left_type.clone(), Type::Number, left.span());
-                                self.add_constraint(right_type.clone(), Type::Number, left.span());
+                                self.add_constraint_with_context(left_type.clone(), Type::Number, left.span(), "加法运算要求 number 类型");
+                                self.add_constraint_with_context(right_type.clone(), Type::Number, left.span(), "加法运算要求 number 类型");
                             }
                         }
                     }
                     BinaryOperator::Equal | BinaryOperator::NotEqual => {
-                        // 相等比较：左右操作数必须是相同类型（支持 number、bool、string）
-                        self.add_constraint(left_type.clone(), right_type.clone(), left.span());
+                        self.add_constraint_with_context(left_type.clone(), right_type.clone(), left.span(), "比较运算要求两边类型一致");
                     }
                     BinaryOperator::Subtract
                     | BinaryOperator::Multiply
@@ -1523,8 +1522,8 @@ impl TypeChecker {
                         // 逻辑运算符接受 bool 或 number（与 if/while 条件一致）
                         match (&left_type, &right_type) {
                             (Type::Number, _) | (_, Type::Number) => {
-                                self.add_constraint(left_type.clone(), Type::Number, left.span());
-                                self.add_constraint(right_type.clone(), Type::Number, right.span());
+                                self.add_constraint_with_context(left_type.clone(), Type::Number, left.span(), "逻辑运算符要求 number 类型");
+                                self.add_constraint_with_context(right_type.clone(), Type::Number, right.span(), "逻辑运算符要求 number 类型");
                             }
                             _ => {
                                 self.add_constraint_with_context(left_type.clone(), Type::bool(), left.span(), "逻辑运算符 (&&/||) 要求 bool 类型");
@@ -1742,7 +1741,7 @@ impl TypeChecker {
                         // 对于类型变量，创建约束
                         let return_type = Type::Var(self.fresh_type_var());
                         let expected_func_type = Type::function(arg_types, return_type.clone());
-                        self.add_constraint(func_type, expected_func_type, *span);
+                        self.add_constraint_with_context(func_type, expected_func_type, *span, "函数调用参数类型不匹配");
                         return_type
                     }
                     Type::Unknown => Type::Unknown,
@@ -1904,10 +1903,11 @@ impl TypeChecker {
                                         if params.len() == args.len() {
                                             for (i, arg_expr) in args.iter().enumerate() {
                                                 let arg_type = self.infer_expr(arg_expr, env);
-                                                self.add_constraint(
+                                                self.add_constraint_with_context(
                                                     arg_type,
                                                     params[i].clone(),
                                                     arg_expr.span(),
+                                                    "函数参数类型不匹配",
                                                 );
                                             }
                                             (**return_type).clone()
@@ -1983,10 +1983,11 @@ impl TypeChecker {
                                     if args.len() == variant.data_types.len() {
                                         for (i, arg_expr) in args.iter().enumerate() {
                                             let arg_type = self.infer_expr(arg_expr, env);
-                                            self.add_constraint(
+                                            self.add_constraint_with_context(
                                                 arg_type,
                                                 variant.data_types[i].clone(),
                                                 arg_expr.span(),
+                                                "构造器参数类型不匹配",
                                             );
                                         }
                                         sum_type.clone()
@@ -2648,7 +2649,7 @@ impl TypeChecker {
             Expr::Index { array, index, span } => {
                 let array_type = self.infer_expr(array, env);
                 let index_type = self.infer_expr(index, env);
-                self.add_constraint(index_type, Type::Number, index.span());
+                self.add_constraint_with_context(index_type, Type::Number, index.span(), "数组索引必须是 number 类型");
 
                 match array_type {
                     Type::Array { element } => *element,
@@ -2950,9 +2951,9 @@ impl TypeChecker {
             } => {
                 // start 和 end 必须是数字类型
                 let start_type = self.infer_expr(start, env);
-                self.add_constraint(start_type, Type::Number, start.span());
+                self.add_constraint_with_context(start_type, Type::Number, start.span(), "for 循环范围必须是 number 类型");
                 let end_type = self.infer_expr(end, env);
-                self.add_constraint(end_type, Type::Number, end.span());
+                self.add_constraint_with_context(end_type, Type::Number, end.span(), "for 循环范围必须是 number 类型");
 
                 // 循环变量是数字类型
                 let mut loop_env = env.clone();
