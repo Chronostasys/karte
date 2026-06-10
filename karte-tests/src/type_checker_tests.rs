@@ -1127,4 +1127,97 @@ mod tests {
         let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
         assert!(!diagnostics.has_errors(), "Higher-order function should be valid");
     }
+
+    #[test]
+    fn test_type_inference_let_binding() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = 42;\n    let y = x + 1;\n    let z = y * 2;\n    z\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Type inference for let bindings should work");
+    }
+
+    #[test]
+    fn test_type_inference_if_else() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = 5;\n    let result = if x > 3 {\n        x * 2\n    } else {\n        x + 1\n    };\n    result\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Type inference for if-else should work");
+    }
+
+    #[test]
+    fn test_type_inference_match() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = 42;\n    let result = match x {\n        0 => 100,\n        _ => x\n    };\n    result\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Type inference for match should work");
+    }
+
+    #[test]
+    fn test_type_inference_function_call() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn square(x: number) -> number { x * x }\nfn main() -> number {\n    let a = square(3);\n    let b = square(a);\n    b\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Type inference for function calls should work");
+    }
+
+    #[test]
+    fn test_type_error_wrong_return_type() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn foo() -> number {\n    \"hello\"\n}\nfn main() -> number {\n    foo()\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Wrong return type should report error");
+        let msgs: Vec<&str> = diagnostics.diagnostics.iter().map(|d| d.message.as_str()).collect();
+        let msg = msgs.join(", ");
+        assert!(msg.contains("类型不匹配") || msg.contains("期望"), "Error should mention type mismatch: {}", msg);
+    }
+
+    #[test]
+    fn test_type_error_wrong_argument() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn add(a: number, b: number) -> number { a + b }\nfn main() -> number {\n    add(1, \"hello\")\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Wrong argument type should report error");
+    }
+
+    #[test]
+    fn test_struct_field_access() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "struct Point { x: number, y: number }\nfn main() -> number {\n    let p = Point { x: 1, y: 2 };\n    p.x + p.y\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Struct field access should be valid");
+    }
+
+    #[test]
+    fn test_struct_field_type_error() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "struct Point { x: number, y: number }\nfn main() -> number {\n    let p = Point { x: \"hello\", y: 2 };\n    p.y\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Wrong field type should report error");
+    }
+
+    #[test]
+    fn test_nested_function_calls() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn double(x: number) -> number { x * 2 }\nfn add_one(x: number) -> number { x + 1 }\nfn main() -> number {\n    double(add_one(5))\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Nested function calls should be valid");
+    }
 }
