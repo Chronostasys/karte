@@ -498,7 +498,7 @@ impl<'a> Lexer<'a> {
                 }
                 Err(_) => {
                     self.diagnostics.add_error(
-                        format!("Unexpected character: '{}'", self.lexer.slice()),
+                        format!("意外的字符: '{}'", self.lexer.slice()),
                         span,
                     );
                 }
