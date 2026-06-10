@@ -91,6 +91,7 @@ impl LanguageServer for Backend {
                 }),
                 definition_provider: Some(OneOf::Left(true)),
                 type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
+                implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
                 references_provider: Some(OneOf::Left(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 signature_help_provider: Some(SignatureHelpOptions {
@@ -263,6 +264,14 @@ impl LanguageServer for Backend {
         // type definition 复用 goto_definition 的逻辑
         // 当用户请求跳转到类型定义时，跳转到变量类型的定义位置
         // 目前跳转到变量的定义处（与 goto_definition 一致）
+        self.goto_definition(params).await
+    }
+
+    async fn goto_implementation(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        // implementation 复用 goto_definition 的逻辑
         self.goto_definition(params).await
     }
 
