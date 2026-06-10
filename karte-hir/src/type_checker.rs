@@ -3176,6 +3176,14 @@ impl TypeChecker {
                         );
                     }
 
+                    // 检查变量遮蔽（shadow）
+                    if env.contains_key(name) && !name.starts_with('_') {
+                        self.add_warning(
+                            format!("变量 `{}` 遮蔽了外层作用域中的同名变量", name),
+                            *span,
+                        );
+                    }
+
                     env.insert(name.clone(), value_type);
                     self.define_local(name, *span);
                 } else {
@@ -3189,6 +3197,14 @@ impl TypeChecker {
                             *span,
                             annotated_type,
                             &value_type,
+                        );
+                    }
+
+                    // 检查变量遮蔽（shadow）
+                    if env.contains_key(name) && !name.starts_with('_') {
+                        self.add_warning(
+                            format!("变量 `{}` 遮蔽了外层作用域中的同名变量", name),
+                            *span,
                         );
                     }
 
