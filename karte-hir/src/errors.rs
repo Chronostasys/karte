@@ -156,7 +156,7 @@ impl fmt::Display for TypeCheckError {
             } => {
                 write!(
                     f,
-                    "结构体 {} 缺少字段: 期望 {} 个字段, 实际 {} 个",
+                    "结构体 `{}` 缺少字段: 期望 {} 个字段, 实际 {} 个（请检查是否遗漏了字段）",
                     struct_name, expected, found
                 )
             }
@@ -165,13 +165,13 @@ impl fmt::Display for TypeCheckError {
                 field_name,
                 ..
             } => {
-                write!(f, "结构体 {} 中不存在字段 {}", struct_name, field_name)
+                write!(f, "结构体 `{}` 中不存在字段 `{}`（请检查字段名称是否正确）", struct_name, field_name)
             }
             TypeCheckError::NotAStruct { name, .. } => {
-                write!(f, "{} 不是结构体类型", name)
+                write!(f, "`{}` 不是结构体类型，无法使用构造器语法", name)
             }
             TypeCheckError::UndefinedType { name, .. } => {
-                write!(f, "未定义的类型: {}", name)
+                write!(f, "未定义的类型: `{}`（请检查类型名称是否正确）", name)
             }
             TypeCheckError::InvalidAssignmentTarget { .. } => {
                 write!(f, "无效的赋值目标（只能对变量或结构体字段赋值）")
@@ -187,10 +187,10 @@ impl fmt::Display for TypeCheckError {
                 write!(f, "模块 `{}` 未导出 `{}`", module, symbol)
             }
             TypeCheckError::DuplicateFunctionDefinition { name, .. } => {
-                write!(f, "重复的函数定义: {}", name)
+                write!(f, "重复的函数定义: `{}`（此名称已在此作用域中定义）", name)
             }
             TypeCheckError::IndexOutOfBounds { index, length, .. } => {
-                write!(f, "索引 {} 超出范围 (长度 {})", index, length)
+                write!(f, "索引 {} 超出范围（数组长度为 {}）", index, length)
             }
             TypeCheckError::BuiltinFunctionError { function, message, .. } => {
                 write!(f, "内置函数 `{}`: {}", function, message)
