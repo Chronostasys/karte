@@ -126,3 +126,48 @@ fn test_type_check_struct_constructor() {
 fn test_type_check_closure() {
     check_no_errors("fn main() -> number {\n    let f = |x| { x + 1 };\n    f(42)\n}");
 }
+
+#[test]
+fn test_type_check_let_binding_number() {
+    check_no_errors("fn main() -> number {\n    let x: number = 42;\n    x\n}");
+}
+
+#[test]
+fn test_type_check_let_binding_string() {
+    check_no_errors("fn main() -> number {\n    let x: string = \"hello\";\n    0\n}");
+}
+
+#[test]
+fn test_type_check_let_binding_bool() {
+    check_no_errors("fn main() -> number {\n    let x: bool = true;\n    if x { 1 } else { 0 }\n}");
+}
+
+#[test]
+fn test_type_check_struct_with_methods() {
+    check_no_errors("struct Point { x: number, y: number }\nfn magnitude(p: Point) -> number {\n    p.x * p.x + p.y * p.y\n}\nfn main() -> number {\n    let p = Point { x: 3, y: 4 };\n    magnitude(p)\n}");
+}
+
+#[test]
+fn test_type_check_option_some() {
+    check_no_errors("fn main() -> number {\n    let x = Some(42);\n    match x {\n        Some(v) => v,\n        None => 0\n    }\n}");
+}
+
+#[test]
+fn test_type_check_option_none() {
+    check_no_errors("fn main() -> number {\n    let x: Option<number> = None;\n    match x {\n        Some(v) => v,\n        None => 0\n    }\n}");
+}
+
+#[test]
+fn test_type_check_while_loop() {
+    check_no_errors("fn main() -> number {\n    let x = 0;\n    while x < 10 {\n        x\n    }\n    0\n}");
+}
+
+#[test]
+fn test_type_check_for_loop() {
+    check_no_errors("fn main() -> number {\n    for i in 0..10 {\n        i\n    }\n    0\n}");
+}
+
+#[test]
+fn test_type_check_nested_struct() {
+    check_no_errors("struct Point { x: number, y: number }\nstruct Line { start: Point, end: Point }\nfn main() -> number {\n    let l = Line { start: Point { x: 0, y: 0 }, end: Point { x: 1, y: 1 } };\n    l.start.x\n}");
+}
