@@ -319,11 +319,15 @@ impl CompilerBridge {
             }
             Statement::TypeDef { name, variants, span, .. } => {
                 let def_pos = (span.start, span.end);
+                let enum_sig = format!(
+                    "{{ {} }}",
+                    variants.iter().map(|v| v.name.as_str()).collect::<Vec<_>>().join(", ")
+                );
                 result.symbols.push(SymbolInfo {
                     name: name.clone(),
                     kind: KarteSymbolKind::Enum,
                     span: *span,
-                    type_signature: None,
+                    type_signature: Some(enum_sig),
                     name_span: None,
                 });
                 env.insert(name, def_pos);
@@ -331,11 +335,20 @@ impl CompilerBridge {
 
                 for variant in variants {
                     let variant_name = &variant.name;
+                    let variant_sig = if variant.data_types.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{}({})", variant_name, 
+                            variant.data_types.iter()
+                                .map(|_| "_")
+                                .collect::<Vec<_>>()
+                                .join(", "))
+                    };
                     result.symbols.push(SymbolInfo {
                         name: format!("{}::{}", name, variant_name),
                         kind: KarteSymbolKind::EnumVariant,
                         span: *span,
-                        type_signature: None,
+                        type_signature: Some(variant_sig),
                         name_span: None,
                     });
                     env.insert(variant_name, def_pos);
