@@ -50,6 +50,10 @@ pub struct LirLoweringContext {
     /// 当前函数中，通过 return 语句返回的临时变量 ID 集合
     /// 用于在 LIR lowering 时判断 struct 是否需要堆分配
     pub(super) returned_temp_ids: HashSet<usize>,
+    /// 当前函数中，通过 Dereference 语句产生的临时变量 ID 集合
+    /// 这些 temp 存储的是指针（如 shared_var 解引用得到的 struct_copy 地址）
+    /// 对这些 temp 做 struct Store 时，应该直接写入新的 struct_ptr，而不是逐字段拷贝
+    pub(super) dereferenced_temp_ids: HashSet<usize>,
     /// 强制下一个 struct 分配使用堆（由逃逸分析触发）
     /// 当 struct 值被赋给一个将通过 return 返回的 temp 时设置此标志
     pub(super) force_struct_heap: bool,

@@ -2223,7 +2223,8 @@ impl LirFunction {
     }
 
     pub fn add_instruction(&mut self, instruction: Instruction) {
-        // 如果是alloc且不是heap，放在开头
+        // 如果是alloc且不是heap，放在开头（Label之后）
+        // 这确保所有Stack Alloc在函数入口处，不会被代码执行跳过
         if let Instruction::Alloc {
             allocation_type, ..
         } = &instruction

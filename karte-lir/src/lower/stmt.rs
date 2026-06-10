@@ -1929,6 +1929,12 @@ pub(super) fn lower_statement(
                 }
             }
 
+            // 🔧 标记 target 为解引用产生的 temp
+            // 这些 temp 存储的是指针（如 shared_var 解引用得到的 struct_copy 地址）
+            if let Value::Temp { id, .. } = target {
+                ctx.dereferenced_temp_ids.insert(id.0);
+            }
+
             Ok(())
         }
 
@@ -2216,23 +2222,45 @@ pub(super) fn lower_statement(
             });
 
             if let Some(layout) = struct_layout {
-                let source_ptr_operand = ctx.lower_to_rvalue(value);
-                let source_ptr_reg = ctx.ensure_register_from_operand(source_ptr_operand, *span);
-
-                for field_layout in &layout.fields {
-                    let temp_reg = ctx.current_function_mut().new_register();
-                    ctx.add_instruction(Instruction::Load64 {
-                        dst: temp_reg,
-                        addr: source_ptr_reg,
-                        offset: field_layout.offset as i64,
-                        span: *span,
-                    });
+                // 🔧 关键修复：当 target 是 Dereference（如 shared_var 解引用）时，
+                // struct 赋值应该直接写入新的 struct_ptr（8字节指针），而不是逐字段拷贝。
+                // 因为 shared_var 是一个 8 字节栈槽，存储的是指向 struct 数据的指针。
+                // 逐字段拷贝会把指针覆盖为字段值（如值1），导致后续读取 SIGSEGV。
+                let is_deref_target = match target {
+                    Value::Temp { id, .. } => ctx.dereferenced_temp_ids.contains(&id.0),
+                    Value::Reference { .. } => true,
+                    _ => false,
+                };
+                
+                if is_deref_target {
+                    // 直接写入新的 struct_ptr
+                    let value_operand = ctx.lower_to_rvalue(value);
                     ctx.add_instruction(Instruction::Store64 {
                         addr: target_addr_reg,
-                        offset: field_layout.offset as i64,
-                        src: Operand::Register { id: temp_reg },
+                        offset: 0,
+                        src: value_operand,
                         span: *span,
                     });
+                } else {
+                    // 非 Dereference target：逐字段拷贝
+                    let source_ptr_operand = ctx.lower_to_rvalue(value);
+                    let source_ptr_reg = ctx.ensure_register_from_operand(source_ptr_operand, *span);
+
+                    for field_layout in &layout.fields {
+                        let temp_reg = ctx.current_function_mut().new_register();
+                        ctx.add_instruction(Instruction::Load64 {
+                            dst: temp_reg,
+                            addr: source_ptr_reg,
+                            offset: field_layout.offset as i64,
+                            span: *span,
+                        });
+                        ctx.add_instruction(Instruction::Store64 {
+                            addr: target_addr_reg,
+                            offset: field_layout.offset as i64,
+                            src: Operand::Register { id: temp_reg },
+                            span: *span,
+                        });
+                    }
                 }
 
                 // 注意：不再传播结构体布局到 target。
