@@ -689,3 +689,55 @@ add(1)
     );
     assert!(has_type_error, "Should have type error for code action");
 }
+
+#[test]
+fn test_analyze_missing_semicolon() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet x = 5\nlet y = 10;\nx + y\n}";
+    let diagnostics = bridge.analyze(source);
+    let has_error = diagnostics.iter().any(|d| 
+        d.severity == KarteDiagnosticSeverity::Error
+    );
+    assert!(has_error, "Should have error for missing semicolon");
+}
+
+#[test]
+fn test_analyze_extra_semicolon() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet x = 5;;\n0\n}";
+    let diagnostics = bridge.analyze(source);
+    // Extra semicolons may or may not be an error
+    // Just ensure no crash
+    assert!(true);
+}
+
+#[test]
+fn test_analyze_unclosed_brace() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet x = 5;\nx\n";
+    let diagnostics = bridge.analyze(source);
+    let has_error = diagnostics.iter().any(|d| 
+        d.severity == KarteDiagnosticSeverity::Error
+    );
+    assert!(has_error, "Should have error for unclosed brace");
+}
+
+#[test]
+fn test_analyze_unclosed_string() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet s = \"hello;\n0\n}";
+    let diagnostics = bridge.analyze(source);
+    let has_error = diagnostics.iter().any(|d| 
+        d.severity == KarteDiagnosticSeverity::Error
+    );
+    assert!(has_error, "Should have error for unclosed string");
+}
+
+#[test]
+fn test_analyze_empty_source() {
+    let mut bridge = CompilerBridge::new();
+    let source = "";
+    let diagnostics = bridge.analyze(source);
+    // Empty source should not crash
+    assert!(true);
+}
