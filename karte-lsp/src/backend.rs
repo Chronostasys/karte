@@ -1185,6 +1185,66 @@ impl LanguageServer for Backend {
 
         Ok(None)
     }
+
+    async fn inline_value(
+        &self,
+        params: InlineValueParams,
+    ) -> Result<Option<Vec<InlineValue>>> {
+        let uri = &params.text_document.uri;
+        let range = &params.range;
+
+        let store = self.document_store.read().await;
+        let Some(document) = store.get(uri) else {
+            return Ok(None);
+        };
+        let source = &document.content;
+
+        let bridge = self.compiler_bridge.read().await;
+        let mut values = Vec::new();
+
+        if let Some(result) = bridge.get_cached_result() {
+            for sym in &result.symbols {
+                // 只处理在可见范围内的变量和参数
+                let sym_range = crate::compiler_bridge::span_to_range(source, sym.span);
+                if sym_range.start.line < range.start.line || sym_range.start.line > range.end.line {
+                    continue;
+                }
+
+                match sym.kind {
+                    crate::compiler_bridge::KarteSymbolKind::Variable
+                    | crate::compiler_bridge::KarteSymbolKind::Parameter => {
+                        // 在变量定义行的末尾显示类型
+                        if let Some(type_str) = &sym.type_signature {
+                            let line = source.lines().nth(sym_range.start.line as usize);
+                            if let Some(line_text) = line {
+                                // 使用 VariableLookup 代替静态文本
+                                values.push(InlineValue::Text(InlineValueText {
+                                    range: Range {
+                                        start: Position {
+                                            line: sym_range.start.line,
+                                            character: line_text.len() as u32,
+                                        },
+                                        end: Position {
+                                            line: sym_range.start.line,
+                                            character: line_text.len() as u32,
+                                        },
+                                    },
+                                    text: format!(": {}", type_str),
+                                }));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if values.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(values))
+        }
+    }
 }
 
 impl Backend {
