@@ -158,7 +158,7 @@ fn test_analyze_for_loop() {
 }
 
 #[test]
-fn test_analyze_nested_function() {
+fn test_analyze_nested_function_call() {
     let mut bridge = CompilerBridge::new();
     let source = "fn outer(x: number) -> number {\nfn inner(y: number) -> number {\ny\n}\ninner(x)\n}\nfn main() -> number { outer(42) }";
     let diagnostics = bridge.analyze(source);
@@ -470,4 +470,102 @@ fn test_analyze_warning_shadow() {
     let diagnostics = bridge.analyze(source);
     // 应该有变量遮蔽警告
     assert!(!diagnostics.is_empty(), "Should have shadow warning");
+}
+
+#[test]
+fn test_analyze_missing_field_error() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point { x: 1 };\n0\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(!errors.is_empty(), "Should have missing field error");
+    let msg = &errors[0].message;
+    assert!(msg.contains("缺少字段") || msg.contains("Missing"), "Error should mention missing field: {}", msg);
+}
+
+#[test]
+fn test_analyze_unknown_field_error() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point { x: 1, z: 2 };\n0\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(!errors.is_empty(), "Should have unknown field error");
+    let msg = &errors[0].message;
+    assert!(msg.contains("不存在字段") || msg.contains("z"), "Error should mention unknown field z: {}", msg);
+}
+
+#[test]
+fn test_analyze_type_mismatch_error() {
+    let mut bridge = CompilerBridge::new();
+    let source = "foo + bar";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(!errors.is_empty(), "Should have type mismatch error");
+}
+
+#[test]
+fn test_analyze_undefined_variable_error() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nfoo\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(!errors.is_empty(), "Should have undefined variable error");
+    let msg = &errors[0].message;
+    assert!(msg.contains("未定义") || msg.contains("Undefined"), "Error should mention undefined: {}", msg);
+}
+
+#[test]
+fn test_analyze_duplicate_function_error() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f() -> number { 1 }\nfn f() -> number { 2 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(!errors.is_empty(), "Should have duplicate function error");
+}
+
+#[test]
+fn test_analyze_enum_success() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Color { Red, Green, Blue }\nfn main() -> number {\nmatch Color::Red {\nColor::Red => 1\nColor::Green => 2\nColor::Blue => 3\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for exhaustive match: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_non_exhaustive_match_error() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Color { Red, Green, Blue }\nfn main() -> number {\nmatch Color::Red {\nColor::Red => 1\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(!errors.is_empty(), "Should have non-exhaustive match error");
+    let msg = &errors[0].message;
+    assert!(msg.contains("非穷尽") || msg.contains("exhaustive"), "Error should mention non-exhaustive: {}", msg);
+}
+
+#[test]
+fn test_analyze_struct_success() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point { x: 1, y: 2 };\np.x\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for valid struct: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_function_call() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn add(a: number, b: number) -> number { a + b }\nfn main() -> number {\nadd(1, 2)\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for valid function call: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_wrong_arity_error() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn add(a: number, b: number) -> number { a + b }\nfn main() -> number {\nadd(1)\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(!errors.is_empty(), "Should have arity mismatch error");
 }
