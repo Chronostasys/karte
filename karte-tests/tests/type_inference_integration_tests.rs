@@ -966,3 +966,38 @@ fn test_type_check_gen_struct_field() {
 fn test_type_check_wildcard2() {
     check_no_errors("enum Color { Red, Green, Blue }\nfn f(c: Color) -> number {\nmatch c {\n_ => 42\n}\n}");
 }
+
+#[test]
+fn test_type_check_fn_type_param() {
+    check_no_errors("fn apply(f: fn(number) -> number, x: number) -> number {\nf(x)\n}");
+}
+
+#[test]
+fn test_type_check_closure_with_type() {
+    check_no_errors("fn main() -> number {\nlet f = |x: number| -> number { x * 2 };\nf(21)\n}");
+}
+
+#[test]
+fn test_type_check_recursive_closure() {
+    check_no_errors("fn main() -> number {\nlet f = |x| { if x > 0 { x - 1 } else { 0 } };\nf(10)\n}");
+}
+
+#[test]
+fn test_type_check_nested_if_else() {
+    check_no_errors("fn classify(n: number) -> number {\nif n > 0 { 1 } else { if n < 0 { -1 } else { 0 } }\n}");
+}
+
+#[test]
+fn test_type_check_let_in_if() {
+    check_no_errors("fn f(x: number) -> number {\nlet r = if x > 0 { let y = x * 2; y } else { 0 };\nr\n}");
+}
+
+#[test]
+fn test_type_check_early_return2() {
+    check_no_errors("fn abs(x: number) -> number {\nif x < 0 { 0 - x } else { x }\n}");
+}
+
+#[test]
+fn test_type_error_if_branch_mismatch2() {
+    check_has_errors("fn f() -> number {\nlet x = if true { 42 } else { \"hello\" };\n0\n}");
+}
