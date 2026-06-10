@@ -1586,15 +1586,18 @@ impl TypeChecker {
 
                 match op {
                     UnaryOperator::Plus | UnaryOperator::Minus => {
-                        self.add_constraint_with_context(Type::Number, operand_type, operand.span(), "一元运算符 (+/-) 要求 number 类型");
+                        self.add_constraint_with_context(Type::Number, operand_type.clone(), operand.span(), 
+                            format!("一元运算符 (+/-) 要求 number 类型, 但操作数为 `{}`", operand_type));
                         Type::Number
                     }
                     UnaryOperator::LogicalNot => {
-                        self.add_constraint_with_context(Type::bool(), operand_type, operand.span(), "逻辑非运算符 (!) 要求 bool 类型");
+                        self.add_constraint_with_context(Type::bool(), operand_type.clone(), operand.span(), 
+                            format!("逻辑非运算符 (!) 要求 bool 类型, 但操作数为 `{}`", operand_type));
                         Type::bool()
                     }
                     UnaryOperator::BitNot => {
-                        self.add_constraint_with_context(Type::Number, operand_type, operand.span(), "位非运算符 (~) 要求 number 类型");
+                        self.add_constraint_with_context(Type::Number, operand_type.clone(), operand.span(), 
+                            format!("位非运算符 (~) 要求 number 类型, 但操作数为 `{}`", operand_type));
                         Type::Number
                     }
                 }
