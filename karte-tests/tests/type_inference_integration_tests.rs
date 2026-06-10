@@ -2913,3 +2913,53 @@ fn test_type_check_simple_if_else() {
 fn test_type_check_simple_match_number() {
     check_no_errors("fn f(x: number) -> string {\nmatch x {\n0 => \"zero\"\n1 => \"one\"\n_ => \"other\"\n}\n}");
 }
+
+#[test]
+fn test_type_error_fn_param_wrong_type2() {
+    check_has_errors("fn f(x: string) -> number {\nx + 1\n}");
+}
+
+#[test]
+fn test_type_error_fn_extra_param() {
+    check_has_errors("fn f(x: number) -> number {\nx\n}\nfn main() -> number {\nf(1, 2)\n}");
+}
+
+#[test]
+fn test_type_error_fn_missing_param() {
+    check_has_errors("fn f(x: number, y: number) -> number {\nx + y\n}\nfn main() -> number {\nf(1)\n}");
+}
+
+#[test]
+fn test_type_error_struct_wrong_field_type2() {
+    check_has_errors("struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point { x: \"hello\", y: 2 };\n0\n}");
+}
+
+#[test]
+fn test_type_error_struct_undefined_field2() {
+    check_has_errors("struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point { x: 1, y: 2 };\np.z\n}");
+}
+
+#[test]
+fn test_type_error_non_exhaustive_bool2() {
+    check_has_errors("fn f(b: bool) -> number {\nmatch b {\ntrue => 1\n}\n}");
+}
+
+#[test]
+fn test_type_error_string_mul() {
+    check_has_errors("fn main() -> number {\n\"hello\" * 3\n}");
+}
+
+#[test]
+fn test_type_error_string_div() {
+    check_has_errors("fn main() -> number {\n\"hello\" / 2\n}");
+}
+
+#[test]
+fn test_type_error_undefined_var2() {
+    check_has_errors("fn main() -> number {\nfoo\n}");
+}
+
+#[test]
+fn test_type_error_undefined_fn2() {
+    check_has_errors("fn main() -> number {\nbar()\n}");
+}
