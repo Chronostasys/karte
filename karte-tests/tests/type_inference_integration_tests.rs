@@ -1963,3 +1963,53 @@ fn test_type_check_let_in_block_expr() {
 fn test_type_check_assign_after_let() {
     check_no_errors("fn main() -> number {\nlet x = 1;\nlet y = 2;\nx = x + y;\nx\n}");
 }
+
+#[test]
+fn test_type_check_array_literal() {
+    check_no_errors("fn main() -> number {\nlet arr = [1, 2, 3];\narr[0] + arr[1] + arr[2]\n}");
+}
+
+#[test]
+fn test_type_check_nested_array_access() {
+    check_no_errors("fn main() -> number {\nlet arr = [10, 20, 30];\nlet x = arr[0];\nlet y = arr[1];\nx + y\n}");
+}
+
+#[test]
+fn test_type_check_for_in_range() {
+    check_no_errors("fn main() -> number {\nlet sum = 0;\nfor i in 1..10 {\nsum = sum + i\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_string_len3() {
+    check_no_errors("fn f(s: string) -> number {\nlet n = len(s);\nn + 1\n}");
+}
+
+#[test]
+fn test_type_check_negative_number() {
+    check_no_errors("fn f() -> number {\n-42\n}");
+}
+
+#[test]
+fn test_type_check_parenthesized_expr() {
+    check_no_errors("fn f(a: number, b: number) -> number {\n((a + b) * (a - b))\n}");
+}
+
+#[test]
+fn test_type_check_unit_return_v2() {
+    check_no_errors("fn noop() {\nlet x = 42;\nlet y = x + 1;\n}");
+}
+
+#[test]
+fn test_type_check_complex_let_chain() {
+    check_no_errors("fn main() -> number {\nlet a = 1;\nlet b = a + 1;\nlet c = b + a;\nlet d = c + b;\nd\n}");
+}
+
+#[test]
+fn test_type_check_fn_as_param2() {
+    check_no_errors("fn apply(f: fn(number) -> number, x: number) -> number {\nf(x)\n}\nfn double(x: number) -> number { x * 2 }\nfn main() -> number { apply(double, 5) }");
+}
+
+#[test]
+fn test_type_check_struct_param_passing() {
+    check_no_errors("struct Point { x: number, y: number }\nfn translate(p: Point, dx: number, dy: number) -> Point {\nPoint { x: p.x + dx, y: p.y + dy }\n}");
+}
