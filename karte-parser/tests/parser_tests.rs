@@ -287,3 +287,37 @@ fn test_parse_chained_function_calls() {
     let diagnostics = parse_project(code);
     assert!(!diagnostics.has_errors(), "Chained function calls should parse");
 }
+
+#[test]
+fn test_spell_suggestion_similar_keyword() {
+    use karte_parser::ParseError;
+    let result = ParseError::suggest_keyword("whille");
+    assert!(result.is_some(), "Should suggest 'while' for 'whille'");
+    if let Some(sug) = result {
+        assert_eq!(sug, "while", "Should suggest 'while'");
+    }
+}
+
+#[test]
+fn test_spell_suggestion_struct() {
+    use karte_parser::ParseError;
+    let result = ParseError::suggest_keyword("strut");
+    assert!(result.is_some(), "Should suggest 'struct' for 'strut'");
+    if let Some(sug) = result {
+        assert_eq!(sug, "struct", "Should suggest 'struct'");
+    }
+}
+
+#[test]
+fn test_spell_suggestion_no_match() {
+    use karte_parser::ParseError;
+    let result = ParseError::suggest_keyword("xyz123");
+    assert!(result.is_none(), "Should not suggest for completely wrong input");
+}
+
+#[test]
+fn test_spell_suggestion_too_short() {
+    use karte_parser::ParseError;
+    let result = ParseError::suggest_keyword("a");
+    assert!(result.is_none(), "Should not suggest for single char input");
+}

@@ -219,7 +219,7 @@ impl ParseError {
     ];
 
     /// 根据输入字符串建议可能的关键字
-    fn suggest_keyword(input: &str) -> Option<String> {
+    pub fn suggest_keyword(input: &str) -> Option<String> {
         if input.len() < 2 || input.len() > 10 {
             return None;
         }
