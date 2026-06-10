@@ -3051,7 +3051,8 @@ impl TypeChecker {
 
                 let handler_ty = self.infer_expr(handler, &handler_env);
                 // 约束 handler 的函数类型
-                self.add_constraint_with_context(expected_handler_ty, handler_ty, handler.span(), "effect handler 类型不匹配");
+                self.add_constraint_with_context(expected_handler_ty.clone(), handler_ty.clone(), handler.span(), 
+                    format!("effect handler 类型不匹配: 期望 `{}`, 实际 `{}`", expected_handler_ty, handler_ty));
 
                 // body 在原环境中检查，作为整体类型
                 self.infer_expr(body, env)
@@ -3512,7 +3513,8 @@ impl TypeChecker {
                                     // 如果 expected_type 不是具体的 Option，创建一个约束
                                     let inner_type = Type::Var(self.fresh_type_var());
                                     let option_type = Type::option(inner_type.clone());
-                                    self.add_constraint_with_context(expected_type.clone(), option_type, *span, "Option 类型不匹配");
+                                    self.add_constraint_with_context(expected_type.clone(), option_type.clone(), *span, 
+                                    format!("Option 类型不匹配: 期望 `{}`, 实际 `{}`", expected_type, option_type));
                                     self.check_pattern(arg_pattern, &inner_type, env);
                                 }
                             }
@@ -3533,7 +3535,8 @@ impl TypeChecker {
                                 // 如果不是具体的 Option，创建约束
                                 let inner_type = Type::Var(self.fresh_type_var());
                                 let option_type = Type::option(inner_type);
-                                self.add_constraint_with_context(expected_type.clone(), option_type, *span, "Option 类型不匹配");
+                                self.add_constraint_with_context(expected_type.clone(), option_type.clone(), *span, 
+                                    format!("Option 类型不匹配: 期望 `{}`, 实际 `{}`", expected_type, option_type));
                             }
                         }
                     }
