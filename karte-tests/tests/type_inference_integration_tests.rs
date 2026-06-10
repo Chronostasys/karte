@@ -1458,3 +1458,53 @@ fn test_type_check_string_in_if_v2() {
 fn test_type_check_multi_return() {
     check_no_errors("fn abs(n: number) -> number {\nif n < 0 {\nreturn 0 - n\n};\nn\n}");
 }
+
+#[test]
+fn test_type_error_struct_field_type() {
+    check_has_errors("struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Point { x: \"hello\", y: 42 };\n0\n}");
+}
+
+#[test]
+fn test_type_error_arity_too_many() {
+    check_has_errors("fn f(x: number) -> number { x }\nfn main() -> number {\nf(1, 2)\n}");
+}
+
+#[test]
+fn test_type_error_arity_too_few() {
+    check_has_errors("fn f(x: number, y: number) -> number { x + y }\nfn main() -> number {\nf(1)\n}");
+}
+
+#[test]
+fn test_type_error_bool_arithmetic() {
+    check_has_errors("fn f(a: bool, b: bool) -> number {\na + b\n}");
+}
+
+#[test]
+fn test_type_error_string_arithmetic() {
+    check_has_errors("fn f(a: string) -> number {\na - 1\n}");
+}
+
+#[test]
+fn test_type_error_non_bool_condition() {
+    check_has_errors("fn f(x: string) -> number {\nif x { 1 } else { 0 }\n}");
+}
+
+#[test]
+fn test_type_error_non_function_call() {
+    check_has_errors("fn main() -> number {\nlet x = 42;\nx()\n}");
+}
+
+#[test]
+fn test_type_error_undefined_var() {
+    check_has_errors("fn main() -> number {\nundefined_var\n}");
+}
+
+#[test]
+fn test_type_error_undefined_fn() {
+    check_has_errors("fn main() -> number {\nundefined_fn()\n}");
+}
+
+#[test]
+fn test_type_error_undefined_struct() {
+    check_has_errors("fn main() -> number {\nlet p = UndefinedStruct { };\n0\n}");
+}
