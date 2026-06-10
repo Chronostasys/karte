@@ -1201,3 +1201,39 @@ fn test_analyze_duplicate_param2() {
     let has_error = diagnostics.iter().any(|d| d.severity == KarteDiagnosticSeverity::Error);
     assert!(has_error, "Should detect duplicate parameter");
 }
+
+#[test]
+fn test_analyze_valid_while_loop3() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet x = 10;\nlet r = 0;\nwhile x > 0 {\nr = r + x\n};\nr\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for while loop: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_for_loop() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet sum = 0;\nfor i in [1, 2, 3] {\nsum = sum + i\n};\nsum\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for for loop: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_reference() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet x = 42;\nlet r = &x;\n*r\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for reference: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_string_compare() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(a: string, b: string) -> bool {\na == b\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for string compare: {:?}", errors);
+}
