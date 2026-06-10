@@ -1047,4 +1047,84 @@ mod tests {
         let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
         assert!(!diagnostics.has_errors(), "abs() built-in should be valid");
     }
+
+    #[test]
+    fn test_enum_with_data_exhaustive() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "enum Shape { Circle(number), Rectangle(number, number) }\nfn main() -> number {\n    let s = Shape::Circle(5);\n    match s {\n        Shape::Circle(r) => r,\n        Shape::Rectangle(w, h) => w * h\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Exhaustive enum with data should be valid");
+    }
+
+    #[test]
+    fn test_enum_with_data_non_exhaustive() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "enum Shape { Circle(number), Rectangle(number, number) }\nfn main() -> number {\n    let s = Shape::Circle(5);\n    match s {\n        Shape::Circle(r) => r\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Non-exhaustive enum with data should report error");
+    }
+
+    #[test]
+    fn test_nested_enum_match() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "enum Outer { A, B }\nfn main() -> number {\n    let x = Outer::A;\n    match x {\n        Outer::A => 1,\n        Outer::B => 2\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Exhaustive nested enum match should be valid");
+    }
+
+    #[test]
+    fn test_match_with_multiple_patterns() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn classify(n: number) -> number {\n    match n {\n        0 => 0,\n        1 => 1,\n        2 => 2,\n        _ => -1\n    }\n}\nfn main() -> number {\n    classify(5)\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Multiple patterns with wildcard should be valid");
+    }
+
+    #[test]
+    fn test_let_binding_type_annotation() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x: number = 42;\n    let y: number = x + 1;\n    y\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Let binding with type annotation should be valid");
+    }
+
+    #[test]
+    fn test_let_binding_wrong_type_annotation() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x: number = \"hello\";\n    0\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Let binding with wrong type annotation should report error");
+    }
+
+    #[test]
+    fn test_generic_function_simple() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn id(x) { x }\nfn main() -> number {\n    let a = id(42);\n    a\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Generic identity function should be valid");
+    }
+
+    #[test]
+    fn test_higher_order_function() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn apply(f, x) { f(x) }\nfn double(n: number) -> number { n * 2 }\nfn main() -> number {\n    apply(double, 5)\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Higher-order function should be valid");
+    }
 }
