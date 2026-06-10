@@ -2113,3 +2113,32 @@ fn test_type_check_result_chain_v2() {
 fn test_type_check_enum_with_multiple_data_v3() {
     check_no_errors("enum Shape { Circle(number), Rectangle(number, number), Triangle(number, number, number) }\nfn area(s: Shape) -> number {\nmatch s {\nShape::Circle(r) => r * r\nShape::Rectangle(w, h) => w * h\nShape::Triangle(b, h, _) => b * h\n}\n}");
 }
+
+#[test]
+fn test_warning_unused_function() {
+    let source = r#"fn helper() -> number { 42 }
+fn main() -> number { 0 }"#;
+    check_has_warnings(source);
+}
+
+#[test]
+fn test_no_warning_used_function() {
+    let source = r#"fn double(x: number) -> number { x * 2 }
+fn main() -> number { double(5) }"#;
+    check_no_errors(source);
+}
+
+#[test]
+fn test_no_warning_underscore_prefix() {
+    let source = r#"fn main() -> number {
+    let _unused = 42;
+    0
+}"#;
+    check_no_errors(source);
+}
+
+#[test]
+fn test_no_warning_main_function() {
+    let source = r#"fn main() -> number { 42 }"#;
+    check_no_errors(source);
+}
