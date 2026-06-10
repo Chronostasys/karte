@@ -1647,3 +1647,75 @@ fn test_analyze_valid_string_neq() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors for string neq: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_abs_builtin() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn distance(a: number, b: number) -> number {\nabs(a - b)\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for abs builtin: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_min_max() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn clamp(x: number, lo: number, hi: number) -> number {\nmin(max(x, lo), hi)\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for min/max: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_len_builtin() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(s: string) -> number {\nlen(s)\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for len builtin: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_struct_fn_chain() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Vec2 { x: number, y: number }\nfn length(v: Vec2) -> number {\nv.x * v.x + v.y * v.y\n}\nfn dist(a: Vec2, b: Vec2) -> number {\nlet dx = a.x - b.x;\nlet dy = a.y - b.y;\nlength(Vec2 { x: dx, y: dy })\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for struct fn chain: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_option_methods() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn safe_div(a: number, b: number) -> Option<number> {\nif b == 0 { None } else { Some(a / b) }\n}\nfn unwrap_or(opt: Option<number>, def: number) -> number {\nmatch opt {\nSome(x) => x\nNone => def\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for option methods: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_complex_match2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Shape { Circle(number), Rect(number, number) }\nfn area(s: Shape) -> number {\nmatch s {\nShape::Circle(r) => r * r\nShape::Rect(w, h) => w * h\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for complex match: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_string_compare_ops() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(a: string, b: string) -> bool {\na < b\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for string compare: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_early_return_fn() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn classify(n: number) -> string {\nif n < 0 { return \"neg\" };\nif n == 0 { return \"zero\" };\n\"pos\"\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for early return: {:?}", errors);
+}
