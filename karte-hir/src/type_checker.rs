@@ -1527,8 +1527,8 @@ impl TypeChecker {
                                 self.add_constraint(right_type.clone(), Type::Number, right.span());
                             }
                             _ => {
-                                self.add_constraint(left_type.clone(), Type::bool(), left.span());
-                                self.add_constraint(right_type.clone(), Type::bool(), right.span());
+                                self.add_constraint_with_context(left_type.clone(), Type::bool(), left.span(), "逻辑运算符 (&&/||) 要求 bool 类型");
+                                self.add_constraint_with_context(right_type.clone(), Type::bool(), right.span(), "逻辑运算符 (&&/||) 要求 bool 类型");
                             }
                         }
                     }
@@ -1573,15 +1573,15 @@ impl TypeChecker {
 
                 match op {
                     UnaryOperator::Plus | UnaryOperator::Minus => {
-                        self.add_constraint(Type::Number, operand_type, operand.span());
+                        self.add_constraint_with_context(Type::Number, operand_type, operand.span(), "一元运算符 (+/-) 要求 number 类型");
                         Type::Number
                     }
                     UnaryOperator::LogicalNot => {
-                        self.add_constraint(Type::bool(), operand_type, operand.span());
+                        self.add_constraint_with_context(Type::bool(), operand_type, operand.span(), "逻辑非运算符 (!) 要求 bool 类型");
                         Type::bool()
                     }
                     UnaryOperator::BitNot => {
-                        self.add_constraint(Type::Number, operand_type, operand.span());
+                        self.add_constraint_with_context(Type::Number, operand_type, operand.span(), "位非运算符 (~) 要求 number 类型");
                         Type::Number
                     }
                 }
@@ -1611,7 +1611,7 @@ impl TypeChecker {
                 // 如果有返回类型标注，统一约束
                 if let Some(ref ret_annotation) = return_type {
                     let resolved_ret_type = self.resolve_struct_field_from_parsed(ret_annotation);
-                    self.add_constraint(body_type.clone(), resolved_ret_type, body.span());
+                    self.add_constraint_with_context(body_type.clone(), resolved_ret_type, body.span(), "Lambda 返回类型与标注不匹配");
                 }
 
                 // 存储Lambda类型到映射中
@@ -1652,7 +1652,7 @@ impl TypeChecker {
                         "abs" => {
                             if args.len() == 1 {
                                 let arg_type = self.infer_expr(&args[0], env);
-                                self.add_constraint(Type::Number, arg_type, *span);
+                                self.add_constraint_with_context(Type::Number, arg_type, *span, "abs() 要求 number 类型参数");
                                 return Type::Number;
                             }
                         }
@@ -1660,8 +1660,8 @@ impl TypeChecker {
                             if args.len() == 2 {
                                 let t1 = self.infer_expr(&args[0], env);
                                 let t2 = self.infer_expr(&args[1], env);
-                                self.add_constraint(Type::Number, t1, *span);
-                                self.add_constraint(Type::Number, t2, *span);
+                                self.add_constraint_with_context(Type::Number, t1, *span, "min()/max() 要求 number 类型参数");
+                                self.add_constraint_with_context(Type::Number, t2, *span, "min()/max() 要求 number 类型参数");
                                 return Type::Number;
                             }
                         }
@@ -1670,9 +1670,9 @@ impl TypeChecker {
                                 let t1 = self.infer_expr(&args[0], env);
                                 let t2 = self.infer_expr(&args[1], env);
                                 let t3 = self.infer_expr(&args[2], env);
-                                self.add_constraint(Type::Number, t1, *span);
-                                self.add_constraint(Type::Number, t2, *span);
-                                self.add_constraint(Type::Number, t3, *span);
+                                self.add_constraint_with_context(Type::Number, t1, *span, "clamp() 要求 number 类型参数");
+                                self.add_constraint_with_context(Type::Number, t2, *span, "clamp() 要求 number 类型参数");
+                                self.add_constraint_with_context(Type::Number, t3, *span, "clamp() 要求 number 类型参数");
                                 return Type::Number;
                             }
                         }
@@ -2053,7 +2053,7 @@ impl TypeChecker {
                 self.check_pattern(&first_arm.pattern, &expr_type, &mut result_env);
                 if let Some(ref guard) = first_arm.guard {
                     let guard_type = self.infer_expr(guard, &result_env);
-                    self.add_constraint(guard_type, Type::bool(), guard.span());
+                    self.add_constraint_with_context(guard_type, Type::bool(), guard.span(), "match guard 必须是 bool 类型");
                 }
                 let result_type = self.infer_expr(&first_arm.body, &result_env);
 
@@ -2063,12 +2063,12 @@ impl TypeChecker {
                     self.check_pattern(&arm.pattern, &expr_type, &mut arm_env);
                     if let Some(ref guard) = arm.guard {
                         let guard_type = self.infer_expr(guard, &arm_env);
-                        self.add_constraint(guard_type, Type::bool(), guard.span());
+                        self.add_constraint_with_context(guard_type, Type::bool(), guard.span(), "match guard 必须是 bool 类型");
                     }
                     let arm_type = self.infer_expr(&arm.body, &arm_env);
 
                     // 约束：所有分支的类型必须兼容
-                    self.add_constraint(result_type.clone(), arm_type, arm.body.span());
+                    self.add_constraint_with_context(result_type.clone(), arm_type, arm.body.span(), "match 分支类型不一致");
                 }
 
                 // 穷尽性检查：检查所有模式是否覆盖了所有可能的情况
@@ -2109,7 +2109,7 @@ impl TypeChecker {
                 // 允许 number 和 bool 作为条件
                 match condition_type {
                     Type::Number | Type::Int(_) | Type::Bool => {}
-                    _ => self.add_constraint(condition_type, Type::bool(), condition.span()),
+                    _ => self.add_constraint_with_context(condition_type, Type::bool(), condition.span(), "if 条件必须是 bool 或 number 类型"),
                 };
 
                 // 推断then分支的类型
@@ -2147,7 +2147,7 @@ impl TypeChecker {
                 let condition_type = self.infer_expr(condition, env);
                 match condition_type {
                     Type::Number | Type::Int(_) | Type::Bool => {}
-                    _ => self.add_constraint(condition_type, Type::bool(), condition.span()),
+                    _ => self.add_constraint_with_context(condition_type, Type::bool(), condition.span(), "while 条件必须是 bool 或 number 类型"),
                 };
 
                 // while循环的body可以是任何类型，但while表达式本身返回Unit
