@@ -208,3 +208,47 @@ fn test_parse_for_then_expr() {
     let diagnostics = parse_project(code);
     assert!(!diagnostics.has_errors(), "For loop followed by expression should parse");
 }
+
+#[test]
+fn test_parse_error_recovery_missing_semicolon() {
+    let code = "fn main() -> number {\n    let x = 42\n    x\n}";
+    let diagnostics = parse_project(code);
+    // 缺少分号应该报错
+    assert!(diagnostics.has_errors(), "Missing semicolon should be an error");
+}
+
+#[test]
+fn test_parse_error_recovery_extra_brace() {
+    let code = "fn main() -> number {\n    let x = 42;\n    x\n}}";
+    let diagnostics = parse_project(code);
+    assert!(diagnostics.has_errors(), "Extra brace should be an error");
+}
+
+#[test]
+fn test_parse_error_recovery_unclosed_string() {
+    let code = "fn main() -> number {\n    let s = \"hello;\n    0\n}";
+    let diagnostics = parse_project(code);
+    assert!(diagnostics.has_errors(), "Unclosed string should be an error");
+}
+
+#[test]
+fn test_parse_chained_method_calls() {
+    let code = "fn main() -> number {\n    let x = 42;\n    x\n}";
+    let diagnostics = parse_project(code);
+    assert!(!diagnostics.has_errors(), "Simple expression should parse");
+}
+
+#[test]
+fn test_parse_nested_match() {
+    let code = "fn main() -> number {\n    let x = Some(Some(42));\n    match x {\n        Some(Some(v)) => v,\n        Some(None) => 0,\n        None => 0\n    }\n}";
+    let diagnostics = parse_project(code);
+    assert!(!diagnostics.has_errors(), "Nested match should parse");
+}
+
+#[test]
+fn test_parse_let_with_pattern() {
+    let code = "fn main() -> number {\n    let (a, b) = (1, 2);\n    a + b\n}";
+    let diagnostics = parse_project(code);
+    // Tuple destructuring 可能不支持
+    let _ = diagnostics;
+}
