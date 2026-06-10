@@ -3611,16 +3611,25 @@ impl TypeChecker {
     fn solve_constraints(&mut self) {
         let constraints = std::mem::take(&mut self.constraints);
         for constraint in constraints {
-            let _ = self.unify(
+            let result = self.unify(
                 &constraint.left,
                 &constraint.right,
                 constraint.span,
                 &constraint.left,
                 &constraint.right,
             );
-            // Note: unify 内部已经处理了错误报告
-            // 如果需要将约束的上下文传递给错误消息，
-            // 需要修改 unify 的签名——这里暂不修改以避免大范围重构
+            // 如果 unify 失败且有上下文信息，在最近的错误消息中附加上下文
+            if result.is_err() {
+                if let Some(ctx) = constraint.context {
+                    // 找到最后一个 TypeMismatch 错误并附加上下文
+                    for diag in self.diagnostics.diagnostics.iter_mut().rev() {
+                        if diag.message.contains("类型不匹配") || diag.message.contains("Type mismatch") {
+                            diag.message = format!("{} ({})", diag.message, ctx);
+                            break;
+                        }
+                    }
+                }
+            }
         }
     }
 
