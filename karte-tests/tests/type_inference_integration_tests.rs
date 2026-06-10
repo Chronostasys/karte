@@ -2712,3 +2712,59 @@ fn test_type_check_simple_string_lt() {
 fn test_type_check_simple_string_gt() {
     check_no_errors("fn f(a: string, b: string) -> bool {\na > b\n}");
 }
+
+#[test]
+fn test_type_check_fn_unit_return() {
+    check_no_errors("fn side_effect() {
+}");
+}
+
+#[test]
+fn test_type_check_fn_return_number() {
+    check_no_errors("fn forty_two() -> number {\n42\n}");
+}
+
+#[test]
+fn test_type_check_fn_return_string() {
+    check_no_errors("fn hello() -> string {\n\"hello\"\n}");
+}
+
+#[test]
+fn test_type_check_fn_return_bool() {
+    check_no_errors("fn yes() -> bool {\ntrue\n}");
+}
+
+#[test]
+fn test_type_check_fn_param_number() {
+    check_no_errors("fn double(x: number) -> number {\nx * 2\n}");
+}
+
+#[test]
+fn test_type_check_fn_param_string() {
+    check_no_errors("fn exclaim(s: string) -> string {\ns + \"!\"\n}");
+}
+
+#[test]
+fn test_type_check_fn_param_bool() {
+    check_no_errors("fn not(b: bool) -> bool {\n!b\n}");
+}
+
+#[test]
+fn test_type_check_fn_two_params() {
+    check_no_errors("fn add(a: number, b: number) -> number {\na + b\n}");
+}
+
+#[test]
+fn test_type_check_fn_three_params() {
+    check_no_errors("fn clamp(x: number, lo: number, hi: number) -> number {\nif x < lo { lo } else { if x > hi { hi } else { x } }\n}");
+}
+
+#[test]
+fn test_type_check_fn_return_option() {
+    check_no_errors("fn safe_div(a: number, b: number) -> Option<number> {\nif b == 0 { None } else { Some(a / b) }\n}");
+}
+
+#[test]
+fn test_type_check_fn_return_result() {
+    check_no_errors("fn checked_div(a: number, b: number) -> Result<number, string> {\nif b == 0 { Err(\"zero\") } else { Ok(a / b) }\n}");
+}
