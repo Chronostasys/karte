@@ -3319,7 +3319,8 @@ impl TypeChecker {
                         // 变量赋值：更新环境中的变量类型
                         if env.contains_key(name) {
                             // 变量已存在，统一类型
-                            self.add_constraint_with_context(target_type, value_type.clone(), target.span(), "let 绑定类型不匹配");
+                            self.add_constraint_with_context(target_type.clone(), value_type.clone(), target.span(), 
+                                format!("赋值类型不匹配: 变量 `{}` 为 `{}`, 值为 `{}`", name, target_type, value_type));
                             env.insert(name.clone(), value_type);
                         } else {
                             // 变量不存在，报告错误（或者可以选择自动创建）
@@ -3335,7 +3336,8 @@ impl TypeChecker {
                         // 大写字母开头的变量被 parser 误解析为零参数 Constructor
                         // 在赋值目标位置应视为普通变量
                         if env.contains_key(name) {
-                            self.add_constraint_with_context(target_type, value_type.clone(), target.span(), "let 绑定类型不匹配");
+                            self.add_constraint_with_context(target_type.clone(), value_type.clone(), target.span(), 
+                                format!("赋值类型不匹配: 变量 `{}` 为 `{}`, 值为 `{}`", name, target_type, value_type));
                             env.insert(name.clone(), value_type);
                         } else {
                             let suggestion = self.suggest_variable(name, env);
@@ -3348,11 +3350,13 @@ impl TypeChecker {
                     }
                     Expr::FieldAccess { .. } => {
                         // 字段赋值：统一类型
-                        self.add_constraint_with_context(target_type, value_type, target.span(), "赋值类型不匹配");
+                        self.add_constraint_with_context(target_type.clone(), value_type.clone(), target.span(), 
+                            format!("字段赋值类型不匹配: 字段为 `{}`, 值为 `{}`", target_type, value_type));
                     }
                     Expr::Index { .. } => {
                         // 数组下标赋值：统一类型
-                        self.add_constraint_with_context(target_type, value_type, target.span(), "赋值类型不匹配");
+                        self.add_constraint_with_context(target_type.clone(), value_type.clone(), target.span(), 
+                            format!("数组元素赋值类型不匹配: 元素为 `{}`, 值为 `{}`", target_type, value_type));
                     }
                     _ => {
                         // 其他表达式不能作为赋值目标
