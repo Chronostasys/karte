@@ -880,12 +880,19 @@ impl CompilerBridge {
         // 🔧 检测是否是枚举变体补全（TypeName:: 的场景）
         let enum_completion = Self::try_enum_variant_completion(before, &self.cached_result);
 
+        // 🔧 检测是否是 struct 构造器字段名补全（TypeName { 的场景）
+        let struct_field_completion = Self::try_struct_field_completion(before, &self.cached_result);
+
         if let Some(field_items) = dot_completion {
             return field_items;
         }
 
         if let Some(enum_items) = enum_completion {
             return enum_items;
+        }
+
+        if let Some(struct_field_items) = struct_field_completion {
+            return struct_field_items;
         }
 
         let mut keywords_items = Vec::new();
@@ -1166,6 +1173,105 @@ impl CompilerBridge {
             None
         } else {
             Some(items)
+        }
+    }
+
+    /// 检测是否是 struct 构造器字段名补全（TypeName { field1: val, 的场景）
+    fn try_struct_field_completion(before: &str, cached_result: &Option<AnalysisResult>) -> Option<Vec<KarteCompletionItem>> {
+        let result = cached_result.as_ref()?;
+
+        // 查找最后一个未关闭的 { 的位置（struct 构造器开始）
+        let mut brace_depth = 0i32;
+        let mut brace_pos = None;
+        for (i, c) in before.char_indices().rev() {
+            match c {
+                '}' => brace_depth += 1,
+                '{' => {
+                    brace_depth -= 1;
+                    if brace_depth < 0 {
+                        brace_pos = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let open_brace = brace_pos?;
+        let before_brace = &before[..open_brace];
+
+        // 获取 { 前面的类型名
+        let type_name: String = before_brace.chars().rev()
+            .skip_while(|c| c.is_whitespace())
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect::<String>()
+            .chars().rev()
+            .collect();
+
+        if type_name.is_empty() {
+            return None;
+        }
+
+        // 在符号表中查找匹配的 struct
+        let struct_sym = result.symbols.iter().find(|sym| {
+            sym.kind == KarteSymbolKind::Struct && sym.name == type_name
+        })?;
+
+        // 从 type_signature 中提取字段名
+        let sig = struct_sym.type_signature.as_ref()?;
+        if !sig.starts_with('{') || !sig.ends_with('}') {
+            return None;
+        }
+
+        let inner = &sig[1..sig.len()-1];
+        let mut field_items = Vec::new();
+
+        // 获取 { 后面的前缀
+        let after_brace = &before[open_brace + 1..];
+        let prefix: String = after_brace.chars().rev()
+            .skip_while(|c| c.is_whitespace())
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect::<String>()
+            .chars().rev()
+            .collect();
+
+        // 获取已经使用的字段名（在 { 和当前位置之间）
+        let mut used_fields = std::collections::HashSet::new();
+        let content = &before[open_brace + 1..];
+        for field in content.split(',') {
+            let field = field.trim();
+            if let Some(colon_pos) = field.find(':') {
+                let name = field[..colon_pos].trim();
+                if !name.is_empty() {
+                    used_fields.insert(name.to_string());
+                }
+            }
+        }
+
+        for field in inner.split(',') {
+            let field = field.trim();
+            if let Some(colon_pos) = field.find(':') {
+                let field_name = field[..colon_pos].trim();
+                let field_type = field[colon_pos + 1..].trim();
+                // 跳过已使用的字段
+                if used_fields.contains(field_name) {
+                    continue;
+                }
+                if prefix.is_empty() || field_name.starts_with(&prefix) {
+                    field_items.push(KarteCompletionItem {
+                        label: field_name.to_string(),
+                        kind: KarteCompletionKind::Field,
+                        detail: Some(field_type.to_string()),
+                        insert_text: Some(format!("{}: $0", field_name)),
+                    });
+                }
+            }
+        }
+
+        if field_items.is_empty() {
+            None
+        } else {
+            Some(field_items)
         }
     }
 
