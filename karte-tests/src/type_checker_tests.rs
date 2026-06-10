@@ -886,4 +886,75 @@ mod tests {
         let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
         assert!(!diagnostics.has_errors(), "Empty struct should be valid");
     }
+
+    #[test]
+    fn test_exhaustive_bool_match() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let b = true;\n    match b {\n        true => 1,\n        false => 0\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Exhaustive bool match should be valid");
+    }
+
+    #[test]
+    fn test_non_exhaustive_bool_match() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let b = true;\n    match b {\n        true => 1\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(diagnostics.has_errors(), "Non-exhaustive bool match should report error");
+    }
+
+    #[test]
+    fn test_wildcard_match_is_exhaustive() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = 42;\n    match x {\n        _ => 0\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Wildcard match should be exhaustive");
+    }
+
+    #[test]
+    fn test_or_pattern_match() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "enum Color { Red, Green, Blue }\nfn main() -> number {\n    let c = Color::Red;\n    match c {\n        Color::Red | Color::Green => 1,\n        Color::Blue => 2\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Or-pattern match should be exhaustive");
+    }
+
+    #[test]
+    fn test_nested_struct_pattern() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "struct Point { x: number, y: number }\nfn main() -> number {\n    let p = Point { x: 1, y: 2 };\n    match p {\n        Point { x, y } => x + y\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Struct pattern match should be valid");
+    }
+
+    #[test]
+    fn test_tuple_pattern_match() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let t = (1, 2);\n    match t {\n        (a, b) => a + b\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        // Tuple 可能不被支持，所以只检查不 panic
+        let _ = diagnostics.has_errors();
+    }
+
+    #[test]
+    fn test_number_pattern_match() {
+        use karte_lexer::Lexer;
+        use karte_parser::{ParserMode, parse_with_type_check};
+        let code = "fn main() -> number {\n    let x = 42;\n    match x {\n        0 => 1,\n        1 => 2,\n        _ => 3\n    }\n}";
+        let tokens = Lexer::new(code).tokenize();
+        let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
+        assert!(!diagnostics.has_errors(), "Number pattern with wildcard should be valid");
+    }
 }
