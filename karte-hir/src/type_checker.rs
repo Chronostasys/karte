@@ -1788,8 +1788,9 @@ impl TypeChecker {
                     Type::Var(_) => {
                         // 对于类型变量，创建约束
                         let return_type = Type::Var(self.fresh_type_var());
-                        let expected_func_type = Type::function(arg_types, return_type.clone());
-                        self.add_constraint_with_context(func_type, expected_func_type, *span, "函数调用参数类型不匹配");
+                        let expected_func_type = Type::function(arg_types.clone(), return_type.clone());
+                        self.add_constraint_with_context(func_type.clone(), expected_func_type, *span, 
+                            format!("函数调用参数类型不匹配: 期望函数类型, 实际为 `{}`", func_type));
                         return_type
                     }
                     Type::Unknown => Type::Unknown,
@@ -3467,16 +3468,19 @@ impl TypeChecker {
             }
             crate::ast::Pattern::Number { value: _, span } => {
                 // 数字模式必须匹配数字类型
-                self.add_constraint_with_context(expected_type.clone(), Type::Number, *span, "期望 number 类型");
+                self.add_constraint_with_context(expected_type.clone(), Type::Number, *span, 
+                    format!("数字模式期望 number 类型, 实际为 `{}`", expected_type));
             }
             crate::ast::Pattern::Boolean { value: _, span } => {
                 // 布尔模式必须匹配布尔类型
-                self.add_constraint_with_context(expected_type.clone(), Type::bool(), *span, "期望 bool 类型");
+                self.add_constraint_with_context(expected_type.clone(), Type::bool(), *span, 
+                    format!("布尔模式期望 bool 类型, 实际为 `{}`", expected_type));
             }
             crate::ast::Pattern::Constructor { name, args, span } => {
                 match name.as_str() {
                     "True" | "False" => {
-                        self.add_constraint_with_context(expected_type.clone(), Type::bool(), *span, "期望 bool 类型");
+                        self.add_constraint_with_context(expected_type.clone(), Type::bool(), *span, 
+                            format!("布尔构造器期望 bool 类型, 实际为 `{}`", expected_type));
                     }
                     "Some" => {
                         if let Some(arg_pattern) = args.get(0) {
