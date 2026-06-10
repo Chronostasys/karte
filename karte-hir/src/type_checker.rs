@@ -2190,6 +2190,21 @@ impl TypeChecker {
                     );
                 }
 
+                // 🔧 检测始终为 true/false 的条件
+                if let Expr::Boolean { value, .. } = condition.as_ref() {
+                    if *value {
+                        self.add_warning(
+                            "if 条件始终为 true, 这个分支总是会被执行".to_string(),
+                            condition.span(),
+                        );
+                    } else {
+                        self.add_warning(
+                            "if 条件始终为 false, 这个分支永远不会被执行".to_string(),
+                            condition.span(),
+                        );
+                    }
+                }
+
                 // 推断条件的类型，条件可以是布尔或数字类型（非零为 true）
                 let condition_type = self.infer_expr(condition, env);
                 // 允许 number 和 bool 作为条件
