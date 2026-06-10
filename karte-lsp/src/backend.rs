@@ -1,7 +1,7 @@
 // LSP 后端实现
 //
 // 实现 tower-lsp 的 LanguageServer trait
-// 增强版：支持悬停信息、跳转定义、智能补全、文档符号
+// 增强版：支持悬停信息、跳转定义、智能补全、文档符号、查找引用
 
 use crate::compiler_bridge::{
     CompilerBridge, KarteCompletionItem, KarteCompletionKind, KarteDiagnosticSeverity,
@@ -89,6 +89,7 @@ impl LanguageServer for Backend {
                     ..Default::default()
                 }),
                 definition_provider: Some(OneOf::Left(true)),
+                references_provider: Some(OneOf::Left(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 ..Default::default()
@@ -162,7 +163,10 @@ impl LanguageServer for Backend {
                     KarteCompletionKind::Class => CompletionItemKind::CLASS,
                     KarteCompletionKind::Enum => CompletionItemKind::ENUM,
                     KarteCompletionKind::Struct => CompletionItemKind::STRUCT,
+                    KarteCompletionKind::EnumVariant => CompletionItemKind::ENUM_MEMBER,
                     KarteCompletionKind::Module => CompletionItemKind::MODULE,
+                    KarteCompletionKind::Field => CompletionItemKind::FIELD,
+                    KarteCompletionKind::Snippet => CompletionItemKind::SNIPPET,
                 }),
                 detail: item.detail,
                 insert_text: item.insert_text,
@@ -197,24 +201,46 @@ impl LanguageServer for Backend {
         Ok(None)
     }
 
+    async fn references(
+        &self,
+        params: ReferenceParams,
+    ) -> Result<Option<Vec<Location>>> {
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+
+        let bridge = self.compiler_bridge.read().await;
+        let spans = bridge.find_references(position);
+
+        if spans.is_empty() {
+            return Ok(None);
+        }
+
+        let store = self.document_store.read().await;
+        if let Some(document) = store.get(&uri) {
+            let locations: Vec<Location> = spans
+                .into_iter()
+                .map(|span| Location {
+                    uri: uri.clone(),
+                    range: crate::compiler_bridge::span_to_range(&document.content, span),
+                })
+                .collect();
+            return Ok(Some(locations));
+        }
+
+        Ok(None)
+    }
+
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
-        let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 
         let bridge = self.compiler_bridge.read().await;
-        if let Some(info) = bridge.get_hover_info(position) {
+        if let Some((info, range)) = bridge.get_hover_info(position) {
             return Ok(Some(Hover {
                 contents: HoverContents::Scalar(MarkedString::String(format!(
                     "```karte\n{}\n```",
                     info
                 ))),
-                range: Some(Range {
-                    start: position,
-                    end: Position {
-                        line: position.line,
-                        character: position.character + 20,
-                    },
-                }),
+                range: Some(range),
             }));
         }
 
@@ -223,27 +249,30 @@ impl LanguageServer for Backend {
 
     async fn document_symbol(
         &self,
-        _: DocumentSymbolParams,
+        params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
+        let uri = &params.text_document.uri;
         let bridge = self.compiler_bridge.read().await;
         let symbols = bridge.get_document_symbols();
 
         let store = self.document_store.read().await;
-        let source = store.first_source();
-
-        let items: Vec<DocumentSymbol> = if let Some(src) = source {
-            symbols
+        if let Some(document) = store.get(uri) {
+            let source = &document.content;
+            let items: Vec<DocumentSymbol> = symbols
                 .into_iter()
+                .filter(|sym| !matches!(sym.kind, KarteSymbolKind::Parameter | KarteSymbolKind::EnumVariant))
                 .map(|sym| {
                     let kind = match sym.kind {
                         KarteSymbolKind::Function => SymbolKind::FUNCTION,
                         KarteSymbolKind::Variable => SymbolKind::VARIABLE,
+                        KarteSymbolKind::Parameter => SymbolKind::VARIABLE,
                         KarteSymbolKind::Type => SymbolKind::CLASS,
                         KarteSymbolKind::Enum => SymbolKind::ENUM,
                         KarteSymbolKind::Struct => SymbolKind::STRUCT,
+                        KarteSymbolKind::EnumVariant => SymbolKind::ENUM_MEMBER,
                         KarteSymbolKind::Module => SymbolKind::MODULE,
                     };
-                    let range = crate::compiler_bridge::span_to_range(src, sym.span);
+                    let range = crate::compiler_bridge::span_to_range(source, sym.span);
                     DocumentSymbol {
                         name: sym.name,
                         kind,
@@ -255,11 +284,11 @@ impl LanguageServer for Backend {
                         tags: None,
                     }
                 })
-                .collect()
-        } else {
-            vec![]
-        };
+                .collect();
 
-        Ok(Some(DocumentSymbolResponse::Nested(items)))
+            return Ok(Some(DocumentSymbolResponse::Nested(items)));
+        }
+
+        Ok(None)
     }
 }
