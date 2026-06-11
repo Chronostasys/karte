@@ -3363,3 +3363,53 @@ fn test_type_check_complex_string_ops2() {
 fn test_type_check_complex_number_ops2() {
     check_no_errors("fn clamp_byte(n: number) -> number {\nif n < 0 { 0 } else { if n > 255 { 255 } else { n } }\n}");
 }
+
+#[test]
+fn test_type_check_advanced_generic_fn() {
+    check_no_errors("fn id(x) { x }\nfn main() -> number {\nid(42)\n}");
+}
+
+#[test]
+fn test_type_check_advanced_generic_fn2() {
+    check_no_errors("fn first(x, y) { x }\nfn main() -> number {\nfirst(1, 2)\n}");
+}
+
+#[test]
+fn test_type_check_advanced_closure_fn() {
+    check_no_errors("fn main() -> number {\nlet add = |a: number, b: number| -> number { a + b };\nadd(3, 4)\n}");
+}
+
+#[test]
+fn test_type_check_advanced_nested_closure() {
+    check_no_errors("fn main() -> number {\nlet make_adder = |x: number| -> fn(number) -> number {\n|y: number| -> number { x + y }\n};\nlet add5 = make_adder(5);\nadd5(10)\n}");
+}
+
+#[test]
+fn test_type_check_advanced_fn_as_param() {
+    check_no_errors("fn apply(f: fn(number) -> number, x: number) -> number {\nf(x)\n}\nfn double(x: number) -> number { x * 2 }\nfn main() -> number {\napply(double, 21)\n}");
+}
+
+#[test]
+fn test_type_check_advanced_higher_order_chain() {
+    check_no_errors("fn apply(f: fn(number) -> number, x: number) -> number {\nf(x)\n}\nfn main() -> number {\nlet double = |x: number| -> number { x * 2 };\nlet quad = |x: number| -> number { apply(double, apply(double, x)) };\nquad(3)\n}");
+}
+
+#[test]
+fn test_type_check_advanced_method_syntax2() {
+    check_no_errors("struct Point { x: number, y: number }\nfn distance(a: Point, b: Point) -> number {\nlet dx = a.x - b.x;\nlet dy = a.y - b.y;\ndx * dx + dy * dy\n}");
+}
+
+#[test]
+fn test_type_check_advanced_option_chain4() {
+    check_no_errors("fn find(items: number, target: number) -> Option<number> {\nif items == target { Some(items) } else { None }\n}");
+}
+
+#[test]
+fn test_type_check_advanced_result_chain5() {
+    check_no_errors("fn safe_div(a: number, b: number) -> Result<number, string> {\nif b == 0 { Err(\"division by zero\") } else { Ok(a / b) }\n}\nfn safe_mod(a: number, b: number) -> Result<number, string> {\nif b == 0 { Err(\"division by zero\") } else { Ok(a % b) }\n}");
+}
+
+#[test]
+fn test_type_check_advanced_pattern_match() {
+    check_no_errors("enum Shape { Circle(number), Rect(number, number) }\nfn perimeter(s: Shape) -> number {\nmatch s {\nShape::Circle(r) => 2 * 3 * r\nShape::Rect(w, h) => 2 * (w + h)\n}\n}");
+}
