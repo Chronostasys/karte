@@ -7858,3 +7858,53 @@ fn test_type_check_v67_9() {
 fn test_type_check_v67_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = 1;\nfor i in 1..x {\nresult = result + i\n};\nresult\n}");
 }
+
+#[test]
+fn test_type_check_v68_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 3 + 2;\nlet b = a * a - 4;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v68_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 5 && i < 15 {\nsum = sum + (i - 5)\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v68_3() {
+    check_no_errors("struct Energy { joules: number }\nfn to_kj(e: Energy) -> number { e.joules / 1000 }\nfn to_cal(e: Energy) -> number { e.joules / 4 }");
+}
+
+#[test]
+fn test_type_check_v68_4() {
+    check_no_errors("enum Sort2 { Bubble, Quick, Merge, Heap }\nfn is_nlogn(s: Sort2) -> bool {\nmatch s {\nSort2::Bubble => false\nSort2::Quick => true\nSort2::Merge => true\nSort2::Heap => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v68_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet ninth = x / 9;\nif ninth > 0 { Some(ninth) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v68_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 10000 { Err(\"overflow\") } else { Ok(x * 2) }\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v68_7() {
+    check_no_errors("struct Ellipse2 { a: number, b: number }\nfn approx_area(e: Ellipse2) -> number { e.a * e.b * 3 }\nfn is_circle2(e: Ellipse2) -> bool { e.a == e.b }");
+}
+
+#[test]
+fn test_type_check_v68_8() {
+    check_no_errors("enum Wire2 { Copper, Aluminum, Fiber, Wireless }\nfn needs_cable(w: Wire2) -> bool {\nmatch w {\nWire2::Copper => true\nWire2::Aluminum => true\nWire2::Fiber => true\nWire2::Wireless => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v68_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + (2 * i + 1)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v68_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + i * i * i;\ni = i + 1\n};\nresult\n}");
+}
