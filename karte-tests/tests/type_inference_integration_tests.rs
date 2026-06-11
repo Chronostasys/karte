@@ -4308,3 +4308,53 @@ fn test_type_check_tuple_2() {
 fn test_type_check_tuple_3() {
     check_no_errors("struct Pair { a: number, b: number }\nfn swap(p: Pair) -> Pair {\nPair { a: p.b, b: p.a }\n}");
 }
+
+#[test]
+fn test_type_check_pattern_1() {
+    check_no_errors("enum Option2 { Some2(number), None2 }\nfn f(opt: Option2) -> number {\nmatch opt {\nOption2::Some2(x) => x * 2\nOption2::None2 => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_pattern_2() {
+    check_no_errors("enum Result2 { Ok2(number), Err2(string) }\nfn f(res: Result2) -> number {\nmatch res {\nResult2::Ok2(x) => x\nResult2::Err2(e) => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_pattern_3() {
+    check_no_errors("enum Shape { Circle(number), Rect(number, number) }\nfn area(s: Shape) -> number {\nmatch s {\nShape::Circle(r) => 3 * r * r\nShape::Rect(w, h) => w * h\n}\n}");
+}
+
+#[test]
+fn test_type_check_pattern_4() {
+    check_no_errors("struct Point { x: number, y: number }\nfn f(p: Point) -> number {\nmatch p {\nPoint { x, y } => x + y\n}\n}");
+}
+
+#[test]
+fn test_type_check_pattern_5() {
+    check_no_errors("fn f(x: number) -> number {\nmatch x {\n0 => 100\n1 => 200\n2 => 300\n_ => x\n}\n}");
+}
+
+#[test]
+fn test_type_check_pattern_6() {
+    check_no_errors("fn f(x: number) -> string {\nmatch x {\n0 => \"zero\"\n1 => \"one\"\n2 => \"two\"\n_ => \"other\"\n}\n}");
+}
+
+#[test]
+fn test_type_check_pattern_7() {
+    check_no_errors("fn f(b: bool) -> number {\nmatch b {\ntrue => 1\nfalse => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_pattern_8() {
+    check_no_errors("enum Bool { True, False }\nfn f(b: Bool) -> number {\nmatch b {\nBool::True => 1\nBool::False => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_pattern_9() {
+    check_no_errors("enum Maybe { Just(string), Nothing }\nfn f(m: Maybe) -> string {\nmatch m {\nMaybe::Just(s) => s\nMaybe::Nothing => \"default\"\n}\n}");
+}
+
+#[test]
+fn test_type_check_pattern_10() {
+    check_no_errors("enum Either { Left(number), Right(string) }\nfn f(e: Either) -> string {\nmatch e {\nEither::Left(n) => \"number\"\nEither::Right(s) => s\n}\n}");
+}
