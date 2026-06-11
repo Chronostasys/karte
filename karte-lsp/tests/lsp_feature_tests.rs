@@ -4191,3 +4191,93 @@ fn test_analyze_valid_v63_fib_sum() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_v65_capacitance() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Capacitance { farads: number }\nfn to_uf(c: Capacitance) -> number { c.farads * 1000000 }\nfn is_large_cap(c: Capacitance) -> bool { c.farads > 1 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v65_vm_state() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum VMState { Stopped, Starting, Running3, Stopping }\nfn is_transitioning(v: VMState) -> bool {\nmatch v {\nVMState::Stopped => false\nVMState::Starting => true\nVMState::Running3 => false\nVMState::Stopping => true\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v65_kite() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Kite2 { d1: number, d2: number }\nfn area(k: Kite2) -> number { k.d1 * k.d2 / 2 }\nfn is_square(k: Kite2) -> bool { k.d1 == k.d2 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v65_gesture() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Gesture { Tap, Swipe, Pinch, Rotate }\nfn is_continuous(g: Gesture) -> bool {\nmatch g {\nGesture::Tap => false\nGesture::Swipe => false\nGesture::Pinch => true\nGesture::Rotate => true\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v65_harmonic() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + if i > 0 { 1 / i } else { 0 }\n};\nsum\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v64_luminance2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Luminance { lux: number }\nfn is_bright(l: Luminance) -> bool { l.lux > 1000 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v64_game_state2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum GameState2 { Menu2, Playing, Paused, GameOver }\nfn is_active(g: GameState2) -> bool {\nmatch g {\nGameState2::Playing => true\n_ => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v63_decagon2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Decagon { side: number }\nfn perimeter(d: Decagon) -> number { d.side * 10 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v63_token2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Token3 { Ident2(string), Number3(number), Operator, EOF2 }\nfn has_value(t: Token3) -> bool {\nmatch t {\nToken3::Ident2(_) => true\nToken3::Number3(_) => true\n_ => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v65_fib_variant() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet a = 2;\nlet b = 3;\nfor i in 0..x {\nlet c = a + b;\na = b;\nb = c\n};\na\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
