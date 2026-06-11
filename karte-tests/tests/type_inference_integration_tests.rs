@@ -7358,3 +7358,53 @@ fn test_type_check_v57_9() {
 fn test_type_check_v57_10() {
     check_no_errors("fn f(x: number) -> number {\nlet a = 0;\nlet b = 1;\nfor i in 0..x {\nlet c = a + b;\na = b;\nb = c\n};\na * b\n}");
 }
+
+#[test]
+fn test_type_check_v58_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 1;\nlet b = a * 3 + 2;\nb * b\n}");
+}
+
+#[test]
+fn test_type_check_v58_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i % 13 == 0 {\nsum = sum + i / 13\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v58_3() {
+    check_no_errors("struct Force2 { newtons: number }\nfn to_kilonewtons(f: Force2) -> number { f.newtons / 1000 }\nfn is_strong(f: Force2) -> bool { f.newtons > 1000 }");
+}
+
+#[test]
+fn test_type_check_v58_4() {
+    check_no_errors("enum Screen2 { LCD, OLED, AMOLED, EInk }\nfn has_backlight(s: Screen2) -> bool {\nmatch s {\nScreen2::LCD => true\nScreen2::OLED => false\nScreen2::AMOLED => false\nScreen2::EInk => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v58_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet halved = x / 2;\nif halved > 10 { None } else { Some(halved) }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v58_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 200 {\nErr(\"overflow\")\n} else {\nOk(x * x)\n}\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v58_7() {
+    check_no_errors("struct Rhombus2 { d1: number, d2: number }\nfn area9(r: Rhombus2) -> number { r.d1 * r.d2 / 2 }\nfn is_square2(r: Rhombus2) -> bool { r.d1 == r.d2 }");
+}
+
+#[test]
+fn test_type_check_v58_8() {
+    check_no_errors("enum ColorModel2 { RGB2, CMYK, HSV }\nfn is_additive(c: ColorModel2) -> bool {\nmatch c {\nColorModel2::RGB2 => true\nColorModel2::CMYK => false\nColorModel2::HSV => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v58_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + if i % 4 == 0 { i * i } else { i }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v58_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 1;\nwhile i < x {\nresult = result + i;\ni = i * 2\n};\nresult\n}");
+}
