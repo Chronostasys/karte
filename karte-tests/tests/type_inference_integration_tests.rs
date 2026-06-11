@@ -7258,3 +7258,53 @@ fn test_type_check_v55_9() {
 fn test_type_check_v55_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + (2 * i + 1) * (2 * i + 1);\ni = i + 1\n};\nresult\n}");
 }
+
+#[test]
+fn test_type_check_v56_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x - 1;\nlet b = a * a + 2 * a + 1;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v56_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 5 {\nsum = sum + (i - 5) * (i - 5)\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v56_3() {
+    check_no_errors("struct Density2 { mass: number, volume: number }\nfn compute(d: Density2) -> number { d.mass / d.volume }\nfn is_heavy2(d: Density2) -> bool { d.mass / d.volume > 5 }");
+}
+
+#[test]
+fn test_type_check_v56_4() {
+    check_no_errors("enum Cloud2 { Public3, Private3, Hybrid }\nfn is_shared(c: Cloud2) -> bool {\nmatch c {\nCloud2::Public3 => true\nCloud2::Private3 => false\nCloud2::Hybrid => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v56_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 10 {\nlet subtracted = x - 10;\nif subtracted % 3 == 0 { Some(subtracted) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v56_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 100 {\nOk(100)\n} else {\nif x > 50 {\nOk(x - 50)\n} else {\nOk(x)\n}\n}\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v56_7() {
+    check_no_errors("struct Prism2 { base_area: number, height: number }\nfn volume9(p: Prism2) -> number { p.base_area * p.height }\nfn is_flat2(p: Prism2) -> bool { p.height < 1 }");
+}
+
+#[test]
+fn test_type_check_v56_8() {
+    check_no_errors("enum EventType2 { Click2, Hover, Focus, Blur }\nfn is_mouse_event(e: EventType2) -> bool {\nmatch e {\nEventType2::Click2 => true\nEventType2::Hover => true\nEventType2::Focus => false\nEventType2::Blur => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v56_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + (2 * i + 1) * (2 * i + 1) * (2 * i + 1)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v56_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nlet a = 0;\nlet b = 1;\nfor i in 0..x {\nsum = sum + a;\nlet c = a + b;\na = b;\nb = c\n};\nsum\n}");
+}
