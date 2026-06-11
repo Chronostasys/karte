@@ -3213,3 +3213,53 @@ fn test_type_check_complex_enum_chain2() {
 fn test_type_check_complex_fn_chain2() {
     check_no_errors("fn square(x: number) -> number { x * x }\nfn sum_squares(a: number, b: number) -> number {\nsquare(a) + square(b)\n}\nfn main() -> number {\nsum_squares(3, 4)\n}");
 }
+
+#[test]
+fn test_type_error_if_condition_string_v2() {
+    check_has_errors("fn f() -> number {\nif \"hello\" { 1 } else { 2 }\n}");
+}
+
+#[test]
+fn test_type_error_while_condition_string() {
+    check_has_errors("fn f() -> number {\nwhile \"hello\" {\n0\n};\n0\n}");
+}
+
+#[test]
+fn test_type_error_match_string_on_number() {
+    check_has_errors("fn f(x: number) -> number {\nmatch x {\n\"hello\" => 1\n_ => 0\n}\n}");
+}
+
+#[test]
+fn test_type_error_match_number_on_string() {
+    check_has_errors("fn f(s: string) -> number {\nmatch s {\n42 => 1\n_ => 0\n}\n}");
+}
+
+#[test]
+fn test_type_error_struct_wrong_name() {
+    check_has_errors("struct Point { x: number, y: number }\nfn main() -> number {\nlet p = Vector { x: 1, y: 2 };\n0\n}");
+}
+
+#[test]
+fn test_type_error_enum_wrong_variant() {
+    check_has_errors("enum Color { Red, Green, Blue }\nfn f(c: Color) -> number {\nmatch c {\nColor::Yellow => 1\n_ => 0\n}\n}");
+}
+
+#[test]
+fn test_type_error_fn_wrong_return2() {
+    check_has_errors("fn f() -> number {\n\"42\"\n}");
+}
+
+#[test]
+fn test_type_error_fn_missing_return2() {
+    check_has_errors("fn f() -> number {\n}");
+}
+
+#[test]
+fn test_type_error_let_wrong_annotation() {
+    check_has_errors("fn f() -> number {\nlet x: string = 42;\n0\n}");
+}
+
+#[test]
+fn test_type_error_param_wrong_annotation() {
+    check_has_errors("fn f(x: string) -> number {\nx + 1\n}");
+}
