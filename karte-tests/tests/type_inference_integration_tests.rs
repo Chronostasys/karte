@@ -8008,3 +8008,53 @@ fn test_type_check_v70_9() {
 fn test_type_check_v70_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + i * 2 + 1;\ni = i + 1\n};\nresult\n}");
 }
+
+#[test]
+fn test_type_check_v71_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 5 + 1;\nlet b = a * a - 1;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v71_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 60 && i < 80 {\nsum = sum + (i - 60) * 2\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v71_3() {
+    check_no_errors("struct Pressure2 { pascals: number }\nfn to_kpa(p: Pressure2) -> number { p.pascals / 1000 }\nfn to_atm(p: Pressure2) -> number { p.pascals / 101325 }");
+}
+
+#[test]
+fn test_type_check_v71_4() {
+    check_no_errors("enum Arch2 { X86, ARM, RISCV, MIPS }\nfn is_64bit(a: Arch2) -> bool {\nmatch a {\nArch2::X86 => true\nArch2::ARM => true\nArch2::RISCV => true\nArch2::MIPS => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v71_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet sixth = x / 6;\nif sixth > 0 { Some(sixth) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v71_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 300 { Ok(x / 3) } else { Ok(x + 10) }\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v71_7() {
+    check_no_errors("struct Pyramid2 { base_area: number, height: number }\nfn volume2(p: Pyramid2) -> number { p.base_area * p.height / 3 }\nfn is_tall(p: Pyramid2) -> bool { p.height > p.base_area }");
+}
+
+#[test]
+fn test_type_check_v71_8() {
+    check_no_errors("enum Sensor2 { Temperature3, Pressure3, Humidity, Light2 }\nfn is_environmental(s: Sensor2) -> bool {\nmatch s {\nSensor2::Temperature3 => true\nSensor2::Pressure3 => true\nSensor2::Humidity => true\nSensor2::Light2 => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v71_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + (i + 1) * (i + 2)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v71_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 1;\nfor i in 1..x {\nresult = result * 2\n};\nresult\n}");
+}
