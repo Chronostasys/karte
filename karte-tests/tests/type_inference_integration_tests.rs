@@ -6858,3 +6858,53 @@ fn test_type_check_v47_9() {
 fn test_type_check_v47_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + (2 * i + 1);\ni = i + 1\n};\nresult\n}");
 }
+
+#[test]
+fn test_type_check_v48_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x - 3;\nlet b = a * a + 6 * a + 9;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v48_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nfor j in 0..3 {\nif i % 2 == 0 {\nsum = sum + 1\n}\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v48_3() {
+    check_no_errors("struct Ratio2 { num: number, den: number }\nfn simplify_hint(r: Ratio2) -> number { r.num / r.den }\nfn is_unit_fraction(r: Ratio2) -> bool { r.num == 1 }");
+}
+
+#[test]
+fn test_type_check_v48_4() {
+    check_no_errors("enum ConnState { Connected, Disconnected, Reconnecting }\nfn is_online(c: ConnState) -> bool {\nmatch c {\nConnState::Connected => true\nConnState::Disconnected => false\nConnState::Reconnecting => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v48_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet tripled = x * 3;\nif tripled > 50 && tripled < 150 { Some(tripled) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v48_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 50 {\nif x > 75 { Ok(x - 75) } else { Ok(x - 50) }\n} else {\nOk(x)\n}\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v48_7() {
+    check_no_errors("struct Transform2D { tx: number, ty: number, sx: number, sy: number }\nfn is_identity_transform(t: Transform2D) -> bool { t.tx == 0 && t.ty == 0 && t.sx == 1 && t.sy == 1 }");
+}
+
+#[test]
+fn test_type_check_v48_8() {
+    check_no_errors("enum Phase2 { New2, Growing, Mature, Declining }\nfn is_growth_phase(p: Phase2) -> bool {\nmatch p {\nPhase2::New2 => true\nPhase2::Growing => true\nPhase2::Mature => false\nPhase2::Declining => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v48_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + if i > x / 3 { i * 2 } else { i }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v48_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 1;\nlet b = 1;\nfor i in 2..x {\nlet c = a + b;\na = b;\nb = c\n};\na + b\n}");
+}
