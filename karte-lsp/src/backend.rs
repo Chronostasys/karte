@@ -1425,26 +1425,35 @@ impl Backend {
         params: CodeLensParams,
     ) -> Result<Option<Vec<CodeLens>>> {
         let uri = &params.text_document.uri;
-        let store = self.document_store.read().await;
-        let Some(document) = store.get(uri) else {
-            return Ok(None);
+        // 先获取源码，立即释放 document_store 锁
+        let source = {
+            let store = self.document_store.read().await;
+            match store.get(uri) {
+                Some(doc) => doc.content.clone(),
+                None => return Ok(None),
+            }
         };
-        let source = &document.content;
 
-        let bridge = self.compiler_bridge.read().await;
-        let symbols = bridge.get_document_symbols();
+        // 再获取 compiler_bridge 锁（避免与 analyze_document 死锁）
+        let (symbols, type_strings) = {
+            let bridge = self.compiler_bridge.read().await;
+            let symbols = bridge.get_document_symbols();
+            let type_strings = bridge.get_cached_result()
+                .map(|r| r.identifier_type_strings.clone())
+                .unwrap_or_default();
+            (symbols, type_strings)
+        };
 
         let mut lenses = Vec::new();
 
         for sym in &symbols {
             // 为函数符号添加类型签名 code lens
             if sym.kind == KarteSymbolKind::Function {
-                let range = crate::compiler_bridge::span_to_range(source, sym.span);
+                let range = crate::compiler_bridge::span_to_range(&source, sym.span);
                 let name = &sym.name;
 
                 // 获取函数类型签名
-                let type_str = bridge.get_cached_result()
-                    .and_then(|r| r.identifier_type_strings.get(&(sym.span.start, sym.span.end)));
+                let type_str = type_strings.get(&(sym.span.start, sym.span.end));
                 if let Some(type_str) = type_str {
                     lenses.push(CodeLens {
                         range,
@@ -1478,11 +1487,13 @@ impl Backend {
         params: DocumentLinkParams,
     ) -> Result<Option<Vec<DocumentLink>>> {
         let uri = &params.text_document.uri;
-        let store = self.document_store.read().await;
-        let Some(document) = store.get(uri) else {
-            return Ok(None);
+        let source = {
+            let store = self.document_store.read().await;
+            match store.get(uri) {
+                Some(doc) => doc.content.clone(),
+                None => return Ok(None),
+            }
         };
-        let source = &document.content;
 
         let mut links = Vec::new();
 
@@ -1499,14 +1510,17 @@ impl Backend {
                             Position::new(line_num as u32, path_start as u32 + 1 + path_end as u32),
                         );
 
-                        // 生成文件 URI
+                        // 生成文件 URI：相对于当前文件所在目录
                         let file_path = if module_path.contains('.') {
                             module_path.replace('.', "/") + ".karte"
                         } else {
                             module_path.to_string() + ".karte"
                         };
 
-                        let target_uri = Url::parse(&format!("file:///{}", file_path)).ok();
+                        // 使用当前文件的 URI 作为 base 解析相对路径
+                        let base_uri = Url::parse(&uri.to_string()).ok();
+                        let target_uri = base_uri
+                            .and_then(|base| base.join(&file_path).ok());
 
                         if let Some(target) = target_uri {
                             links.push(DocumentLink {
