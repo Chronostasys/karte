@@ -79,6 +79,8 @@ pub struct LspDiagnostic {
     pub message: String,
     pub severity: KarteDiagnosticSeverity,
     pub help: Option<String>,
+    /// 错误代码 (如 "E001", "E002" 等)
+    pub code: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,6 +172,7 @@ impl CompilerBridge {
                 message: diag.message.clone(),
                 severity: KarteDiagnosticSeverity::Error,
                 help: None,
+                code: None,
             });
         }
 
@@ -188,6 +191,7 @@ impl CompilerBridge {
                 message: diag.message.clone(),
                 severity: KarteDiagnosticSeverity::Error,
                 help: None,
+                code: None,
             });
         }
 
@@ -217,6 +221,7 @@ impl CompilerBridge {
                 message: diag.message.clone(),
                 severity,
                 help: diag.help.clone(),
+                code: diag.code.clone(),
             });
         }
 
