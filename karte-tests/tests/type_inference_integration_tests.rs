@@ -4208,3 +4208,53 @@ fn test_type_check_error_code_9() {
 fn test_type_check_error_code_10() {
     check_has_errors("fn f(x: number) -> number {\nx.y\n}");
 }
+
+#[test]
+fn test_type_check_string_ops_1() {
+    check_no_errors("fn f(s: string) -> string {\ns + \"!\"\n}");
+}
+
+#[test]
+fn test_type_check_string_ops_2() {
+    check_no_errors("fn f(s: string) -> number {\nlen(s)\n}");
+}
+
+#[test]
+fn test_type_check_string_ops_3() {
+    check_no_errors("fn f(a: string, b: string) -> string {\na + b\n}");
+}
+
+#[test]
+fn test_type_check_string_ops_4() {
+    check_no_errors("fn f(s: string) -> bool {\ns == \"hello\"\n}");
+}
+
+#[test]
+fn test_type_check_string_ops_5() {
+    check_no_errors("fn f(s: string) -> bool {\ns != \"hello\"\n}");
+}
+
+#[test]
+fn test_type_check_ref_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet r = &x;\n*r\n}");
+}
+
+#[test]
+fn test_type_check_ref_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x;\nlet r = &a;\n*r\n}");
+}
+
+#[test]
+fn test_type_check_ref_3() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 42;\nlet b = &a;\n*b + 1\n}");
+}
+
+#[test]
+fn test_type_check_char_1() {
+    check_no_errors("fn f() -> number {\nlet c = 'A';\nc + 1\n}");
+}
+
+#[test]
+fn test_type_check_char_2() {
+    check_no_errors("fn f() -> number {\nlet c = 'A';\nlet d = 'B';\nc + d\n}");
+}
