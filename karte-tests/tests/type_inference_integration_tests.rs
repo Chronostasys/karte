@@ -5558,3 +5558,53 @@ fn test_type_check_v21_9() {
 fn test_type_check_v21_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 1..x {\nresult = result + if i % 3 == 0 { i * 3 } else { i }\n};\nresult\n}");
 }
+
+#[test]
+fn test_type_check_v22_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 1;\nlet b = a * a;\nlet c = b - a;\nc\n}");
+}
+
+#[test]
+fn test_type_check_v22_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet total = 0;\nfor i in 0..x {\ntotal = total + i * i * i\n};\ntotal\n}");
+}
+
+#[test]
+fn test_type_check_v22_3() {
+    check_no_errors("struct Book { title: string, pages: number }\nfn is_short(b: Book) -> bool {\nb.pages < 100\n}\nfn summary(b: Book) -> string {\nb.title + \" (\" + \" pages)\"\n}");
+}
+
+#[test]
+fn test_type_check_v22_4() {
+    check_no_errors("enum OS { Linux, MacOS, Windows }\nfn is_unix(o: OS) -> bool {\nmatch o {\nOS::Linux => true\nOS::MacOS => true\nOS::Windows => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v22_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nlet half = x / 2;\nif half > 0 { Some(half) } else { None }\n}");
+}
+
+#[test]
+fn test_type_check_v22_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x == 0 {\nErr(\"division by zero\")\n} else {\nOk(100 / x)\n}\n}");
+}
+
+#[test]
+fn test_type_check_v22_7() {
+    check_no_errors("struct Polar2 { r: number, theta: number }\nfn magnitude(p: Polar2) -> number { p.r }\nfn is_origin(p: Polar2) -> bool { p.r == 0 }");
+}
+
+#[test]
+fn test_type_check_v22_8() {
+    check_no_errors("enum Permission { Read, Write, Execute }\nfn can_read(p: Permission) -> bool {\nmatch p {\nPermission::Read => true\nPermission::Write => true\nPermission::Execute => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v22_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nlet i = 0;\nwhile i < x {\nsum = sum + 2 * i + 1;\ni = i + 1\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v22_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 0..x {\nfor j in 0..i {\nresult = result + j\n}\n};\nresult\n}");
+}
