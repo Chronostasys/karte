@@ -3663,3 +3663,53 @@ fn test_type_check_final_9() {
 fn test_type_check_final_10() {
     check_no_errors("struct Point { x: number, y: number }\nfn on_x_axis(p: Point) -> bool {\np.y == 0\n}\nfn on_y_axis(p: Point) -> bool {\np.x == 0\n}\nfn on_origin(p: Point) -> bool {\non_x_axis(p) && on_y_axis(p)\n}");
 }
+
+#[test]
+fn test_type_check_round_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet y = x * 2;\nlet z = y + 1;\nz\n}");
+}
+
+#[test]
+fn test_type_check_round_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = if x > 0 { x } else { 0 };\nlet b = a * a;\nb\n}");
+}
+
+#[test]
+fn test_type_check_round_3() {
+    check_no_errors("fn f(x: number) -> number {\nmatch x {\n0 => 0\nn => n * n\n}\n}");
+}
+
+#[test]
+fn test_type_check_round_4() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x == 0 { None } else { Some(x) }\n}");
+}
+
+#[test]
+fn test_type_check_round_5() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x < 0 { Err(\"negative\") } else { Ok(x) }\n}");
+}
+
+#[test]
+fn test_type_check_round_6() {
+    check_no_errors("struct Box { width: number, height: number }\nfn area(b: Box) -> number {\nb.width * b.height\n}");
+}
+
+#[test]
+fn test_type_check_round_7() {
+    check_no_errors("enum Status { Ok, Error }\nfn is_ok(s: Status) -> bool {\nmatch s {\nStatus::Ok => true\nStatus::Error => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_round_8() {
+    check_no_errors("fn f(a: number, b: number) -> number {\nlet sum = a + b;\nlet diff = a - b;\nsum * diff\n}");
+}
+
+#[test]
+fn test_type_check_round_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet total = 0;\nlet i = 0;\nwhile i < x {\ntotal = total + i;\ni = i + 1\n};\ntotal\n}");
+}
+
+#[test]
+fn test_type_check_round_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet total = 0;\nfor i in 0..x {\ntotal = total + i\n};\ntotal\n}");
+}
