@@ -3561,3 +3561,93 @@ fn test_analyze_valid_v44_pattern() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_v46_storage() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Storage { Register, Cache, RAM, Disk }\nfn latency_ns(s: Storage) -> number {\nmatch s {\nStorage::Register => 1\nStorage::Cache => 10\nStorage::RAM => 100\nStorage::Disk => 10000000\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v47_dimension() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Dimension { width: number, height: number }\nfn aspect_ratio(d: Dimension) -> number { d.width / d.height }\nfn is_square(d: Dimension) -> bool { d.width == d.height }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v48_conn_state() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum ConnState { Connected, Disconnected, Reconnecting }\nfn is_online(c: ConnState) -> bool {\nmatch c {\nConnState::Connected => true\nConnState::Disconnected => false\nConnState::Reconnecting => true\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v48_transform() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Transform2D { tx: number, ty: number, sx: number, sy: number }\nfn is_identity(t: Transform2D) -> bool { t.tx == 0 && t.ty == 0 && t.sx == 1 && t.sy == 1 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v49_volume() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Volume2 { liters: number }\nfn to_ml(v: Volume2) -> number { v.liters * 1000 }\nfn is_empty(v: Volume2) -> bool { v.liters == 0 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v49_encoding() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Encoding2 { UTF8, ASCII, UTF16 }\nfn is_unicode(e: Encoding2) -> bool {\nmatch e {\nEncoding2::UTF8 => true\nEncoding2::ASCII => false\nEncoding2::UTF16 => true\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v49_factorial() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet product = 1;\nlet i = 2;\nwhile i <= x {\nproduct = product * i;\ni = i + 1\n};\nproduct\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v47_thread() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Thread2 { Running, Paused, Blocked, Terminated }\nfn is_active(t: Thread2) -> bool {\nmatch t {\nThread2::Running => true\nThread2::Paused => true\nThread2::Blocked => false\nThread2::Terminated => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v46_point6() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point6 { x: number, y: number, z: number }\nfn translate(p: Point6, dx: number, dy: number, dz: number) -> Point6 {\nPoint6 { x: p.x + dx, y: p.y + dy, z: p.z + dz }\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v48_phase() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Phase2 { New2, Growing, Mature, Declining }\nfn is_growth_phase(p: Phase2) -> bool {\nmatch p {\nPhase2::New2 => true\nPhase2::Growing => true\nPhase2::Mature => false\nPhase2::Declining => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
