@@ -337,6 +337,35 @@ impl TypeCheckError {
             | TypeCheckError::UnreachableCode { span, .. } => *span,
         }
     }
+
+    /// 获取错误代码
+    pub fn error_code(&self) -> &'static str {
+        match self {
+            TypeCheckError::TypeMismatch { .. } => "E001",
+            TypeCheckError::UndefinedVariable { .. } => "E002",
+            TypeCheckError::ArityMismatch { .. } => "E003",
+            TypeCheckError::DuplicateFunctionDefinition { .. } => "E004",
+            TypeCheckError::DuplicateParameterName { .. } => "E005",
+            TypeCheckError::MissingFields { .. } => "E006",
+            TypeCheckError::UnknownField { .. } => "E007",
+            TypeCheckError::NotAStruct { .. } => "E008",
+            TypeCheckError::NonExhaustiveMatch { .. } => "E009",
+            TypeCheckError::EmptyMatch { .. } => "E010",
+            TypeCheckError::InvalidPattern { .. } => "E011",
+            TypeCheckError::InvalidConstructor { .. } => "E012",
+            TypeCheckError::NotCallable { .. } => "E013",
+            TypeCheckError::InfiniteType { .. } => "E014",
+            TypeCheckError::InvalidMainReturnType { .. } => "E015",
+            TypeCheckError::UndefinedType { .. } => "E016",
+            TypeCheckError::InvalidAssignmentTarget { .. } => "E017",
+            TypeCheckError::ModuleInterfaceUnavailable { .. } => "E018",
+            TypeCheckError::UndefinedModuleSymbol { .. } => "E019",
+            TypeCheckError::BuiltinFunctionError { .. } => "E020",
+            TypeCheckError::IndexOutOfBounds { .. } => "E021",
+            TypeCheckError::CannotInferType { .. } => "E022",
+            TypeCheckError::UnreachableCode { .. } => "E023",
+        }
+    }
 }
 
 /// 根据期望类型和实际类型生成智能建议

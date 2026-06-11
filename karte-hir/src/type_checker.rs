@@ -4567,6 +4567,7 @@ impl TypeChecker {
     fn add_error(&mut self, error: TypeCheckError) {
         let message = error.to_string();
         let span = error.span();
+        let code = error.error_code().to_string();
         let help = match &error {
             TypeCheckError::TypeMismatch { expected, found, context, .. } => {
                 // 根据类型不匹配的上下文提供不同的帮助信息
@@ -4638,7 +4639,7 @@ impl TypeChecker {
             }
             _ => None,
         };
-        self.diagnostics.add_error_with_help(message, span, help);
+        self.diagnostics.add_error_with_code(message, span, code, help);
     }
 
     /// 添加编译器警告
