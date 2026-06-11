@@ -3651,3 +3651,93 @@ fn test_analyze_valid_v48_phase() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_v50_speed() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Speed2 { mps: number }\nfn to_kmh(s: Speed2) -> number { s.mps * 3600 / 1000 }\nfn is_walking(s: Speed2) -> bool { s.mps < 2 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v50_terminal() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Terminal2 { VT100, VT220, XTerm, ANSI }\nfn supports_color(t: Terminal2) -> bool {\nmatch t {\nTerminal2::VT100 => false\nTerminal2::VT220 => false\nTerminal2::XTerm => true\nTerminal2::ANSI => true\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v51_cylinder() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Cylinder { radius: number, height: number }\nfn volume(c: Cylinder) -> number { 3 * c.radius * c.radius * c.height }\nfn is_flat(c: Cylinder) -> bool { c.height == 0 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v51_job() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Job2 { Running2, Queued, Completed, Failed }\nfn is_pending(j: Job2) -> bool {\nmatch j {\nJob2::Running2 => true\nJob2::Queued => true\nJob2::Completed => false\nJob2::Failed => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v52_cone() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Cone { radius: number, height: number }\nfn volume(c: Cone) -> number { c.radius * c.radius * c.height }\nfn is_pointy(c: Cone) -> bool { c.height > c.radius * 2 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v52_device() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Device { Keyboard, Mouse, Monitor, Speaker }\nfn is_input(d: Device) -> bool {\nmatch d {\nDevice::Keyboard => true\nDevice::Mouse => true\nDevice::Monitor => false\nDevice::Speaker => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v52_lock() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Lock2 { Shared, Exclusive, Free }\nfn is_writeable(l: Lock2) -> bool {\nmatch l {\nLock2::Shared => false\nLock2::Exclusive => true\nLock2::Free => true\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v50_sphere2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Sphere2 { cx: number, cy: number, cz: number, r: number }\nfn volume(s: Sphere2) -> number { 4 * s.r * s.r * s.r }\nfn contains_origin(s: Sphere2) -> bool {\ns.cx * s.cx + s.cy * s.cy + s.cz * s.cz <= s.r * s.r\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v50_logic_gate() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum LogicGate { And4, Or4, Not, Xor2 }\nfn num_inputs(g: LogicGate) -> number {\nmatch g {\nLogicGate::And4 => 2\nLogicGate::Or4 => 2\nLogicGate::Not => 1\nLogicGate::Xor2 => 2\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v52_area() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Area2 { sqm: number }\nfn to_sqft(a: Area2) -> number { a.sqm * 10 }\nfn is_large(a: Area2) -> bool { a.sqm > 100 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
