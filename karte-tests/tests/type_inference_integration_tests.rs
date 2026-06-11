@@ -4508,3 +4508,53 @@ fn test_type_check_error_detect_1() {
 fn test_type_check_error_detect_2() {
     check_has_errors("fn f(x: number, y: number, z: number) -> number {\nf(x)\n}");
 }
+
+#[test]
+fn test_type_check_edge_1() {
+    check_no_errors("fn f() -> number {\nlet x = 0;\nx\n}");
+}
+
+#[test]
+fn test_type_check_edge_2() {
+    check_no_errors("fn f() -> number {\nlet x = 1;\nlet y = 2;\nlet z = 3;\nx + y + z\n}");
+}
+
+#[test]
+fn test_type_check_edge_3() {
+    check_no_errors("fn f() -> string {\nlet a = \"hello\";\nlet b = \" \";\nlet c = \"world\";\na + b + c\n}");
+}
+
+#[test]
+fn test_type_check_edge_4() {
+    check_no_errors("fn f() -> bool {\nlet a = true;\nlet b = false;\na && b || a\n}");
+}
+
+#[test]
+fn test_type_check_edge_5() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x;\nlet b = a;\nlet c = b;\nlet d = c;\nlet e = d;\ne\n}");
+}
+
+#[test]
+fn test_type_check_edge_6() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 0..10 {\nfor j in 0..10 {\nresult = result + 1\n}\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_edge_7() {
+    check_no_errors("struct A { x: number }\nstruct B { y: number }\nfn f(a: A, b: B) -> number {\na.x + b.y\n}");
+}
+
+#[test]
+fn test_type_check_edge_8() {
+    check_no_errors("enum X { A, B }\nenum Y { C, D }\nfn f(x: X) -> Y {\nmatch x {\nX::A => Y::C\nX::B => Y::D\n}\n}");
+}
+
+#[test]
+fn test_type_check_edge_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = if x > 0 {\nlet b = x * 2;\nb\n} else {\n0\n};\na + 1\n}");
+}
+
+#[test]
+fn test_type_check_edge_10() {
+    check_no_errors("struct Pair { fst: number, snd: number }\nfn f(p: Pair) -> Pair {\nlet a = p.fst;\nlet b = p.snd;\nPair { fst: b, snd: a }\n}");
+}
