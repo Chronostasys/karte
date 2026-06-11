@@ -3713,3 +3713,53 @@ fn test_type_check_round_9() {
 fn test_type_check_round_10() {
     check_no_errors("fn f(x: number) -> number {\nlet total = 0;\nfor i in 0..x {\ntotal = total + i\n};\ntotal\n}");
 }
+
+#[test]
+fn test_type_check_wave_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet y = x;\nlet z = y;\nlet w = z;\nw\n}");
+}
+
+#[test]
+fn test_type_check_wave_2() {
+    check_no_errors("fn f(x: number) -> number {\nif true { x } else { x }\n}");
+}
+
+#[test]
+fn test_type_check_wave_3() {
+    check_no_errors("fn f() -> bool {\ntrue && false || true\n}");
+}
+
+#[test]
+fn test_type_check_wave_4() {
+    check_no_errors("fn f(x: number) -> bool {\nx != 0 && x > 0\n}");
+}
+
+#[test]
+fn test_type_check_wave_5() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 1;\nlet b = a + 2;\nlet c = b + 3;\nc\n}");
+}
+
+#[test]
+fn test_type_check_wave_6() {
+    check_no_errors("struct Triple { a: number, b: number, c: number }\nfn sum(t: Triple) -> number {\nt.a + t.b + t.c\n}");
+}
+
+#[test]
+fn test_type_check_wave_7() {
+    check_no_errors("enum Cardinal { N, S, E, W }\nfn opposite(c: Cardinal) -> Cardinal {\nmatch c {\nCardinal::N => Cardinal::S\nCardinal::S => Cardinal::N\nCardinal::E => Cardinal::W\nCardinal::W => Cardinal::E\n}\n}");
+}
+
+#[test]
+fn test_type_check_wave_8() {
+    check_no_errors("fn f(x: number) -> number {\nmatch x {\n0 => 1\n1 => 2\n2 => 3\n_ => x + 1\n}\n}");
+}
+
+#[test]
+fn test_type_check_wave_9() {
+    check_no_errors("fn f(x: number) -> string {\nlet result = if x > 0 { \"pos\" } else { \"non-pos\" };\nresult\n}");
+}
+
+#[test]
+fn test_type_check_wave_10() {
+    check_no_errors("fn f(x: number, y: number) -> bool {\n(x > 0 && y > 0) || (x < 0 && y < 0)\n}");
+}
