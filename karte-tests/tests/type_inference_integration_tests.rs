@@ -5708,3 +5708,53 @@ fn test_type_check_v24_9() {
 fn test_type_check_v24_10() {
     check_no_errors("fn f(x: number) -> number {\nlet a = 0;\nlet b = 1;\nlet i = 0;\nwhile i < x {\nlet c = a + b;\na = b;\nb = c;\ni = i + 1\n};\na\n}");
 }
+
+#[test]
+fn test_type_check_v25_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet y = x + 1;\ny * y - y\n}");
+}
+
+#[test]
+fn test_type_check_v25_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + if i > 50 { i } else { 0 }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v25_3() {
+    check_no_errors("struct Employee { name: string, salary: number }\nfn is_high_earner(e: Employee) -> bool { e.salary > 100000 }");
+}
+
+#[test]
+fn test_type_check_v25_4() {
+    check_no_errors("enum FileType { File, Dir, Symlink }\nfn is_file(ft: FileType) -> bool {\nmatch ft {\nFileType::File => true\nFileType::Dir => false\nFileType::Symlink => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v25_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x >= 0 && x <= 100 {\nif x == 50 { None } else { Some(x) }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v25_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 50 {\nOk(x * 2)\n} else {\nOk(x)\n}\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v25_7() {
+    check_no_errors("struct Interval2 { lo: number, hi: number }\nfn width(i: Interval2) -> number { i.hi - i.lo }\nfn is_empty(i: Interval2) -> bool { i.lo >= i.hi }");
+}
+
+#[test]
+fn test_type_check_v25_8() {
+    check_no_errors("enum Status3 { Active2(number), Inactive(number) }\nfn get_id2(s: Status3) -> number {\nmatch s {\nStatus3::Active2(id) => id\nStatus3::Inactive(id) => id\n}\n}");
+}
+
+#[test]
+fn test_type_check_v25_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + i * i + i;\ni = i + 1\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_v25_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 1..x {\nsum = sum + if i % 10 == 0 { i / 10 } else { i }\n};\nsum\n}");
+}
