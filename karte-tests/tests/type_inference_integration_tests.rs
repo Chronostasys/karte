@@ -4908,3 +4908,53 @@ fn test_type_check_v8_9() {
 fn test_type_check_v8_10() {
     check_no_errors("fn f(a: number, b: number) -> number {\nlet x = a;\nlet y = b;\nwhile y != 0 {\nlet temp = y;\ny = x % y;\nx = temp\n};\nx\n}");
 }
+
+#[test]
+fn test_type_check_v9_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet y = 0 - x;\nif y < 0 { 0 - y } else { y }\n}");
+}
+
+#[test]
+fn test_type_check_v9_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 0..x {\nresult = result + i * (i + 1)\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_v9_3() {
+    check_no_errors("struct Person { age: number }\nfn is_adult(p: Person) -> bool {\np.age >= 18\n}");
+}
+
+#[test]
+fn test_type_check_v9_4() {
+    check_no_errors("enum Direction2 { Up, Down, Left, Right }\nfn opposite(d: Direction2) -> Direction2 {\nmatch d {\nDirection2::Up => Direction2::Down\nDirection2::Down => Direction2::Up\nDirection2::Left => Direction2::Right\nDirection2::Right => Direction2::Left\n}\n}");
+}
+
+#[test]
+fn test_type_check_v9_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 && x < 1000 {\nif x % 2 == 0 { Some(x) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v9_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x % 2 == 0 { Ok(x) } else { Ok(x + 1) }\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v9_7() {
+    check_no_errors("struct Vector { x: number, y: number, z: number }\nfn dot(a: Vector, b: Vector) -> number {\na.x * b.x + a.y * b.y + a.z * b.z\n}");
+}
+
+#[test]
+fn test_type_check_v9_8() {
+    check_no_errors("enum Token { Number(number), Op(string), EOF }\nfn is_number(t: Token) -> bool {\nmatch t {\nToken::Number(_) => true\nToken::Op(_) => false\nToken::EOF => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v9_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet min = x;\nfor i in 0..100 {\nif i < min {\nmin = i\n}\n};\nmin\n}");
+}
+
+#[test]
+fn test_type_check_v9_10() {
+    check_no_errors("fn f(n: number) -> number {\nlet a = 1;\nlet b = 1;\nfor i in 2..n {\nlet c = a + b;\na = b;\nb = c\n};\nb\n}");
+}
