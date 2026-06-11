@@ -6408,3 +6408,53 @@ fn test_type_check_v38_9() {
 fn test_type_check_v38_10() {
     check_no_errors("fn f(x: number) -> number {\nlet count = 0;\nlet n = x;\nwhile n > 0 {\nif n % 2 == 1 {\ncount = count + 1\n};\nn = n / 2\n};\ncount\n}");
 }
+
+#[test]
+fn test_type_check_v39_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 3;\nlet b = a * a;\nb - 9\n}");
+}
+
+#[test]
+fn test_type_check_v39_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + if i > 0 { i / 2 } else { 0 }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v39_3() {
+    check_no_errors("struct Weight { kg: number }\nfn to_grams(w: Weight) -> number { w.kg * 1000 }\nfn is_heavy(w: Weight) -> bool { w.kg > 100 }");
+}
+
+#[test]
+fn test_type_check_v39_4() {
+    check_no_errors("enum Compass { N2, NE, E2, SE, S2, SW, W2, NW }\nfn is_cardinal(c: Compass) -> bool {\nmatch c {\nCompass::N2 => true\nCompass::E2 => true\nCompass::S2 => true\nCompass::W2 => true\n_ => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v39_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet sq = x * x;\nSome(sq)\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v39_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x == 0 {\nOk(0)\n} else {\nif x > 0 {\nif x > 50 {\nOk(x * 10)\n} else {\nOk(x)\n}\n} else {\nErr(\"negative\")\n}\n}\n}");
+}
+
+#[test]
+fn test_type_check_v39_7() {
+    check_no_errors("struct Line2 { x1: number, y1: number, x2: number, y2: number }\nfn length_sq(l: Line2) -> number {\nlet dx = l.x2 - l.x1;\nlet dy = l.y2 - l.y1;\ndx * dx + dy * dy\n}");
+}
+
+#[test]
+fn test_type_check_v39_8() {
+    check_no_errors("enum BinaryOp { And3, Or3, Xor }\nfn eval_bool(op: BinaryOp, a: bool, b: bool) -> bool {\nmatch op {\nBinaryOp::And3 => a && b\nBinaryOp::Or3 => a || b\nBinaryOp::Xor => a != b\n}\n}");
+}
+
+#[test]
+fn test_type_check_v39_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + (2 * i + 1) * (2 * i + 1)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v39_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 1;\nwhile i <= x {\nresult = result + i * i;\ni = i * 2\n};\nresult\n}");
+}
