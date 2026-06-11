@@ -6758,3 +6758,53 @@ fn test_type_check_v45_9() {
 fn test_type_check_v45_10() {
     check_no_errors("fn f(x: number) -> number {\nlet count = 0;\nlet n = x;\nwhile n > 1 {\nn = n / 2;\ncount = count + 1\n};\ncount\n}");
 }
+
+#[test]
+fn test_type_check_v46_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 4;\nlet b = a * 2;\nb - 8\n}");
+}
+
+#[test]
+fn test_type_check_v46_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i >= 10 && i <= 20 {\nsum = sum + i\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v46_3() {
+    check_no_errors("struct Angle3 { radians: number }\nfn to_degrees(a: Angle3) -> number { a.radians * 180 / 314 * 100 }\nfn is_straight(a: Angle3) -> bool { a.radians == 314 / 100 }");
+}
+
+#[test]
+fn test_type_check_v46_4() {
+    check_no_errors("enum Storage { Register, Cache, RAM, Disk }\nfn latency_ns(s: Storage) -> number {\nmatch s {\nStorage::Register => 1\nStorage::Cache => 10\nStorage::RAM => 100\nStorage::Disk => 10000000\n}\n}");
+}
+
+#[test]
+fn test_type_check_v46_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 10 {\nlet doubled = x * 2;\nif doubled < 50 { Some(doubled) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v46_6() {
+    check_no_errors("fn f(x: number) -> Result<string, string> {\nif x == 0 {\nOk(\"zero\")\n} else {\nif x > 0 {\nif x % 2 == 0 { Ok(\"positive even\") } else { Ok(\"positive odd\") }\n} else {\nErr(\"negative\")\n}\n}\n}");
+}
+
+#[test]
+fn test_type_check_v46_7() {
+    check_no_errors("struct Point6 { x: number, y: number, z: number }\nfn translate3(p: Point6, dx: number, dy: number, dz: number) -> Point6 {\nPoint6 { x: p.x + dx, y: p.y + dy, z: p.z + dz }\n}");
+}
+
+#[test]
+fn test_type_check_v46_8() {
+    check_no_errors("enum Relation { Parent, Child, Sibling, Spouse }\nfn is_ancestor(r: Relation) -> bool {\nmatch r {\nRelation::Parent => true\nRelation::Child => false\nRelation::Sibling => false\nRelation::Spouse => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v46_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 1..x {\nsum = sum + if i % 3 == 0 && i % 5 == 0 { i * 15 } else { i }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v46_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 0;\nlet b = 1;\nfor i in 0..x {\nlet c = a + b;\na = b;\nb = c\n};\na\n}");
+}
