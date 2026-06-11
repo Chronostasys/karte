@@ -5958,3 +5958,53 @@ fn test_type_check_v29_9() {
 fn test_type_check_v29_10() {
     check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nlet i = x;\nwhile i > 0 {\nsum = sum + i % 10;\ni = i / 10\n};\nsum\n}");
 }
+
+#[test]
+fn test_type_check_v30_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet y = x + 3;\ny * y - 9\n}");
+}
+
+#[test]
+fn test_type_check_v30_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet count = 0;\nfor i in 0..x {\nif i % 2 != 0 && i % 3 != 0 {\ncount = count + 1\n}\n};\ncount\n}");
+}
+
+#[test]
+fn test_type_check_v30_3() {
+    check_no_errors("struct Score { player: string, points: number }\nfn is_winning(s: Score) -> bool { s.points > 100 }");
+}
+
+#[test]
+fn test_type_check_v30_4() {
+    check_no_errors("enum Priority { Low, Medium, High, Critical }\nfn is_urgent(p: Priority) -> bool {\nmatch p {\nPriority::Low => false\nPriority::Medium => false\nPriority::High => true\nPriority::Critical => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v30_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x >= 1 && x <= 10 {\nif x <= 5 { Some(x * 2) } else { Some(x * 3) }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v30_6() {
+    check_no_errors("fn f(x: number) -> Result<bool, string> {\nif x == 0 { Ok(false) } else { if x > 0 { Ok(true) } else { Err(\"negative\") } }\n}");
+}
+
+#[test]
+fn test_type_check_v30_7() {
+    check_no_errors("struct Vector3 { x: number, y: number, z: number }\nfn dot(a: Vector3, b: Vector3) -> number { a.x * b.x + a.y * b.y + a.z * b.z }");
+}
+
+#[test]
+fn test_type_check_v30_8() {
+    check_no_errors("enum Token2 { Number2(number), Ident(string), EOF }\nfn is_eof(t: Token2) -> bool {\nmatch t {\nToken2::Number2(_) => false\nToken2::Ident(_) => false\nToken2::EOF => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v30_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 1..x {\nresult = result + i * (i + 1) / 2\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_v30_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet reversed = 0;\nlet n = x;\nwhile n > 0 {\nreversed = reversed * 10 + n % 10;\nn = n / 10\n};\nreversed\n}");
+}
