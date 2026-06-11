@@ -6008,3 +6008,53 @@ fn test_type_check_v30_9() {
 fn test_type_check_v30_10() {
     check_no_errors("fn f(x: number) -> number {\nlet reversed = 0;\nlet n = x;\nwhile n > 0 {\nreversed = reversed * 10 + n % 10;\nn = n / 10\n};\nreversed\n}");
 }
+
+#[test]
+fn test_type_check_v31_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 2;\nlet b = a + 1;\nlet c = b * b - b;\nc\n}");
+}
+
+#[test]
+fn test_type_check_v31_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i % 2 == 0 {\nsum = sum + i * i\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v31_3() {
+    check_no_errors("struct Point5 { x: number, y: number }\nfn distance_sq(a: Point5, b: Point5) -> number {\nlet dx = a.x - b.x;\nlet dy = a.y - b.y;\ndx * dx + dy * dy\n}");
+}
+
+#[test]
+fn test_type_check_v31_4() {
+    check_no_errors("enum Direction2 { North, South, East, West }\nfn opposite(d: Direction2) -> Direction2 {\nmatch d {\nDirection2::North => Direction2::South\nDirection2::South => Direction2::North\nDirection2::East => Direction2::West\nDirection2::West => Direction2::East\n}\n}");
+}
+
+#[test]
+fn test_type_check_v31_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 100 {\nif x > 200 { Some(x / 100) } else { Some(x - 100) }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v31_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x < 0 {\nErr(\"negative\")\n} else {\nif x == 0 {\nOk(1)\n} else {\nOk(x * 2 + 1)\n}\n}\n}");
+}
+
+#[test]
+fn test_type_check_v31_7() {
+    check_no_errors("struct Rational { num: number, den: number }\nfn is_whole(r: Rational) -> bool { r.num % r.den == 0 }\nfn to_float(r: Rational) -> number { r.num / r.den }");
+}
+
+#[test]
+fn test_type_check_v31_8() {
+    check_no_errors("enum Grade { A, B, C, D, F }\nfn passing(g: Grade) -> bool {\nmatch g {\nGrade::A => true\nGrade::B => true\nGrade::C => true\nGrade::D => true\nGrade::F => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v31_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + (2 * i + 1)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v31_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 1;\nlet i = 1;\nwhile i <= x {\nresult = result * i;\ni = i + 2\n};\nresult\n}");
+}
