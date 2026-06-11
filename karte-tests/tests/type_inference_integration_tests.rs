@@ -4808,3 +4808,53 @@ fn test_type_check_v6_9() {
 fn test_type_check_v6_10() {
     check_no_errors("fn f(x: number) -> number {\nlet prev = 0;\nlet curr = 1;\nfor i in 0..x {\nlet next = prev + curr;\nprev = curr;\ncurr = next\n};\nprev\n}");
 }
+
+#[test]
+fn test_type_check_v7_1() {
+    check_no_errors("fn f(x: number) -> number {\nmatch x {\n0 => 0\n1 => 1\n2 => 2\n3 => 3\n4 => 4\n5 => 5\n_ => x\n}\n}");
+}
+
+#[test]
+fn test_type_check_v7_2() {
+    check_no_errors("fn f(x: number) -> string {\nif x > 90 { \"A\" } else {\nif x > 80 { \"B\" } else {\nif x > 70 { \"C\" } else {\nif x > 60 { \"D\" } else { \"F\" }\n}\n}\n}\n}");
+}
+
+#[test]
+fn test_type_check_v7_3() {
+    check_no_errors("struct Point3D { x: number, y: number, z: number }\nfn distance(a: Point3D, b: Point3D) -> number {\nlet dx = a.x - b.x;\nlet dy = a.y - b.y;\nlet dz = a.z - b.z;\ndx * dx + dy * dy + dz * dz\n}");
+}
+
+#[test]
+fn test_type_check_v7_4() {
+    check_no_errors("enum Temperature { Celsius(number), Fahrenheit(number) }\nfn to_celsius(t: Temperature) -> number {\nmatch t {\nTemperature::Celsius(c) => c\nTemperature::Fahrenheit(f) => (f - 32) * 5 / 9\n}\n}");
+}
+
+#[test]
+fn test_type_check_v7_5() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 1;\nfor i in 2..x {\nresult = result * i\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_v7_6() {
+    check_no_errors("struct Rational { numerator: number, denominator: number }\nfn add_rational(a: Rational, b: Rational) -> Rational {\nRational { numerator: a.numerator * b.denominator + b.numerator * a.denominator, denominator: a.denominator * b.denominator }\n}");
+}
+
+#[test]
+fn test_type_check_v7_7() {
+    check_no_errors("enum Operation { Add, Sub, Mul, Div }\nfn apply_op(op: Operation, a: number, b: number) -> number {\nmatch op {\nOperation::Add => a + b\nOperation::Sub => a - b\nOperation::Mul => a * b\nOperation::Div => a / b\n}\n}");
+}
+
+#[test]
+fn test_type_check_v7_8() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 1..x {\nsum = sum + i * i\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v7_9() {
+    check_no_errors("struct Polar { r: number, theta: number }\nfn to_x(p: Polar) -> number {\np.r\n}\nfn to_y(p: Polar) -> number {\np.r\n}");
+}
+
+#[test]
+fn test_type_check_v7_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet prev = 0;\nlet curr = 1;\nlet i = 0;\nwhile i < x {\nlet temp = prev + curr;\nprev = curr;\ncurr = temp;\ni = i + 1\n};\nprev\n}");
+}
