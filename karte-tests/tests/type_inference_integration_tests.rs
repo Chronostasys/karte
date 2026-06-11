@@ -6658,3 +6658,53 @@ fn test_type_check_v43_9() {
 fn test_type_check_v43_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = 1;\nfor i in 1..x {\nresult = result * 2\n};\nresult\n}");
 }
+
+#[test]
+fn test_type_check_v44_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 3;\nlet b = a + 1;\nb * b - 1\n}");
+}
+
+#[test]
+fn test_type_check_v44_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + if i > 5 { i - 5 } else { 0 }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v44_3() {
+    check_no_errors("struct Velocity { dx: number, dy: number, dz: number }\nfn speed_sq(v: Velocity) -> number { v.dx * v.dx + v.dy * v.dy + v.dz * v.dz }\nfn is_stationary(v: Velocity) -> bool { speed_sq(v) == 0 }");
+}
+
+#[test]
+fn test_type_check_v44_4() {
+    check_no_errors("enum Protocol { TCP, UDP, ICMP }\nfn is_reliable(p: Protocol) -> bool {\nmatch p {\nProtocol::TCP => true\nProtocol::UDP => false\nProtocol::ICMP => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v44_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet sq = x * x;\nif sq > 0 && sq < 10000 { Some(sq) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v44_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x == 0 {\nErr(\"zero\")\n} else {\nif x < 0 {\nOk(0 - x)\n} else {\nOk(x)\n}\n}\n}");
+}
+
+#[test]
+fn test_type_check_v44_7() {
+    check_no_errors("struct Triangle4 { base: number, height: number }\nfn area7(t: Triangle4) -> number { t.base * t.height / 2 }\nfn is_degenerate(t: Triangle4) -> bool { t.base == 0 || t.height == 0 }");
+}
+
+#[test]
+fn test_type_check_v44_8() {
+    check_no_errors("enum Pattern3 { Singleton, Factory, Observer, Strategy }\nfn is_creational(p: Pattern3) -> bool {\nmatch p {\nPattern3::Singleton => true\nPattern3::Factory => true\nPattern3::Observer => false\nPattern3::Strategy => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v44_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nfor j in 0..3 {\nsum = sum + i * j\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v44_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 1;\nwhile i * i <= x {\nresult = i;\ni = i + 1\n};\nresult\n}");
+}
