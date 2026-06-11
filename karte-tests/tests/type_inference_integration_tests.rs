@@ -5208,3 +5208,53 @@ fn test_type_check_v14_9() {
 fn test_type_check_v14_10() {
     check_no_errors("fn f(a: number, b: number, c: number) -> number {\nlet max = if a > b {\nif a > c { a } else { c }\n} else {\nif b > c { b } else { c }\n};\nmax\n}");
 }
+
+#[test]
+fn test_type_check_v15_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 1;\nlet b = a * 2;\nlet c = b - 1;\nlet d = c / 2;\nlet e = d + 3;\ne\n}");
+}
+
+#[test]
+fn test_type_check_v15_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 0..x {\nresult = result + if i % 2 == 0 { i * i } else { i * i * i }\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_v15_3() {
+    check_no_errors("struct Student2 { id: number, score: number }\nfn honors(s: Student2) -> bool {\ns.score >= 90\n}\nfn pass(s: Student2) -> bool {\ns.score >= 60\n}");
+}
+
+#[test]
+fn test_type_check_v15_4() {
+    check_no_errors("enum Gas { Solid, Liquid, Gas2 }\nfn can_flow(g: Gas) -> bool {\nmatch g {\nGas::Solid => false\nGas::Liquid => true\nGas::Gas2 => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v15_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nmatch x {\n0 => None\nn => if n > 0 { Some(n) } else { None }\n}\n}");
+}
+
+#[test]
+fn test_type_check_v15_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x == 0 {\nErr(\"division by zero\")\n} else {\nOk(100 / x)\n}\n}");
+}
+
+#[test]
+fn test_type_check_v15_7() {
+    check_no_errors("struct Line2 { start: number, end: number }\nfn length(l: Line2) -> number {\nl.end - l.start\n}\nfn is_point(l: Line2) -> bool {\nl.start == l.end\n}");
+}
+
+#[test]
+fn test_type_check_v15_8() {
+    check_no_errors("enum Card2 { Heart(number), Spade(number) }\nfn value2(c: Card2) -> number {\nmatch c {\nCard2::Heart(x) => x\nCard2::Spade(x) => x\n}\n}\nfn is_heart(c: Card2) -> bool {\nmatch c {\nCard2::Heart(_) => true\nCard2::Spade(_) => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v15_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet count = 0;\nlet n = x;\nwhile n > 1 {\ncount = count + 1;\nn = n / 2\n};\ncount\n}");
+}
+
+#[test]
+fn test_type_check_v15_10() {
+    check_no_errors("fn f(a: number, b: number, c: number) -> number {\nlet min = if a < b {\nif a < c { a } else { c }\n} else {\nif b < c { b } else { c }\n};\nmin\n}");
+}
