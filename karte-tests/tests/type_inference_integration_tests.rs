@@ -4558,3 +4558,53 @@ fn test_type_check_edge_9() {
 fn test_type_check_edge_10() {
     check_no_errors("struct Pair { fst: number, snd: number }\nfn f(p: Pair) -> Pair {\nlet a = p.fst;\nlet b = p.snd;\nPair { fst: b, snd: a }\n}");
 }
+
+#[test]
+fn test_type_check_final_v2_1() {
+    check_no_errors("fn add(a: number, b: number) -> number { a + b }\nfn mul(a: number, b: number) -> number { a * b }\nfn main() -> number {\nadd(mul(2, 3), mul(4, 5))\n}");
+}
+
+#[test]
+fn test_type_check_final_v2_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet y = if x > 0 { x } else { 0 - x };\nlet z = y * y;\nz\n}");
+}
+
+#[test]
+fn test_type_check_final_v2_3() {
+    check_no_errors("struct Point { x: number, y: number }\nfn midpoint(a: Point, b: Point) -> Point {\nPoint { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }\n}");
+}
+
+#[test]
+fn test_type_check_final_v2_4() {
+    check_no_errors("enum TrafficLight { Red, Yellow, Green }\nfn next_light(l: TrafficLight) -> TrafficLight {\nmatch l {\nTrafficLight::Red => TrafficLight::Green\nTrafficLight::Green => TrafficLight::Yellow\nTrafficLight::Yellow => TrafficLight::Red\n}\n}");
+}
+
+#[test]
+fn test_type_check_final_v2_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nif x > 100 { None } else { Some(x) }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_final_v2_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x >= 0 {\nif x <= 100 { Ok(x) } else { Err(\"too large\") }\n} else {\nErr(\"negative\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_final_v2_7() {
+    check_no_errors("struct Vec2 { x: number, y: number }\nfn add_vec(a: Vec2, b: Vec2) -> Vec2 {\nVec2 { x: a.x + b.x, y: a.y + b.y }\n}\nfn scale_vec(v: Vec2, s: number) -> Vec2 {\nVec2 { x: v.x * s, y: v.y * s }\n}");
+}
+
+#[test]
+fn test_type_check_final_v2_8() {
+    check_no_errors("enum Expr { Val(number), Add(number, number), Mul(number, number) }\nfn eval(e: Expr) -> number {\nmatch e {\nExpr::Val(n) => n\nExpr::Add(a, b) => a + b\nExpr::Mul(a, b) => a * b\n}\n}");
+}
+
+#[test]
+fn test_type_check_final_v2_9() {
+    check_no_errors("fn f(n: number) -> number {\nlet result = 0;\nfor i in 1..n {\nif i % 3 == 0 {\nresult = result + i\n} else {\nif i % 5 == 0 {\nresult = result + i\n}\n}\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_final_v2_10() {
+    check_no_errors("struct Rectangle { width: number, height: number }\nfn area(r: Rectangle) -> number { r.width * r.height }\nfn bigger(a: Rectangle, b: Rectangle) -> Rectangle {\nif area(a) > area(b) { a } else { b }\n}");
+}
