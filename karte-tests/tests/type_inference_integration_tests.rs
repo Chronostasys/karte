@@ -5858,3 +5858,53 @@ fn test_type_check_v27_9() {
 fn test_type_check_v27_10() {
     check_no_errors("fn f(x: number) -> number {\nlet prev = 0;\nlet curr = 1;\nfor i in 0..x {\nlet next = prev + curr;\nprev = curr;\ncurr = next\n};\ncurr\n}");
 }
+
+#[test]
+fn test_type_check_v28_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x;\nlet b = a + 2;\nlet c = b * b;\nc - a\n}");
+}
+
+#[test]
+fn test_type_check_v28_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 1..x {\nif i % 6 == 0 {\nsum = sum + i\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v28_3() {
+    check_no_errors("struct Record { key: string, value: number }\nfn is_valid(r: Record) -> bool { r.value > 0 }");
+}
+
+#[test]
+fn test_type_check_v28_4() {
+    check_no_errors("enum Mode { Read2, Write2, ReadWrite }\nfn can_write(m: Mode) -> bool {\nmatch m {\nMode::Read2 => false\nMode::Write2 => true\nMode::ReadWrite => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v28_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 && x < 1000 {\nif x % 10 == 0 { None } else { Some(x) }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v28_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x == 0 {\nErr(\"zero\")\n} else {\nif x < 0 {\nOk(0 - x)\n} else {\nOk(x * 2)\n}\n}\n}");
+}
+
+#[test]
+fn test_type_check_v28_7() {
+    check_no_errors("struct Rect2 { x: number, y: number, w: number, h: number }\nfn area4(r: Rect2) -> number { r.w * r.h }\nfn contains_point2(r: Rect2, px: number, py: number) -> bool { px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h }");
+}
+
+#[test]
+fn test_type_check_v28_8() {
+    check_no_errors("enum Expr3 { Lit(number), Add3(number, number), Sub(number, number) }\nfn eval3(e: Expr3) -> number {\nmatch e {\nExpr3::Lit(n) => n\nExpr3::Add3(a, b) => a + b\nExpr3::Sub(a, b) => a - b\n}\n}");
+}
+
+#[test]
+fn test_type_check_v28_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nfor j in 0..x {\nif i == j {\nsum = sum + 1\n}\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v28_10() {
+    check_no_errors("fn f(x: number, y: number) -> number {\nlet a = x;\nlet b = y;\nwhile b != 0 {\nlet temp = b;\nb = a % b;\na = temp\n};\na\n}");
+}
