@@ -4858,3 +4858,53 @@ fn test_type_check_v7_9() {
 fn test_type_check_v7_10() {
     check_no_errors("fn f(x: number) -> number {\nlet prev = 0;\nlet curr = 1;\nlet i = 0;\nwhile i < x {\nlet temp = prev + curr;\nprev = curr;\ncurr = temp;\ni = i + 1\n};\nprev\n}");
 }
+
+#[test]
+fn test_type_check_v8_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet y = x;\nwhile y > 0 {\ny = y - 1\n};\ny\n}");
+}
+
+#[test]
+fn test_type_check_v8_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 0..x {\nresult = result + i * i * i\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_v8_3() {
+    check_no_errors("struct Student { name: string, score: number }\nfn passed(s: Student) -> bool {\ns.score >= 60\n}");
+}
+
+#[test]
+fn test_type_check_v8_4() {
+    check_no_errors("enum Animal { Dog, Cat, Bird, Fish }\nfn sound(a: Animal) -> string {\nmatch a {\nAnimal::Dog => \"woof\"\nAnimal::Cat => \"meow\"\nAnimal::Bird => \"tweet\"\nAnimal::Fish => \"glub\"\n}\n}");
+}
+
+#[test]
+fn test_type_check_v8_5() {
+    check_no_errors("fn f(x: number) -> Option<string> {\nmatch x {\n0 => None\n_ => Some(\"found\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v8_6() {
+    check_no_errors("fn f(x: number) -> Result<string, string> {\nif x > 0 {\nOk(\"positive\")\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v8_7() {
+    check_no_errors("struct Quaternion { w: number, x: number, y: number, z: number }\nfn conjugate(q: Quaternion) -> Quaternion {\nQuaternion { w: q.w, x: 0 - q.x, y: 0 - q.y, z: 0 - q.z }\n}");
+}
+
+#[test]
+fn test_type_check_v8_8() {
+    check_no_errors("enum Instruction { Load(number), Store(number), Add(number) }\nfn execute(inst: Instruction) -> number {\nmatch inst {\nInstruction::Load(x) => x\nInstruction::Store(x) => x\nInstruction::Add(x) => x\n}\n}");
+}
+
+#[test]
+fn test_type_check_v8_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet max = x;\nfor i in 0..100 {\nif i > max {\nmax = i\n}\n};\nmax\n}");
+}
+
+#[test]
+fn test_type_check_v8_10() {
+    check_no_errors("fn f(a: number, b: number) -> number {\nlet x = a;\nlet y = b;\nwhile y != 0 {\nlet temp = y;\ny = x % y;\nx = temp\n};\nx\n}");
+}
