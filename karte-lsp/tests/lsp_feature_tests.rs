@@ -3111,3 +3111,93 @@ fn test_analyze_valid_v26_cloud() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_v29_planet() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Planet { Mercury, Venus, Earth, Mars }\nfn is_habitable(p: Planet) -> bool {\nmatch p {\nPlanet::Mercury => false\nPlanet::Venus => false\nPlanet::Earth => true\nPlanet::Mars => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v29_circle3() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Circle3 { cx: number, cy: number, r: number }\nfn area(c: Circle3) -> number { 3 * c.r * c.r }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v30_priority() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Priority { Low, Medium, High, Critical }\nfn is_urgent(p: Priority) -> bool {\nmatch p {\nPriority::Low => false\nPriority::Medium => false\nPriority::High => true\nPriority::Critical => true\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v30_vector3() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Vector3 { x: number, y: number, z: number }\nfn dot(a: Vector3, b: Vector3) -> number { a.x * b.x + a.y * b.y + a.z * b.z }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v30_token2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Token2 { Number2(number), Ident(string), EOF }\nfn is_eof(t: Token2) -> bool {\nmatch t {\nToken2::Number2(_) => false\nToken2::Ident(_) => false\nToken2::EOF => true\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v30_reverse() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet reversed = 0;\nlet n = x;\nwhile n > 0 {\nreversed = reversed * 10 + n % 10;\nn = n / 10\n};\nreversed\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v29_digit_sum() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet sum = 0;\nlet i = x;\nwhile i > 0 {\nsum = sum + i % 10;\ni = i / 10\n};\nsum\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v28_record() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Record { key: string, value: number }\nfn is_valid(r: Record) -> bool { r.value > 0 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v25_employee() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Employee { name: string, salary: number }\nfn is_high_earner(e: Employee) -> bool { e.salary > 100000 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v24_coord() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Coord { lat: number, lon: number }\nfn is_north(c: Coord) -> bool { c.lat > 0 }\nfn is_east(c: Coord) -> bool { c.lon > 0 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
