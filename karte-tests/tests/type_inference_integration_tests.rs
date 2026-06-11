@@ -4258,3 +4258,53 @@ fn test_type_check_char_1() {
 fn test_type_check_char_2() {
     check_no_errors("fn f() -> number {\nlet c = 'A';\nlet d = 'B';\nc + d\n}");
 }
+
+#[test]
+fn test_type_check_closure_1() {
+    check_no_errors("fn f() -> number {\nlet add = |a: number, b: number| -> number { a + b };\nadd(1, 2)\n}");
+}
+
+#[test]
+fn test_type_check_closure_2() {
+    check_no_errors("fn f() -> number {\nlet double = |x: number| -> number { x * 2 };\ndouble(21)\n}");
+}
+
+#[test]
+fn test_type_check_closure_3() {
+    check_no_errors("fn f(x: number) -> number {\nlet inc = |n: number| -> number { n + 1 };\ninc(x)\n}");
+}
+
+#[test]
+fn test_type_check_closure_4() {
+    check_no_errors("fn f() -> number {\nlet add = |a: number, b: number| -> number { a + b };\nlet mul = |a: number, b: number| -> number { a * b };\nadd(mul(2, 3), 4)\n}");
+}
+
+#[test]
+fn test_type_check_closure_5() {
+    check_no_errors("fn f(x: number) -> number {\nlet transform = |n: number| -> number {\nif n > 0 { n * 2 } else { n }\n};\ntransform(x)\n}");
+}
+
+#[test]
+fn test_type_check_closure_6() {
+    check_no_errors("fn f() -> bool {\nlet is_positive = |x: number| -> bool { x > 0 };\nis_positive(42)\n}");
+}
+
+#[test]
+fn test_type_check_closure_7() {
+    check_no_errors("fn f(x: number) -> number {\nlet apply = |f: fn(number) -> number, x: number| -> number { f(x) };\nlet double = |n: number| -> number { n * 2 };\napply(double, x)\n}");
+}
+
+#[test]
+fn test_type_check_tuple_1() {
+    check_no_errors("struct Pair { a: number, b: number }\nfn f() -> number {\nlet p = Pair { a: 1, b: 2 };\np.a + p.b\n}");
+}
+
+#[test]
+fn test_type_check_tuple_2() {
+    check_no_errors("struct Triple { x: number, y: number, z: number }\nfn f() -> number {\nlet t = Triple { x: 1, y: 2, z: 3 };\nt.x + t.y + t.z\n}");
+}
+
+#[test]
+fn test_type_check_tuple_3() {
+    check_no_errors("struct Pair { a: number, b: number }\nfn swap(p: Pair) -> Pair {\nPair { a: p.b, b: p.a }\n}");
+}
