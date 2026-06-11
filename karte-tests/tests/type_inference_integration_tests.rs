@@ -8208,3 +8208,53 @@ fn test_type_check_v74_9() {
 fn test_type_check_v74_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + if i % 3 == 0 { i * 2 } else { i };\ni = i + 1\n};\nresult\n}");
 }
+
+#[test]
+fn test_type_check_v75_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 4 + 3;\nlet b = a * a - 9;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v75_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 100 {\nsum = sum + (i - 100) * (i - 100)\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v75_3() {
+    check_no_errors("struct Impedance { ohms: number }\nfn to_kohm(i: Impedance) -> number { i.ohms / 1000 }\nfn is_capacitive(i: Impedance) -> bool { i.ohms < 0 }");
+}
+
+#[test]
+fn test_type_check_v75_4() {
+    check_no_errors("enum Flavor { Sweet, Sour, Salty, Bitter, Umami }\nfn is_savory(f: Flavor) -> bool {\nmatch f {\nFlavor::Sweet => false\nFlavor::Sour => false\nFlavor::Salty => true\nFlavor::Bitter => false\nFlavor::Umami => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v75_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet thirteenth = x / 13;\nif thirteenth > 0 { Some(thirteenth) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v75_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 800 { Err(\"overflow\") } else { Ok(x * 7) }\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v75_7() {
+    check_no_errors("struct Frustum { r1: number, r2: number, h: number }\nfn approx_vol(f: Frustum) -> number { (f.r1 * f.r1 + f.r2 * f.r2) * f.h }\nfn is_cone_like(f: Frustum) -> bool { f.r1 > f.r2 * 3 }");
+}
+
+#[test]
+fn test_type_check_v75_8() {
+    check_no_errors("enum Planet { Mercury, Venus, Earth, Mars, Jupiter, Saturn }\nfn is_rocky(p: Planet) -> bool {\nmatch p {\nPlanet::Mercury => true\nPlanet::Venus => true\nPlanet::Earth => true\nPlanet::Mars => true\nPlanet::Jupiter => false\nPlanet::Saturn => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v75_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + i * i * i + 3 * i * i + 3 * i + 1\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v75_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 7;\nlet b = 11;\nfor i in 0..x {\nlet c = a + b;\na = b;\nb = c\n};\nb\n}");
+}
