@@ -5808,3 +5808,53 @@ fn test_type_check_v26_9() {
 fn test_type_check_v26_10() {
     check_no_errors("fn f(x: number) -> number {\nlet prev = 0;\nlet curr = 1;\nfor i in 0..x {\nlet next = prev + curr;\nprev = curr;\ncurr = next\n};\nprev + curr\n}");
 }
+
+#[test]
+fn test_type_check_v27_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 2;\nlet b = a * 3;\nb - a\n}");
+}
+
+#[test]
+fn test_type_check_v27_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + if i % 4 == 0 { i } else { 0 }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v27_3() {
+    check_no_errors("struct Account { balance: number }\nfn is_positive(a: Account) -> bool { a.balance > 0 }\nfn is_overdrawn(a: Account) -> bool { a.balance < 0 }");
+}
+
+#[test]
+fn test_type_check_v27_4() {
+    check_no_errors("enum Color3 { Red2, Green2, Blue2 }\nfn is_primary(c: Color3) -> bool {\nmatch c {\nColor3::Red2 => true\nColor3::Green2 => true\nColor3::Blue2 => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v27_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x == 42 { None } else { if x > 0 { Some(x) } else { None } }\n}");
+}
+
+#[test]
+fn test_type_check_v27_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x == 1 { Ok(1) } else { if x > 1 { Ok(x * x) } else { Err(\"invalid\") } }\n}");
+}
+
+#[test]
+fn test_type_check_v27_7() {
+    check_no_errors("struct Segment { start: number, end: number }\nfn length2(s: Segment) -> number { s.end - s.start }\nfn contains3(s: Segment, x: number) -> bool { x >= s.start && x <= s.end }");
+}
+
+#[test]
+fn test_type_check_v27_8() {
+    check_no_errors("enum Shape3 { Circle3(number), Square3(number) }\nfn area3(s: Shape3) -> number {\nmatch s {\nShape3::Circle3(r) => 3 * r * r\nShape3::Square3(side) => side * side\n}\n}");
+}
+
+#[test]
+fn test_type_check_v27_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 1..x {\nsum = sum + i * (x - i + 1)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v27_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet prev = 0;\nlet curr = 1;\nfor i in 0..x {\nlet next = prev + curr;\nprev = curr;\ncurr = next\n};\ncurr\n}");
+}
