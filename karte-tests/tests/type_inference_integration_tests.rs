@@ -4708,3 +4708,53 @@ fn test_type_check_v4_9() {
 fn test_type_check_v4_10() {
     check_no_errors("fn f(n: number) -> number {\nlet a = 0;\nlet b = 1;\nfor i in 0..n {\nlet temp = b;\nb = a + b;\na = temp\n};\na\n}");
 }
+
+#[test]
+fn test_type_check_v5_1() {
+    check_no_errors("fn f(x: number, y: number) -> number {\nlet sum = x + y;\nlet diff = x - y;\nlet prod = sum * diff;\nprod\n}");
+}
+
+#[test]
+fn test_type_check_v5_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x;\nlet b = a + 1;\nlet c = b * 2;\nlet d = c - 3;\nd\n}");
+}
+
+#[test]
+fn test_type_check_v5_3() {
+    check_no_errors("fn f(x: number) -> bool {\nlet a = x > 0;\nlet b = x < 100;\nlet c = x != 50;\na && b && c\n}");
+}
+
+#[test]
+fn test_type_check_v5_4() {
+    check_no_errors("struct Time { hour: number, minute: number }\nfn to_minutes(t: Time) -> number {\nt.hour * 60 + t.minute\n}\nfn is_morning(t: Time) -> bool {\nt.hour < 12\n}");
+}
+
+#[test]
+fn test_type_check_v5_5() {
+    check_no_errors("enum Suit { Hearts, Diamonds, Clubs, Spades }\nfn is_red(s: Suit) -> bool {\nmatch s {\nSuit::Hearts => true\nSuit::Diamonds => true\nSuit::Clubs => false\nSuit::Spades => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v5_6() {
+    check_no_errors("fn f(x: number) -> number {\nlet total = 0;\nfor i in 0..x {\ntotal = total + if i % 2 == 0 { i * i } else { 0 }\n};\ntotal\n}");
+}
+
+#[test]
+fn test_type_check_v5_7() {
+    check_no_errors("fn f(items: number) -> number {\nlet count = 0;\nfor i in 0..items {\nif i % 3 == 0 || i % 5 == 0 {\ncount = count + i\n}\n};\ncount\n}");
+}
+
+#[test]
+fn test_type_check_v5_8() {
+    check_no_errors("struct Fraction { num: number, den: number }\nfn multiply(a: Fraction, b: Fraction) -> Fraction {\nFraction { num: a.num * b.num, den: a.den * b.den }\n}");
+}
+
+#[test]
+fn test_type_check_v5_9() {
+    check_no_errors("enum Logic { And, Or, Not }\nfn apply(op: Logic, a: bool, b: bool) -> bool {\nmatch op {\nLogic::And => a && b\nLogic::Or => a || b\nLogic::Not => !a\n}\n}");
+}
+
+#[test]
+fn test_type_check_v5_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x;\nlet b = a * a;\nlet c = b + a;\nlet d = c * c;\nd\n}");
+}
