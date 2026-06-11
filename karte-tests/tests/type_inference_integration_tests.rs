@@ -5258,3 +5258,53 @@ fn test_type_check_v15_9() {
 fn test_type_check_v15_10() {
     check_no_errors("fn f(a: number, b: number, c: number) -> number {\nlet min = if a < b {\nif a < c { a } else { c }\n} else {\nif b < c { b } else { c }\n};\nmin\n}");
 }
+
+#[test]
+fn test_type_check_v16_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x;\nlet b = a * a;\nlet c = b + a;\nlet d = c * c;\nlet e = d + c;\ne\n}");
+}
+
+#[test]
+fn test_type_check_v16_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet even_sum = 0;\nlet odd_sum = 0;\nfor i in 0..x {\nif i % 2 == 0 {\neven_sum = even_sum + i\n} else {\nodd_sum = odd_sum + i\n}\n};\neven_sum + odd_sum\n}");
+}
+
+#[test]
+fn test_type_check_v16_3() {
+    check_no_errors("struct Circle2 { cx: number, cy: number, radius: number }\nfn contains_point(c: Circle2, x: number, y: number) -> bool {\nlet dx = x - c.cx;\nlet dy = y - c.cy;\ndx * dx + dy * dy <= c.radius * c.radius\n}");
+}
+
+#[test]
+fn test_type_check_v16_4() {
+    check_no_errors("enum Size { Small, Medium, Large }\nfn price(s: Size) -> number {\nmatch s {\nSize::Small => 5\nSize::Medium => 8\nSize::Large => 12\n}\n}");
+}
+
+#[test]
+fn test_type_check_v16_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 && x < 100 {\nSome(x * x)\n} else {\nif x >= 100 && x < 1000 {\nSome(x)\n} else {\nNone\n}\n}\n}");
+}
+
+#[test]
+fn test_type_check_v16_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x == 0 {\nErr(\"zero\")\n} else {\nif x > 0 {\nOk(x)\n} else {\nOk(0 - x)\n}\n}\n}");
+}
+
+#[test]
+fn test_type_check_v16_7() {
+    check_no_errors("struct Vec4 { x: number, y: number, z: number, w: number }\nfn dot4(a: Vec4, b: Vec4) -> number {\na.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w\n}");
+}
+
+#[test]
+fn test_type_check_v16_8() {
+    check_no_errors("enum Weekday { Mon2, Tue2, Wed2, Thu2, Fri2 }\nfn is_midweek(w: Weekday) -> bool {\nmatch w {\nWeekday::Mon2 => false\nWeekday::Tue2 => true\nWeekday::Wed2 => true\nWeekday::Thu2 => true\nWeekday::Fri2 => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v16_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + i * (i + 1) / 2\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v16_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 1;\nlet b = 1;\nfor i in 2..x {\nlet c = a + b;\na = b;\nb = c\n};\nif x == 0 { 1 } else { b }\n}");
+}
