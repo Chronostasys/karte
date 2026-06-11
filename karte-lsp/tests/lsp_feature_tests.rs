@@ -3201,3 +3201,93 @@ fn test_analyze_valid_v24_coord() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_v31_rational() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Rational { num: number, den: number }\nfn is_whole(r: Rational) -> bool { r.num % r.den == 0 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v31_grade() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Grade { A, B, C, D, F }\nfn passing(g: Grade) -> bool {\nmatch g {\nGrade::A => true\nGrade::B => true\nGrade::C => true\nGrade::D => true\nGrade::F => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v32_complex() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Complex2 { real: number, imag: number }\nfn magnitude_sq(c: Complex2) -> number { c.real * c.real + c.imag * c.imag }\nfn is_real(c: Complex2) -> bool { c.imag == 0 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v32_currency() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Currency { USD, EUR, GBP, JPY }\nfn symbol(c: Currency) -> string {\nmatch c {\nCurrency::USD => \"USD\"\nCurrency::EUR => \"EUR\"\nCurrency::GBP => \"GBP\"\nCurrency::JPY => \"JPY\"\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v33_quaternion() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Quaternion { w: number, x: number, y: number, z: number }\nfn norm_sq(q: Quaternion) -> number { q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v33_weekday() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Weekday2 { Mon, Tue, Wed, Thu, Fri, Sat, Sun }\nfn is_weekend(d: Weekday2) -> bool {\nmatch d {\nWeekday2::Sat => true\nWeekday2::Sun => true\n_ => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v34_vec4() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Vec4 { x: number, y: number, z: number, w: number }\nfn dot4(a: Vec4, b: Vec4) -> number { a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v34_animal() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Animal2 { Dog2, Cat2, Bird2 }\nfn sound(a: Animal2) -> string {\nmatch a {\nAnimal2::Dog2 => \"woof\"\nAnimal2::Cat2 => \"meow\"\nAnimal2::Bird2 => \"tweet\"\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v35_time() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Time2 { hours: number, minutes: number }\nfn total_minutes(t: Time2) -> number { t.hours * 60 + t.minutes }\nfn is_midnight(t: Time2) -> bool { t.hours == 0 && t.minutes == 0 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v35_tree() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Tree2 { Leaf2(number), Branch2(number, number) }\nfn sum_tree(t: Tree2) -> number {\nmatch t {\nTree2::Leaf2(v) => v\nTree2::Branch2(a, b) => a + b\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
