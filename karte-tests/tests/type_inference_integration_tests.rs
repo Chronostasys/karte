@@ -7508,3 +7508,53 @@ fn test_type_check_v60_9() {
 fn test_type_check_v60_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + i * i + i;\ni = i + 1\n};\nresult\n}");
 }
+
+#[test]
+fn test_type_check_v61_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 2;\nlet b = a * 4;\nb - 8\n}");
+}
+
+#[test]
+fn test_type_check_v61_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 7 {\nsum = sum + (i - 7)\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v61_3() {
+    check_no_errors("struct Current2 { amps: number }\nfn to_ma(c: Current2) -> number { c.amps * 1000 }\nfn is_short_circuit(c: Current2) -> bool { c.amps > 100 }");
+}
+
+#[test]
+fn test_type_check_v61_4() {
+    check_no_errors("enum Language3 { Compiled, Interpreted, JIT2 }\nfn needs_runtime(l: Language3) -> bool {\nmatch l {\nLanguage3::Compiled => false\nLanguage3::Interpreted => true\nLanguage3::JIT2 => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v61_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet seventh = x / 7;\nif seventh > 0 { Some(seventh) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v61_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 1000 { Err(\"overflow\") } else { Ok(x * x) }\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v61_7() {
+    check_no_errors("struct Hexagon { side: number }\nfn perimeter4(h: Hexagon) -> number { h.side * 6 }\nfn is_regular2(h: Hexagon) -> bool { h.side > 0 }");
+}
+
+#[test]
+fn test_type_check_v61_8() {
+    check_no_errors("enum Log2 { Debug3, Info3, Warn3, Error4 }\nfn is_error_level(l: Log2) -> bool {\nmatch l {\nLog2::Debug3 => false\nLog2::Info3 => false\nLog2::Warn3 => false\nLog2::Error4 => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v61_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + i * (x - i) * (x - i)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v61_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 0;\nlet b = 1;\nlet sum = 0;\nfor i in 0..x {\nsum = sum + b;\nlet c = a + b;\na = b;\nb = c\n};\nsum\n}");
+}
