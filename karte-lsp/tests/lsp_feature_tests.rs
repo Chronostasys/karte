@@ -4641,3 +4641,93 @@ fn test_analyze_valid_v68_expand2() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_v70_temperature() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Temperature2 { kelvin: number }\nfn to_celsius(t: Temperature2) -> number { t.kelvin - 273 }\nfn to_fahrenheit(t: Temperature2) -> number { (t.kelvin - 273) * 9 / 5 + 32 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v70_platform() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Platform2 { Web, Mobile, Desktop, Embedded }\nfn has_gui(p: Platform2) -> bool {\nmatch p {\nPlatform2::Web => true\nPlatform2::Mobile => true\nPlatform2::Desktop => true\nPlatform2::Embedded => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v70_annulus() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Annulus { r_outer: number, r_inner: number }\nfn approx_area(a: Annulus) -> number { a.r_outer * a.r_outer - a.r_inner * a.r_inner }\nfn is_valid_ring(a: Annulus) -> bool { a.r_outer > a.r_inner }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v70_cipher() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Cipher2 { Caesar, AES, RSA, XOR }\nfn is_symmetric(c: Cipher2) -> bool {\nmatch c {\nCipher2::Caesar => true\nCipher2::AES => true\nCipher2::RSA => false\nCipher2::XOR => true\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v70_cross() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + i * (x - i)\n};\nsum\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v70_odd_while() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + i * 2 + 1;\ni = i + 1\n};\nresult\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v70_square_offset() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 50 {\nsum = sum + (i - 50) * (i - 50)\n}\n};\nsum\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v70_option_tri() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> Option<number> {\nif x > 0 {\nlet tri = x * (x + 1) / 2;\nif tri > 100 { Some(tri) } else { None }\n} else {\nNone\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v70_result_large() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 200 { Err(\"too large\") } else { Ok(x * x + x) }\n} else {\nErr(\"non-positive\")\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v69_expand() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet a = x * 4 - 1;\nlet b = a * a;\nb\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
