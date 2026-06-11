@@ -3831,3 +3831,93 @@ fn test_analyze_valid_v54_ellipse() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_v56_density() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Density2 { mass: number, volume: number }\nfn compute(d: Density2) -> number { d.mass / d.volume }\nfn is_heavy(d: Density2) -> bool { d.mass / d.volume > 5 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v56_cloud() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Cloud2 { Public3, Private3, Hybrid }\nfn is_shared(c: Cloud2) -> bool {\nmatch c {\nCloud2::Public3 => true\nCloud2::Private3 => false\nCloud2::Hybrid => true\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v57_frequency() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Frequency { hz: number }\nfn to_khz(f: Frequency) -> number { f.hz / 1000 }\nfn is_audible(f: Frequency) -> bool { f.hz >= 20 && f.hz <= 20000 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v57_container() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Container2 { List, Vector, Set, Map }\nfn is_ordered(c: Container2) -> bool {\nmatch c {\nContainer2::List => true\nContainer2::Vector => true\nContainer2::Set => false\nContainer2::Map => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v58_force() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Force2 { newtons: number }\nfn to_kilonewtons(f: Force2) -> number { f.newtons / 1000 }\nfn is_strong(f: Force2) -> bool { f.newtons > 1000 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v58_screen() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Screen2 { LCD, OLED, AMOLED, EInk }\nfn has_backlight(s: Screen2) -> bool {\nmatch s {\nScreen2::LCD => true\nScreen2::OLED => false\nScreen2::AMOLED => false\nScreen2::EInk => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v59_acceleration() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Acceleration2 { mps2: number }\nfn to_g(a: Acceleration2) -> number { a.mps2 / 10 }\nfn is_zero_g(a: Acceleration2) -> bool { a.mps2 == 0 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v59_cache() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum CacheLevel { L1, L2, L3, MainMemory }\nfn is_on_chip(c: CacheLevel) -> bool {\nmatch c {\nCacheLevel::L1 => true\nCacheLevel::L2 => true\nCacheLevel::L3 => true\nCacheLevel::MainMemory => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v57_trapezoid() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Trapezoid2 { a: number, b: number, h: number }\nfn area(t: Trapezoid2) -> number { (t.a + t.b) * t.h / 2 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v58_rhombus() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Rhombus2 { d1: number, d2: number }\nfn area(r: Rhombus2) -> number { r.d1 * r.d2 / 2 }\nfn is_square(r: Rhombus2) -> bool { r.d1 == r.d2 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
