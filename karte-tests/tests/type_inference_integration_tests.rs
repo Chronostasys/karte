@@ -5358,3 +5358,53 @@ fn test_type_check_v17_9() {
 fn test_type_check_v17_10() {
     check_no_errors("fn f(x: number) -> number {\nlet product = 1;\nfor i in 1..x {\nproduct = product * (i + 1)\n};\nproduct\n}");
 }
+
+#[test]
+fn test_type_check_v18_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 2;\nlet b = a + 1;\nlet c = b * 3;\nlet d = c - 2;\nd\n}");
+}
+
+#[test]
+fn test_type_check_v18_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + i * i - i\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v18_3() {
+    check_no_errors("struct Rectangle3 { width: number, height: number }\nfn area3(r: Rectangle3) -> number { r.width * r.height }\nfn perimeter3(r: Rectangle3) -> number { 2 * (r.width + r.height) }\nfn is_square3(r: Rectangle3) -> bool { r.width == r.height }");
+}
+
+#[test]
+fn test_type_check_v18_4() {
+    check_no_errors("enum Country { China, USA, Japan, UK }\nfn greeting(c: Country) -> string {\nmatch c {\nCountry::China => \"你好\"\nCountry::USA => \"Hello\"\nCountry::Japan => \"こんにちは\"\nCountry::UK => \"Hello\"\n}\n}");
+}
+
+#[test]
+fn test_type_check_v18_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nlet doubled = x * 2;\nif doubled > 100 { None } else { Some(doubled) }\n}");
+}
+
+#[test]
+fn test_type_check_v18_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x < 0 {\nErr(\"negative\")\n} else {\nif x == 0 {\nOk(0)\n} else {\nOk(x * x)\n}\n}\n}");
+}
+
+#[test]
+fn test_type_check_v18_7() {
+    check_no_errors("struct Point4 { x: number, y: number }\nfn translate2(p: Point4, dx: number, dy: number) -> Point4 {\nPoint4 { x: p.x + dx, y: p.y + dy }\n}\nfn scale2(p: Point4, s: number) -> Point4 {\nPoint4 { x: p.x * s, y: p.y * s }\n}");
+}
+
+#[test]
+fn test_type_check_v18_8() {
+    check_no_errors("enum Status2 { Pending(number), Active(number), Closed(number) }\nfn get_id(s: Status2) -> number {\nmatch s {\nStatus2::Pending(id) => id\nStatus2::Active(id) => id\nStatus2::Closed(id) => id\n}\n}");
+}
+
+#[test]
+fn test_type_check_v18_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 1..x {\nresult = result + i * (x - i)\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_v18_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet prev = 0;\nlet curr = 1;\nlet i = 0;\nwhile i < x {\nlet temp = prev + curr;\nprev = curr;\ncurr = temp;\ni = i + 1\n};\ncurr\n}");
+}
