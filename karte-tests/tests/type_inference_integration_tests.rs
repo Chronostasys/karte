@@ -7308,3 +7308,53 @@ fn test_type_check_v56_9() {
 fn test_type_check_v56_10() {
     check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nlet a = 0;\nlet b = 1;\nfor i in 0..x {\nsum = sum + a;\nlet c = a + b;\na = b;\nb = c\n};\nsum\n}");
 }
+
+#[test]
+fn test_type_check_v57_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 3 + 2;\nlet b = a * a;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v57_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 10 {\nsum = sum + (i - 10) * 2\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v57_3() {
+    check_no_errors("struct Frequency { hz: number }\nfn to_khz(f: Frequency) -> number { f.hz / 1000 }\nfn is_audible(f: Frequency) -> bool { f.hz >= 20 && f.hz <= 20000 }");
+}
+
+#[test]
+fn test_type_check_v57_4() {
+    check_no_errors("enum Container2 { List, Vector, Set, Map }\nfn is_ordered(c: Container2) -> bool {\nmatch c {\nContainer2::List => true\nContainer2::Vector => true\nContainer2::Set => false\nContainer2::Map => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v57_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet sq = x * x;\nif sq > 50 && sq < 500 { Some(sq) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v57_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 50 {\nOk(50)\n} else {\nOk(x)\n}\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v57_7() {
+    check_no_errors("struct Trapezoid2 { a: number, b: number, h: number }\nfn area8(t: Trapezoid2) -> number { (t.a + t.b) * t.h / 2 }\nfn is_triangle_shape(t: Trapezoid2) -> bool { t.a == 0 || t.b == 0 }");
+}
+
+#[test]
+fn test_type_check_v57_8() {
+    check_no_errors("enum Engine2 { V8, V6, Inline4, Electric }\nfn is_combustion(e: Engine2) -> bool {\nmatch e {\nEngine2::V8 => true\nEngine2::V6 => true\nEngine2::Inline4 => true\nEngine2::Electric => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v57_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + i * (x - i)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v57_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 0;\nlet b = 1;\nfor i in 0..x {\nlet c = a + b;\na = b;\nb = c\n};\na * b\n}");
+}
