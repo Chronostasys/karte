@@ -3863,3 +3863,53 @@ fn test_type_check_last_9() {
 fn test_type_check_last_10() {
     check_no_errors("fn f(x: number) -> number {\nlet a = x;\nlet b = a;\na + b\n}");
 }
+
+#[test]
+fn test_type_check_push_1() {
+    check_no_errors("fn f(x: number) -> number {\nmatch x {\n0 => 0\n_ => x\n}\n}");
+}
+
+#[test]
+fn test_type_check_push_2() {
+    check_no_errors("fn f(x: number) -> number {\nif x == 0 { 0 } else { x }\n}");
+}
+
+#[test]
+fn test_type_check_push_3() {
+    check_no_errors("fn f(x: number, y: number) -> number {\nif x > y { x } else { y }\n}");
+}
+
+#[test]
+fn test_type_check_push_4() {
+    check_no_errors("fn f(x: number) -> string {\nlet s = \"value\";\ns\n}");
+}
+
+#[test]
+fn test_type_check_push_5() {
+    check_no_errors("fn f(x: number) -> number {\nlet y = x;\ny = y + 1;\ny = y + 1;\ny\n}");
+}
+
+#[test]
+fn test_type_check_push_6() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 1;\nlet b = 2;\nlet c = 3;\na + b + c + x\n}");
+}
+
+#[test]
+fn test_type_check_push_7() {
+    check_no_errors("struct Circle { radius: number }\nfn circumference(c: Circle) -> number {\n2 * c.radius * 3\n}");
+}
+
+#[test]
+fn test_type_check_push_8() {
+    check_no_errors("enum Day { Mon, Tue, Wed, Thu, Fri, Sat, Sun }\nfn is_weekend(d: Day) -> bool {\nmatch d {\nDay::Sat => true\nDay::Sun => true\n_ => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_push_9() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 100 { None } else { if x < 0 { None } else { Some(x) } }\n}");
+}
+
+#[test]
+fn test_type_check_push_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet total = 0;\nwhile total < x {\ntotal = total + 1\n};\ntotal\n}");
+}
