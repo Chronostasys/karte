@@ -5001,3 +5001,93 @@ fn test_analyze_valid_v73_expand() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_v74_torque() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Torque { newton_meters: number }\nfn to_lbft(t: Torque) -> number { t.newton_meters * 737 / 1000 }\nfn is_strong(t: Torque) -> bool { t.newton_meters > 500 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v74_season() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Season2 { Spring, Summer, Autumn, Winter }\nfn is_warm(s: Season2) -> bool {\nmatch s {\nSeason2::Spring => true\nSeason2::Summer => true\nSeason2::Autumn => false\nSeason2::Winter => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v74_cylinder() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Cylinder { radius: number, height: number }\nfn approx_vol(c: Cylinder) -> number { c.radius * c.radius * c.height * 3 }\nfn is_flat(c: Cylinder) -> bool { c.height < c.radius }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v74_month() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Month2 { Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec }\nfn has_31_days(m: Month2) -> bool {\nmatch m {\nMonth2::Jan => true\nMonth2::Mar => true\nMonth2::May => true\nMonth2::Jul => true\nMonth2::Aug => true\nMonth2::Oct => true\nMonth2::Dec => true\n_ => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v74_triple_consecutive() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + (i + 1) * (i + 2) * (i + 3)\n};\nsum\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v74_cond_3x() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + if i % 3 == 0 { i * 2 } else { i };\ni = i + 1\n};\nresult\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v74_offset_90() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 90 {\nsum = sum + (i - 90)\n}\n};\nsum\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v74_option_twelfth() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> Option<number> {\nif x > 0 {\nlet twelfth = x / 12;\nif twelfth > 0 { Some(twelfth) } else { None }\n} else {\nNone\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v74_result_overflow() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 700 { Err(\"overflow\") } else { Ok(x * 6) }\n} else {\nErr(\"non-positive\")\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v74_expand() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet a = x * 3 + 5;\nlet b = a * a - 25;\nb\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
