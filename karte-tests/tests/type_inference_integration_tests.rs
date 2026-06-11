@@ -4158,3 +4158,53 @@ fn test_type_check_bitwise_9() {
 fn test_type_check_bitwise_10() {
     check_no_errors("fn f(x: number, y: number) -> number {\nlet a = x & y;\nlet b = x | y;\nlet c = x ^ y;\na + b + c\n}");
 }
+
+#[test]
+fn test_type_check_error_code_1() {
+    check_has_errors("fn f() -> number {\nundefined_var\n}");
+}
+
+#[test]
+fn test_type_check_error_code_2() {
+    check_has_errors("fn f() -> number {\nlet x: string = 42;\nx\n}");
+}
+
+#[test]
+fn test_type_check_error_code_3() {
+    check_has_errors("fn f(x: number, y: number, z: number) -> number {\nf(x)\n}");
+}
+
+#[test]
+fn test_type_check_error_code_4() {
+    check_has_errors("struct Foo { x: number }\nfn f() -> Foo {\nFoo { x: 1, y: 2 }\n}");
+}
+
+#[test]
+fn test_type_check_error_code_5() {
+    check_has_errors("struct Foo { x: number }\nfn f() -> Foo {\nFoo { z: 1 }\n}");
+}
+
+#[test]
+fn test_type_check_error_code_6() {
+    check_has_errors("enum Color { Red, Green, Blue }\nfn f(c: Color) -> number {\nmatch c {\nColor::Red => 1\n}\n}");
+}
+
+#[test]
+fn test_type_check_error_code_7() {
+    check_has_errors("fn f() -> number {\nmatch 1 {\n}\n}");
+}
+
+#[test]
+fn test_type_check_error_code_8() {
+    check_has_errors("fn f() -> number {\n42(\"hello\")\n}");
+}
+
+#[test]
+fn test_type_check_error_code_9() {
+    check_has_errors("fn main() -> string {\n\"hello\"\n}");
+}
+
+#[test]
+fn test_type_check_error_code_10() {
+    check_has_errors("fn f(x: number) -> number {\nx.y\n}");
+}
