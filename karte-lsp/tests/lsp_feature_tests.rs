@@ -2931,3 +2931,93 @@ fn test_analyze_valid_v16_bit_count() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_v19_name() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Name { first: string, last: string }\nfn full_name(n: Name) -> string {\nn.first + \" \" + n.last\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v19_language() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Language { Rust, Python, JavaScript, Go }\nfn is_compiled(l: Language) -> bool {\nmatch l {\nLanguage::Rust => true\nLanguage::Go => true\nLanguage::Python => false\nLanguage::JavaScript => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v19_vector() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Vector2D { dx: number, dy: number }\nfn magnitude_sq(v: Vector2D) -> number {\nv.dx * v.dx + v.dy * v.dy\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v19_http() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum HTTP { Get, Post, Put, Delete }\nfn has_body(h: HTTP) -> bool {\nmatch h {\nHTTP::Get => false\nHTTP::Post => true\nHTTP::Put => true\nHTTP::Delete => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v20_transport() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Transport { Walk, Bike, Car, Bus }\nfn speed(t: Transport) -> number {\nmatch t {\nTransport::Walk => 5\nTransport::Bike => 15\nTransport::Car => 60\nTransport::Bus => 30\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v20_box3d() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Box3D { w: number, h: number, d: number }\nfn volume(b: Box3D) -> number { b.w * b.h * b.d }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v21_season() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Season3 { Spring2, Summer2, Autumn2, Winter2 }\nfn temp(s: Season3) -> string {\nmatch s {\nSeason3::Spring2 => \"warm\"\nSeason3::Summer2 => \"hot\"\nSeason3::Autumn2 => \"cool\"\nSeason3::Winter2 => \"cold\"\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v21_matrix() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Matrix3 { a: number, b: number, c: number, d: number }\nfn add_matrix(a: Matrix3, b: Matrix3) -> Matrix3 {\nMatrix3 { a: a.a + b.a, b: a.b + b.b, c: a.c + b.c, d: a.d + b.d }\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v21_config() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Config { Debug, Release }\nfn is_debug(c: Config) -> bool {\nmatch c {\nConfig::Debug => true\nConfig::Release => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v21_person() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Person2 { name: string, age: number }\nfn is_teenager(p: Person2) -> bool {\np.age >= 13 && p.age <= 19\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
