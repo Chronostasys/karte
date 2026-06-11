@@ -5108,3 +5108,53 @@ fn test_type_check_v12_9() {
 fn test_type_check_v12_10() {
     check_no_errors("fn f(x: number, y: number) -> number {\nlet a = x;\nlet b = y;\nfor i in 0..5 {\nlet temp = a + b;\na = b;\nb = temp\n};\nb\n}");
 }
+
+#[test]
+fn test_type_check_v13_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet prev = 0;\nlet curr = 1;\nfor i in 0..x {\nlet next = prev + curr;\nprev = curr;\ncurr = next\n};\nprev\n}");
+}
+
+#[test]
+fn test_type_check_v13_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 1..x {\nif i % 2 == 0 {\nresult = result + i\n}\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_v13_3() {
+    check_no_errors("struct Point { x: number, y: number }\nfn manhattan(a: Point, b: Point) -> number {\nabs(a.x - b.x) + abs(a.y - b.y)\n}");
+}
+
+#[test]
+fn test_type_check_v13_4() {
+    check_no_errors("enum Arrow { Up2, Down2, Left2, Right2 }\nfn horizontal(a: Arrow) -> bool {\nmatch a {\nArrow::Left2 => true\nArrow::Right2 => true\nArrow::Up2 => false\nArrow::Down2 => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v13_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet doubled = x * 2;\nSome(doubled)\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v13_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 100 {\nErr(\"overflow\")\n} else {\nif x < 0 {\nErr(\"underflow\")\n} else {\nOk(x * 2)\n}\n}\n}");
+}
+
+#[test]
+fn test_type_check_v13_7() {
+    check_no_errors("struct Matrix2 { a: number, b: number, c: number, d: number }\nfn trace(m: Matrix2) -> number {\nm.a + m.d\n}\nfn is_identity(m: Matrix2) -> bool {\nm.a == 1 && m.b == 0 && m.c == 0 && m.d == 1\n}");
+}
+
+#[test]
+fn test_type_check_v13_8() {
+    check_no_errors("enum Animal2 { Dog2(number), Cat2(number) }\nfn age(a: Animal2) -> number {\nmatch a {\nAnimal2::Dog2(x) => x\nAnimal2::Cat2(x) => x\n}\n}");
+}
+
+#[test]
+fn test_type_check_v13_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet product = 1;\nfor i in 1..x {\nproduct = product * i\n};\nproduct\n}");
+}
+
+#[test]
+fn test_type_check_v13_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nlet i = 1;\nwhile i <= x {\nsum = sum + i * i;\ni = i + 1\n};\nsum\n}");
+}
