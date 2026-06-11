@@ -5508,3 +5508,53 @@ fn test_type_check_v20_9() {
 fn test_type_check_v20_10() {
     check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 1..x {\nsum = sum + if i % 2 == 0 { i / 2 } else { i }\n};\nsum\n}");
 }
+
+#[test]
+fn test_type_check_v21_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x;\nlet b = a + 1;\nlet c = b * b;\nc\n}");
+}
+
+#[test]
+fn test_type_check_v21_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet positive = 0;\nlet negative = 0;\nfor i in 0..x {\nlet val = i - x / 2;\nif val > 0 {\npositive = positive + 1\n} else {\nnegative = negative + 1\n}\n};\npositive + negative\n}");
+}
+
+#[test]
+fn test_type_check_v21_3() {
+    check_no_errors("struct Person2 { name: string, age: number }\nfn is_teenager(p: Person2) -> bool {\np.age >= 13 && p.age <= 19\n}\nfn greet(p: Person2) -> string {\n\"Hello, \" + p.name\n}");
+}
+
+#[test]
+fn test_type_check_v21_4() {
+    check_no_errors("enum Season3 { Spring2, Summer2, Autumn2, Winter2 }\nfn temp(s: Season3) -> string {\nmatch s {\nSeason3::Spring2 => \"warm\"\nSeason3::Summer2 => \"hot\"\nSeason3::Autumn2 => \"cool\"\nSeason3::Winter2 => \"cold\"\n}\n}");
+}
+
+#[test]
+fn test_type_check_v21_5() {
+    check_no_errors("fn f(x: number) -> Option<string> {\nif x > 0 {\nif x > 50 {\nSome(\"large\")\n} else {\nSome(\"small\")\n}\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v21_6() {
+    check_no_errors("fn f(x: number) -> Result<string, string> {\nif x == 0 {\nOk(\"zero\")\n} else {\nif x > 0 {\nOk(\"positive\")\n} else {\nErr(\"negative\")\n}\n}\n}");
+}
+
+#[test]
+fn test_type_check_v21_7() {
+    check_no_errors("struct Matrix3 { a: number, b: number, c: number, d: number }\nfn add_matrix(a: Matrix3, b: Matrix3) -> Matrix3 {\nMatrix3 { a: a.a + b.a, b: a.b + b.b, c: a.c + b.c, d: a.d + b.d }\n}");
+}
+
+#[test]
+fn test_type_check_v21_8() {
+    check_no_errors("enum Config { Debug, Release }\nfn is_debug(c: Config) -> bool {\nmatch c {\nConfig::Debug => true\nConfig::Release => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v21_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nlet i = 1;\nwhile i * i <= x {\nsum = sum + i * i;\ni = i + 1\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v21_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 1..x {\nresult = result + if i % 3 == 0 { i * 3 } else { i }\n};\nresult\n}");
+}
