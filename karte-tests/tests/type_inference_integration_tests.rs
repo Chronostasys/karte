@@ -6258,3 +6258,53 @@ fn test_type_check_v35_9() {
 fn test_type_check_v35_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + (2 * i + 1) * (2 * i + 1);\ni = i + 1\n};\nresult\n}");
 }
+
+#[test]
+fn test_type_check_v36_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x - 1;\nlet b = a * a + 2 * a + 1;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v36_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nfor j in 0..i {\nfor k in 0..j {\nsum = sum + 1\n}\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v36_3() {
+    check_no_errors("struct Fraction2 { num: number, den: number }\nfn value(f: Fraction2) -> number { f.num / f.den }\nfn is_proper(f: Fraction2) -> bool { f.num < f.den }");
+}
+
+#[test]
+fn test_type_check_v36_4() {
+    check_no_errors("enum Tetromino { I2, O2, T2, S2, Z2, L2, J2 }\nfn rotation_count(t: Tetromino) -> number {\nmatch t {\nTetromino::I2 => 2\nTetromino::O2 => 1\nTetromino::T2 => 4\nTetromino::S2 => 2\nTetromino::Z2 => 2\nTetromino::L2 => 4\nTetromino::J2 => 4\n}\n}");
+}
+
+#[test]
+fn test_type_check_v36_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 10 {\nlet halved = x / 2;\nif halved > 5 { None } else { Some(halved) }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v36_6() {
+    check_no_errors("fn f(x: number) -> Result<string, string> {\nif x > 0 {\nif x > 100 {\nOk(\"large\")\n} else {\nif x > 50 {\nOk(\"medium\")\n} else {\nOk(\"small\")\n}\n}\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v36_7() {
+    check_no_errors("struct AABB { min_x: number, min_y: number, max_x: number, max_y: number }\nfn width2(a: AABB) -> number { a.max_x - a.min_x }\nfn height2(a: AABB) -> number { a.max_y - a.min_y }\nfn area6(a: AABB) -> number { width2(a) * height2(a) }");
+}
+
+#[test]
+fn test_type_check_v36_8() {
+    check_no_errors("enum JSON2 { Null, Num2(number), Str2(string), Bool3(bool) }\nfn is_null(j: JSON2) -> bool {\nmatch j {\nJSON2::Null => true\nJSON2::Num2(_) => false\nJSON2::Str2(_) => false\nJSON2::Bool3(_) => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v36_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + if i % 2 == 0 { i * i } else { i }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v36_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet largest = 0;\nlet n = x;\nwhile n > 0 {\nlet digit = n % 10;\nif digit > largest {\nlargest = digit\n};\nn = n / 10\n};\nlargest\n}");
+}
