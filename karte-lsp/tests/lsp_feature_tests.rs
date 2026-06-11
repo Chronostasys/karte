@@ -4011,3 +4011,93 @@ fn test_analyze_valid_v56_prism() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_v61_current() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Current2 { amps: number }\nfn to_ma(c: Current2) -> number { c.amps * 1000 }\nfn is_short_circuit(c: Current2) -> bool { c.amps > 100 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v61_language() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Language3 { Compiled, Interpreted, JIT2 }\nfn needs_runtime(l: Language3) -> bool {\nmatch l {\nLanguage3::Compiled => false\nLanguage3::Interpreted => true\nLanguage3::JIT2 => true\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v61_hexagon() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Hexagon { side: number }\nfn perimeter(h: Hexagon) -> number { h.side * 6 }\nfn is_regular(h: Hexagon) -> bool { h.side > 0 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v61_log() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Log2 { Debug3, Info3, Warn3, Error4 }\nfn is_error_level(l: Log2) -> bool {\nmatch l {\nLog2::Debug3 => false\nLog2::Info3 => false\nLog2::Warn3 => false\nLog2::Error4 => true\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v62_resistance() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Resistance { ohms: number }\nfn to_kohm(r: Resistance) -> number { r.ohms / 1000 }\nfn is_short(r: Resistance) -> bool { r.ohms == 0 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v62_database() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Database { Postgres, MySQL, SQLite, MongoDB }\nfn is_sql(d: Database) -> bool {\nmatch d {\nDatabase::Postgres => true\nDatabase::MySQL => true\nDatabase::SQLite => true\nDatabase::MongoDB => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v62_octagon() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Octagon { side: number }\nfn perimeter(o: Octagon) -> number { o.side * 8 }\nfn is_regular(o: Octagon) -> bool { o.side > 0 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v62_file_mode() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum FileMode2 { Read4, Write4, ReadWrite2, Append }\nfn can_read(f: FileMode2) -> bool {\nmatch f {\nFileMode2::Read4 => true\nFileMode2::Write4 => false\nFileMode2::ReadWrite2 => true\nFileMode2::Append => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v60_pentagon2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Pentagon { side: number }\nfn perimeter(p: Pentagon) -> number { p.side * 5 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v60_algorithm2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Algorithm2 { BFS, DFS, Dijkstra, AStar }\nfn uses_heuristic(a: Algorithm2) -> bool {\nmatch a {\nAlgorithm2::AStar => true\n_ => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
