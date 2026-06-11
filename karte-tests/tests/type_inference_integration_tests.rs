@@ -7158,3 +7158,53 @@ fn test_type_check_v53_9() {
 fn test_type_check_v53_10() {
     check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nlet n = x;\nwhile n > 0 {\nsum = sum + n % 10 * (n % 10);\nn = n / 10\n};\nsum\n}");
 }
+
+#[test]
+fn test_type_check_v54_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 5;\nlet b = a * 2;\nb - 10\n}");
+}
+
+#[test]
+fn test_type_check_v54_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 0 && i % 2 == 0 {\nsum = sum + i / 2\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v54_3() {
+    check_no_errors("struct Energy { joules: number }\nfn to_kj(e: Energy) -> number { e.joules / 1000 }\nfn to_cal(e: Energy) -> number { e.joules / 4 }\nfn is_positive_energy(e: Energy) -> bool { e.joules > 0 }");
+}
+
+#[test]
+fn test_type_check_v54_4() {
+    check_no_errors("enum Format2 { JSON, XML, YAML, TOML }\nfn is_markup(f: Format2) -> bool {\nmatch f {\nFormat2::JSON => false\nFormat2::XML => true\nFormat2::YAML => false\nFormat2::TOML => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v54_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 5 {\nlet quadrupled = x * 4;\nif quadrupled < 200 { Some(quadrupled) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v54_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 10 {\nOk(x * x)\n} else {\nOk(x + x)\n}\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v54_7() {
+    check_no_errors("struct Ellipse2 { a: number, b: number }\nfn is_circle2(e: Ellipse2) -> bool { e.a == e.b }\nfn eccentricity_sq(e: Ellipse2) -> number { if e.a > e.b { (e.a * e.a - e.b * e.b) / (e.a * e.a) } else { 0 } }");
+}
+
+#[test]
+fn test_type_check_v54_8() {
+    check_no_errors("enum Method2 { GET, POST, PUT, DELETE, PATCH }\nfn has_body2(m: Method2) -> bool {\nmatch m {\nMethod2::GET => false\nMethod2::POST => true\nMethod2::PUT => true\nMethod2::DELETE => false\nMethod2::PATCH => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v54_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + (x - i) * (x - i) * (x - i)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v54_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 3;\nlet b = 5;\nfor i in 0..x {\nlet c = a + b;\na = b;\nb = c\n};\nb\n}");
+}
