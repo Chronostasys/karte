@@ -7908,3 +7908,53 @@ fn test_type_check_v68_9() {
 fn test_type_check_v68_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + i * i * i;\ni = i + 1\n};\nresult\n}");
 }
+
+#[test]
+fn test_type_check_v69_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 4 - 1;\nlet b = a * a;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v69_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 40 && i < 60 {\nsum = sum + (i - 40)\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v69_3() {
+    check_no_errors("struct Power2 { watts: number }\nfn to_kw(p: Power2) -> number { p.watts / 1000 }\nfn to_hp(p: Power2) -> number { p.watts / 746 }");
+}
+
+#[test]
+fn test_type_check_v69_4() {
+    check_no_errors("enum Protocol2 { TCP, UDP, HTTP, WebSocket }\nfn is_reliable(p: Protocol2) -> bool {\nmatch p {\nProtocol2::TCP => true\nProtocol2::UDP => false\nProtocol2::HTTP => true\nProtocol2::WebSocket => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v69_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet halved = x / 2;\nif halved > 10 { Some(halved) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v69_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 500 { Ok(x * 3) } else { Ok(x + 1) }\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v69_7() {
+    check_no_errors("struct Trapezoid3 { a: number, b: number, h: number, has_right_angle: bool }\nfn area13(t: Trapezoid3) -> number { (t.a + t.b) * t.h / 2 }");
+}
+
+#[test]
+fn test_type_check_v69_8() {
+    check_no_errors("enum Fuel2 { Gasoline, Diesel, Electric2, Hydrogen }\nfn is_green(f: Fuel2) -> bool {\nmatch f {\nFuel2::Gasoline => false\nFuel2::Diesel => false\nFuel2::Electric2 => true\nFuel2::Hydrogen => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v69_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + (3 * i + 2)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v69_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 1;\nlet b = 1;\nlet c = 2;\nfor i in 0..x {\nlet d = a + b + c;\na = b;\nb = c;\nc = d\n};\nc\n}");
+}
