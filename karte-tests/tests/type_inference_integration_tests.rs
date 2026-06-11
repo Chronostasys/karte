@@ -6908,3 +6908,53 @@ fn test_type_check_v48_9() {
 fn test_type_check_v48_10() {
     check_no_errors("fn f(x: number) -> number {\nlet a = 1;\nlet b = 1;\nfor i in 2..x {\nlet c = a + b;\na = b;\nb = c\n};\na + b\n}");
 }
+
+#[test]
+fn test_type_check_v49_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 2;\nlet b = a * 4;\nb / 2\n}");
+}
+
+#[test]
+fn test_type_check_v49_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 0 && i < x {\nsum = sum + i * i\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v49_3() {
+    check_no_errors("struct Volume2 { liters: number }\nfn to_ml(v: Volume2) -> number { v.liters * 1000 }\nfn is_empty(v: Volume2) -> bool { v.liters == 0 }");
+}
+
+#[test]
+fn test_type_check_v49_4() {
+    check_no_errors("enum Encoding2 { UTF8, ASCII, UTF16 }\nfn is_unicode(e: Encoding2) -> bool {\nmatch e {\nEncoding2::UTF8 => true\nEncoding2::ASCII => false\nEncoding2::UTF16 => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v49_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet mod5 = x % 5;\nif mod5 == 0 { None } else { Some(mod5) }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v49_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x >= 1 && x <= 12 {\nOk(x * x)\n} else {\nErr(\"month out of range\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v49_7() {
+    check_no_errors("struct Plane2 { normal_x: number, normal_y: number, normal_z: number, offset: number }\nfn is_through_origin(p: Plane2) -> bool { p.offset == 0 }");
+}
+
+#[test]
+fn test_type_check_v49_8() {
+    check_no_errors("enum Sync2 { Full, Partial, None2 }\nfn is_synced(s: Sync2) -> bool {\nmatch s {\nSync2::Full => true\nSync2::Partial => false\nSync2::None2 => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v49_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + (i + 1) * (x - i)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v49_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet product = 1;\nlet i = 2;\nwhile i <= x {\nproduct = product * i;\ni = i + 1\n};\nproduct\n}");
+}
