@@ -6958,3 +6958,53 @@ fn test_type_check_v49_9() {
 fn test_type_check_v49_10() {
     check_no_errors("fn f(x: number) -> number {\nlet product = 1;\nlet i = 2;\nwhile i <= x {\nproduct = product * i;\ni = i + 1\n};\nproduct\n}");
 }
+
+#[test]
+fn test_type_check_v50_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 2 + 1;\nlet b = a * 3;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v50_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + if i % 10 == 0 { i / 10 } else { 0 }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v50_3() {
+    check_no_errors("struct Speed2 { mps: number }\nfn to_kmh(s: Speed2) -> number { s.mps * 3600 / 1000 }\nfn to_mph(s: Speed2) -> number { s.mps * 3600 / 1609 }\nfn is_walking(s: Speed2) -> bool { s.mps < 2 }");
+}
+
+#[test]
+fn test_type_check_v50_4() {
+    check_no_errors("enum Terminal2 { VT100, VT220, XTerm, ANSI }\nfn supports_color(t: Terminal2) -> bool {\nmatch t {\nTerminal2::VT100 => false\nTerminal2::VT220 => false\nTerminal2::XTerm => true\nTerminal2::ANSI => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v50_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet halved = x / 2;\nif halved > 10 { None } else { Some(halved) }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v50_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 10 {\nif x > 100 {\nErr(\"too large\")\n} else {\nOk(x * 10)\n}\n} else {\nOk(x)\n}\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v50_7() {
+    check_no_errors("struct Sphere2 { cx: number, cy: number, cz: number, r: number }\nfn volume5(s: Sphere2) -> number { 4 * s.r * s.r * s.r }\nfn contains_origin2(s: Sphere2) -> bool {\ns.cx * s.cx + s.cy * s.cy + s.cz * s.cz <= s.r * s.r\n}");
+}
+
+#[test]
+fn test_type_check_v50_8() {
+    check_no_errors("enum LogicGate { And4, Or4, Not, Xor2 }\nfn num_inputs(g: LogicGate) -> number {\nmatch g {\nLogicGate::And4 => 2\nLogicGate::Or4 => 2\nLogicGate::Not => 1\nLogicGate::Xor2 => 2\n}\n}");
+}
+
+#[test]
+fn test_type_check_v50_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + i * (i + 1) * (i + 2) / 6\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v50_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nlet i = 1;\nwhile i <= x {\nsum = sum + i * i;\ni = i + 1\n};\nsum\n}");
+}
