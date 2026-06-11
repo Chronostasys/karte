@@ -7808,3 +7808,53 @@ fn test_type_check_v66_9() {
 fn test_type_check_v66_10() {
     check_no_errors("fn f(x: number) -> number {\nlet a = 5;\nlet b = 8;\nfor i in 0..x {\nlet c = a + b;\na = b;\nb = c\n};\nb\n}");
 }
+
+#[test]
+fn test_type_check_v67_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 2 - 2;\nlet b = a * a;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v67_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 30 {\nsum = sum + (i - 30)\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v67_3() {
+    check_no_errors("struct Memory2 { bytes: number }\nfn to_kb(m: Memory2) -> number { m.bytes / 1024 }\nfn to_mb(m: Memory2) -> number { m.bytes / 1048576 }");
+}
+
+#[test]
+fn test_type_check_v67_4() {
+    check_no_errors("enum AudioFormat { MP3, WAV, FLAC, OGG }\nfn is_lossless(a: AudioFormat) -> bool {\nmatch a {\nAudioFormat::MP3 => false\nAudioFormat::WAV => true\nAudioFormat::FLAC => true\nAudioFormat::OGG => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v67_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet squared = x * x;\nif squared > 100 { Some(squared) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v67_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 10 { Ok(x * 10) } else { Ok(x) }\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v67_7() {
+    check_no_errors("struct Isosceles2 { base: number, leg: number }\nfn is_valid_iso(t: Isosceles2) -> bool { t.leg * 2 > t.base }");
+}
+
+#[test]
+fn test_type_check_v67_8() {
+    check_no_errors("enum Brush2 { Pen, Pencil, Marker, Eraser }\nfn draws(b: Brush2) -> bool {\nmatch b {\nBrush2::Pen => true\nBrush2::Pencil => true\nBrush2::Marker => true\nBrush2::Eraser => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v67_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + i * i * i\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v67_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 1;\nfor i in 1..x {\nresult = result + i\n};\nresult\n}");
+}
