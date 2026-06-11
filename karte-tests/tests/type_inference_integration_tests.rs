@@ -7208,3 +7208,53 @@ fn test_type_check_v54_9() {
 fn test_type_check_v54_10() {
     check_no_errors("fn f(x: number) -> number {\nlet a = 3;\nlet b = 5;\nfor i in 0..x {\nlet c = a + b;\na = b;\nb = c\n};\nb\n}");
 }
+
+#[test]
+fn test_type_check_v55_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 2 + 3;\nlet b = a * a;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v55_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nfor j in 0..2 {\nsum = sum + i\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v55_3() {
+    check_no_errors("struct Power2 { watts: number }\nfn to_kw(p: Power2) -> number { p.watts / 1000 }\nfn is_high_power(p: Power2) -> bool { p.watts > 1000 }");
+}
+
+#[test]
+fn test_type_check_v55_4() {
+    check_no_errors("enum Geo2 { Point2, Line3, Polygon }\nfn has_area(g: Geo2) -> bool {\nmatch g {\nGeo2::Point2 => false\nGeo2::Line3 => false\nGeo2::Polygon => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v55_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet mod7 = x % 7;\nif mod7 == 0 { None } else { Some(mod7) }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v55_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 50 { Ok(x - 50) } else { Ok(x) }\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v55_7() {
+    check_no_errors("struct Pyramid { base: number, height: number }\nfn volume8(p: Pyramid) -> number { p.base * p.base * p.height / 3 }\nfn is_tall(p: Pyramid) -> bool { p.height > p.base }");
+}
+
+#[test]
+fn test_type_check_v55_8() {
+    check_no_errors("enum BuildStatus { Success2, Failed2, Timeout, Cancelled }\nfn needs_retry(b: BuildStatus) -> bool {\nmatch b {\nBuildStatus::Success2 => false\nBuildStatus::Failed2 => true\nBuildStatus::Timeout => true\nBuildStatus::Cancelled => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v55_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + i * i * i * i\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v55_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + (2 * i + 1) * (2 * i + 1);\ni = i + 1\n};\nresult\n}");
+}
