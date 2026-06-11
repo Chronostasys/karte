@@ -5608,3 +5608,53 @@ fn test_type_check_v22_9() {
 fn test_type_check_v22_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 0..x {\nfor j in 0..i {\nresult = result + j\n}\n};\nresult\n}");
 }
+
+#[test]
+fn test_type_check_v23_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 2;\nlet b = a + 3;\nlet c = b * b;\nc\n}");
+}
+
+#[test]
+fn test_type_check_v23_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 0 {\nsum = sum + 1 / i\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v23_3() {
+    check_no_errors("struct Product { name: string, price: number, quantity: number }\nfn total_cost(p: Product) -> number {\np.price * p.quantity\n}");
+}
+
+#[test]
+fn test_type_check_v23_4() {
+    check_no_errors("enum Genre { Action, Comedy, Drama, Horror }\nfn is_family(g: Genre) -> bool {\nmatch g {\nGenre::Action => false\nGenre::Comedy => true\nGenre::Drama => true\nGenre::Horror => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v23_5() {
+    check_no_errors("fn f(x: number) -> Option<string> {\nif x > 0 {\nif x % 2 == 0 {\nSome(\"even\")\n} else {\nSome(\"odd\")\n}\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v23_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 100 {\nOk(x - 100)\n} else {\nif x < 0 {\nErr(\"negative\")\n} else {\nOk(x)\n}\n}\n}");
+}
+
+#[test]
+fn test_type_check_v23_7() {
+    check_no_errors("struct Triangle2 { a: number, b: number, c: number }\nfn is_valid_triangle(t: Triangle2) -> bool {\nt.a + t.b > t.c && t.b + t.c > t.a && t.a + t.c > t.b\n}");
+}
+
+#[test]
+fn test_type_check_v23_8() {
+    check_no_errors("enum Response2 { Success(number), Error2(string) }\nfn get_code(r: Response2) -> number {\nmatch r {\nResponse2::Success(c) => c\nResponse2::Error2(_) => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_v23_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nlet i = 1;\nwhile i <= x {\nsum = sum + i * i;\ni = i + 2\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v23_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 1;\nlet b = 1;\nfor i in 2..x {\nlet c = a + b;\na = b;\nb = c\n};\nb + a\n}");
+}
