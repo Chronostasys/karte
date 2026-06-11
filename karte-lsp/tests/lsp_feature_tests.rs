@@ -5181,3 +5181,93 @@ fn test_analyze_valid_v75_expand() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_v76_flux() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Flux2 { webers: number }\nfn to_mwb(f: Flux2) -> number { f.webers * 1000 }\nfn is_strong_flux(f: Flux2) -> bool { f.webers > 1 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v76_continent() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Continent { Asia, Europe, Africa, America, Oceania, Antarctic }\nfn is_inhabited(c: Continent) -> bool {\nmatch c {\nContinent::Asia => true\nContinent::Europe => true\nContinent::Africa => true\nContinent::America => true\nContinent::Oceania => true\nContinent::Antarctic => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v76_torus() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Torus { major_r: number, minor_r: number }\nfn approx_area(t: Torus) -> number { t.major_r * t.minor_r * 40 }\nfn is_thick(t: Torus) -> bool { t.minor_r > t.major_r / 3 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v76_element() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Element2 { Metal, NonMetal, Metalloid, Noble3 }\nfn conducts_electricity(e: Element2) -> bool {\nmatch e {\nElement2::Metal => true\nElement2::NonMetal => false\nElement2::Metalloid => true\nElement2::Noble3 => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v76_cross() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + (i * 2 + 1) * (i + 1)\n};\nsum\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v76_cond_while() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + if i > 10 { i * i } else { i * 2 };\ni = i + 1\n};\nresult\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v76_range_sq() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 10 && i < 20 {\nsum = sum + (i - 10) * (i - 10)\n}\n};\nsum\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v76_option_14() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> Option<number> {\nif x > 0 {\nlet fourteenth = x / 14;\nif fourteenth > 0 { Some(fourteenth) } else { None }\n} else {\nNone\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v76_result_8x() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 900 { Err(\"overflow\") } else { Ok(x * 8) }\n} else {\nErr(\"non-positive\")\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v76_expand() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet a = x * 5 + 4;\nlet b = a * a - 16;\nb\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
