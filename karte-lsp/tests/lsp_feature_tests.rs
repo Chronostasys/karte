@@ -3021,3 +3021,93 @@ fn test_analyze_valid_v21_person() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_v27_account() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Account { balance: number }\nfn is_positive(a: Account) -> bool { a.balance > 0 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v27_shape3() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Shape3 { Circle3(number), Square3(number) }\nfn area3(s: Shape3) -> number {\nmatch s {\nShape3::Circle3(r) => 3 * r * r\nShape3::Square3(side) => side * side\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v27_fibonacci() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet prev = 0;\nlet curr = 1;\nfor i in 0..x {\nlet next = prev + curr;\nprev = curr;\ncurr = next\n};\ncurr\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v28_mode() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Mode { Read2, Write2, ReadWrite }\nfn can_write(m: Mode) -> bool {\nmatch m {\nMode::Read2 => false\nMode::Write2 => true\nMode::ReadWrite => true\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v28_rect() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Rect2 { x: number, y: number, w: number, h: number }\nfn area(r: Rect2) -> number { r.w * r.h }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v28_expr3() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Expr3 { Lit(number), Add3(number, number), Sub(number, number) }\nfn eval(e: Expr3) -> number {\nmatch e {\nExpr3::Lit(n) => n\nExpr3::Add3(a, b) => a + b\nExpr3::Sub(a, b) => a - b\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v28_gcd() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number, y: number) -> number {\nlet a = x;\nlet b = y;\nwhile b != 0 {\nlet temp = b;\nb = a % b;\na = temp\n};\na\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v26_sphere() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Sphere { cx: number, cy: number, cz: number, radius: number }\nfn contains_origin(s: Sphere) -> bool {\nlet d = s.cx * s.cx + s.cy * s.cy + s.cz * s.cz;\nd <= s.radius * s.radius\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v26_metric() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Metric { Bytes(number), KB(number), MB(number) }\nfn to_bytes(m: Metric) -> number {\nmatch m {\nMetric::Bytes(b) => b\nMetric::KB(k) => k * 1024\nMetric::MB(m) => m * 1024 * 1024\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v26_cloud() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Cloud { Cumulus, Stratus, Cirrus, Nimbus }\nfn produces_rain(c: Cloud) -> bool {\nmatch c {\nCloud::Cumulus => false\nCloud::Stratus => false\nCloud::Cirrus => false\nCloud::Nimbus => true\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
