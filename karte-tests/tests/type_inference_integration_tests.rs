@@ -5758,3 +5758,53 @@ fn test_type_check_v25_9() {
 fn test_type_check_v25_10() {
     check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 1..x {\nsum = sum + if i % 10 == 0 { i / 10 } else { i }\n};\nsum\n}");
 }
+
+#[test]
+fn test_type_check_v26_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 3;\nlet b = a + 2;\nlet c = b / 2;\nc\n}");
+}
+
+#[test]
+fn test_type_check_v26_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nlet val = i * i - i;\nif val > 0 {\nsum = sum + val\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v26_3() {
+    check_no_errors("struct Tuple2 { fst: string, snd: number }\nfn describe(t: Tuple2) -> string {\nt.fst\n}\nfn value(t: Tuple2) -> number {\nt.snd\n}");
+}
+
+#[test]
+fn test_type_check_v26_4() {
+    check_no_errors("enum Cloud { Cumulus, Stratus, Cirrus, Nimbus }\nfn produces_rain(c: Cloud) -> bool {\nmatch c {\nCloud::Cumulus => false\nCloud::Stratus => false\nCloud::Cirrus => false\nCloud::Nimbus => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v26_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 10 {\nif x > 20 {\nif x > 30 { None } else { Some(x) }\n} else {\nSome(x)\n}\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v26_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x == 0 {\nOk(0)\n} else {\nif x == 1 {\nOk(1)\n} else {\nif x > 1 {\nOk(x * x)\n} else {\nErr(\"negative\")\n}\n}\n}\n}");
+}
+
+#[test]
+fn test_type_check_v26_7() {
+    check_no_errors("struct Sphere { cx: number, cy: number, cz: number, radius: number }\nfn contains_origin(s: Sphere) -> bool {\nlet d = s.cx * s.cx + s.cy * s.cy + s.cz * s.cz;\nd <= s.radius * s.radius\n}");
+}
+
+#[test]
+fn test_type_check_v26_8() {
+    check_no_errors("enum Metric { Bytes(number), KB(number), MB(number) }\nfn to_bytes(m: Metric) -> number {\nmatch m {\nMetric::Bytes(b) => b\nMetric::KB(k) => k * 1024\nMetric::MB(m) => m * 1024 * 1024\n}\n}");
+}
+
+#[test]
+fn test_type_check_v26_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 0..x {\nresult = result + (x - i)\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_v26_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet prev = 0;\nlet curr = 1;\nfor i in 0..x {\nlet next = prev + curr;\nprev = curr;\ncurr = next\n};\nprev + curr\n}");
+}
