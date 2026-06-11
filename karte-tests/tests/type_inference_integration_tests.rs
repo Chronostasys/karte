@@ -7708,3 +7708,53 @@ fn test_type_check_v64_9() {
 fn test_type_check_v64_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + i * i;\ni = i + 1\n};\nresult\n}");
 }
+
+#[test]
+fn test_type_check_v65_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 2 + 3;\nlet b = a * a - 9;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v65_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i % 2 == 1 && i % 3 == 1 {\nsum = sum + i\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v65_3() {
+    check_no_errors("struct Capacitance { farads: number }\nfn to_uf(c: Capacitance) -> number { c.farads * 1000000 }\nfn is_large_cap(c: Capacitance) -> bool { c.farads > 1 }");
+}
+
+#[test]
+fn test_type_check_v65_4() {
+    check_no_errors("enum VMState { Stopped, Starting, Running3, Stopping }\nfn is_transitioning(v: VMState) -> bool {\nmatch v {\nVMState::Stopped => false\nVMState::Starting => true\nVMState::Running3 => false\nVMState::Stopping => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v65_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet mod8 = x % 8;\nif mod8 == 0 { None } else { Some(mod8) }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v65_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 1000 { Err(\"overflow\") } else { if x > 100 { Ok(x / 100) } else { Ok(x) } }\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v65_7() {
+    check_no_errors("struct Kite2 { d1: number, d2: number }\nfn area11(k: Kite2) -> number { k.d1 * k.d2 / 2 }\nfn is_square3(k: Kite2) -> bool { k.d1 == k.d2 }");
+}
+
+#[test]
+fn test_type_check_v65_8() {
+    check_no_errors("enum Gesture { Tap, Swipe, Pinch, Rotate }\nfn is_continuous(g: Gesture) -> bool {\nmatch g {\nGesture::Tap => false\nGesture::Swipe => false\nGesture::Pinch => true\nGesture::Rotate => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v65_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + if i > 0 { 1 / i } else { 0 }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v65_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 2;\nlet b = 3;\nfor i in 0..x {\nlet c = a + b;\na = b;\nb = c\n};\na\n}");
+}
