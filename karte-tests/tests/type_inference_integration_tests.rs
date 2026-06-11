@@ -8158,3 +8158,53 @@ fn test_type_check_v73_9() {
 fn test_type_check_v73_10() {
     check_no_errors("fn f(x: number) -> number {\nlet a = 3;\nlet b = 5;\nfor i in 0..x {\nlet c = a + b;\na = b;\nb = c\n};\nb\n}");
 }
+
+#[test]
+fn test_type_check_v74_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 3 + 5;\nlet b = a * a - 25;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v74_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 90 {\nsum = sum + (i - 90)\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v74_3() {
+    check_no_errors("struct Torque { newton_meters: number }\nfn to_lbft(t: Torque) -> number { t.newton_meters * 737 / 1000 }\nfn is_strong2(t: Torque) -> bool { t.newton_meters > 500 }");
+}
+
+#[test]
+fn test_type_check_v74_4() {
+    check_no_errors("enum Season2 { Spring, Summer, Autumn, Winter }\nfn is_warm(s: Season2) -> bool {\nmatch s {\nSeason2::Spring => true\nSeason2::Summer => true\nSeason2::Autumn => false\nSeason2::Winter => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v74_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet twelfth = x / 12;\nif twelfth > 0 { Some(twelfth) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v74_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 700 { Err(\"overflow\") } else { Ok(x * 6) }\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v74_7() {
+    check_no_errors("struct Cylinder { radius: number, height: number }\nfn approx_vol(c: Cylinder) -> number { c.radius * c.radius * c.height * 3 }\nfn is_flat2(c: Cylinder) -> bool { c.height < c.radius }");
+}
+
+#[test]
+fn test_type_check_v74_8() {
+    check_no_errors("enum Month2 { Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec }\nfn has_31_days(m: Month2) -> bool {\nmatch m {\nMonth2::Jan => true\nMonth2::Feb => false\nMonth2::Mar => true\nMonth2::Apr => false\nMonth2::May => true\nMonth2::Jun => false\nMonth2::Jul => true\nMonth2::Aug => true\nMonth2::Sep => false\nMonth2::Oct => true\nMonth2::Nov => false\nMonth2::Dec => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v74_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + (i + 1) * (i + 2) * (i + 3)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v74_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + if i % 3 == 0 { i * 2 } else { i };\ni = i + 1\n};\nresult\n}");
+}
