@@ -2683,3 +2683,89 @@ fn test_analyze_valid_pattern_option() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_builtins_abs() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nabs(x)\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_builtins_min_max() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number, y: number) -> number {\nmin(x, y) + max(x, y)\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_builtins_len() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(s: string) -> number {\nlen(s)\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_control_for() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(n: number) -> number {\nlet sum = 0;\nfor i in 0..n {\nsum = sum + i\n};\nsum\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_control_while() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet total = 0;\nwhile total < x {\ntotal = total + 1\n};\ntotal\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_control_nested_for() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(n: number) -> number {\nlet total = 0;\nfor i in 0..n {\nfor j in 0..i {\ntotal = total + j\n}\n};\ntotal\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_error_undefined() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f() -> number {\nundefined_var\n}";
+    let diagnostics = bridge.analyze(source);
+    assert!(!diagnostics.is_empty(), "Should have errors for undefined variable");
+}
+
+#[test]
+fn test_analyze_valid_error_type_mismatch() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f() -> number {\n\"hello\"\n}";
+    let diagnostics = bridge.analyze(source);
+    assert!(!diagnostics.is_empty(), "Should have errors for type mismatch");
+}
+
+#[test]
+fn test_analyze_valid_error_arity() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn add(a: number, b: number) -> number {\na + b\n}\nfn f() -> number {\nadd(1)\n}";
+    let diagnostics = bridge.analyze(source);
+    assert!(!diagnostics.is_empty(), "Should have errors for arity mismatch");
+}
+
+#[test]
+fn test_analyze_valid_error_missing_field() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point { x: number, y: number }\nfn f() -> Point {\nPoint { x: 1 }\n}";
+    let diagnostics = bridge.analyze(source);
+    assert!(!diagnostics.is_empty(), "Should have errors for missing field");
+}
