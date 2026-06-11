@@ -3741,3 +3741,93 @@ fn test_analyze_valid_v52_area() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_v53_pressure() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Pressure { pascal: number }\nfn to_bar(p: Pressure) -> number { p.pascal / 100000 }\nfn is_atmosphere(p: Pressure) -> bool { p.pascal > 90000 && p.pascal < 110000 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v53_crypto() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Crypto { AES, RSA, DES, ChaCha }\nfn is_symmetric(c: Crypto) -> bool {\nmatch c {\nCrypto::AES => true\nCrypto::RSA => false\nCrypto::DES => true\nCrypto::ChaCha => true\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v54_energy() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Energy { joules: number }\nfn to_kj(e: Energy) -> number { e.joules / 1000 }\nfn to_cal(e: Energy) -> number { e.joules / 4 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v54_format() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Format2 { JSON, XML, YAML, TOML }\nfn is_markup(f: Format2) -> bool {\nmatch f {\nFormat2::JSON => false\nFormat2::XML => true\nFormat2::YAML => false\nFormat2::TOML => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v55_pyramid() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Pyramid { base: number, height: number }\nfn volume(p: Pyramid) -> number { p.base * p.base * p.height / 3 }\nfn is_tall(p: Pyramid) -> bool { p.height > p.base }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v55_build_status() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum BuildStatus { Success2, Failed2, Timeout, Cancelled }\nfn needs_retry(b: BuildStatus) -> bool {\nmatch b {\nBuildStatus::Success2 => false\nBuildStatus::Failed2 => true\nBuildStatus::Timeout => true\nBuildStatus::Cancelled => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v55_power() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Power2 { watts: number }\nfn to_kw(p: Power2) -> number { p.watts / 1000 }\nfn is_high_power(p: Power2) -> bool { p.watts > 1000 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v55_geo() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Geo2 { Point2, Line3, Polygon }\nfn has_area(g: Geo2) -> bool {\nmatch g {\nGeo2::Point2 => false\nGeo2::Line3 => false\nGeo2::Polygon => true\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v53_torus() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Torus2 { major_r: number, minor_r: number }\nfn surface_area(t: Torus2) -> number { 4 * 3 * t.major_r * t.minor_r }\nfn is_thick(t: Torus2) -> bool { t.minor_r > t.major_r / 2 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v54_ellipse() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Ellipse2 { a: number, b: number }\nfn is_circle(e: Ellipse2) -> bool { e.a == e.b }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
