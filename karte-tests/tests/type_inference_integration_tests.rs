@@ -6708,3 +6708,53 @@ fn test_type_check_v44_9() {
 fn test_type_check_v44_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 1;\nwhile i * i <= x {\nresult = i;\ni = i + 1\n};\nresult\n}");
 }
+
+#[test]
+fn test_type_check_v45_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x - 2;\nlet b = a * a + 4 * a;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v45_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i % 2 == 0 && i % 3 == 0 && i % 5 == 0 {\nsum = sum + i\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v45_3() {
+    check_no_errors("struct Battery { capacity: number, charge: number }\nfn percentage(b: Battery) -> number { b.charge * 100 / b.capacity }\nfn is_full(b: Battery) -> bool { b.charge == b.capacity }");
+}
+
+#[test]
+fn test_type_check_v45_4() {
+    check_no_errors("enum Sort2 { Bubble, Quick, Merge, Heap }\nfn is_nlogn(s: Sort2) -> bool {\nmatch s {\nSort2::Bubble => false\nSort2::Quick => true\nSort2::Merge => true\nSort2::Heap => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v45_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 1 {\nlet prev = x - 1;\nif prev > 0 { Some(prev) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v45_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x == 0 {\nErr(\"zero division\")\n} else {\nlet reciprocal = 1 / x;\nOk(reciprocal)\n}\n}");
+}
+
+#[test]
+fn test_type_check_v45_7() {
+    check_no_errors("struct Complex3 { re: number, im: number }\nfn conjugate(c: Complex3) -> Complex3 { Complex3 { re: c.re, im: 0 - c.im } }\nfn norm_sq(c: Complex3) -> number { c.re * c.re + c.im * c.im }");
+}
+
+#[test]
+fn test_type_check_v45_8() {
+    check_no_errors("enum HttpStatus { Ok2, NotFound, ServerError }\nfn is_success(h: HttpStatus) -> bool {\nmatch h {\nHttpStatus::Ok2 => true\nHttpStatus::NotFound => false\nHttpStatus::ServerError => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v45_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + (2 * i + 1) * (2 * i + 1) * (2 * i + 1)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v45_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet count = 0;\nlet n = x;\nwhile n > 1 {\nn = n / 2;\ncount = count + 1\n};\ncount\n}");
+}
