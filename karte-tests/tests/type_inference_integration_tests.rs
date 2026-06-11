@@ -3313,3 +3313,53 @@ fn test_type_check_simple_string_escape() {
 fn test_type_check_simple_empty_string() {
     check_no_errors("fn f() -> string {\n\"\"\n}");
 }
+
+#[test]
+fn test_type_check_complex_if_else_multi() {
+    check_no_errors("fn classify(n: number) -> string {\nif n > 100 { \"huge\" } else { if n > 10 { \"big\" } else { if n > 0 { \"small\" } else { \"zero or negative\" } } }\n}");
+}
+
+#[test]
+fn test_type_check_complex_match_multi() {
+    check_no_errors("fn http_status(code: number) -> string {\nmatch code {\n200 => \"OK\"\n404 => \"Not Found\"\n500 => \"Internal Error\"\n_ => \"Unknown\"\n}\n}");
+}
+
+#[test]
+fn test_type_check_complex_while_sum() {
+    check_no_errors("fn sum_of_squares(n: number) -> number {\nlet total = 0;\nlet i = 1;\nwhile i <= n {\ntotal = total + i * i;\ni = i + 1\n};\ntotal\n}");
+}
+
+#[test]
+fn test_type_check_complex_fn_chain3() {
+    check_no_errors("fn double(x: number) -> number { x * 2 }\nfn triple(x: number) -> number { x * 3 }\nfn add_then_double(a: number, b: number) -> number {\ndouble(a + b)\n}\nfn main() -> number {\nadd_then_double(triple(2), 4)\n}");
+}
+
+#[test]
+fn test_type_check_complex_enum_data3() {
+    check_no_errors("enum AST { Num(number), BinOp(string, number, number) }\nfn eval(a: AST) -> number {\nmatch a {\nAST::Num(n) => n\nAST::BinOp(op, l, r) => l + r\n}\n}");
+}
+
+#[test]
+fn test_type_check_complex_struct_nested() {
+    check_no_errors("struct Color { r: number, g: number, b: number }\nfn brightness(c: Color) -> number {\n(c.r + c.g + c.b) / 3\n}\nfn is_bright(c: Color) -> bool {\nbrightness(c) > 128\n}");
+}
+
+#[test]
+fn test_type_check_complex_option_methods2() {
+    check_no_errors("fn safe_get(idx: number, len: number) -> Option<number> {\nif idx >= 0 { if idx < len { Some(idx) } else { None } } else { None }\n}");
+}
+
+#[test]
+fn test_type_check_complex_result_chain4() {
+    check_no_errors("fn validate_age(age: number) -> Result<number, string> {\nif age < 0 { Err(\"negative age\") } else { if age > 150 { Err(\"unrealistic age\") } else { Ok(age) } }\n}");
+}
+
+#[test]
+fn test_type_check_complex_string_ops2() {
+    check_no_errors("fn pad(s: string, n: number) -> string {\nlet result = s;\nresult\n}");
+}
+
+#[test]
+fn test_type_check_complex_number_ops2() {
+    check_no_errors("fn clamp_byte(n: number) -> number {\nif n < 0 { 0 } else { if n > 255 { 255 } else { n } }\n}");
+}
