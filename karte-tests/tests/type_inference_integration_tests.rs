@@ -6358,3 +6358,53 @@ fn test_type_check_v37_9() {
 fn test_type_check_v37_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = x;\nlet i = 0;\nwhile i < 10 {\nresult = result + i;\ni = i + 1\n};\nresult\n}");
 }
+
+#[test]
+fn test_type_check_v38_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * x;\nlet b = a + 2 * x;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v38_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i % 2 == 0 && i % 3 == 0 {\nsum = sum + i\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v38_3() {
+    check_no_errors("struct Student3 { name: string, grade: number }\nfn honor_roll(s: Student3) -> bool { s.grade >= 90 }\nfn passing2(s: Student3) -> bool { s.grade >= 60 }");
+}
+
+#[test]
+fn test_type_check_v38_4() {
+    check_no_errors("enum Op2 { Add4, Sub4, Mul4, Div4 }\nfn apply(op: Op2, a: number, b: number) -> number {\nmatch op {\nOp2::Add4 => a + b\nOp2::Sub4 => a - b\nOp2::Mul4 => a * b\nOp2::Div4 => a / b\n}\n}");
+}
+
+#[test]
+fn test_type_check_v38_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet sq = x * x;\nif sq > 1000 { None } else { Some(sq) }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v38_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x == 0 {\nErr(\"zero\")\n} else {\nif x == 1 {\nOk(1)\n} else {\nif x == 2 {\nOk(2)\n} else {\nOk(x * x)\n}\n}\n}\n}");
+}
+
+#[test]
+fn test_type_check_v38_7() {
+    check_no_errors("struct Plane { a: number, b: number, c: number, d: number }\nfn normalize_coeff(p: Plane) -> number { p.a * p.a + p.b * p.b + p.c * p.c }");
+}
+
+#[test]
+fn test_type_check_v38_8() {
+    check_no_errors("enum Lit2 { IntLit(number), StrLit(string), BoolLit(bool) }\nfn int_value(l: Lit2) -> number {\nmatch l {\nLit2::IntLit(n) => n\nLit2::StrLit(_) => 0\nLit2::BoolLit(b) => if b { 1 } else { 0 }\n}\n}");
+}
+
+#[test]
+fn test_type_check_v38_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + i * (x - i)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v38_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet count = 0;\nlet n = x;\nwhile n > 0 {\nif n % 2 == 1 {\ncount = count + 1\n};\nn = n / 2\n};\ncount\n}");
+}
