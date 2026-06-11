@@ -4758,3 +4758,53 @@ fn test_type_check_v5_9() {
 fn test_type_check_v5_10() {
     check_no_errors("fn f(x: number) -> number {\nlet a = x;\nlet b = a * a;\nlet c = b + a;\nlet d = c * c;\nd\n}");
 }
+
+#[test]
+fn test_type_check_v6_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 1;\nlet b = a + 2;\nlet c = b + 3;\nlet d = c + 4;\nlet e = d + 5;\ne\n}");
+}
+
+#[test]
+fn test_type_check_v6_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet y = 0;\nfor i in 0..100 {\ny = y + i\n};\ny\n}");
+}
+
+#[test]
+fn test_type_check_v6_3() {
+    check_no_errors("struct Date { year: number, month: number, day: number }\nfn is_leap_year(d: Date) -> bool {\n(d.year % 4 == 0 && d.year % 100 != 0) || d.year % 400 == 0\n}");
+}
+
+#[test]
+fn test_type_check_v6_4() {
+    check_no_errors("enum Piece { King, Queen, Rook, Bishop, Knight, Pawn }\nfn value(p: Piece) -> number {\nmatch p {\nPiece::King => 0\nPiece::Queen => 9\nPiece::Rook => 5\nPiece::Bishop => 3\nPiece::Knight => 3\nPiece::Pawn => 1\n}\n}");
+}
+
+#[test]
+fn test_type_check_v6_5() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nlet i = 1;\nwhile i <= x {\nsum = sum + i;\ni = i + 1\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v6_6() {
+    check_no_errors("struct Angle { degrees: number }\nfn normalize(a: Angle) -> Angle {\nAngle { degrees: a.degrees % 360 }\n}\nfn is_acute(a: Angle) -> bool {\na.degrees > 0 && a.degrees < 90\n}");
+}
+
+#[test]
+fn test_type_check_v6_7() {
+    check_no_errors("enum Season2 { Spring(number), Summer(number), Fall(number), Winter(number) }\nfn temp_range(s: Season2) -> number {\nmatch s {\nSeason2::Spring(t) => t\nSeason2::Summer(t) => t\nSeason2::Fall(t) => t\nSeason2::Winter(t) => t\n}\n}");
+}
+
+#[test]
+fn test_type_check_v6_8() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 0..10 {\nfor j in 0..10 {\nresult = result + i + j\n}\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_v6_9() {
+    check_no_errors("struct RGB { r: number, g: number, b: number }\nfn brightness(c: RGB) -> number {\n(c.r + c.g + c.b) / 3\n}\nfn is_grayscale(c: RGB) -> bool {\nc.r == c.g && c.g == c.b\n}");
+}
+
+#[test]
+fn test_type_check_v6_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet prev = 0;\nlet curr = 1;\nfor i in 0..x {\nlet next = prev + curr;\nprev = curr;\ncurr = next\n};\nprev\n}");
+}
