@@ -2133,3 +2133,93 @@ fn test_analyze_valid_simple_compose2() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors for compose: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_simple_empty_fn() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f() {\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for empty fn: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_return_fn2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn forty_two() -> number {\n42\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for return fn: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_hello_fn() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn hello() -> string {\n\"hello\"\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for hello fn: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_yes_fn() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn yes() -> bool {\ntrue\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for yes fn: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_param_fn() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn double(x: number) -> number {\nx * 2\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for param fn: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_two_param_fn() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn add(a: number, b: number) -> number {\na + b\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for two param fn: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_option_fn() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn safe_div(a: number, b: number) -> Option<number> {\nif b == 0 { None } else { Some(a / b) }\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for option fn: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_result_fn() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn checked_div(a: number, b: number) -> Result<number, string> {\nif b == 0 { Err(\"zero\") } else { Ok(a / b) }\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for result fn: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_reference_fn() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet x = 42;\nlet r = &x;\n*r\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for reference fn: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_char_fn() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet c = 'A';\nc + 1\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for char fn: {:?}", errors);
+}
