@@ -7558,3 +7558,53 @@ fn test_type_check_v61_9() {
 fn test_type_check_v61_10() {
     check_no_errors("fn f(x: number) -> number {\nlet a = 0;\nlet b = 1;\nlet sum = 0;\nfor i in 0..x {\nsum = sum + b;\nlet c = a + b;\na = b;\nb = c\n};\nsum\n}");
 }
+
+#[test]
+fn test_type_check_v62_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 2;\nlet b = a + 5;\nb * b\n}");
+}
+
+#[test]
+fn test_type_check_v62_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i % 4 == 0 && i > 0 {\nsum = sum + i\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v62_3() {
+    check_no_errors("struct Resistance { ohms: number }\nfn to_kohm(r: Resistance) -> number { r.ohms / 1000 }\nfn is_short(r: Resistance) -> bool { r.ohms == 0 }");
+}
+
+#[test]
+fn test_type_check_v62_4() {
+    check_no_errors("enum Database { Postgres, MySQL, SQLite, MongoDB }\nfn is_sql(d: Database) -> bool {\nmatch d {\nDatabase::Postgres => true\nDatabase::MySQL => true\nDatabase::SQLite => true\nDatabase::MongoDB => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v62_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet cubed = x * x * x;\nif cubed > 1000 { None } else { Some(cubed) }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v62_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 10 { Ok(x * x) } else { Ok(x) }\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v62_7() {
+    check_no_errors("struct Octagon { side: number }\nfn perimeter5(o: Octagon) -> number { o.side * 8 }\nfn is_regular3(o: Octagon) -> bool { o.side > 0 }");
+}
+
+#[test]
+fn test_type_check_v62_8() {
+    check_no_errors("enum FileMode2 { Read4, Write4, ReadWrite2, Append }\nfn can_read2(f: FileMode2) -> bool {\nmatch f {\nFileMode2::Read4 => true\nFileMode2::Write4 => false\nFileMode2::ReadWrite2 => true\nFileMode2::Append => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v62_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + if i % 2 == 0 { i * i } else { i * i * i }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v62_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 0;\nlet b = 1;\nfor i in 0..x {\nlet c = a + b;\na = b;\nb = c\n};\nif a > b { a } else { b }\n}");
+}
