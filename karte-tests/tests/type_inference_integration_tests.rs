@@ -6808,3 +6808,53 @@ fn test_type_check_v46_9() {
 fn test_type_check_v46_10() {
     check_no_errors("fn f(x: number) -> number {\nlet a = 0;\nlet b = 1;\nfor i in 0..x {\nlet c = a + b;\na = b;\nb = c\n};\na\n}");
 }
+
+#[test]
+fn test_type_check_v47_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 4;\nlet b = a / 2;\nb + 1\n}");
+}
+
+#[test]
+fn test_type_check_v47_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + if i % 9 == 0 { i / 9 } else { 0 }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v47_3() {
+    check_no_errors("struct Dimension { width: number, height: number }\nfn aspect_ratio(d: Dimension) -> number { d.width / d.height }\nfn is_square(d: Dimension) -> bool { d.width == d.height }");
+}
+
+#[test]
+fn test_type_check_v47_4() {
+    check_no_errors("enum Thread2 { Running, Paused, Blocked, Terminated }\nfn is_active(t: Thread2) -> bool {\nmatch t {\nThread2::Running => true\nThread2::Paused => true\nThread2::Blocked => false\nThread2::Terminated => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v47_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 5 {\nlet incremented = x + 1;\nif incremented % 3 == 0 { Some(incremented) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v47_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 10 {\nif x > 100 { Ok(x / 100) } else { Ok(x / 10) }\n} else {\nOk(x)\n}\n} else {\nErr(\"negative\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v47_7() {
+    check_no_errors("struct Ray3 { ox: number, oy: number, oz: number, dx: number, dy: number, dz: number }\nfn is_horizontal3(r: Ray3) -> bool { r.dy == 0 && r.dz == 0 }");
+}
+
+#[test]
+fn test_type_check_v47_8() {
+    check_no_errors("enum Visibility2 { Public2, Private2, Protected }\nfn is_accessible(v: Visibility2, is_subclass: bool) -> bool {\nmatch v {\nVisibility2::Public2 => true\nVisibility2::Private2 => false\nVisibility2::Protected => is_subclass\n}\n}");
+}
+
+#[test]
+fn test_type_check_v47_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + (x - i) * (x - i)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v47_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + (2 * i + 1);\ni = i + 1\n};\nresult\n}");
+}
