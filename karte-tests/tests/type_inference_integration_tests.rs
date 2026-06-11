@@ -5158,3 +5158,53 @@ fn test_type_check_v13_9() {
 fn test_type_check_v13_10() {
     check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nlet i = 1;\nwhile i <= x {\nsum = sum + i * i;\ni = i + 1\n};\nsum\n}");
 }
+
+#[test]
+fn test_type_check_v14_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * x;\nlet b = a + a;\nlet c = b * b;\nc\n}");
+}
+
+#[test]
+fn test_type_check_v14_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 1;\nlet i = 2;\nwhile i <= x {\nresult = result * i;\ni = i + 1\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_v14_3() {
+    check_no_errors("struct Date2 { year: number, month: number, day: number }\nfn is_valid(d: Date2) -> bool {\nd.year > 0 && d.month > 0 && d.month <= 12 && d.day > 0 && d.day <= 31\n}");
+}
+
+#[test]
+fn test_type_check_v14_4() {
+    check_no_errors("enum Priority { Low, Medium, High, Critical }\nfn urgency(p: Priority) -> number {\nmatch p {\nPriority::Low => 1\nPriority::Medium => 2\nPriority::High => 3\nPriority::Critical => 4\n}\n}");
+}
+
+#[test]
+fn test_type_check_v14_5() {
+    check_no_errors("fn f(x: number) -> Option<bool> {\nif x > 0 {\nSome(true)\n} else {\nif x < 0 {\nSome(false)\n} else {\nNone\n}\n}\n}");
+}
+
+#[test]
+fn test_type_check_v14_6() {
+    check_no_errors("fn f(x: number) -> Result<bool, string> {\nif x > 0 {\nOk(true)\n} else {\nif x < 0 {\nOk(false)\n} else {\nErr(\"zero\")\n}\n}\n}");
+}
+
+#[test]
+fn test_type_check_v14_7() {
+    check_no_errors("struct Triangle { a: number, b: number, c: number }\nfn perimeter(t: Triangle) -> number {\nt.a + t.b + t.c\n}\nfn is_equilateral(t: Triangle) -> bool {\nt.a == t.b && t.b == t.c\n}");
+}
+
+#[test]
+fn test_type_check_v14_8() {
+    check_no_errors("enum Media { Image(string), Video(number), Audio(number) }\nfn duration(m: Media) -> number {\nmatch m {\nMedia::Image(_) => 0\nMedia::Video(d) => d\nMedia::Audio(d) => d\n}\n}");
+}
+
+#[test]
+fn test_type_check_v14_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 1..x {\nfor j in 1..i {\nsum = sum + 1\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v14_10() {
+    check_no_errors("fn f(a: number, b: number, c: number) -> number {\nlet max = if a > b {\nif a > c { a } else { c }\n} else {\nif b > c { b } else { c }\n};\nmax\n}");
+}
