@@ -4063,3 +4063,53 @@ fn test_type_check_mini_9() {
 fn test_type_check_mini_10() {
     check_no_errors("fn f(x: number) -> number {\nif x > 0 { x } else { 0 }\n}");
 }
+
+#[test]
+fn test_type_check_micro_1() {
+    check_no_errors("fn f(x: number) -> number {\n0 - x\n}");
+}
+
+#[test]
+fn test_type_check_micro_2() {
+    check_no_errors("fn f(x: number) -> bool {\nx == 0\n}");
+}
+
+#[test]
+fn test_type_check_micro_3() {
+    check_no_errors("fn f(x: number) -> bool {\nx != 0\n}");
+}
+
+#[test]
+fn test_type_check_micro_4() {
+    check_no_errors("fn f(x: number, y: number) -> bool {\nx == y\n}");
+}
+
+#[test]
+fn test_type_check_micro_5() {
+    check_no_errors("fn f(x: number, y: number) -> bool {\nx != y\n}");
+}
+
+#[test]
+fn test_type_check_micro_6() {
+    check_no_errors("fn f(x: number, y: number) -> bool {\nx < y\n}");
+}
+
+#[test]
+fn test_type_check_micro_7() {
+    check_no_errors("fn f(x: number, y: number) -> bool {\nx > y\n}");
+}
+
+#[test]
+fn test_type_check_micro_8() {
+    check_no_errors("fn f(x: number, y: number) -> bool {\nx <= y\n}");
+}
+
+#[test]
+fn test_type_check_micro_9() {
+    check_no_errors("fn f(x: number, y: number) -> bool {\nx >= y\n}");
+}
+
+#[test]
+fn test_type_check_micro_10() {
+    check_no_errors("fn f(x: number, y: number) -> number {\nx % y\n}");
+}
