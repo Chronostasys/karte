@@ -7058,3 +7058,53 @@ fn test_type_check_v51_9() {
 fn test_type_check_v51_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = 1;\nfor i in 0..x {\nresult = result * 2\n};\nresult - 1\n}");
 }
+
+#[test]
+fn test_type_check_v52_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 1;\nlet b = a * 5;\nlet c = b - 5;\nc / 5\n}");
+}
+
+#[test]
+fn test_type_check_v52_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + if i % 12 == 0 { i / 12 } else { 0 }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v52_3() {
+    check_no_errors("struct Area2 { sqm: number }\nfn to_sqft(a: Area2) -> number { a.sqm * 10 }\nfn is_large(a: Area2) -> bool { a.sqm > 100 }");
+}
+
+#[test]
+fn test_type_check_v52_4() {
+    check_no_errors("enum Lock2 { Shared, Exclusive, Free }\nfn is_writeable(l: Lock2) -> bool {\nmatch l {\nLock2::Shared => false\nLock2::Exclusive => true\nLock2::Free => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v52_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 1 {\nlet prev = x - 1;\nif prev % 2 == 0 { Some(prev) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v52_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x >= 0 && x <= 360 {\nif x <= 90 { Ok(1) } else { if x <= 180 { Ok(2) } else { if x <= 270 { Ok(3) } else { Ok(4) } } }\n} else {\nErr(\"invalid angle\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v52_7() {
+    check_no_errors("struct Cone { radius: number, height: number }\nfn volume7(c: Cone) -> number { c.radius * c.radius * c.height }\nfn is_pointy(c: Cone) -> bool { c.height > c.radius * 2 }");
+}
+
+#[test]
+fn test_type_check_v52_8() {
+    check_no_errors("enum Device { Keyboard, Mouse, Monitor, Speaker }\nfn is_input(d: Device) -> bool {\nmatch d {\nDevice::Keyboard => true\nDevice::Mouse => true\nDevice::Monitor => false\nDevice::Speaker => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v52_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + (2 * i + 1) * (2 * i + 1) * (2 * i + 1)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v52_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 2;\nlet b = 3;\nlet i = 0;\nwhile i < x {\nlet c = a + b;\na = b;\nb = c;\ni = i + 1\n};\nb\n}");
+}
