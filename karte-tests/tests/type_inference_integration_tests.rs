@@ -7758,3 +7758,53 @@ fn test_type_check_v65_9() {
 fn test_type_check_v65_10() {
     check_no_errors("fn f(x: number) -> number {\nlet a = 2;\nlet b = 3;\nfor i in 0..x {\nlet c = a + b;\na = b;\nb = c\n};\na\n}");
 }
+
+#[test]
+fn test_type_check_v66_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 4;\nlet b = a * a - 16;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v66_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 25 && i < 50 {\nsum = sum + i\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v66_3() {
+    check_no_errors("struct Inductance { henries: number }\nfn to_mh(l: Inductance) -> number { l.henries * 1000 }\nfn is_small(l: Inductance) -> bool { l.henries < 1 }");
+}
+
+#[test]
+fn test_type_check_v66_4() {
+    check_no_errors("enum RenderAPI { OpenGL, Vulkan, Metal, DirectX }\nfn is_cross_platform(r: RenderAPI) -> bool {\nmatch r {\nRenderAPI::OpenGL => true\nRenderAPI::Vulkan => true\nRenderAPI::Metal => false\nRenderAPI::DirectX => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v66_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 5 {\nlet remainder = x % 5;\nif remainder == 0 { None } else { Some(remainder) }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v66_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 500 {\nOk(x / 10)\n} else {\nOk(x)\n}\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v66_7() {
+    check_no_errors("struct Parallelogram2 { base: number, height: number }\nfn area12(p: Parallelogram2) -> number { p.base * p.height }\nfn is_rectangle(p: Parallelogram2) -> bool { p.base > 0 && p.height > 0 }");
+}
+
+#[test]
+fn test_type_check_v66_8() {
+    check_no_errors("enum Align2 { Left2, Center2, Right2, Justify }\nfn is_left_aligned(a: Align2) -> bool {\nmatch a {\nAlign2::Left2 => true\nAlign2::Center2 => false\nAlign2::Right2 => false\nAlign2::Justify => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v66_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + (2 * i + 1) * (2 * i + 1)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v66_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 5;\nlet b = 8;\nfor i in 0..x {\nlet c = a + b;\na = b;\nb = c\n};\nb\n}");
+}
