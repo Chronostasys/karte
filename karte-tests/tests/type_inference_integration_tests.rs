@@ -7958,3 +7958,53 @@ fn test_type_check_v69_9() {
 fn test_type_check_v69_10() {
     check_no_errors("fn f(x: number) -> number {\nlet a = 1;\nlet b = 1;\nlet c = 2;\nfor i in 0..x {\nlet d = a + b + c;\na = b;\nb = c;\nc = d\n};\nc\n}");
 }
+
+#[test]
+fn test_type_check_v70_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 5;\nlet b = a * 3 - 15;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v70_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 50 {\nsum = sum + (i - 50) * (i - 50)\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v70_3() {
+    check_no_errors("struct Temperature2 { kelvin: number }\nfn to_celsius(t: Temperature2) -> number { t.kelvin - 273 }\nfn to_fahrenheit(t: Temperature2) -> number { (t.kelvin - 273) * 9 / 5 + 32 }");
+}
+
+#[test]
+fn test_type_check_v70_4() {
+    check_no_errors("enum Platform2 { Web, Mobile, Desktop, Embedded }\nfn has_gui(p: Platform2) -> bool {\nmatch p {\nPlatform2::Web => true\nPlatform2::Mobile => true\nPlatform2::Desktop => true\nPlatform2::Embedded => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v70_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet tri = x * (x + 1) / 2;\nif tri > 100 { Some(tri) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v70_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 200 { Err(\"too large\") } else { Ok(x * x + x) }\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v70_7() {
+    check_no_errors("struct Annulus { r_outer: number, r_inner: number }\nfn approx_area(a: Annulus) -> number { a.r_outer * a.r_outer - a.r_inner * a.r_inner }\nfn is_valid_ring(a: Annulus) -> bool { a.r_outer > a.r_inner }");
+}
+
+#[test]
+fn test_type_check_v70_8() {
+    check_no_errors("enum Cipher2 { Caesar, AES, RSA, XOR }\nfn is_symmetric(c: Cipher2) -> bool {\nmatch c {\nCipher2::Caesar => true\nCipher2::AES => true\nCipher2::RSA => false\nCipher2::XOR => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v70_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + i * (x - i)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v70_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + i * 2 + 1;\ni = i + 1\n};\nresult\n}");
+}
