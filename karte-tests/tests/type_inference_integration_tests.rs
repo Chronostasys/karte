@@ -7608,3 +7608,53 @@ fn test_type_check_v62_9() {
 fn test_type_check_v62_10() {
     check_no_errors("fn f(x: number) -> number {\nlet a = 0;\nlet b = 1;\nfor i in 0..x {\nlet c = a + b;\na = b;\nb = c\n};\nif a > b { a } else { b }\n}");
 }
+
+#[test]
+fn test_type_check_v63_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 3 - 1;\nlet b = a * a + 2 * a;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v63_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 15 {\nsum = sum + (i - 15) * 2\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v63_3() {
+    check_no_errors("struct DataRate { bps: number }\nfn to_kbps(d: DataRate) -> number { d.bps / 1000 }\nfn is_broadband(d: DataRate) -> bool { d.bps > 25000000 }");
+}
+
+#[test]
+fn test_type_check_v63_4() {
+    check_no_errors("enum IDE2 { VSCode, IntelliJ, Vim, Emacs }\nfn has_lsp(i: IDE2) -> bool {\nmatch i {\nIDE2::VSCode => true\nIDE2::IntelliJ => true\nIDE2::Vim => true\nIDE2::Emacs => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v63_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet squared = x * x;\nif squared < 10000 { Some(squared) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v63_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 50 {\nif x > 75 { Ok(100) } else { Ok(75) }\n} else {\nOk(x)\n}\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v63_7() {
+    check_no_errors("struct Decagon { side: number }\nfn perimeter6(d: Decagon) -> number { d.side * 10 }\nfn is_regular4(d: Decagon) -> bool { d.side > 0 }");
+}
+
+#[test]
+fn test_type_check_v63_8() {
+    check_no_errors("enum Token3 { Ident2(string), Number3(number), Operator, EOF2 }\nfn has_value(t: Token3) -> bool {\nmatch t {\nToken3::Ident2(_) => true\nToken3::Number3(_) => true\nToken3::Operator => false\nToken3::EOF2 => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v63_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + (i + 1) * (i + 1) * (i + 1)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v63_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 0;\nlet b = 1;\nfor i in 0..x {\nlet c = a + b;\na = b;\nb = c\n};\na + b\n}");
+}
