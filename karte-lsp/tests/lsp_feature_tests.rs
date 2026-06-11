@@ -2043,3 +2043,93 @@ fn test_analyze_valid_simple_mutual_rec() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors for mutual recursion: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_simple_let_chain() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet a = 1;\nlet b = a + 1;\nlet c = b + a;\nc\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for let chain: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_assignment() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn counter() -> number {\nlet x = 0;\nx = x + 1;\nx\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for assignment: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_string_concat() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(s: string) -> string {\ns + \"!\"\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for string concat: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_number_concat() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(n: number) -> string {\n\"value: \" + n\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for number concat: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_match_assign() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet result = 0;\nmatch x {\n0 => result = 1\n_ => result = 2\n};\nresult\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for match assign: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_if_assign() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet result = 0;\nif x > 0 {\nresult = 1\n} else {\nresult = 2\n};\nresult\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for if assign: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_enum_bool() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Bool { True, False }\nfn not(b: Bool) -> Bool {\nmatch b {\nBool::True => Bool::False\nBool::False => Bool::True\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for enum bool: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_transform() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point { x: number, y: number }\nfn translate(p: Point, dx: number) -> Point {\nPoint { x: p.x + dx, y: p.y }\n}\nfn scale(p: Point, s: number) -> Point {\nPoint { x: p.x * s, y: p.y * s }\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for transform: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_square_sum() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn square(x: number) -> number { x * x }\nfn sum_squares(a: number, b: number) -> number {\nsquare(a) + square(b)\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for square sum: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_compose2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn compose(f: fn(number) -> number, g: fn(number) -> number, x: number) -> number {\nf(g(x))\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for compose: {:?}", errors);
+}
