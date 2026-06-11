@@ -4458,3 +4458,53 @@ fn test_type_check_control_9() {
 fn test_type_check_control_10() {
     check_no_errors("fn f(n: number) -> number {\nlet fib_prev = 0;\nlet fib_curr = 1;\nlet i = 0;\nwhile i < n {\nlet temp = fib_curr;\nfib_curr = fib_prev + fib_curr;\nfib_prev = temp;\ni = i + 1\n};\nfib_prev\n}");
 }
+
+#[test]
+fn test_type_check_builtins_1() {
+    check_no_errors("fn f(x: number) -> number {\nabs(x)\n}");
+}
+
+#[test]
+fn test_type_check_builtins_2() {
+    check_no_errors("fn f(x: number, y: number) -> number {\nmin(x, y)\n}");
+}
+
+#[test]
+fn test_type_check_builtins_3() {
+    check_no_errors("fn f(x: number, y: number) -> number {\nmax(x, y)\n}");
+}
+
+#[test]
+fn test_type_check_builtins_4() {
+    check_no_errors("fn f(s: string) -> number {\nlen(s)\n}");
+}
+
+#[test]
+fn test_type_check_builtins_5() {
+    check_no_errors("fn f() -> number {\nlen(\"hello\")\n}");
+}
+
+#[test]
+fn test_type_check_generic_1() {
+    check_no_errors("fn id(x: number) -> number {\nx\n}\nfn main() -> number {\nid(42)\n}");
+}
+
+#[test]
+fn test_type_check_generic_2() {
+    check_no_errors("fn first(a: number, b: number) -> number {\na\n}\nfn main() -> number {\nfirst(1, 2)\n}");
+}
+
+#[test]
+fn test_type_check_generic_3() {
+    check_no_errors("fn apply(f: fn(number) -> number, x: number) -> number {\nf(x)\n}\nfn main() -> number {\nlet double = |x: number| -> number { x * 2 };\napply(double, 5)\n}");
+}
+
+#[test]
+fn test_type_check_error_detect_1() {
+    check_has_errors("fn f(x: number) -> number {\nx.y\n}");
+}
+
+#[test]
+fn test_type_check_error_detect_2() {
+    check_has_errors("fn f(x: number, y: number, z: number) -> number {\nf(x)\n}");
+}
