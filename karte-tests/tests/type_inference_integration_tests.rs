@@ -6558,3 +6558,53 @@ fn test_type_check_v41_9() {
 fn test_type_check_v41_10() {
     check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nlet n = x;\nwhile n > 0 {\nsum = sum + n % 10 * n % 10;\nn = n / 10\n};\nsum\n}");
 }
+
+#[test]
+fn test_type_check_v42_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 1;\nlet b = a + a;\nb * a\n}");
+}
+
+#[test]
+fn test_type_check_v42_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 20 {\nif i < 40 {\nsum = sum + i\n}\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v42_3() {
+    check_no_errors("struct Angle2 { degrees: number }\nfn to_radians(a: Angle2) -> number { a.degrees * 314 / 18000 }\nfn is_right(a: Angle2) -> bool { a.degrees == 90 }");
+}
+
+#[test]
+fn test_type_check_v42_4() {
+    check_no_errors("enum Layer2 { Physical, DataLink, Network, Transport }\nfn is_end_to_end(l: Layer2) -> bool {\nmatch l {\nLayer2::Physical => false\nLayer2::DataLink => false\nLayer2::Network => false\nLayer2::Transport => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v42_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 5 {\nlet doubled = x * 2;\nif doubled > 30 && doubled < 100 { Some(doubled) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v42_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x == 42 {\nOk(42)\n} else {\nif x > 42 {\nOk(x - 42)\n} else {\nOk(42 - x)\n}\n}\n}");
+}
+
+#[test]
+fn test_type_check_v42_7() {
+    check_no_errors("struct AABB3D { min_x: number, min_y: number, min_z: number, max_x: number, max_y: number, max_z: number }\nfn volume(a: AABB3D) -> number { (a.max_x - a.min_x) * (a.max_y - a.min_y) * (a.max_z - a.min_z) }");
+}
+
+#[test]
+fn test_type_check_v42_8() {
+    check_no_errors("enum Regex2 { Char(char), Star, Plus, Question }\nfn has_modifier(r: Regex2) -> bool {\nmatch r {\nRegex2::Char(_) => false\nRegex2::Star => true\nRegex2::Plus => true\nRegex2::Question => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v42_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + if i % 2 == 0 { i / 2 + 1 } else { i * 2 - 1 }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v42_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet power = 1;\nlet i = 0;\nwhile i < x {\nresult = result + power;\npower = power * 2;\ni = i + 1\n};\nresult\n}");
+}
