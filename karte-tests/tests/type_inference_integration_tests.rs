@@ -6158,3 +6158,53 @@ fn test_type_check_v33_9() {
 fn test_type_check_v33_10() {
     check_no_errors("fn f(x: number) -> number {\nlet count = 0;\nlet n = x;\nwhile n > 1 {\nn = n / 2;\ncount = count + 1\n};\ncount\n}");
 }
+
+#[test]
+fn test_type_check_v34_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet y = x + 5;\ny * y - 25\n}");
+}
+
+#[test]
+fn test_type_check_v34_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + if i % 5 == 0 { i / 5 } else { 0 }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v34_3() {
+    check_no_errors("struct Money { amount: number, currency: string }\nfn is_positive2(m: Money) -> bool { m.amount > 0 }\nfn describe2(m: Money) -> string { m.currency }");
+}
+
+#[test]
+fn test_type_check_v34_4() {
+    check_no_errors("enum Meal { Breakfast, Lunch, Dinner }\nfn time_of_day(m: Meal) -> string {\nmatch m {\nMeal::Breakfast => \"morning\"\nMeal::Lunch => \"noon\"\nMeal::Dinner => \"evening\"\n}\n}");
+}
+
+#[test]
+fn test_type_check_v34_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet doubled = x * 2;\nif doubled > 100 { None } else { Some(doubled) }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v34_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x == 1 { Ok(1) } else { if x == 2 { Ok(2) } else { if x == 3 { Ok(6) } else { Err(\"unknown\") } } }\n}");
+}
+
+#[test]
+fn test_type_check_v34_7() {
+    check_no_errors("struct Vec4 { x: number, y: number, z: number, w: number }\nfn dot4(a: Vec4, b: Vec4) -> number { a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w }");
+}
+
+#[test]
+fn test_type_check_v34_8() {
+    check_no_errors("enum Animal2 { Dog2, Cat2, Bird2 }\nfn sound(a: Animal2) -> string {\nmatch a {\nAnimal2::Dog2 => \"woof\"\nAnimal2::Cat2 => \"meow\"\nAnimal2::Bird2 => \"tweet\"\n}\n}");
+}
+
+#[test]
+fn test_type_check_v34_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 1..x {\nsum = sum + i * i + 2 * i + 1\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v34_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 1;\nlet b = 1;\nlet i = 2;\nwhile i <= x {\nlet c = a + b;\na = b;\nb = c;\ni = i + 1\n};\nb\n}");
+}
