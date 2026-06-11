@@ -4013,3 +4013,53 @@ fn test_type_check_final_push_9() {
 fn test_type_check_final_push_10() {
     check_no_errors("fn f(x: number, y: number) -> number {\nlet sum = x + y;\nlet diff = x - y;\nlet prod = x * y;\nsum + diff + prod\n}");
 }
+
+#[test]
+fn test_type_check_mini_1() {
+    check_no_errors("fn f(x: number) -> number {\nx + 1\n}");
+}
+
+#[test]
+fn test_type_check_mini_2() {
+    check_no_errors("fn f(x: number) -> number {\nx * x\n}");
+}
+
+#[test]
+fn test_type_check_mini_3() {
+    check_no_errors("fn f(x: number, y: number) -> number {\nx + y\n}");
+}
+
+#[test]
+fn test_type_check_mini_4() {
+    check_no_errors("fn f(x: number) -> bool {\nx > 0\n}");
+}
+
+#[test]
+fn test_type_check_mini_5() {
+    check_no_errors("fn f(x: number) -> number {\nlet y = x;\ny\n}");
+}
+
+#[test]
+fn test_type_check_mini_6() {
+    check_no_errors("fn f(x: number) -> number {\nlet y = x + 1;\ny\n}");
+}
+
+#[test]
+fn test_type_check_mini_7() {
+    check_no_errors("fn f() -> number {\n42\n}");
+}
+
+#[test]
+fn test_type_check_mini_8() {
+    check_no_errors("fn f() -> bool {\ntrue\n}");
+}
+
+#[test]
+fn test_type_check_mini_9() {
+    check_no_errors("fn f() -> string {\n\"hello\"\n}");
+}
+
+#[test]
+fn test_type_check_mini_10() {
+    check_no_errors("fn f(x: number) -> number {\nif x > 0 { x } else { 0 }\n}");
+}
