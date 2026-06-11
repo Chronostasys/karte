@@ -7458,3 +7458,53 @@ fn test_type_check_v59_9() {
 fn test_type_check_v59_10() {
     check_no_errors("fn f(x: number) -> number {\nlet a = 1;\nlet b = 2;\nlet i = 0;\nwhile i < x {\nlet c = a + b;\na = b;\nb = c;\ni = i + 1\n};\nb\n}");
 }
+
+#[test]
+fn test_type_check_v60_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 4;\nlet b = a + 1;\nlet c = b * b;\nc\n}");
+}
+
+#[test]
+fn test_type_check_v60_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i % 2 == 0 && i > 0 {\nsum = sum + i * i\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v60_3() {
+    check_no_errors("struct Voltage { volts: number }\nfn to_mv(v: Voltage) -> number { v.volts * 1000 }\nfn is_safe(v: Voltage) -> bool { v.volts < 50 }");
+}
+
+#[test]
+fn test_type_check_v60_4() {
+    check_no_errors("enum Algorithm2 { BFS, DFS, Dijkstra, AStar }\nfn uses_heuristic(a: Algorithm2) -> bool {\nmatch a {\nAlgorithm2::BFS => false\nAlgorithm2::DFS => false\nAlgorithm2::Dijkstra => false\nAlgorithm2::AStar => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v60_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet fifth = x / 5;\nif fifth > 0 { Some(fifth) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v60_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x % 2 == 0 { Ok(x / 2) } else { Ok(x * 3 + 1) }\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v60_7() {
+    check_no_errors("struct Pentagon { side: number }\nfn perimeter3(p: Pentagon) -> number { p.side * 5 }\nfn is_regular(p: Pentagon) -> bool { p.side > 0 }");
+}
+
+#[test]
+fn test_type_check_v60_8() {
+    check_no_errors("enum TestResult { Pass2, Fail2, Error3, Skip }\nfn needs_attention(t: TestResult) -> bool {\nmatch t {\nTestResult::Pass2 => false\nTestResult::Fail2 => true\nTestResult::Error3 => true\nTestResult::Skip => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v60_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + i * i * i + 3 * i * i + 3 * i + 1\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v60_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + i * i + i;\ni = i + 1\n};\nresult\n}");
+}
