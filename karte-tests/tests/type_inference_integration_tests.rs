@@ -6458,3 +6458,53 @@ fn test_type_check_v39_9() {
 fn test_type_check_v39_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 1;\nwhile i <= x {\nresult = result + i * i;\ni = i * 2\n};\nresult\n}");
 }
+
+#[test]
+fn test_type_check_v40_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 2 + 1;\nlet b = a * a;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v40_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 0 {\nsum = sum + 1 / i\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v40_3() {
+    check_no_errors("struct Distance2 { meters: number }\nfn to_km(d: Distance2) -> number { d.meters / 1000 }\nfn to_cm(d: Distance2) -> number { d.meters * 100 }");
+}
+
+#[test]
+fn test_type_check_v40_4() {
+    check_no_errors("enum Wave { Sine, Square, Triangle, Sawtooth }\nfn is_smooth(w: Wave) -> bool {\nmatch w {\nWave::Sine => true\nWave::Square => false\nWave::Triangle => true\nWave::Sawtooth => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v40_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 10 {\nlet tripled = x * 3;\nif tripled < 200 { Some(tripled) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v40_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x >= 0 && x <= 255 {\nif x < 128 { Ok(x) } else { Ok(255 - x) }\n} else {\nErr(\"out of byte range\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v40_7() {
+    check_no_errors("struct Triangle3 { a: number, b: number, c: number }\nfn perimeter2(t: Triangle3) -> number { t.a + t.b + t.c }\nfn is_equilateral(t: Triangle3) -> bool { t.a == t.b && t.b == t.c }");
+}
+
+#[test]
+fn test_type_check_v40_8() {
+    check_no_errors("enum Color4 { RGB(number, number, number), Gray(number) }\nfn brightness(c: Color4) -> number {\nmatch c {\nColor4::RGB(r, g, b) => (r + g + b) / 3\nColor4::Gray(v) => v\n}\n}");
+}
+
+#[test]
+fn test_type_check_v40_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + if i > x / 2 { 2 * i } else { i }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v40_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 0;\nlet b = 1;\nlet i = 0;\nwhile i < x {\nlet c = a + b;\na = b;\nb = c + a;\ni = i + 1\n};\nb\n}");
+}
