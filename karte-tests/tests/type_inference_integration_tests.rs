@@ -3563,3 +3563,53 @@ fn test_type_check_extra_complex_2() {
 fn test_type_check_extra_complex_3() {
     check_no_errors("struct Color { r: number, g: number, b: number }\nfn grayscale(c: Color) -> number {\n(c.r + c.g + c.b) / 3\n}\nfn is_dark(c: Color) -> bool {\ngrayscale(c) < 128\n}\nfn is_light(c: Color) -> bool {\n!is_dark(c)\n}");
 }
+
+#[test]
+fn test_type_check_bonus_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x;\nlet b = a;\na + b\n}");
+}
+
+#[test]
+fn test_type_check_bonus_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet y = x;\ny = y + 1;\ny = y * 2;\ny\n}");
+}
+
+#[test]
+fn test_type_check_bonus_3() {
+    check_no_errors("fn f(x: number) -> bool {\nlet a = x > 0;\nlet b = x < 100;\na && b\n}");
+}
+
+#[test]
+fn test_type_check_bonus_4() {
+    check_no_errors("struct Pair { a: number, b: number }\nfn make_pair(x: number) -> Pair {\nPair { a: x, b: x * 2 }\n}");
+}
+
+#[test]
+fn test_type_check_bonus_5() {
+    check_no_errors("enum Maybe { Just(number), Nothing }\nfn get_or_default(m: Maybe) -> number {\nmatch m {\nMaybe::Just(x) => x\nMaybe::Nothing => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_bonus_6() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = match x {\n0 => 100\n1 => 200\n_ => 300\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_bonus_7() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = if x > 0 {\nx * 2\n} else {\nx * 3\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_bonus_8() {
+    check_no_errors("fn f(x: number, y: number) -> number {\nlet max = if x > y { x } else { y };\nlet min = if x < y { x } else { y };\nmax - min\n}");
+}
+
+#[test]
+fn test_type_check_bonus_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x;\nlet b = a + 1;\nlet c = b + a;\nlet d = c + b;\nlet e = d + c;\ne\n}");
+}
+
+#[test]
+fn test_type_check_bonus_10() {
+    check_no_errors("struct Point { x: number, y: number }\nfn origin() -> Point {\nPoint { x: 0, y: 0 }\n}\nfn is_origin(p: Point) -> bool {\np.x == 0 && p.y == 0\n}");
+}
