@@ -1953,3 +1953,93 @@ fn test_analyze_valid_leap_year_fn() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors for leap year: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_simple_return() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn abs(x: number) -> number {\nif x < 0 { return 0 - x };\nx\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for return: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_recursion() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn fact(n: number) -> number {\nif n <= 1 { 1 } else { n * fact(n - 1) }\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for recursion: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_while() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn countdown(n: number) -> number {\nlet x = n;\nwhile x > 0 {\nx = x - 1\n};\nx\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for while: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_for() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn sum_to(n: number) -> number {\nlet total = 0;\nfor i in 1..n {\ntotal = total + i\n};\ntotal\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for for: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_closure_capture2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet y = 10;\nlet f = |x: number| -> number { x + y };\nf(5)\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for closure capture: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_struct_method() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Counter { value: number }\nfn increment(c: Counter) -> Counter {\nCounter { value: c.value + 1 }\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for struct method: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_enum_match() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Direction { North, South, East, West }\nfn opposite(d: Direction) -> Direction {\nmatch d {\nDirection::North => Direction::South\nDirection::South => Direction::North\nDirection::East => Direction::West\nDirection::West => Direction::East\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for enum match: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_option_chain() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn safe_div(a: number, b: number) -> Option<number> {\nif b == 0 { None } else { Some(a / b) }\n}\nfn try_div(a: number, b: number) -> number {\nmatch safe_div(a, b) {\nSome(x) => x\nNone => 0\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for option chain: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_result_chain() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn parse(s: string) -> Result<number, string> {\nOk(42)\n}\nfn compute(s: string) -> number {\nmatch parse(s) {\nOk(n) => n * 2\nErr(_) => 0\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for result chain: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_simple_mutual_rec() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn is_even(n: number) -> bool {\nif n == 0 { true } else { is_odd(n - 1) }\n}\nfn is_odd(n: number) -> bool {\nif n == 0 { false } else { is_even(n - 1) }\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors for mutual recursion: {:?}", errors);
+}
