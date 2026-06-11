@@ -8058,3 +8058,53 @@ fn test_type_check_v71_9() {
 fn test_type_check_v71_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = 1;\nfor i in 1..x {\nresult = result * 2\n};\nresult\n}");
 }
+
+#[test]
+fn test_type_check_v72_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 6;\nlet b = a * a - 36;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v72_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 70 && i < 90 {\nsum = sum + i\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v72_3() {
+    check_no_errors("struct Velocity { mps: number }\nfn to_kph(v: Velocity) -> number { v.mps * 3600 / 1000 }\nfn to_mph(v: Velocity) -> number { v.mps * 3600 / 1609 }");
+}
+
+#[test]
+fn test_type_check_v72_4() {
+    check_no_errors("enum Encryption2 { None3, TLS10, TLS12, TLS13 }\nfn is_secure(e: Encryption2) -> bool {\nmatch e {\nEncryption2::None3 => false\nEncryption2::TLS10 => false\nEncryption2::TLS12 => true\nEncryption2::TLS13 => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v72_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet fourth = x / 4;\nif fourth > 5 { Some(fourth) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v72_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 400 { Ok(x * 4) } else { Ok(x + 20) }\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v72_7() {
+    check_no_errors("struct Sphere2 { radius: number }\nfn approx_volume(s: Sphere2) -> number { s.radius * s.radius * s.radius * 4 }\nfn is_unit(s: Sphere2) -> bool { s.radius == 1 }");
+}
+
+#[test]
+fn test_type_check_v72_8() {
+    check_no_errors("enum Scale3 { Major, Minor3, Pentatonic, Blues }\nfn has_seven_notes(s: Scale3) -> bool {\nmatch s {\nScale3::Major => true\nScale3::Minor3 => true\nScale3::Pentatonic => false\nScale3::Blues => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v72_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + (2 * i + 1) * (2 * i + 1) * (2 * i + 1)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v72_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + if i > 5 { i * i } else { i };\ni = i + 1\n};\nresult\n}");
+}
