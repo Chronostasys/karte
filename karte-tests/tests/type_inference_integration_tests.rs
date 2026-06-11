@@ -3613,3 +3613,53 @@ fn test_type_check_bonus_9() {
 fn test_type_check_bonus_10() {
     check_no_errors("struct Point { x: number, y: number }\nfn origin() -> Point {\nPoint { x: 0, y: 0 }\n}\nfn is_origin(p: Point) -> bool {\np.x == 0 && p.y == 0\n}");
 }
+
+#[test]
+fn test_type_check_final_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x;\nlet b = a;\nlet c = b;\nc\n}");
+}
+
+#[test]
+fn test_type_check_final_2() {
+    check_no_errors("fn f() -> number {\nlet x = 10;\nlet y = 20;\nlet z = x + y;\nz\n}");
+}
+
+#[test]
+fn test_type_check_final_3() {
+    check_no_errors("fn f(x: number) -> number {\nif x > 0 {\nif x > 10 {\nif x > 100 {\n3\n} else {\n2\n}\n} else {\n1\n}\n} else {\n0\n}\n}");
+}
+
+#[test]
+fn test_type_check_final_4() {
+    check_no_errors("fn f(x: number) -> string {\nmatch x {\n0 => \"zero\"\n1 => \"one\"\n2 => \"two\"\n_ => \"many\"\n}\n}");
+}
+
+#[test]
+fn test_type_check_final_5() {
+    check_no_errors("fn f(a: number, b: number) -> number {\nlet sum = a + b;\nlet diff = a - b;\nlet prod = a * b;\nsum + diff + prod\n}");
+}
+
+#[test]
+fn test_type_check_final_6() {
+    check_no_errors("struct Line { x1: number, y1: number, x2: number, y2: number }\nfn horizontal(l: Line) -> bool {\nl.y1 == l.y2\n}\nfn vertical(l: Line) -> bool {\nl.x1 == l.x2\n}");
+}
+
+#[test]
+fn test_type_check_final_7() {
+    check_no_errors("enum Grade { A, B, C, D, F }\nfn pass(g: Grade) -> bool {\nmatch g {\nGrade::A => true\nGrade::B => true\nGrade::C => true\nGrade::D => true\nGrade::F => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_final_8() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nif x > 100 {\nNone\n} else {\nSome(x)\n}\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_final_9() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 100 {\nErr(\"too large\")\n} else {\nif x < 0 {\nErr(\"negative\")\n} else {\nOk(x)\n}\n}\n}");
+}
+
+#[test]
+fn test_type_check_final_10() {
+    check_no_errors("struct Point { x: number, y: number }\nfn on_x_axis(p: Point) -> bool {\np.y == 0\n}\nfn on_y_axis(p: Point) -> bool {\np.x == 0\n}\nfn on_origin(p: Point) -> bool {\non_x_axis(p) && on_y_axis(p)\n}");
+}
