@@ -4958,3 +4958,53 @@ fn test_type_check_v9_9() {
 fn test_type_check_v9_10() {
     check_no_errors("fn f(n: number) -> number {\nlet a = 1;\nlet b = 1;\nfor i in 2..n {\nlet c = a + b;\na = b;\nb = c\n};\nb\n}");
 }
+
+#[test]
+fn test_type_check_v10_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 1;\nlet b = 1;\nlet c = a + b;\nlet d = b + c;\nlet e = c + d;\ne\n}");
+}
+
+#[test]
+fn test_type_check_v10_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 0..x {\nif i % 2 == 0 {\nresult = result + i\n} else {\nresult = result - i\n}\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_v10_3() {
+    check_no_errors("struct Money { amount: number }\nfn add_money(a: Money, b: Money) -> Money {\nMoney { amount: a.amount + b.amount }\n}\nfn is_positive(m: Money) -> bool {\nm.amount > 0\n}");
+}
+
+#[test]
+fn test_type_check_v10_4() {
+    check_no_errors("enum Grade2 { A(number), B(number), C(number), D(number), F }\nfn to_number(g: Grade2) -> number {\nmatch g {\nGrade2::A(x) => x\nGrade2::B(x) => x\nGrade2::C(x) => x\nGrade2::D(x) => x\nGrade2::F => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_v10_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nlet opt = if x > 0 { Some(x) } else { None };\nmatch opt {\nSome(v) => Some(v * 2)\nNone => None\n}\n}");
+}
+
+#[test]
+fn test_type_check_v10_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nlet res = if x > 0 { Ok(x) } else { Err(\"non-positive\") };\nmatch res {\nOk(v) => Ok(v * 2)\nErr(e) => Err(e)\n}\n}");
+}
+
+#[test]
+fn test_type_check_v10_7() {
+    check_no_errors("struct Color { r: number, g: number, b: number }\nfn invert(c: Color) -> Color {\nColor { r: 255 - c.r, g: 255 - c.g, b: 255 - c.b }\n}\nfn is_black(c: Color) -> bool {\nc.r == 0 && c.g == 0 && c.b == 0\n}");
+}
+
+#[test]
+fn test_type_check_v10_8() {
+    check_no_errors("enum Expr2 { Val(number), Add2(number, number) }\nfn eval2(e: Expr2) -> number {\nmatch e {\nExpr2::Val(n) => n\nExpr2::Add2(a, b) => a + b\n}\n}\nfn is_val(e: Expr2) -> bool {\nmatch e {\nExpr2::Val(_) => true\nExpr2::Add2(_, _) => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v10_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nlet i = 1;\nwhile i <= x {\nsum = sum + i;\ni = i + 1\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v10_10() {
+    check_no_errors("fn f(a: number, b: number) -> number {\nlet x = a;\nlet y = b;\nfor i in 0..10 {\nlet temp = x + y;\nx = y;\ny = temp\n};\ny\n}");
+}
