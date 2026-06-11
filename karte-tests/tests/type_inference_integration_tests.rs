@@ -4408,3 +4408,53 @@ fn test_type_check_higher_order_3() {
 fn test_type_check_higher_order_4() {
     check_no_errors("fn add_n(n: number) -> fn(number) -> number {\n|x: number| -> number { x + n }\n}");
 }
+
+#[test]
+fn test_type_check_control_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet total = 0;\nfor i in 0..x {\nif i % 2 == 0 {\ntotal = total + i\n}\n};\ntotal\n}");
+}
+
+#[test]
+fn test_type_check_control_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet total = 0;\nwhile total < x {\ntotal = total + 1\n};\ntotal\n}");
+}
+
+#[test]
+fn test_type_check_control_3() {
+    check_no_errors("fn f(items: number) -> number {\nlet count = 0;\nfor i in 0..items {\ncount = count + 1\n};\ncount\n}");
+}
+
+#[test]
+fn test_type_check_control_4() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 0..10 {\nresult = result + i * x\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_control_5() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 1;\nfor i in 1..x {\nresult = result * i\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_control_6() {
+    check_no_errors("fn f(a: number, b: number) -> number {\nlet count = 0;\nwhile count < a {\ncount = count + b\n};\ncount\n}");
+}
+
+#[test]
+fn test_type_check_control_7() {
+    check_no_errors("fn f(n: number) -> number {\nlet sum = 0;\nfor i in 0..n {\nsum = sum + i * i\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_control_8() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x;\nlet b = x;\nwhile a < 100 {\na = a + b\n};\na\n}");
+}
+
+#[test]
+fn test_type_check_control_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 0..100 {\nif i % x == 0 {\nresult = result + i\n}\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_control_10() {
+    check_no_errors("fn f(n: number) -> number {\nlet fib_prev = 0;\nlet fib_curr = 1;\nlet i = 0;\nwhile i < n {\nlet temp = fib_curr;\nfib_curr = fib_prev + fib_curr;\nfib_prev = temp;\ni = i + 1\n};\nfib_prev\n}");
+}
