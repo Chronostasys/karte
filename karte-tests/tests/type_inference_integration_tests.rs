@@ -7008,3 +7008,53 @@ fn test_type_check_v50_9() {
 fn test_type_check_v50_10() {
     check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nlet i = 1;\nwhile i <= x {\nsum = sum + i * i;\ni = i + 1\n};\nsum\n}");
 }
+
+#[test]
+fn test_type_check_v51_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 5;\nlet b = a + 3;\nlet c = b / 2;\nc\n}");
+}
+
+#[test]
+fn test_type_check_v51_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i >= 5 && i <= 15 {\nsum = sum + i * i\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v51_3() {
+    check_no_errors("struct Mass2 { kg: number }\nfn to_grams(m: Mass2) -> number { m.kg * 1000 }\nfn is_heavy2(m: Mass2) -> bool { m.kg > 50 }");
+}
+
+#[test]
+fn test_type_check_v51_4() {
+    check_no_errors("enum Job2 { Running2, Queued, Completed, Failed }\nfn is_pending(j: Job2) -> bool {\nmatch j {\nJob2::Running2 => true\nJob2::Queued => true\nJob2::Completed => false\nJob2::Failed => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v51_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet sq = x * x;\nif sq > 100 && sq < 1000 { Some(sq) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v51_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nOk(if x > 50 { x - 50 } else { x })\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v51_7() {
+    check_no_errors("struct Cylinder { radius: number, height: number }\nfn volume6(c: Cylinder) -> number { 3 * c.radius * c.radius * c.height }\nfn is_flat(c: Cylinder) -> bool { c.height == 0 }");
+}
+
+#[test]
+fn test_type_check_v51_8() {
+    check_no_errors("enum Shader2 { Vertex, Fragment, Geometry }\nfn is_vertex(s: Shader2) -> bool {\nmatch s {\nShader2::Vertex => true\nShader2::Fragment => false\nShader2::Geometry => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v51_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 1..x {\nsum = sum + if i % 2 == 0 { i * i } else { i }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v51_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 1;\nfor i in 0..x {\nresult = result * 2\n};\nresult - 1\n}");
+}
