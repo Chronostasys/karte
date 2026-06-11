@@ -8108,3 +8108,53 @@ fn test_type_check_v72_9() {
 fn test_type_check_v72_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + if i > 5 { i * i } else { i };\ni = i + 1\n};\nresult\n}");
 }
+
+#[test]
+fn test_type_check_v73_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 2 + 7;\nlet b = a * a - 49;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v73_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 80 {\nsum = sum + (i - 80) * 3\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v73_3() {
+    check_no_errors("struct Angle2 { degrees: number }\nfn to_radians(a: Angle2) -> number { a.degrees * 314 / 18000 }\nfn is_acute(a: Angle2) -> bool { a.degrees > 0 && a.degrees < 90 }");
+}
+
+#[test]
+fn test_type_check_v73_4() {
+    check_no_errors("enum Compression2 { None4, Gzip, Brotli, Zstd }\nfn is_modern(c: Compression2) -> bool {\nmatch c {\nCompression2::None4 => false\nCompression2::Gzip => false\nCompression2::Brotli => true\nCompression2::Zstd => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v73_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet eleventh = x / 11;\nif eleventh > 0 { Some(eleventh) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v73_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 600 { Err(\"overflow\") } else { Ok(x * 5) }\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v73_7() {
+    check_no_errors("struct Cone { radius: number, height: number }\nfn approx_volume(c: Cone) -> number { c.radius * c.radius * c.height }\nfn is_pointy(c: Cone) -> bool { c.height > c.radius * 3 }");
+}
+
+#[test]
+fn test_type_check_v73_8() {
+    check_no_errors("enum Day2 { Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday }\nfn is_weekend(d: Day2) -> bool {\nmatch d {\nDay2::Monday => false\nDay2::Tuesday => false\nDay2::Wednesday => false\nDay2::Thursday => false\nDay2::Friday => false\nDay2::Saturday => true\nDay2::Sunday => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v73_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + (i * i + i)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v73_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 3;\nlet b = 5;\nfor i in 0..x {\nlet c = a + b;\na = b;\nb = c\n};\nb\n}");
+}
