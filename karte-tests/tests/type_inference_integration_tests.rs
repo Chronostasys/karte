@@ -6208,3 +6208,53 @@ fn test_type_check_v34_9() {
 fn test_type_check_v34_10() {
     check_no_errors("fn f(x: number) -> number {\nlet a = 1;\nlet b = 1;\nlet i = 2;\nwhile i <= x {\nlet c = a + b;\na = b;\nb = c;\ni = i + 1\n};\nb\n}");
 }
+
+#[test]
+fn test_type_check_v35_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 1;\nlet b = a * 2;\nlet c = b + 3;\nc\n}");
+}
+
+#[test]
+fn test_type_check_v35_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 0 && i < x {\nsum = sum + i\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v35_3() {
+    check_no_errors("struct Time2 { hours: number, minutes: number }\nfn total_minutes(t: Time2) -> number { t.hours * 60 + t.minutes }\nfn is_midnight(t: Time2) -> bool { t.hours == 0 && t.minutes == 0 }");
+}
+
+#[test]
+fn test_type_check_v35_4() {
+    check_no_errors("enum Cardinal { N, S, E, W }\nfn to_string(c: Cardinal) -> string {\nmatch c {\nCardinal::N => \"North\"\nCardinal::S => \"South\"\nCardinal::E => \"East\"\nCardinal::W => \"West\"\n}\n}");
+}
+
+#[test]
+fn test_type_check_v35_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet tripled = x * 3;\nif tripled > 50 { None } else { Some(tripled) }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v35_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x >= 0 && x <= 255 {\nOk(x)\n} else {\nErr(\"out of range\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v35_7() {
+    check_no_errors("struct Ray2 { ox: number, oy: number, dx: number, dy: number }\nfn is_horizontal(r: Ray2) -> bool { r.dy == 0 }\nfn is_vertical(r: Ray2) -> bool { r.dx == 0 }");
+}
+
+#[test]
+fn test_type_check_v35_8() {
+    check_no_errors("enum Tree2 { Leaf2(number), Branch2(number, number) }\nfn sum_tree(t: Tree2) -> number {\nmatch t {\nTree2::Leaf2(v) => v\nTree2::Branch2(a, b) => a + b\n}\n}");
+}
+
+#[test]
+fn test_type_check_v35_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + if i % 3 == 0 { i * 3 } else { if i % 5 == 0 { i * 5 } else { i } }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v35_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + (2 * i + 1) * (2 * i + 1);\ni = i + 1\n};\nresult\n}");
+}
