@@ -2769,3 +2769,75 @@ fn test_analyze_valid_error_missing_field() {
     let diagnostics = bridge.analyze(source);
     assert!(!diagnostics.is_empty(), "Should have errors for missing field");
 }
+
+#[test]
+fn test_analyze_valid_v11_sign() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet sign = if x > 0 { 1 } else { if x < 0 { 0 - 1 } else { 0 } };\nsign\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v11_fizzbuzz() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> string {\nmatch x % 3 {\n0 => \"fizz\"\n1 => \"buzz\"\n_ => \"fizzbuzz\"\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v11_point_quadrant() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point2D { x: number, y: number }\nfn quadrant(p: Point2D) -> number {\nif p.x > 0 {\nif p.y > 0 { 1 } else { 4 }\n} else {\nif p.y > 0 { 2 } else { 3 }\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v11_for_sum() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(n: number) -> number {\nlet sum = 0;\nfor i in 0..n {\nsum = sum + i\n};\nsum\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v11_while_count() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet count = 0;\nlet n = x;\nwhile n > 0 {\ncount = count + 1;\nn = n / 2\n};\ncount\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v11_complex_chain() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn add(a: number, b: number) -> number { a + b }\nfn mul(a: number, b: number) -> number { a * b }\nfn main() -> number {\nadd(mul(2, 3), mul(4, 5))\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v11_midpoint() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Point { x: number, y: number }\nfn midpoint(a: Point, b: Point) -> Point {\nPoint { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v11_eval_expr() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Expr { Val(number), Add(number, number), Mul(number, number) }\nfn eval(e: Expr) -> number {\nmatch e {\nExpr::Val(n) => n\nExpr::Add(a, b) => a + b\nExpr::Mul(a, b) => a * b\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
