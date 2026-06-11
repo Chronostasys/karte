@@ -4358,3 +4358,53 @@ fn test_type_check_pattern_9() {
 fn test_type_check_pattern_10() {
     check_no_errors("enum Either { Left(number), Right(string) }\nfn f(e: Either) -> string {\nmatch e {\nEither::Left(n) => \"number\"\nEither::Right(s) => s\n}\n}");
 }
+
+#[test]
+fn test_type_check_recursion_1() {
+    check_no_errors("fn fact(n: number) -> number {\nif n <= 1 { 1 } else { n * fact(n - 1) }\n}");
+}
+
+#[test]
+fn test_type_check_recursion_2() {
+    check_no_errors("fn fib(n: number) -> number {\nif n <= 1 { n } else { fib(n - 1) + fib(n - 2) }\n}");
+}
+
+#[test]
+fn test_type_check_recursion_3() {
+    check_no_errors("fn gcd(a: number, b: number) -> number {\nif b == 0 { a } else { gcd(b, a % b) }\n}");
+}
+
+#[test]
+fn test_type_check_recursion_4() {
+    check_no_errors("fn power(base: number, exp: number) -> number {\nif exp == 0 { 1 } else { base * power(base, exp - 1) }\n}");
+}
+
+#[test]
+fn test_type_check_recursion_5() {
+    check_no_errors("fn sum_to(n: number) -> number {\nif n == 0 { 0 } else { n + sum_to(n - 1) }\n}");
+}
+
+#[test]
+fn test_type_check_mutual_1() {
+    check_no_errors("fn is_even(n: number) -> bool {\nif n == 0 { true } else { is_odd(n - 1) }\n}\nfn is_odd(n: number) -> bool {\nif n == 0 { false } else { is_even(n - 1) }\n}");
+}
+
+#[test]
+fn test_type_check_higher_order_1() {
+    check_no_errors("fn apply(f: fn(number) -> number, x: number) -> number {\nf(x)\n}");
+}
+
+#[test]
+fn test_type_check_higher_order_2() {
+    check_no_errors("fn compose(f: fn(number) -> number, g: fn(number) -> number, x: number) -> number {\nf(g(x))\n}");
+}
+
+#[test]
+fn test_type_check_higher_order_3() {
+    check_no_errors("fn twice(f: fn(number) -> number, x: number) -> number {\nf(f(x))\n}");
+}
+
+#[test]
+fn test_type_check_higher_order_4() {
+    check_no_errors("fn add_n(n: number) -> fn(number) -> number {\n|x: number| -> number { x + n }\n}");
+}
