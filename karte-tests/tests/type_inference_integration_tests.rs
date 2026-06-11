@@ -7658,3 +7658,53 @@ fn test_type_check_v63_9() {
 fn test_type_check_v63_10() {
     check_no_errors("fn f(x: number) -> number {\nlet a = 0;\nlet b = 1;\nfor i in 0..x {\nlet c = a + b;\na = b;\nb = c\n};\na + b\n}");
 }
+
+#[test]
+fn test_type_check_v64_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 3;\nlet b = a * 2 + 1;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v64_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 20 {\nsum = sum + i - 20\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v64_3() {
+    check_no_errors("struct Luminance { lux: number }\nfn is_bright(l: Luminance) -> bool { l.lux > 1000 }\nfn is_dark2(l: Luminance) -> bool { l.lux < 10 }");
+}
+
+#[test]
+fn test_type_check_v64_4() {
+    check_no_errors("enum GameState2 { Menu2, Playing, Paused, GameOver }\nfn is_active2(g: GameState2) -> bool {\nmatch g {\nGameState2::Menu2 => false\nGameState2::Playing => true\nGameState2::Paused => false\nGameState2::GameOver => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v64_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet tenth = x / 10;\nif tenth > 0 { Some(tenth) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v64_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nOk(if x > 100 { 100 } else { x })\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v64_7() {
+    check_no_errors("struct Dodecagon { side: number }\nfn perimeter7(d: Dodecagon) -> number { d.side * 12 }\nfn is_regular5(d: Dodecagon) -> bool { d.side > 0 }");
+}
+
+#[test]
+fn test_type_check_v64_8() {
+    check_no_errors("enum Node3 { Root, Internal, Leaf3 }\nfn has_children(n: Node3) -> bool {\nmatch n {\nNode3::Root => true\nNode3::Internal => true\nNode3::Leaf3 => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v64_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + if i % 3 == 0 { i * i } else { i }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v64_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + i * i;\ni = i + 1\n};\nresult\n}");
+}
