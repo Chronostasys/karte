@@ -2539,3 +2539,75 @@ fn test_analyze_valid_push_7() {
     assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
 }
 
+
+#[test]
+fn test_analyze_valid_closure_1() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f() -> number {\nlet double = |x: number| -> number { x * 2 };\ndouble(21)\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_closure_2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet inc = |n: number| -> number { n + 1 };\ninc(x)\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_closure_3() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f() -> bool {\nlet is_positive = |x: number| -> bool { x > 0 };\nis_positive(42)\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_closure_4() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet transform = |n: number| -> number {\nif n > 0 { n * 2 } else { n }\n};\ntransform(x)\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_struct_pair() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Pair { a: number, b: number }\nfn f() -> number {\nlet p = Pair { a: 1, b: 2 };\np.a + p.b\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_struct_triple() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Triple { x: number, y: number, z: number }\nfn f() -> number {\nlet t = Triple { x: 1, y: 2, z: 3 };\nt.x + t.y + t.z\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_ref_1() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet r = &x;\n*r\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_char_1() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f() -> number {\nlet c = 'A';\nc + 1\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
