@@ -3513,3 +3513,53 @@ fn test_type_check_final_result_chain_1() {
 fn test_type_check_final_complex_program() {
     check_no_errors("struct Point { x: number, y: number }\nfn distance_sq(a: Point, b: Point) -> number {\nlet dx = a.x - b.x;\nlet dy = a.y - b.y;\ndx * dx + dy * dy\n}\nfn nearest(origin: Point, a: Point, b: Point) -> Point {\nif distance_sq(origin, a) < distance_sq(origin, b) { a } else { b }\n}");
 }
+
+#[test]
+fn test_type_check_extra_fn_chain_1() {
+    check_no_errors("fn identity(x: number) -> number {\nx\n}\nfn apply_twice(f: fn(number) -> number, x: number) -> number {\nf(f(x))\n}\nfn main() -> number {\napply_twice(identity, 5)\n}");
+}
+
+#[test]
+fn test_type_check_extra_fn_chain_2() {
+    check_no_errors("fn add(a: number) -> fn(number) -> number {\n|b: number| -> number { a + b }\n}\nfn main() -> number {\nlet add5 = add(5);\nadd5(10)\n}");
+}
+
+#[test]
+fn test_type_check_extra_fn_chain_3() {
+    check_no_errors("fn compose(f: fn(number) -> number, g: fn(number) -> number) -> fn(number) -> number {\n|x: number| -> number { f(g(x)) }\n}");
+}
+
+#[test]
+fn test_type_check_extra_enum_chain() {
+    check_no_errors("enum Bool { True, False }\nfn and(a: Bool, b: Bool) -> Bool {\nmatch a {\nBool::True => b\nBool::False => Bool::False\n}\n}\nfn or(a: Bool, b: Bool) -> Bool {\nmatch a {\nBool::True => Bool::True\nBool::False => b\n}\n}");
+}
+
+#[test]
+fn test_type_check_extra_struct_chain() {
+    check_no_errors("struct Vec3 { x: number, y: number, z: number }\nfn dot(a: Vec3, b: Vec3) -> number {\na.x * b.x + a.y * b.y + a.z * b.z\n}\nfn length_sq(v: Vec3) -> number {\ndot(v, v)\n}");
+}
+
+#[test]
+fn test_type_check_extra_option_chain() {
+    check_no_errors("fn map_option(opt: Option<number>, f: fn(number) -> number) -> Option<number> {\nmatch opt {\nSome(x) => Some(f(x))\nNone => None\n}\n}");
+}
+
+#[test]
+fn test_type_check_extra_result_chain() {
+    check_no_errors("fn map_result(res: Result<number, string>, f: fn(number) -> number) -> Result<number, string> {\nmatch res {\nOk(x) => Ok(f(x))\nErr(e) => Err(e)\n}\n}");
+}
+
+#[test]
+fn test_type_check_extra_complex_1() {
+    check_no_errors("struct Point { x: number, y: number }\nfn reflect_x(p: Point) -> Point {\nPoint { x: 0 - p.x, y: p.y }\n}\nfn reflect_y(p: Point) -> Point {\nPoint { x: p.x, y: 0 - p.y }\n}\nfn reflect_origin(p: Point) -> Point {\nreflect_x(reflect_y(p))\n}");
+}
+
+#[test]
+fn test_type_check_extra_complex_2() {
+    check_no_errors("enum List { Cons(number, number), Nil }\nfn sum_list(l: List) -> number {\nmatch l {\nList::Cons(a, b) => a + b\nList::Nil => 0\n}\n}\nfn is_empty(l: List) -> bool {\nmatch l {\nList::Cons(_, _) => false\nList::Nil => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_extra_complex_3() {
+    check_no_errors("struct Color { r: number, g: number, b: number }\nfn grayscale(c: Color) -> number {\n(c.r + c.g + c.b) / 3\n}\nfn is_dark(c: Color) -> bool {\ngrayscale(c) < 128\n}\nfn is_light(c: Color) -> bool {\n!is_dark(c)\n}");
+}
