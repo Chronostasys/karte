@@ -5908,3 +5908,53 @@ fn test_type_check_v28_9() {
 fn test_type_check_v28_10() {
     check_no_errors("fn f(x: number, y: number) -> number {\nlet a = x;\nlet b = y;\nwhile b != 0 {\nlet temp = b;\nb = a % b;\na = temp\n};\na\n}");
 }
+
+#[test]
+fn test_type_check_v29_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet y = x * x + 2 * x + 1;\ny\n}");
+}
+
+#[test]
+fn test_type_check_v29_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nfor j in 0..i {\nsum = sum + 1\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v29_3() {
+    check_no_errors("struct Pair2 { first: number, second: string }\nfn swap(p: Pair2) -> number { p.first }\nfn describe(p: Pair2) -> string { p.second }");
+}
+
+#[test]
+fn test_type_check_v29_4() {
+    check_no_errors("enum Planet { Mercury, Venus, Earth, Mars }\nfn is_habitable(p: Planet) -> bool {\nmatch p {\nPlanet::Mercury => false\nPlanet::Venus => false\nPlanet::Earth => true\nPlanet::Mars => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v29_5() {
+    check_no_errors("fn f(x: number) -> Option<string> {\nmatch x {\n0 => None\n1 => Some(\"one\")\n2 => Some(\"two\")\n_ => Some(\"many\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v29_6() {
+    check_no_errors("fn f(x: number) -> Result<string, string> {\nmatch x {\n0 => Ok(\"zero\")\n1 => Ok(\"one\")\n_ => if x > 0 { Ok(\"positive\") } else { Err(\"negative\") }\n}\n}");
+}
+
+#[test]
+fn test_type_check_v29_7() {
+    check_no_errors("struct Circle3 { cx: number, cy: number, r: number }\nfn area5(c: Circle3) -> number { 3 * c.r * c.r }\nfn is_unit(c: Circle3) -> bool { c.r == 1 }");
+}
+
+#[test]
+fn test_type_check_v29_8() {
+    check_no_errors("enum IO2 { Read3(number), Write3(number) }\nfn bytes(io: IO2) -> number {\nmatch io {\nIO2::Read3(n) => n\nIO2::Write3(n) => n\n}\n}");
+}
+
+#[test]
+fn test_type_check_v29_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 1..x {\nsum = sum + if i % 2 == 0 { i / 2 } else { i * 3 }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v29_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nlet i = x;\nwhile i > 0 {\nsum = sum + i % 10;\ni = i / 10\n};\nsum\n}");
+}
