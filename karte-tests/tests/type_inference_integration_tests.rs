@@ -4113,3 +4113,48 @@ fn test_type_check_micro_9() {
 fn test_type_check_micro_10() {
     check_no_errors("fn f(x: number, y: number) -> number {\nx % y\n}");
 }
+
+#[test]
+fn test_type_check_bitwise_1() {
+    check_no_errors("fn f(x: number, y: number) -> number {\nx & y\n}");
+}
+
+#[test]
+fn test_type_check_bitwise_2() {
+    check_no_errors("fn f(x: number, y: number) -> number {\nx | y\n}");
+}
+
+#[test]
+fn test_type_check_bitwise_3() {
+    check_no_errors("fn f(x: number, y: number) -> number {\nx ^ y\n}");
+}
+
+#[test]
+fn test_type_check_bitwise_5() {
+    check_no_errors("fn f(x: number, y: number) -> number {\nx << y\n}");
+}
+
+#[test]
+fn test_type_check_bitwise_6() {
+    check_no_errors("fn f(x: number, y: number) -> number {\nx >> y\n}");
+}
+
+#[test]
+fn test_type_check_bitwise_7() {
+    check_no_errors("fn f(x: bool) -> bool {\n!x\n}");
+}
+
+#[test]
+fn test_type_check_bitwise_8() {
+    check_no_errors("fn f(x: number, y: number) -> bool {\nx & y != 0\n}");
+}
+
+#[test]
+fn test_type_check_bitwise_9() {
+    check_no_errors("fn f(x: number, y: number) -> bool {\nx | y != 0\n}");
+}
+
+#[test]
+fn test_type_check_bitwise_10() {
+    check_no_errors("fn f(x: number, y: number) -> number {\nlet a = x & y;\nlet b = x | y;\nlet c = x ^ y;\na + b + c\n}");
+}
