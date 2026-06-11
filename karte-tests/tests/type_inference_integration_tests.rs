@@ -6308,3 +6308,53 @@ fn test_type_check_v36_9() {
 fn test_type_check_v36_10() {
     check_no_errors("fn f(x: number) -> number {\nlet largest = 0;\nlet n = x;\nwhile n > 0 {\nlet digit = n % 10;\nif digit > largest {\nlargest = digit\n};\nn = n / 10\n};\nlargest\n}");
 }
+
+#[test]
+fn test_type_check_v37_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 2;\nlet b = a * 3 - 1;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v37_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 1..x {\nsum = sum + if i % 7 == 0 { i / 7 } else { i }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v37_3() {
+    check_no_errors("struct Temperature { celsius: number }\nfn to_fahrenheit(t: Temperature) -> number { t.celsius * 9 / 5 + 32 }\nfn is_freezing(t: Temperature) -> bool { t.celsius <= 0 }");
+}
+
+#[test]
+fn test_type_check_v37_4() {
+    check_no_errors("enum Note { C, D, E, F, G, A, B }\nfn is_natural(n: Note) -> bool {\nmatch n {\nNote::C => true\nNote::D => true\nNote::E => true\nNote::F => true\nNote::G => true\nNote::A => true\nNote::B => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v37_5() {
+    check_no_errors("fn f(x: number) -> Option<string> {\nif x >= 0 && x <= 9 {\nmatch x {\n0 => Some(\"zero\")\n1 => Some(\"one\")\n2 => Some(\"two\")\n_ => Some(\"other\")\n}\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v37_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x % 2 == 0 { Ok(x / 2) } else { Ok(x * 3 + 1) }\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v37_7() {
+    check_no_errors("struct Polar3 { r: number, theta: number }\nfn x_coord(p: Polar3) -> number { p.r }\nfn is_unit2(p: Polar3) -> bool { p.r == 1 }");
+}
+
+#[test]
+fn test_type_check_v37_8() {
+    check_no_errors("enum Stmt2 { Let2(string, number), Expr2(number), Return2(number) }\nfn is_let(s: Stmt2) -> bool {\nmatch s {\nStmt2::Let2(_, _) => true\nStmt2::Expr2(_) => false\nStmt2::Return2(_) => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v37_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + (i + 1) * (i + 1)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v37_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = x;\nlet i = 0;\nwhile i < 10 {\nresult = result + i;\ni = i + 1\n};\nresult\n}");
+}
