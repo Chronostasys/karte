@@ -7408,3 +7408,53 @@ fn test_type_check_v58_9() {
 fn test_type_check_v58_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 1;\nwhile i < x {\nresult = result + i;\ni = i * 2\n};\nresult\n}");
 }
+
+#[test]
+fn test_type_check_v59_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 2 - 1;\nlet b = a * a;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v59_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 3 {\nsum = sum + (i - 3) * (i - 3)\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v59_3() {
+    check_no_errors("struct Acceleration2 { mps2: number }\nfn to_g(a: Acceleration2) -> number { a.mps2 / 10 }\nfn is_zero_g(a: Acceleration2) -> bool { a.mps2 == 0 }");
+}
+
+#[test]
+fn test_type_check_v59_4() {
+    check_no_errors("enum CacheLevel { L1, L2, L3, MainMemory }\nfn is_on_chip(c: CacheLevel) -> bool {\nmatch c {\nCacheLevel::L1 => true\nCacheLevel::L2 => true\nCacheLevel::L3 => true\nCacheLevel::MainMemory => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v59_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 5 {\nlet tripled = x * 3;\nif tripled < 100 { Some(tripled) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v59_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 10 {\nif x > 100 {\nErr(\"overflow\")\n} else {\nOk(x)\n}\n} else {\nOk(x * 2)\n}\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v59_7() {
+    check_no_errors("struct Sector2 { radius: number, angle: number }\nfn area10(s: Sector2) -> number { s.radius * s.radius * s.angle / 360 }\nfn is_half_circle(s: Sector2) -> bool { s.angle == 180 }");
+}
+
+#[test]
+fn test_type_check_v59_8() {
+    check_no_errors("enum Event3 { Timer, IO, Network, Signal }\nfn is_external(e: Event3) -> bool {\nmatch e {\nEvent3::Timer => false\nEvent3::IO => true\nEvent3::Network => true\nEvent3::Signal => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v59_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 1..x {\nsum = sum + i * (i + 1) * (i + 2) / 6\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v59_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 1;\nlet b = 2;\nlet i = 0;\nwhile i < x {\nlet c = a + b;\na = b;\nb = c;\ni = i + 1\n};\nb\n}");
+}
