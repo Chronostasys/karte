@@ -3113,3 +3113,53 @@ fn test_type_check_simple_flip_fn() {
 fn test_type_check_simple_curry_fn() {
     check_no_errors("fn add(a: number) -> fn(number) -> number {\n|b: number| -> number { a + b }\n}");
 }
+
+#[test]
+fn test_type_check_simple_let_in_if() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = if x > 0 {\nlet y = x * 2;\ny\n} else {\n0\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_simple_let_in_match() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = match x {\n0 => {\nlet y = 10;\ny\n}\n_ => {\nlet y = 20;\ny\n}\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_simple_let_in_while() {
+    check_no_errors("fn f(n: number) -> number {\nlet total = 0;\nlet i = 0;\nwhile i < n {\nlet step = i + 1;\ntotal = total + step;\ni = i + 1\n};\ntotal\n}");
+}
+
+#[test]
+fn test_type_check_simple_early_return_in_match() {
+    check_no_errors("fn f(x: number) -> number {\nmatch x {\n0 => return 100\n_ => x\n}\n}");
+}
+
+#[test]
+fn test_type_check_simple_nested_if_assign() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nif x > 0 {\nresult = 1\n} else {\nresult = 2\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_simple_match_assign() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nmatch x {\n0 => result = 1\n_ => result = 2\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_simple_string_in_if() {
+    check_no_errors("fn f(x: number) -> string {\nif x > 0 {\n\"positive\"\n} else {\n\"non-positive\"\n}\n}");
+}
+
+#[test]
+fn test_type_check_simple_number_in_match() {
+    check_no_errors("fn f(x: number) -> number {\nmatch x {\n0 => 0\n1 => 1\n2 => 4\n3 => 9\n_ => x * x\n}\n}");
+}
+
+#[test]
+fn test_type_check_simple_bool_in_if() {
+    check_no_errors("fn f(x: number) -> bool {\nif x > 0 {\ntrue\n} else {\nfalse\n}\n}");
+}
+
+#[test]
+fn test_type_check_simple_option_in_if() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nSome(x)\n} else {\nNone\n}\n}");
+}
