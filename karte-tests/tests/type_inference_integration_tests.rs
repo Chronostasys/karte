@@ -5408,3 +5408,53 @@ fn test_type_check_v18_9() {
 fn test_type_check_v18_10() {
     check_no_errors("fn f(x: number) -> number {\nlet prev = 0;\nlet curr = 1;\nlet i = 0;\nwhile i < x {\nlet temp = prev + curr;\nprev = curr;\ncurr = temp;\ni = i + 1\n};\ncurr\n}");
 }
+
+#[test]
+fn test_type_check_v19_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 1;\nlet b = a * 2;\nlet c = b - 3;\nc\n}");
+}
+
+#[test]
+fn test_type_check_v19_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet even = 0;\nlet odd = 0;\nfor i in 0..x {\nif i % 2 == 0 {\neven = even + 1\n} else {\nodd = odd + 1\n}\n};\neven + odd\n}");
+}
+
+#[test]
+fn test_type_check_v19_3() {
+    check_no_errors("struct Name { first: string, last: string }\nfn full_name(n: Name) -> string {\nn.first + \" \" + n.last\n}");
+}
+
+#[test]
+fn test_type_check_v19_4() {
+    check_no_errors("enum Language { Rust, Python, JavaScript, Go }\nfn is_compiled(l: Language) -> bool {\nmatch l {\nLanguage::Rust => true\nLanguage::Go => true\nLanguage::Python => false\nLanguage::JavaScript => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v19_5() {
+    check_no_errors("fn f(x: number) -> Option<bool> {\nif x > 100 { None } else { if x > 50 { Some(true) } else { Some(false) } }\n}");
+}
+
+#[test]
+fn test_type_check_v19_6() {
+    check_no_errors("fn f(x: number) -> Result<bool, string> {\nif x == 0 { Err(\"zero\") } else { if x > 0 { Ok(true) } else { Ok(false) } }\n}");
+}
+
+#[test]
+fn test_type_check_v19_7() {
+    check_no_errors("struct Vector2D { dx: number, dy: number }\nfn magnitude_sq(v: Vector2D) -> number {\nv.dx * v.dx + v.dy * v.dy\n}\nfn is_zero(v: Vector2D) -> bool {\nmagnitude_sq(v) == 0\n}");
+}
+
+#[test]
+fn test_type_check_v19_8() {
+    check_no_errors("enum HTTP { Get, Post, Put, Delete }\nfn has_body(h: HTTP) -> bool {\nmatch h {\nHTTP::Get => false\nHTTP::Post => true\nHTTP::Put => true\nHTTP::Delete => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v19_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 0..x {\nfor j in 0..x {\nresult = result + 1\n}\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_v19_10() {
+    check_no_errors("fn f(x: number, y: number) -> number {\nlet a = x + y;\nlet b = x - y;\nlet c = x * y;\nlet d = if b != 0 { c / b } else { 0 };\nd\n}");
+}
