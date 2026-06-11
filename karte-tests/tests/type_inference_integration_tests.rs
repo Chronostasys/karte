@@ -3463,3 +3463,53 @@ fn test_type_check_misc_complex_while_break() {
 fn test_type_check_misc_fn_chain_with_let() {
     check_no_errors("fn double(x: number) -> number { x * 2 }\nfn add_one(x: number) -> number { x + 1 }\nfn main() -> number {\nlet a = 5;\nlet b = double(a);\nlet c = add_one(b);\nc\n}");
 }
+
+#[test]
+fn test_type_check_final_fn_chain_1() {
+    check_no_errors("fn square(x: number) -> number { x * x }\nfn cube(x: number) -> number { x * x * x }\nfn main() -> number {\nsquare(3) + cube(2)\n}");
+}
+
+#[test]
+fn test_type_check_final_fn_chain_2() {
+    check_no_errors("fn max(a: number, b: number) -> number {\nif a > b { a } else { b }\n}\nfn min(a: number, b: number) -> number {\nif a < b { a } else { b }\n}\nfn clamp(x: number, lo: number, hi: number) -> number {\nmax(min(x, hi), lo)\n}");
+}
+
+#[test]
+fn test_type_check_final_fn_chain_3() {
+    check_no_errors("fn abs(x: number) -> number {\nif x < 0 { 0 - x } else { x }\n}\nfn distance(a: number, b: number) -> number {\nabs(a - b)\n}");
+}
+
+#[test]
+fn test_type_check_final_fn_chain_4() {
+    check_no_errors("fn is_even(n: number) -> bool {\nn % 2 == 0\n}\nfn is_odd(n: number) -> bool {\n!is_even(n)\n}");
+}
+
+#[test]
+fn test_type_check_final_fn_chain_5() {
+    check_no_errors("fn fib(n: number) -> number {\nif n <= 1 { n } else { fib(n - 1) + fib(n - 2) }\n}\nfn main() -> number {\nfib(10)\n}");
+}
+
+#[test]
+fn test_type_check_final_enum_chain_1() {
+    check_no_errors("enum Season { Spring, Summer, Autumn, Winter }\nfn next_season(s: Season) -> Season {\nmatch s {\nSeason::Spring => Season::Summer\nSeason::Summer => Season::Autumn\nSeason::Autumn => Season::Winter\nSeason::Winter => Season::Spring\n}\n}");
+}
+
+#[test]
+fn test_type_check_final_struct_chain_1() {
+    check_no_errors("struct Rect { width: number, height: number }\nfn area(r: Rect) -> number {\nr.width * r.height\n}\nfn perimeter(r: Rect) -> number {\n2 * (r.width + r.height)\n}\nfn is_square(r: Rect) -> bool {\nr.width == r.height\n}");
+}
+
+#[test]
+fn test_type_check_final_option_chain_1() {
+    check_no_errors("fn safe_sqrt(x: number) -> Option<number> {\nif x < 0 { None } else { Some(x) }\n}\nfn sqrt_or_zero(x: number) -> number {\nmatch safe_sqrt(x) {\nSome(r) => r\nNone => 0\n}\n}");
+}
+
+#[test]
+fn test_type_check_final_result_chain_1() {
+    check_no_errors("fn parse_int(s: string) -> Result<number, string> {\nOk(42)\n}\nfn double_parse(s: string) -> Result<number, string> {\nmatch parse_int(s) {\nOk(n) => Ok(n * 2)\nErr(e) => Err(e)\n}\n}");
+}
+
+#[test]
+fn test_type_check_final_complex_program() {
+    check_no_errors("struct Point { x: number, y: number }\nfn distance_sq(a: Point, b: Point) -> number {\nlet dx = a.x - b.x;\nlet dy = a.y - b.y;\ndx * dx + dy * dy\n}\nfn nearest(origin: Point, a: Point, b: Point) -> Point {\nif distance_sq(origin, a) < distance_sq(origin, b) { a } else { b }\n}");
+}
