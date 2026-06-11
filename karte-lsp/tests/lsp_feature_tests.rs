@@ -3921,3 +3921,93 @@ fn test_analyze_valid_v58_rhombus() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_v59_sector() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Sector2 { radius: number, angle: number }\nfn area(s: Sector2) -> number { s.radius * s.radius * s.angle / 360 }\nfn is_half_circle(s: Sector2) -> bool { s.angle == 180 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v59_event() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Event3 { Timer, IO, Network, Signal }\nfn is_external(e: Event3) -> bool {\nmatch e {\nEvent3::Timer => false\nEvent3::IO => true\nEvent3::Network => true\nEvent3::Signal => true\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v60_voltage() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Voltage { volts: number }\nfn to_mv(v: Voltage) -> number { v.volts * 1000 }\nfn is_safe(v: Voltage) -> bool { v.volts < 50 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v60_algorithm() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Algorithm2 { BFS, DFS, Dijkstra, AStar }\nfn uses_heuristic(a: Algorithm2) -> bool {\nmatch a {\nAlgorithm2::BFS => false\nAlgorithm2::DFS => false\nAlgorithm2::Dijkstra => false\nAlgorithm2::AStar => true\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v60_pentagon() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Pentagon { side: number }\nfn perimeter(p: Pentagon) -> number { p.side * 5 }\nfn is_regular(p: Pentagon) -> bool { p.side > 0 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v60_test_result() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum TestResult { Pass2, Fail2, Error3, Skip }\nfn needs_attention(t: TestResult) -> bool {\nmatch t {\nTestResult::Pass2 => false\nTestResult::Fail2 => true\nTestResult::Error3 => true\nTestResult::Skip => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v57_engine() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Engine2 { V8, V6, Inline4, Electric }\nfn is_combustion(e: Engine2) -> bool {\nmatch e {\nEngine2::V8 => true\nEngine2::V6 => true\nEngine2::Inline4 => true\nEngine2::Electric => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v58_color_model() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum ColorModel2 { RGB2, CMYK, HSV }\nfn is_additive(c: ColorModel2) -> bool {\nmatch c {\nColorModel2::RGB2 => true\nColorModel2::CMYK => false\nColorModel2::HSV => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v56_event_type() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum EventType2 { Click2, Hover, Focus, Blur }\nfn is_mouse_event(e: EventType2) -> bool {\nmatch e {\nEventType2::Click2 => true\nEventType2::Hover => true\nEventType2::Focus => false\nEventType2::Blur => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v56_prism() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Prism2 { base_area: number, height: number }\nfn volume(p: Prism2) -> number { p.base_area * p.height }\nfn is_flat(p: Prism2) -> bool { p.height < 1 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
