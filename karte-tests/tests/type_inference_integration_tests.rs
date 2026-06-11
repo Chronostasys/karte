@@ -5658,3 +5658,53 @@ fn test_type_check_v23_9() {
 fn test_type_check_v23_10() {
     check_no_errors("fn f(x: number) -> number {\nlet a = 1;\nlet b = 1;\nfor i in 2..x {\nlet c = a + b;\na = b;\nb = c\n};\nb + a\n}");
 }
+
+#[test]
+fn test_type_check_v24_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x;\nlet b = a + 1;\nlet c = b * 2;\nlet d = c - 1;\nd\n}");
+}
+
+#[test]
+fn test_type_check_v24_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + if i % 2 == 0 { i } else { 0 - i }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v24_3() {
+    check_no_errors("struct Coord { lat: number, lon: number }\nfn is_north(c: Coord) -> bool { c.lat > 0 }\nfn is_east(c: Coord) -> bool { c.lon > 0 }");
+}
+
+#[test]
+fn test_type_check_v24_4() {
+    check_no_errors("enum Chess { King2, Queen2, Rook2 }\nfn is_royal(c: Chess) -> bool {\nmatch c {\nChess::King2 => true\nChess::Queen2 => true\nChess::Rook2 => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v24_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 10 {\nif x > 50 {\nSome(x * 2)\n} else {\nSome(x)\n}\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v24_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x < 0 {\nErr(\"negative\")\n} else {\nif x > 100 {\nOk(100)\n} else {\nOk(x)\n}\n}\n}");
+}
+
+#[test]
+fn test_type_check_v24_7() {
+    check_no_errors("struct Range2 { lo: number, hi: number }\nfn contains2(r: Range2, x: number) -> bool { x >= r.lo && x <= r.hi }\nfn size(r: Range2) -> number { r.hi - r.lo }");
+}
+
+#[test]
+fn test_type_check_v24_8() {
+    check_no_errors("enum Level { Debug2, Info2, Warn2, Error2 }\nfn is_error(l: Level) -> bool {\nmatch l {\nLevel::Debug2 => false\nLevel::Info2 => false\nLevel::Warn2 => false\nLevel::Error2 => true\n}\n}");
+}
+
+#[test]
+fn test_type_check_v24_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 1..x {\nsum = sum + i * (i + 1)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v24_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 0;\nlet b = 1;\nlet i = 0;\nwhile i < x {\nlet c = a + b;\na = b;\nb = c;\ni = i + 1\n};\na\n}");
+}
