@@ -4608,3 +4608,53 @@ fn test_type_check_final_v2_9() {
 fn test_type_check_final_v2_10() {
     check_no_errors("struct Rectangle { width: number, height: number }\nfn area(r: Rectangle) -> number { r.width * r.height }\nfn bigger(a: Rectangle, b: Rectangle) -> Rectangle {\nif area(a) > area(b) { a } else { b }\n}");
 }
+
+#[test]
+fn test_type_check_v3_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 1;\nlet b = a * 2;\nlet c = b - 3;\nlet d = c / 4;\nd\n}");
+}
+
+#[test]
+fn test_type_check_v3_2() {
+    check_no_errors("fn f(x: number) -> bool {\nlet a = x > 0;\nlet b = x < 100;\nlet c = a && b;\nc\n}");
+}
+
+#[test]
+fn test_type_check_v3_3() {
+    check_no_errors("fn f(x: number) -> string {\nif x == 0 { \"zero\" } else { if x == 1 { \"one\" } else { \"other\" } }\n}");
+}
+
+#[test]
+fn test_type_check_v3_4() {
+    check_no_errors("struct Box { w: number, h: number, d: number }\nfn volume(b: Box) -> number {\nb.w * b.h * b.d\n}");
+}
+
+#[test]
+fn test_type_check_v3_5() {
+    check_no_errors("enum Coin { Penny, Nickel, Dime, Quarter }\nfn value(c: Coin) -> number {\nmatch c {\nCoin::Penny => 1\nCoin::Nickel => 5\nCoin::Dime => 10\nCoin::Quarter => 25\n}\n}");
+}
+
+#[test]
+fn test_type_check_v3_6() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 && x < 100 {\nSome(x)\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v3_7() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x >= 0 && x <= 100 {\nOk(x)\n} else {\nif x < 0 {\nErr(\"negative\")\n} else {\nErr(\"too large\")\n}\n}\n}");
+}
+
+#[test]
+fn test_type_check_v3_8() {
+    check_no_errors("struct Matrix { a: number, b: number, c: number, d: number }\nfn determinant(m: Matrix) -> number {\nm.a * m.d - m.b * m.c\n}");
+}
+
+#[test]
+fn test_type_check_v3_9() {
+    check_no_errors("enum Planet { Mercury, Venus, Earth, Mars }\nfn distance_to_sun(p: Planet) -> number {\nmatch p {\nPlanet::Mercury => 58\nPlanet::Venus => 108\nPlanet::Earth => 150\nPlanet::Mars => 228\n}\n}");
+}
+
+#[test]
+fn test_type_check_v3_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 0..10 {\nresult = result + if i % 2 == 0 { i } else { 0 }\n};\nresult\n}");
+}
