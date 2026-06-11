@@ -5308,3 +5308,53 @@ fn test_type_check_v16_9() {
 fn test_type_check_v16_10() {
     check_no_errors("fn f(x: number) -> number {\nlet a = 1;\nlet b = 1;\nfor i in 2..x {\nlet c = a + b;\na = b;\nb = c\n};\nif x == 0 { 1 } else { b }\n}");
 }
+
+#[test]
+fn test_type_check_v17_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x;\nlet b = a;\nlet c = b;\nlet d = c;\nlet e = d;\nlet g = e;\ng\n}");
+}
+
+#[test]
+fn test_type_check_v17_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 0..100 {\nresult = result + if i % 6 == 0 { i } else { 0 }\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_v17_3() {
+    check_no_errors("struct Timer { hours: number, minutes: number, seconds: number }\nfn to_seconds(t: Timer) -> number {\nt.hours * 3600 + t.minutes * 60 + t.seconds\n}");
+}
+
+#[test]
+fn test_type_check_v17_4() {
+    check_no_errors("enum Fruit { Apple, Banana, Cherry, Date }\nfn calories(f: Fruit) -> number {\nmatch f {\nFruit::Apple => 95\nFruit::Banana => 105\nFruit::Cherry => 50\nFruit::Date => 20\n}\n}");
+}
+
+#[test]
+fn test_type_check_v17_5() {
+    check_no_errors("fn f(x: number) -> Option<string> {\nmatch x {\n1 => Some(\"one\")\n2 => Some(\"two\")\n3 => Some(\"three\")\n_ => None\n}\n}");
+}
+
+#[test]
+fn test_type_check_v17_6() {
+    check_no_errors("fn f(x: number) -> Result<string, string> {\nif x == 42 {\nOk(\"answer\")\n} else {\nif x == 0 {\nOk(\"nothing\")\n} else {\nErr(\"unknown\")\n}\n}\n}");
+}
+
+#[test]
+fn test_type_check_v17_7() {
+    check_no_errors("struct ColorRGB { red: number, green: number, blue: number }\nfn to_grayscale(c: ColorRGB) -> number {\n(c.red * 30 + c.green * 59 + c.blue * 11) / 100\n}");
+}
+
+#[test]
+fn test_type_check_v17_8() {
+    check_no_errors("enum Shape2 { Square(number), Rectangle2(number, number) }\nfn area2(s: Shape2) -> number {\nmatch s {\nShape2::Square(side) => side * side\nShape2::Rectangle2(w, h) => w * h\n}\n}");
+}
+
+#[test]
+fn test_type_check_v17_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nlet i = 1;\nwhile i <= x {\nsum = sum + i;\ni = i + 2\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v17_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet product = 1;\nfor i in 1..x {\nproduct = product * (i + 1)\n};\nproduct\n}");
+}
