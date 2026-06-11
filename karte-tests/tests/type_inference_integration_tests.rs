@@ -8258,3 +8258,53 @@ fn test_type_check_v75_9() {
 fn test_type_check_v75_10() {
     check_no_errors("fn f(x: number) -> number {\nlet a = 7;\nlet b = 11;\nfor i in 0..x {\nlet c = a + b;\na = b;\nb = c\n};\nb\n}");
 }
+
+#[test]
+fn test_type_check_v76_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 5 + 4;\nlet b = a * a - 16;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v76_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 10 && i < 20 {\nsum = sum + (i - 10) * (i - 10)\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v76_3() {
+    check_no_errors("struct Flux2 { webers: number }\nfn to_mwb(f: Flux2) -> number { f.webers * 1000 }\nfn is_strong_flux(f: Flux2) -> bool { f.webers > 1 }");
+}
+
+#[test]
+fn test_type_check_v76_4() {
+    check_no_errors("enum Continent { Asia, Europe, Africa, America, Oceania, Antarctic }\nfn is_inhabited(c: Continent) -> bool {\nmatch c {\nContinent::Asia => true\nContinent::Europe => true\nContinent::Africa => true\nContinent::America => true\nContinent::Oceania => true\nContinent::Antarctic => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v76_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet fourteenth = x / 14;\nif fourteenth > 0 { Some(fourteenth) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v76_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 900 { Err(\"overflow\") } else { Ok(x * 8) }\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v76_7() {
+    check_no_errors("struct Torus { major_r: number, minor_r: number }\nfn approx_area(t: Torus) -> number { t.major_r * t.minor_r * 40 }\nfn is_thick(t: Torus) -> bool { t.minor_r > t.major_r / 3 }");
+}
+
+#[test]
+fn test_type_check_v76_8() {
+    check_no_errors("enum Element2 { Metal, NonMetal, Metalloid, Noble3 }\nfn conducts_electricity(e: Element2) -> bool {\nmatch e {\nElement2::Metal => true\nElement2::NonMetal => false\nElement2::Metalloid => true\nElement2::Noble3 => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v76_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + (i * 2 + 1) * (i + 1)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v76_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + if i > 10 { i * i } else { i * 2 };\ni = i + 1\n};\nresult\n}");
+}
