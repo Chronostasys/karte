@@ -3813,3 +3813,53 @@ fn test_type_check_sprint_9() {
 fn test_type_check_sprint_10() {
     check_no_errors("fn f(x: number) -> number {\nlet total = 0;\nfor i in 0..10 {\ntotal = total + i\n};\ntotal\n}");
 }
+
+#[test]
+fn test_type_check_last_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet y = x + 1;\nlet z = y + 1;\nlet w = z + 1;\nw\n}");
+}
+
+#[test]
+fn test_type_check_last_2() {
+    check_no_errors("fn f(x: number) -> bool {\nlet a = x > 0;\nlet b = x < 100;\na && b\n}");
+}
+
+#[test]
+fn test_type_check_last_3() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 2;\nlet b = a + 1;\nlet c = b * 3;\nc\n}");
+}
+
+#[test]
+fn test_type_check_last_4() {
+    check_no_errors("fn f(s: string) -> string {\nlet a = s + \"!\";\na\n}");
+}
+
+#[test]
+fn test_type_check_last_5() {
+    check_no_errors("fn f(b: bool) -> number {\nif b { 1 } else { 0 }\n}");
+}
+
+#[test]
+fn test_type_check_last_6() {
+    check_no_errors("struct Range { start: number, end: number }\nfn contains(r: Range, x: number) -> bool {\nx >= r.start && x <= r.end\n}");
+}
+
+#[test]
+fn test_type_check_last_7() {
+    check_no_errors("enum Month { Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec }\nfn quarter(m: Month) -> number {\nmatch m {\nMonth::Jan => 1\nMonth::Feb => 1\nMonth::Mar => 1\nMonth::Apr => 2\nMonth::May => 2\nMonth::Jun => 2\nMonth::Jul => 3\nMonth::Aug => 3\nMonth::Sep => 3\nMonth::Oct => 4\nMonth::Nov => 4\nMonth::Dec => 4\n}\n}");
+}
+
+#[test]
+fn test_type_check_last_8() {
+    check_no_errors("fn f(x: number) -> number {\nlet abs = if x < 0 { 0 - x } else { x };\nabs * 2\n}");
+}
+
+#[test]
+fn test_type_check_last_9() {
+    check_no_errors("fn f(a: number, b: number, c: number) -> number {\nlet sum = a + b + c;\nlet avg = sum / 3;\navg\n}");
+}
+
+#[test]
+fn test_type_check_last_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x;\nlet b = a;\na + b\n}");
+}
