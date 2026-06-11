@@ -3381,3 +3381,93 @@ fn test_analyze_valid_v39_compass() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_v40_distance() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Distance2 { meters: number }\nfn to_km(d: Distance2) -> number { d.meters / 1000 }\nfn to_cm(d: Distance2) -> number { d.meters * 100 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v40_wave() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Wave { Sine, Square, Triangle, Sawtooth }\nfn is_smooth(w: Wave) -> bool {\nmatch w {\nWave::Sine => true\nWave::Square => false\nWave::Triangle => true\nWave::Sawtooth => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v41_hexcolor() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct HexColor { r: number, g: number, b: number }\nfn luminance(c: HexColor) -> number { (c.r * 299 + c.g * 587 + c.b * 114) / 1000 }\nfn is_dark(c: HexColor) -> bool { luminance(c) < 128 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v41_arch() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Arch { X86, ARM, RISCV, MIPS }\nfn is_64bit(a: Arch) -> bool {\nmatch a {\nArch::X86 => true\nArch::ARM => true\nArch::RISCV => true\nArch::MIPS => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v42_mat2x2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Mat2x2 { a: number, b: number, c: number, d: number }\nfn determinant(m: Mat2x2) -> number { m.a * m.d - m.b * m.c }\nfn is_identity(m: Mat2x2) -> bool { m.a == 1 && m.b == 0 && m.c == 0 && m.d == 1 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v43_opcode() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Opcode2 { Push(number), Pop, Add5, Mul5 }\nfn has_operand(op: Opcode2) -> bool {\nmatch op {\nOpcode2::Push(_) => true\nOpcode2::Pop => false\nOpcode2::Add5 => false\nOpcode2::Mul5 => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v43_dbtype() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum DBType { Integer, Float, VarChar, Boolean }\nfn is_numeric(t: DBType) -> bool {\nmatch t {\nDBType::Integer => true\nDBType::Float => true\nDBType::VarChar => false\nDBType::Boolean => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v43_coordinate() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Coordinate2 { x: number, y: number, z: number }\nfn is_origin(c: Coordinate2) -> bool { c.x == 0 && c.y == 0 && c.z == 0 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v42_aabb3d() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct AABB3D { min_x: number, min_y: number, min_z: number, max_x: number, max_y: number, max_z: number }\nfn volume(a: AABB3D) -> number { (a.max_x - a.min_x) * (a.max_y - a.min_y) * (a.max_z - a.min_z) }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v42_power_sum() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet result = 0;\nlet power = 1;\nlet i = 0;\nwhile i < x {\nresult = result + power;\npower = power * 2;\ni = i + 1\n};\nresult\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
