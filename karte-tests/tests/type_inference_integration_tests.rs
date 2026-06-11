@@ -3413,3 +3413,53 @@ fn test_type_check_advanced_result_chain5() {
 fn test_type_check_advanced_pattern_match() {
     check_no_errors("enum Shape { Circle(number), Rect(number, number) }\nfn perimeter(s: Shape) -> number {\nmatch s {\nShape::Circle(r) => 2 * 3 * r\nShape::Rect(w, h) => 2 * (w + h)\n}\n}");
 }
+
+#[test]
+fn test_type_check_misc_bool_and_number() {
+    check_no_errors("fn f(x: number) -> number {\nlet b = x > 0;\nif b { x } else { 0 }\n}");
+}
+
+#[test]
+fn test_type_check_misc_nested_let_scope() {
+    check_no_errors("fn f() -> number {\nlet x = 1;\nlet y = {\nlet x = 2;\nx + 1\n};\nx + y\n}");
+}
+
+#[test]
+fn test_type_check_misc_complex_assignment() {
+    check_no_errors("fn f() -> number {\nlet a = 1;\nlet b = 2;\na = a + b;\nb = a + b;\na + b\n}");
+}
+
+#[test]
+fn test_type_check_misc_string_compare() {
+    check_no_errors("fn is_hello(s: string) -> bool {\ns == \"hello\"\n}");
+}
+
+#[test]
+fn test_type_check_misc_option_default() {
+    check_no_errors("fn unwrap_or(opt: Option<number>, def: number) -> number {\nmatch opt {\nSome(x) => x\nNone => def\n}\n}");
+}
+
+#[test]
+fn test_type_check_misc_result_or() {
+    check_no_errors("fn unwrap_or(res: Result<number, string>, def: number) -> number {\nmatch res {\nOk(x) => x\nErr(_) => def\n}\n}");
+}
+
+#[test]
+fn test_type_check_misc_enum_data_access() {
+    check_no_errors("enum Pair { P(number, number) }\nfn fst(p: Pair) -> number {\nmatch p {\nPair::P(a, _) => a\n}\n}");
+}
+
+#[test]
+fn test_type_check_misc_struct_field_update() {
+    check_no_errors("struct Point { x: number, y: number }\nfn move_right(p: Point, dx: number) -> Point {\nPoint { x: p.x + dx, y: p.y }\n}");
+}
+
+#[test]
+fn test_type_check_misc_complex_while_break() {
+    check_no_errors("fn find_positive(items: number) -> Option<number> {\nif items > 0 { Some(items) } else { None }\n}");
+}
+
+#[test]
+fn test_type_check_misc_fn_chain_with_let() {
+    check_no_errors("fn double(x: number) -> number { x * 2 }\nfn add_one(x: number) -> number { x + 1 }\nfn main() -> number {\nlet a = 5;\nlet b = double(a);\nlet c = add_one(b);\nc\n}");
+}
