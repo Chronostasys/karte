@@ -34,10 +34,13 @@ impl Backend {
         let lsp_diagnostics: Vec<Diagnostic> = diagnostics
             .into_iter()
             .map(|diag| {
-                let message = match &diag.help {
-                    Some(help) => format!("{}\n  💡 {}", diag.message, help),
-                    None => diag.message,
+                let message = match (&diag.help, &diag.code) {
+                    (Some(help), Some(code)) => format!("[{}] {}\n  💡 {}", code, diag.message, help),
+                    (None, Some(code)) => format!("[{}] {}", code, diag.message),
+                    (Some(help), None) => format!("{}\n  💡 {}", diag.message, help),
+                    (None, None) => diag.message,
                 };
+                let code = diag.code.map(|c| NumberOrString::String(c));
                 Diagnostic {
                 range: diag.range,
                 severity: Some(match diag.severity {
@@ -46,6 +49,7 @@ impl Backend {
                     KarteDiagnosticSeverity::Information => DiagnosticSeverity::INFORMATION,
                     KarteDiagnosticSeverity::Hint => DiagnosticSeverity::HINT,
                 }),
+                code,
                 message,
                 source: Some("karte".to_string()),
                 ..Default::default()
