@@ -4658,3 +4658,53 @@ fn test_type_check_v3_9() {
 fn test_type_check_v3_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 0..10 {\nresult = result + if i % 2 == 0 { i } else { 0 }\n};\nresult\n}");
 }
+
+#[test]
+fn test_type_check_v4_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x;\na = a + 1;\na = a + 1;\na = a + 1;\na\n}");
+}
+
+#[test]
+fn test_type_check_v4_2() {
+    check_no_errors("fn f(x: number) -> string {\nlet s = \"\";\nlet s = s + \"hello\";\nlet s = s + \" \";\nlet s = s + \"world\";\ns\n}");
+}
+
+#[test]
+fn test_type_check_v4_3() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 1;\nfor i in 1..x {\nresult = result * i\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_v4_4() {
+    check_no_errors("struct Interval { lo: number, hi: number }\nfn contains(i: Interval, x: number) -> bool {\nx >= i.lo && x <= i.hi\n}\nfn overlap(a: Interval, b: Interval) -> bool {\ncontains(a, b.lo) || contains(a, b.hi) || contains(b, a.lo)\n}");
+}
+
+#[test]
+fn test_type_check_v4_5() {
+    check_no_errors("enum Weather { Sunny, Cloudy, Rainy }\nfn activity(w: Weather) -> string {\nmatch w {\nWeather::Sunny => \"picnic\"\nWeather::Cloudy => \"walk\"\nWeather::Rainy => \"read\"\n}\n}");
+}
+
+#[test]
+fn test_type_check_v4_6() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nmatch x {\n0 => None\n1 => Some(1)\n2 => Some(2)\n_ => Some(x)\n}\n}");
+}
+
+#[test]
+fn test_type_check_v4_7() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x % 2 == 0 { Ok(x) } else { Err(\"odd\") }\n} else {\nErr(\"negative\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v4_8() {
+    check_no_errors("struct Complex { real: number, imag: number }\nfn add_complex(a: Complex, b: Complex) -> Complex {\nComplex { real: a.real + b.real, imag: a.imag + b.imag }\n}\nfn magnitude_sq(c: Complex) -> number {\nc.real * c.real + c.imag * c.imag\n}");
+}
+
+#[test]
+fn test_type_check_v4_9() {
+    check_no_errors("enum TreeNode { Leaf(number), Branch(number, number) }\nfn sum_tree(t: TreeNode) -> number {\nmatch t {\nTreeNode::Leaf(x) => x\nTreeNode::Branch(a, b) => a + b\n}\n}");
+}
+
+#[test]
+fn test_type_check_v4_10() {
+    check_no_errors("fn f(n: number) -> number {\nlet a = 0;\nlet b = 1;\nfor i in 0..n {\nlet temp = b;\nb = a + b;\na = temp\n};\na\n}");
+}
