@@ -3063,3 +3063,53 @@ fn test_type_check_complex_while_accumulate() {
 fn test_type_check_for_accumulate() {
     check_no_errors("fn sum_range(lo: number, hi: number) -> number {\nlet total = 0;\nfor i in lo..hi {\ntotal = total + i\n};\ntotal\n}");
 }
+
+#[test]
+fn test_type_check_simple_tuple_return() {
+    check_no_errors("struct Pair { first: number, second: number }\nfn make_pair(a: number, b: number) -> Pair {\nPair { first: a, second: b }\n}");
+}
+
+#[test]
+fn test_type_check_simple_swap_fn() {
+    check_no_errors("struct Pair { first: number, second: number }\nfn swap(p: Pair) -> Pair {\nPair { first: p.second, second: p.first }\n}");
+}
+
+#[test]
+fn test_type_check_simple_map_fn() {
+    check_no_errors("struct Pair { first: number, second: number }\nfn map_first(p: Pair, f: fn(number) -> number) -> Pair {\nPair { first: f(p.first), second: p.second }\n}");
+}
+
+#[test]
+fn test_type_check_simple_filter_fn() {
+    check_no_errors("fn is_positive(n: number) -> bool {\nn > 0\n}\nfn classify(n: number) -> string {\nif is_positive(n) { \"positive\" } else { \"non-positive\" }\n}");
+}
+
+#[test]
+fn test_type_check_simple_fold_fn() {
+    check_no_errors("fn sum(a: number, b: number) -> number {\na + b\n}\nfn f() -> number {\nsum(10, 20)\n}");
+}
+
+#[test]
+fn test_type_check_simple_compose_fn() {
+    check_no_errors("fn compose(f: fn(number) -> number, g: fn(number) -> number, x: number) -> number {\nf(g(x))\n}");
+}
+
+#[test]
+fn test_type_check_simple_identity_fn() {
+    check_no_errors("fn identity(x: number) -> number {\nx\n}");
+}
+
+#[test]
+fn test_type_check_simple_constant_fn() {
+    check_no_errors("fn constant(x: number, _y: number) -> number {\nx\n}");
+}
+
+#[test]
+fn test_type_check_simple_flip_fn() {
+    check_no_errors("fn flip(f: fn(number, number) -> number, a: number, b: number) -> number {\nf(b, a)\n}");
+}
+
+#[test]
+fn test_type_check_simple_curry_fn() {
+    check_no_errors("fn add(a: number) -> fn(number) -> number {\n|b: number| -> number { a + b }\n}");
+}
