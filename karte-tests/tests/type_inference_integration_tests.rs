@@ -3763,3 +3763,53 @@ fn test_type_check_wave_9() {
 fn test_type_check_wave_10() {
     check_no_errors("fn f(x: number, y: number) -> bool {\n(x > 0 && y > 0) || (x < 0 && y < 0)\n}");
 }
+
+#[test]
+fn test_type_check_sprint_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x;\na\n}");
+}
+
+#[test]
+fn test_type_check_sprint_2() {
+    check_no_errors("fn f(x: number, y: number) -> number {\nlet sum = x + y;\nsum\n}");
+}
+
+#[test]
+fn test_type_check_sprint_3() {
+    check_no_errors("fn f(x: number) -> bool {\nx > 0\n}");
+}
+
+#[test]
+fn test_type_check_sprint_4() {
+    check_no_errors("fn f(x: number) -> string {\nif x > 0 { \"positive\" } else { \"non-positive\" }\n}");
+}
+
+#[test]
+fn test_type_check_sprint_5() {
+    check_no_errors("struct Point { x: number, y: number }\nfn new_point(x: number, y: number) -> Point {\nPoint { x: x, y: y }\n}");
+}
+
+#[test]
+fn test_type_check_sprint_6() {
+    check_no_errors("enum Option2 { Some2(number), None2 }\nfn unwrap_or(opt: Option2, def: number) -> number {\nmatch opt {\nOption2::Some2(x) => x\nOption2::None2 => def\n}\n}");
+}
+
+#[test]
+fn test_type_check_sprint_7() {
+    check_no_errors("fn f(x: number) -> number {\nlet y = x;\ny = y + 1;\ny\n}");
+}
+
+#[test]
+fn test_type_check_sprint_8() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nif x > 10 {\nresult = 1\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_sprint_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = match x {\n0 => 100\n_ => 200\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_sprint_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet total = 0;\nfor i in 0..10 {\ntotal = total + i\n};\ntotal\n}");
+}
