@@ -8308,3 +8308,53 @@ fn test_type_check_v76_9() {
 fn test_type_check_v76_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet i = 0;\nwhile i < x {\nresult = result + if i > 10 { i * i } else { i * 2 };\ni = i + 1\n};\nresult\n}");
 }
+
+#[test]
+fn test_type_check_v77_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 6 + 1;\nlet b = a * a - 1;\nb\n}");
+}
+
+#[test]
+fn test_type_check_v77_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 3 && i < 8 {\nsum = sum + (i - 3)\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v77_3() {
+    check_no_errors("struct Frequency2 { hz: number }\nfn to_ghz(f: Frequency2) -> number { f.hz / 1000000000 }\nfn is_microwave(f: Frequency2) -> bool { f.hz > 3000000000 }");
+}
+
+#[test]
+fn test_type_check_v77_4() {
+    check_no_errors("enum Color2 { Red3, Green3, Blue3, Alpha }\nfn has_red(c: Color2) -> bool {\nmatch c {\nColor2::Red3 => true\nColor2::Green3 => false\nColor2::Blue3 => false\nColor2::Alpha => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v77_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet fifteenth = x / 15;\nif fifteenth > 0 { Some(fifteenth) } else { None }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v77_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x > 999 { Err(\"overflow\") } else { Ok(x * 9) }\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v77_7() {
+    check_no_errors("struct Tetrahedron { edge: number }\nfn approx_vol(t: Tetrahedron) -> number { t.edge * t.edge * t.edge / 6 }\nfn is_regular6(t: Tetrahedron) -> bool { t.edge > 0 }");
+}
+
+#[test]
+fn test_type_check_v77_8() {
+    check_no_errors("enum Cloud3 { Cirrus, Cumulus, Stratus, Nimbus }\nfn is_high_altitude(c: Cloud3) -> bool {\nmatch c {\nCloud3::Cirrus => true\nCloud3::Cumulus => false\nCloud3::Stratus => false\nCloud3::Nimbus => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v77_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + (i * i + 1)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v77_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = 13;\nlet b = 21;\nfor i in 0..x {\nlet c = a + b;\na = b;\nb = c\n};\nb\n}");
+}
