@@ -5458,3 +5458,53 @@ fn test_type_check_v19_9() {
 fn test_type_check_v19_10() {
     check_no_errors("fn f(x: number, y: number) -> number {\nlet a = x + y;\nlet b = x - y;\nlet c = x * y;\nlet d = if b != 0 { c / b } else { 0 };\nd\n}");
 }
+
+#[test]
+fn test_type_check_v20_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x;\nlet b = a * a;\nlet c = a + b;\nc\n}");
+}
+
+#[test]
+fn test_type_check_v20_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet count = 0;\nfor i in 0..x {\nif i % 3 == 0 || i % 5 == 0 || i % 7 == 0 {\ncount = count + 1\n}\n};\ncount\n}");
+}
+
+#[test]
+fn test_type_check_v20_3() {
+    check_no_errors("struct Address { street: string, city: string }\nfn full_address(a: Address) -> string {\na.street + \", \" + a.city\n}");
+}
+
+#[test]
+fn test_type_check_v20_4() {
+    check_no_errors("enum Transport { Walk, Bike, Car, Bus }\nfn speed(t: Transport) -> number {\nmatch t {\nTransport::Walk => 5\nTransport::Bike => 15\nTransport::Car => 60\nTransport::Bus => 30\n}\n}");
+}
+
+#[test]
+fn test_type_check_v20_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 { if x > 50 { if x > 75 { None } else { Some(x) } } else { Some(x) } } else { None }\n}");
+}
+
+#[test]
+fn test_type_check_v20_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x == 0 { Err(\"zero\") } else { if x < 0 { Err(\"negative\") } else { if x > 1000 { Err(\"overflow\") } else { Ok(x) } } }\n}");
+}
+
+#[test]
+fn test_type_check_v20_7() {
+    check_no_errors("struct Box3D { w: number, h: number, d: number }\nfn volume3(b: Box3D) -> number { b.w * b.h * b.d }\nfn surface_area(b: Box3D) -> number { 2 * (b.w * b.h + b.h * b.d + b.d * b.w) }");
+}
+
+#[test]
+fn test_type_check_v20_8() {
+    check_no_errors("enum Event { Click(number), KeyPress(string), Resize(number, number) }\nfn is_click(e: Event) -> bool {\nmatch e {\nEvent::Click(_) => true\nEvent::KeyPress(_) => false\nEvent::Resize(_, _) => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v20_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 1;\nlet i = 2;\nwhile i <= x {\nresult = result * i;\ni = i + 1\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_v20_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 1..x {\nsum = sum + if i % 2 == 0 { i / 2 } else { i }\n};\nsum\n}");
+}
