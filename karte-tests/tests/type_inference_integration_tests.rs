@@ -6058,3 +6058,53 @@ fn test_type_check_v31_9() {
 fn test_type_check_v31_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = 1;\nlet i = 1;\nwhile i <= x {\nresult = result * i;\ni = i + 2\n};\nresult\n}");
 }
+
+#[test]
+fn test_type_check_v32_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 1;\nlet b = a * 3;\nlet c = b + 2;\nc * c\n}");
+}
+
+#[test]
+fn test_type_check_v32_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 10 {\nif i < 20 {\nsum = sum + i\n}\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v32_3() {
+    check_no_errors("struct Date2 { year: number, month: number, day: number }\nfn is_new_year(d: Date2) -> bool { d.month == 1 && d.day == 1 }");
+}
+
+#[test]
+fn test_type_check_v32_4() {
+    check_no_errors("enum Currency { USD, EUR, GBP, JPY }\nfn symbol(c: Currency) -> string {\nmatch c {\nCurrency::USD => \"USD\"\nCurrency::EUR => \"EUR\"\nCurrency::GBP => \"GBP\"\nCurrency::JPY => \"JPY\"\n}\n}");
+}
+
+#[test]
+fn test_type_check_v32_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x == 0 { None } else { if x == 1 { Some(1) } else { if x == 2 { Some(2) } else { None } } }\n}");
+}
+
+#[test]
+fn test_type_check_v32_6() {
+    check_no_errors("fn f(x: number) -> Result<string, string> {\nif x > 0 { if x > 10 { if x > 100 { Ok(\"huge\") } else { Ok(\"big\") } } else { Ok(\"small\") } } else { Err(\"non-positive\") }\n}");
+}
+
+#[test]
+fn test_type_check_v32_7() {
+    check_no_errors("struct Complex2 { real: number, imag: number }\nfn magnitude_sq2(c: Complex2) -> number { c.real * c.real + c.imag * c.imag }\nfn is_real(c: Complex2) -> bool { c.imag == 0 }");
+}
+
+#[test]
+fn test_type_check_v32_8() {
+    check_no_errors("enum ASTNode { Num(number), Str(string), Bool2(bool) }\nfn is_number(n: ASTNode) -> bool {\nmatch n {\nASTNode::Num(_) => true\nASTNode::Str(_) => false\nASTNode::Bool2(_) => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v32_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 0..x {\nresult = result + if i > x / 2 { i * 2 } else { i }\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_v32_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet n = x;\nlet digits = 0;\nwhile n > 0 {\ndigits = digits + 1;\nn = n / 10\n};\ndigits\n}");
+}
