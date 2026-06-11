@@ -3163,3 +3163,53 @@ fn test_type_check_simple_bool_in_if() {
 fn test_type_check_simple_option_in_if() {
     check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nSome(x)\n} else {\nNone\n}\n}");
 }
+
+#[test]
+fn test_type_check_complex_fn_composition2() {
+    check_no_errors("fn double(x: number) -> number { x * 2 }\nfn inc(x: number) -> number { x + 1 }\nfn main() -> number {\ndouble(inc(double(5)))\n}");
+}
+
+#[test]
+fn test_type_check_complex_let_chain3() {
+    check_no_errors("fn main() -> number {\nlet a = 1;\nlet b = a + 1;\nlet c = a + b;\nlet d = b + c;\nlet e = c + d;\ne\n}");
+}
+
+#[test]
+fn test_type_check_complex_string_chain2() {
+    check_no_errors("fn f(a: string, b: string, c: string) -> string {\nlet d = a + b;\nlet e = d + c;\ne\n}");
+}
+
+#[test]
+fn test_type_check_complex_while_loop2() {
+    check_no_errors("fn f(n: number) -> number {\nlet sum = 0;\nlet i = 1;\nwhile i <= n {\nsum = sum + i * i;\ni = i + 1\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_complex_match_chain2() {
+    check_no_errors("enum Expr { Lit(number), Neg(number), Add(number, number) }\nfn eval(e: Expr) -> number {\nmatch e {\nExpr::Lit(n) => n\nExpr::Neg(n) => 0 - n\nExpr::Add(a, b) => a + b\n}\n}");
+}
+
+#[test]
+fn test_type_check_complex_option_chain3() {
+    check_no_errors("fn safe_div(a: number, b: number) -> Option<number> {\nif b == 0 { None } else { Some(a / b) }\n}\nfn safe_add(a: Option<number>, b: Option<number>) -> Option<number> {\nmatch a {\nSome(x) => match b {\nSome(y) => Some(x + y)\nNone => None\n}\nNone => None\n}\n}");
+}
+
+#[test]
+fn test_type_check_complex_result_chain3() {
+    check_no_errors("fn checked_add(a: number, b: number) -> Result<number, string> {\nif a + b > 1000 { Err(\"overflow\") } else { Ok(a + b) }\n}\nfn checked_mul(a: number, b: number) -> Result<number, string> {\nif a * b > 1000 { Err(\"overflow\") } else { Ok(a * b) }\n}");
+}
+
+#[test]
+fn test_type_check_complex_struct_chain2() {
+    check_no_errors("struct Point { x: number, y: number }\nfn translate(p: Point, dx: number, dy: number) -> Point {\nPoint { x: p.x + dx, y: p.y + dy }\n}\nfn scale(p: Point, s: number) -> Point {\nPoint { x: p.x * s, y: p.y * s }\n}\nfn transform(p: Point) -> Point {\nscale(translate(p, 10, 20), 2)\n}");
+}
+
+#[test]
+fn test_type_check_complex_enum_chain2() {
+    check_no_errors("enum Bool { True, False }\nfn not(b: Bool) -> Bool {\nmatch b {\nBool::True => Bool::False\nBool::False => Bool::True\n}\n}\nfn and(a: Bool, b: Bool) -> Bool {\nmatch a {\nBool::True => b\nBool::False => Bool::False\n}\n}");
+}
+
+#[test]
+fn test_type_check_complex_fn_chain2() {
+    check_no_errors("fn square(x: number) -> number { x * x }\nfn sum_squares(a: number, b: number) -> number {\nsquare(a) + square(b)\n}\nfn main() -> number {\nsum_squares(3, 4)\n}");
+}
