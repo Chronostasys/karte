@@ -3013,3 +3013,53 @@ fn test_type_check_simple_option_chain2() {
 fn test_type_check_simple_result_chain2() {
     check_no_errors("fn parse(s: string) -> Result<number, string> {\nOk(42)\n}\nfn compute(s: string) -> number {\nmatch parse(s) {\nOk(n) => n * 2\nErr(_) => 0\n}\n}");
 }
+
+#[test]
+fn test_type_check_complex_enum_recursive() {
+    check_no_errors("enum Expr { Lit(number), Add(number, number) }\nfn eval(e: Expr) -> number {\nmatch e {\nExpr::Lit(n) => n\nExpr::Add(a, b) => eval(Expr::Lit(a)) + eval(Expr::Lit(b))\n}\n}");
+}
+
+#[test]
+fn test_type_check_nested_option_result2() {
+    check_no_errors("fn try_parse(s: string) -> Option<number> {\nSome(42)\n}\nfn try_compute(s: string) -> Result<number, string> {\nmatch try_parse(s) {\nSome(n) => if n > 0 { Ok(n) } else { Err(\"negative\") }\nNone => Err(\"parse failed\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_multi_struct_ops() {
+    check_no_errors("struct Vec2 { x: number, y: number }\nfn add_vec(a: Vec2, b: Vec2) -> Vec2 {\nVec2 { x: a.x + b.x, y: a.y + b.y }\n}\nfn scale_vec(v: Vec2, s: number) -> Vec2 {\nVec2 { x: v.x * s, y: v.y * s }\n}\nfn dot_vec(a: Vec2, b: Vec2) -> number {\na.x * b.x + a.y * b.y\n}");
+}
+
+#[test]
+fn test_type_check_string_ops_complex() {
+    check_no_errors("fn f(s: string) -> string {\nlet a = s + \" \";\nlet b = a + \"world\";\nlet c = b + \"!\";\nc\n}");
+}
+
+#[test]
+fn test_type_check_complex_let_assignment2() {
+    check_no_errors("fn counter(start: number) -> number {\nlet c = start;\nc = c + 1;\nc = c * 2;\nc = c - 1;\nc\n}");
+}
+
+#[test]
+fn test_type_check_nested_closure_higher_order() {
+    check_no_errors("fn apply(f: fn(number) -> number, x: number) -> number {\nf(x)\n}\nfn main() -> number {\nlet double = |n: number| -> number { n * 2 };\nlet quad = |n: number| -> number { apply(double, apply(double, n)) };\nquad(3)\n}");
+}
+
+#[test]
+fn test_type_check_complex_match_guard2() {
+    check_no_errors("fn classify(n: number) -> string {\nmatch n {\n0 => \"zero\"\nx if x > 0 => \"positive\"\n_ => \"negative\"\n}\n}");
+}
+
+#[test]
+fn test_type_check_enum_with_multiple_constructors() {
+    check_no_errors("enum Shape { Circle(number), Rect(number, number), Triangle(number, number, number) }\nfn describe(s: Shape) -> string {\nmatch s {\nShape::Circle(_) => \"circle\"\nShape::Rect(_, _) => \"rectangle\"\nShape::Triangle(_, _, _) => \"triangle\"\n}\n}");
+}
+
+#[test]
+fn test_type_check_complex_while_accumulate() {
+    check_no_errors("fn sum_to(n: number) -> number {\nlet total = 0;\nlet i = 1;\nwhile i <= n {\ntotal = total + i;\ni = i + 1\n};\ntotal\n}");
+}
+
+#[test]
+fn test_type_check_for_accumulate() {
+    check_no_errors("fn sum_range(lo: number, hi: number) -> number {\nlet total = 0;\nfor i in lo..hi {\ntotal = total + i\n};\ntotal\n}");
+}
