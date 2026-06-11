@@ -6608,3 +6608,53 @@ fn test_type_check_v42_9() {
 fn test_type_check_v42_10() {
     check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nlet power = 1;\nlet i = 0;\nwhile i < x {\nresult = result + power;\npower = power * 2;\ni = i + 1\n};\nresult\n}");
 }
+
+#[test]
+fn test_type_check_v43_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * 2;\nlet b = a + 3;\nlet c = b * b - b;\nc\n}");
+}
+
+#[test]
+fn test_type_check_v43_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + if i % 11 == 0 { i } else { 0 }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v43_3() {
+    check_no_errors("struct Coordinate2 { x: number, y: number, z: number }\nfn x_val(c: Coordinate2) -> number { c.x }\nfn is_origin2(c: Coordinate2) -> bool { c.x == 0 && c.y == 0 && c.z == 0 }");
+}
+
+#[test]
+fn test_type_check_v43_4() {
+    check_no_errors("enum DBType { Integer, Float, VarChar, Boolean }\nfn is_numeric(t: DBType) -> bool {\nmatch t {\nDBType::Integer => true\nDBType::Float => true\nDBType::VarChar => false\nDBType::Boolean => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v43_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet mod3 = x % 3;\nif mod3 == 0 { None } else { Some(mod3) }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v43_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x > 0 {\nif x % 2 == 0 {\nOk(x / 2)\n} else {\nOk(x * 3 + 1)\n}\n} else {\nErr(\"must be positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v43_7() {
+    check_no_errors("struct Mat2x2 { a: number, b: number, c: number, d: number }\nfn determinant(m: Mat2x2) -> number { m.a * m.d - m.b * m.c }\nfn is_identity(m: Mat2x2) -> bool { m.a == 1 && m.b == 0 && m.c == 0 && m.d == 1 }");
+}
+
+#[test]
+fn test_type_check_v43_8() {
+    check_no_errors("enum Opcode2 { Push(number), Pop, Add5, Mul5 }\nfn has_operand(op: Opcode2) -> bool {\nmatch op {\nOpcode2::Push(_) => true\nOpcode2::Pop => false\nOpcode2::Add5 => false\nOpcode2::Mul5 => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v43_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + i * i * i + i\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v43_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 1;\nfor i in 1..x {\nresult = result * 2\n};\nresult\n}");
+}
