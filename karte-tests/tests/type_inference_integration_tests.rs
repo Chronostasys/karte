@@ -3963,3 +3963,53 @@ fn test_type_check_final_sprint_9() {
 fn test_type_check_final_sprint_10() {
     check_no_errors("fn f(x: number) -> number {\nlet total = 0;\nfor i in 0..100 {\ntotal = total + i\n};\ntotal\n}");
 }
+
+#[test]
+fn test_type_check_final_push_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x;\nlet b = a + 1;\nlet c = b + 1;\nc\n}");
+}
+
+#[test]
+fn test_type_check_final_push_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 0..x {\nresult = result + i\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_final_push_3() {
+    check_no_errors("struct Point { x: number, y: number }\nfn translate(p: Point, dx: number, dy: number) -> Point {\nPoint { x: p.x + dx, y: p.y + dy }\n}");
+}
+
+#[test]
+fn test_type_check_final_push_4() {
+    check_no_errors("enum Color { Red, Green, Blue }\nfn to_number(c: Color) -> number {\nmatch c {\nColor::Red => 0\nColor::Green => 1\nColor::Blue => 2\n}\n}");
+}
+
+#[test]
+fn test_type_check_final_push_5() {
+    check_no_errors("fn f(x: number) -> number {\nlet y = if x > 0 { x } else { 0 - x };\ny\n}");
+}
+
+#[test]
+fn test_type_check_final_push_6() {
+    check_no_errors("fn f(a: number, b: number) -> number {\nlet x = a + b;\nlet y = a - b;\nlet z = x * y;\nz\n}");
+}
+
+#[test]
+fn test_type_check_final_push_7() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = match x {\n0 => 0\nn => n * n\n};\nresult + 1\n}");
+}
+
+#[test]
+fn test_type_check_final_push_8() {
+    check_no_errors("fn f(x: number) -> bool {\nlet a = x > 0;\nlet b = x < 100;\na && b\n}");
+}
+
+#[test]
+fn test_type_check_final_push_9() {
+    check_no_errors("struct Range { lo: number, hi: number }\nfn clamp(x: number, r: Range) -> number {\nif x < r.lo { r.lo } else { if x > r.hi { r.hi } else { x } }\n}");
+}
+
+#[test]
+fn test_type_check_final_push_10() {
+    check_no_errors("fn f(x: number, y: number) -> number {\nlet sum = x + y;\nlet diff = x - y;\nlet prod = x * y;\nsum + diff + prod\n}");
+}
