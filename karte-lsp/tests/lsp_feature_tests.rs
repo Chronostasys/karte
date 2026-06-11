@@ -4281,3 +4281,93 @@ fn test_analyze_valid_v65_fib_variant() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_v66_inductance() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Inductance { henries: number }\nfn to_mh(l: Inductance) -> number { l.henries * 1000 }\nfn is_small(l: Inductance) -> bool { l.henries < 1 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v66_render_api() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum RenderAPI { OpenGL, Vulkan, Metal, DirectX }\nfn is_cross_platform(r: RenderAPI) -> bool {\nmatch r {\nRenderAPI::OpenGL => true\nRenderAPI::Vulkan => true\nRenderAPI::Metal => false\nRenderAPI::DirectX => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v66_parallelogram() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Parallelogram2 { base: number, height: number }\nfn area(p: Parallelogram2) -> number { p.base * p.height }\nfn is_rectangle(p: Parallelogram2) -> bool { p.base > 0 && p.height > 0 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v66_align() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Align2 { Left2, Center2, Right2, Justify }\nfn is_left_aligned(a: Align2) -> bool {\nmatch a {\nAlign2::Left2 => true\nAlign2::Center2 => false\nAlign2::Right2 => false\nAlign2::Justify => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v66_odd_squares() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + (2 * i + 1) * (2 * i + 1)\n};\nsum\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v66_fib_58() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet a = 5;\nlet b = 8;\nfor i in 0..x {\nlet c = a + b;\na = b;\nb = c\n};\nb\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v66_range_filter() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nif i > 25 && i < 50 {\nsum = sum + i\n}\n};\nsum\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v65_cap2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Capacitance { farads: number }\nfn to_uf(c: Capacitance) -> number { c.farads * 1000000 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v65_vm2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum VMState { Stopped, Starting, Running3, Stopping }\nfn is_running(v: VMState) -> bool {\nmatch v {\nVMState::Running3 => true\n_ => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v65_gesture2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Gesture { Tap, Swipe, Pinch, Rotate }\nfn is_discrete(g: Gesture) -> bool {\nmatch g {\nGesture::Tap => true\nGesture::Swipe => true\n_ => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
