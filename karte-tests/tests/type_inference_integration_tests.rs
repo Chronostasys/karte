@@ -6508,3 +6508,53 @@ fn test_type_check_v40_9() {
 fn test_type_check_v40_10() {
     check_no_errors("fn f(x: number) -> number {\nlet a = 0;\nlet b = 1;\nlet i = 0;\nwhile i < x {\nlet c = a + b;\na = b;\nb = c + a;\ni = i + 1\n};\nb\n}");
 }
+
+#[test]
+fn test_type_check_v41_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet y = x * 3 + 2;\ny * y\n}");
+}
+
+#[test]
+fn test_type_check_v41_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 1..x {\nsum = sum + if i % 8 == 0 { i } else { 0 }\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v41_3() {
+    check_no_errors("struct Percentage { value: number }\nfn to_decimal(p: Percentage) -> number { p.value / 100 }\nfn is_half(p: Percentage) -> bool { p.value == 50 }");
+}
+
+#[test]
+fn test_type_check_v41_4() {
+    check_no_errors("enum Arch { X86, ARM, RISCV, MIPS }\nfn is_64bit(a: Arch) -> bool {\nmatch a {\nArch::X86 => true\nArch::ARM => true\nArch::RISCV => true\nArch::MIPS => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v41_5() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nif x > 0 {\nlet halved = x / 2;\nif halved > 25 { None } else { Some(halved) }\n} else {\nNone\n}\n}");
+}
+
+#[test]
+fn test_type_check_v41_6() {
+    check_no_errors("fn f(x: number) -> Result<string, string> {\nif x > 0 {\nif x % 2 == 0 { Ok(\"even\") } else { Ok(\"odd\") }\n} else {\nErr(\"non-positive\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v41_7() {
+    check_no_errors("struct HexColor { r: number, g: number, b: number }\nfn luminance(c: HexColor) -> number { (c.r * 299 + c.g * 587 + c.b * 114) / 1000 }\nfn is_dark(c: HexColor) -> bool { luminance(c) < 128 }");
+}
+
+#[test]
+fn test_type_check_v41_8() {
+    check_no_errors("enum PairType { Same(number), Different(number, number) }\nfn sum_pair(p: PairType) -> number {\nmatch p {\nPairType::Same(v) => v + v\nPairType::Different(a, b) => a + b\n}\n}");
+}
+
+#[test]
+fn test_type_check_v41_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nsum = sum + i * (i + 1) * (i + 2)\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v41_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nlet n = x;\nwhile n > 0 {\nsum = sum + n % 10 * n % 10;\nn = n / 10\n};\nsum\n}");
+}
