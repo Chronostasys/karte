@@ -5008,3 +5008,53 @@ fn test_type_check_v10_9() {
 fn test_type_check_v10_10() {
     check_no_errors("fn f(a: number, b: number) -> number {\nlet x = a;\nlet y = b;\nfor i in 0..10 {\nlet temp = x + y;\nx = y;\ny = temp\n};\ny\n}");
 }
+
+#[test]
+fn test_type_check_v11_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x;\nlet b = a + a;\nlet c = b + b;\nlet d = c + c;\nd\n}");
+}
+
+#[test]
+fn test_type_check_v11_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sign = if x > 0 { 1 } else { if x < 0 { 0 - 1 } else { 0 } };\nsign\n}");
+}
+
+#[test]
+fn test_type_check_v11_3() {
+    check_no_errors("fn f(x: number) -> string {\nmatch x % 3 {\n0 => \"fizz\"\n1 => \"buzz\"\n_ => \"fizzbuzz\"\n}\n}");
+}
+
+#[test]
+fn test_type_check_v11_4() {
+    check_no_errors("struct Point2D { x: number, y: number }\nfn quadrant(p: Point2D) -> number {\nif p.x > 0 {\nif p.y > 0 { 1 } else { 4 }\n} else {\nif p.y > 0 { 2 } else { 3 }\n}\n}");
+}
+
+#[test]
+fn test_type_check_v11_5() {
+    check_no_errors("enum Month2 { Jan, Feb, Mar, Apr, May, Jun }\nfn days(m: Month2) -> number {\nmatch m {\nMonth2::Jan => 31\nMonth2::Feb => 28\nMonth2::Mar => 31\nMonth2::Apr => 30\nMonth2::May => 31\nMonth2::Jun => 30\n}\n}");
+}
+
+#[test]
+fn test_type_check_v11_6() {
+    check_no_errors("fn f(x: number) -> number {\nlet total = 0;\nfor i in 1..x {\ntotal = total + if i % 2 == 0 { i * i } else { i }\n};\ntotal\n}");
+}
+
+#[test]
+fn test_type_check_v11_7() {
+    check_no_errors("struct Ratio { num: number, den: number }\nfn simplify(r: Ratio) -> Ratio {\nlet g = gcd(r.num, r.den);\nRatio { num: r.num / g, den: r.den / g }\n}\nfn gcd(a: number, b: number) -> number {\nif b == 0 { a } else { gcd(b, a % b) }\n}");
+}
+
+#[test]
+fn test_type_check_v11_8() {
+    check_no_errors("enum BST { Leaf2, Node(number) }\nfn sum_bst(t: BST) -> number {\nmatch t {\nBST::Leaf2 => 0\nBST::Node(v) => v\n}\n}");
+}
+
+#[test]
+fn test_type_check_v11_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet count = 0;\nlet n = x;\nwhile n > 0 {\ncount = count + 1;\nn = n / 2\n};\ncount\n}");
+}
+
+#[test]
+fn test_type_check_v11_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 0..x {\nfor j in 0..i {\nresult = result + 1\n}\n};\nresult\n}");
+}
