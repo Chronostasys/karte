@@ -167,10 +167,16 @@ impl CompilerBridge {
         let lex_diagnostics = lexer.into_diagnostics();
 
         for diag in &lex_diagnostics.diagnostics {
+            let severity = match diag.level {
+                karte_diagnostics::DiagnosticLevel::Error => KarteDiagnosticSeverity::Error,
+                karte_diagnostics::DiagnosticLevel::Warning => KarteDiagnosticSeverity::Warning,
+                karte_diagnostics::DiagnosticLevel::Info => KarteDiagnosticSeverity::Information,
+                karte_diagnostics::DiagnosticLevel::Hint => KarteDiagnosticSeverity::Hint,
+            };
             result.diagnostics.push(LspDiagnostic {
                 range: span_to_range(source, diag.span),
                 message: diag.message.clone(),
-                severity: KarteDiagnosticSeverity::Error,
+                severity,
                 help: None,
                 code: None,
             });
@@ -186,10 +192,16 @@ impl CompilerBridge {
         let parse_diagnostics = parser.diagnostics();
 
         for diag in &parse_diagnostics.diagnostics {
+            let severity = match diag.level {
+                karte_diagnostics::DiagnosticLevel::Error => KarteDiagnosticSeverity::Error,
+                karte_diagnostics::DiagnosticLevel::Warning => KarteDiagnosticSeverity::Warning,
+                karte_diagnostics::DiagnosticLevel::Info => KarteDiagnosticSeverity::Information,
+                karte_diagnostics::DiagnosticLevel::Hint => KarteDiagnosticSeverity::Hint,
+            };
             result.diagnostics.push(LspDiagnostic {
                 range: span_to_range(source, diag.span),
                 message: diag.message.clone(),
-                severity: KarteDiagnosticSeverity::Error,
+                severity,
                 help: None,
                 code: None,
             });
@@ -205,16 +217,11 @@ impl CompilerBridge {
         let type_info = type_check_for_lsp(&parsed_program.body);
 
         for diag in &type_info.diagnostics.diagnostics {
-            let severity = if diag.message.contains("未使用")
-                || diag.message.contains("冗余")
-                || diag.message.contains("建议")
-                || diag.message.contains("警告")
-            {
-                KarteDiagnosticSeverity::Warning
-            } else if diag.message.contains("提示") || diag.message.contains("信息") {
-                KarteDiagnosticSeverity::Information
-            } else {
-                KarteDiagnosticSeverity::Error
+            let severity = match diag.level {
+                karte_diagnostics::DiagnosticLevel::Error => KarteDiagnosticSeverity::Error,
+                karte_diagnostics::DiagnosticLevel::Warning => KarteDiagnosticSeverity::Warning,
+                karte_diagnostics::DiagnosticLevel::Info => KarteDiagnosticSeverity::Information,
+                karte_diagnostics::DiagnosticLevel::Hint => KarteDiagnosticSeverity::Hint,
             };
             result.diagnostics.push(LspDiagnostic {
                 range: span_to_range(source, diag.span),

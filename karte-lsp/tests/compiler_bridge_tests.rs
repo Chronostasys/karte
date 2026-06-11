@@ -1,4 +1,5 @@
 use karte_lsp::CompilerBridge;
+use karte_lsp::compiler_bridge::KarteDiagnosticSeverity;
 use tower_lsp::lsp_types::Position;
 
 #[test]
@@ -355,4 +356,17 @@ fn test_compiler_bridge_enum_symbols() {
     let _diagnostics = bridge.analyze(source);
     let symbols = bridge.get_document_symbols();
     assert!(symbols.iter().any(|s| s.name == "Color"), "Should find 'Color' enum symbol");
+}
+
+#[test]
+fn test_shadowing_is_warning_not_error() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn main() -> number {\nlet x = 5;\nlet x = 10;\nx\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    let warnings: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Warning).collect();
+    
+    // 变量遮蔽应该是 warning，不应该是 error
+    assert!(warnings.len() > 0, "Should have warnings for shadowing");
+    assert!(errors.len() == 0, "Should have no errors, got: {:?}", errors);
 }
