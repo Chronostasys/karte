@@ -3263,3 +3263,53 @@ fn test_type_error_let_wrong_annotation() {
 fn test_type_error_param_wrong_annotation() {
     check_has_errors("fn f(x: string) -> number {\nx + 1\n}");
 }
+
+#[test]
+fn test_type_check_simple_array_empty() {
+    check_no_errors("fn f() -> number {\nlet arr = [];\n0\n}");
+}
+
+#[test]
+fn test_type_check_simple_array_literal() {
+    check_no_errors("fn f() -> number {\nlet arr = [1, 2, 3, 4, 5];\narr[0] + arr[4]\n}");
+}
+
+#[test]
+fn test_type_check_simple_array_index() {
+    check_no_errors("fn f() -> number {\nlet arr = [10, 20, 30];\nlet idx = 1;\narr[idx]\n}");
+}
+
+#[test]
+fn test_type_check_simple_for_array() {
+    check_no_errors("fn f() -> number {\nlet sum = 0;\nfor i in [1, 2, 3] {\nsum = sum + i\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_simple_for_range() {
+    check_no_errors("fn f() -> number {\nlet sum = 0;\nfor i in 0..10 {\nsum = sum + i\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_simple_char_literal() {
+    check_no_errors("fn f() -> number {\nlet c = 'A';\nc + 1\n}");
+}
+
+#[test]
+fn test_type_check_simple_char_compare() {
+    check_no_errors("fn f(c: number) -> bool {\nc > 64\n}");
+}
+
+#[test]
+fn test_type_check_simple_escaped_char() {
+    check_no_errors("fn f() -> number {\nlet c = '\\n';\nc\n}");
+}
+
+#[test]
+fn test_type_check_simple_string_escape() {
+    check_no_errors("fn f() -> string {\n\"hello\\nworld\"\n}");
+}
+
+#[test]
+fn test_type_check_simple_empty_string() {
+    check_no_errors("fn f() -> string {\n\"\"\n}");
+}
