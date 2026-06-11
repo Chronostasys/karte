@@ -3471,3 +3471,93 @@ fn test_analyze_valid_v42_power_sum() {
     let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
     assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
 }
+
+#[test]
+fn test_analyze_valid_v44_velocity() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Velocity { dx: number, dy: number, dz: number }\nfn speed_sq(v: Velocity) -> number { v.dx * v.dx + v.dy * v.dy + v.dz * v.dz }\nfn is_stationary(v: Velocity) -> bool { speed_sq(v) == 0 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v44_protocol() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Protocol { TCP, UDP, ICMP }\nfn is_reliable(p: Protocol) -> bool {\nmatch p {\nProtocol::TCP => true\nProtocol::UDP => false\nProtocol::ICMP => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v45_battery() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Battery { capacity: number, charge: number }\nfn percentage(b: Battery) -> number { b.charge * 100 / b.capacity }\nfn is_full(b: Battery) -> bool { b.charge == b.capacity }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v45_sort() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Sort2 { Bubble, Quick, Merge, Heap }\nfn is_nlogn(s: Sort2) -> bool {\nmatch s {\nSort2::Bubble => false\nSort2::Quick => true\nSort2::Merge => true\nSort2::Heap => true\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v45_complex3() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Complex3 { re: number, im: number }\nfn conjugate(c: Complex3) -> Complex3 { Complex3 { re: c.re, im: 0 - c.im } }\nfn norm_sq(c: Complex3) -> number { c.re * c.re + c.im * c.im }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v45_http_status() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum HttpStatus { Ok2, NotFound, ServerError }\nfn is_success(h: HttpStatus) -> bool {\nmatch h {\nHttpStatus::Ok2 => true\nHttpStatus::NotFound => false\nHttpStatus::ServerError => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v45_log2() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet count = 0;\nlet n = x;\nwhile n > 1 {\nn = n / 2;\ncount = count + 1\n};\ncount\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v44_isqrt() {
+    let mut bridge = CompilerBridge::new();
+    let source = "fn f(x: number) -> number {\nlet result = 0;\nlet i = 1;\nwhile i * i <= x {\nresult = i;\ni = i + 1\n};\nresult\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v44_triangle4() {
+    let mut bridge = CompilerBridge::new();
+    let source = "struct Triangle4 { base: number, height: number }\nfn area(t: Triangle4) -> number { t.base * t.height / 2 }\nfn is_degenerate(t: Triangle4) -> bool { t.base == 0 || t.height == 0 }";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
+
+#[test]
+fn test_analyze_valid_v44_pattern() {
+    let mut bridge = CompilerBridge::new();
+    let source = "enum Pattern3 { Singleton, Factory, Observer, Strategy }\nfn is_creational(p: Pattern3) -> bool {\nmatch p {\nPattern3::Singleton => true\nPattern3::Factory => true\nPattern3::Observer => false\nPattern3::Strategy => false\n}\n}";
+    let diagnostics = bridge.analyze(source);
+    let errors: Vec<_> = diagnostics.iter().filter(|d| d.severity == KarteDiagnosticSeverity::Error).collect();
+    assert!(errors.is_empty(), "Should have no errors: {:?}", errors);
+}
