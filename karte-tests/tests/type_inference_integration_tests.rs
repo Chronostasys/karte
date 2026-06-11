@@ -6108,3 +6108,53 @@ fn test_type_check_v32_9() {
 fn test_type_check_v32_10() {
     check_no_errors("fn f(x: number) -> number {\nlet n = x;\nlet digits = 0;\nwhile n > 0 {\ndigits = digits + 1;\nn = n / 10\n};\ndigits\n}");
 }
+
+#[test]
+fn test_type_check_v33_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x * x;\nlet b = a + x;\nb * b\n}");
+}
+
+#[test]
+fn test_type_check_v33_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet sum = 0;\nfor i in 0..x {\nfor j in i..x {\nsum = sum + 1\n}\n};\nsum\n}");
+}
+
+#[test]
+fn test_type_check_v33_3() {
+    check_no_errors("struct Interval3 { lo: number, hi: number }\nfn overlaps(a: Interval3, b: Interval3) -> bool { a.lo < b.hi && b.lo < a.hi }");
+}
+
+#[test]
+fn test_type_check_v33_4() {
+    check_no_errors("enum Element { Fire, Water, Earth, Air }\nfn beats(e: Element) -> Element {\nmatch e {\nElement::Fire => Element::Water\nElement::Water => Element::Earth\nElement::Earth => Element::Air\nElement::Air => Element::Fire\n}\n}");
+}
+
+#[test]
+fn test_type_check_v33_5() {
+    check_no_errors("fn f(x: number) -> Option<string> {\nmatch x {\n1 => Some(\"one\")\n2 => Some(\"two\")\n3 => Some(\"three\")\n_ => None\n}\n}");
+}
+
+#[test]
+fn test_type_check_v33_6() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nif x >= 0 && x <= 100 {\nif x >= 90 { Ok(4) } else { if x >= 80 { Ok(3) } else { if x >= 70 { Ok(2) } else { Ok(1) } } }\n} else {\nErr(\"invalid\")\n}\n}");
+}
+
+#[test]
+fn test_type_check_v33_7() {
+    check_no_errors("struct Quaternion { w: number, x: number, y: number, z: number }\nfn norm_sq(q: Quaternion) -> number { q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z }");
+}
+
+#[test]
+fn test_type_check_v33_8() {
+    check_no_errors("enum Weekday2 { Mon, Tue, Wed, Thu, Fri, Sat, Sun }\nfn is_weekend(d: Weekday2) -> bool {\nmatch d {\nWeekday2::Sat => true\nWeekday2::Sun => true\n_ => false\n}\n}");
+}
+
+#[test]
+fn test_type_check_v33_9() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = 0;\nfor i in 0..x {\nresult = result + (x - i) * (i + 1)\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_v33_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet count = 0;\nlet n = x;\nwhile n > 1 {\nn = n / 2;\ncount = count + 1\n};\ncount\n}");
+}
