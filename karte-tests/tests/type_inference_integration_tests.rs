@@ -3913,3 +3913,53 @@ fn test_type_check_push_9() {
 fn test_type_check_push_10() {
     check_no_errors("fn f(x: number) -> number {\nlet total = 0;\nwhile total < x {\ntotal = total + 1\n};\ntotal\n}");
 }
+
+#[test]
+fn test_type_check_final_sprint_1() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x + 1;\nlet b = a + 1;\nlet c = b + 1;\nlet d = c + 1;\nd\n}");
+}
+
+#[test]
+fn test_type_check_final_sprint_2() {
+    check_no_errors("fn f(x: number) -> number {\nlet a = x;\nlet b = a;\nlet c = b;\nlet d = c;\nd\n}");
+}
+
+#[test]
+fn test_type_check_final_sprint_3() {
+    check_no_errors("fn f(x: number) -> number {\nlet result = match x {\n0 => 1\n1 => 2\n2 => 3\n3 => 5\n_ => x\n};\nresult\n}");
+}
+
+#[test]
+fn test_type_check_final_sprint_4() {
+    check_no_errors("fn f(x: number) -> number {\nif x > 0 {\nif x > 10 {\nif x > 100 {\n1000\n} else {\n100\n}\n} else {\n10\n}\n} else {\n1\n}\n}");
+}
+
+#[test]
+fn test_type_check_final_sprint_5() {
+    check_no_errors("struct Pair { first: number, second: number }\nfn swap(p: Pair) -> Pair {\nPair { first: p.second, second: p.first }\n}");
+}
+
+#[test]
+fn test_type_check_final_sprint_6() {
+    check_no_errors("enum Direction { North, South, East, West }\nfn turn_right(d: Direction) -> Direction {\nmatch d {\nDirection::North => Direction::East\nDirection::East => Direction::South\nDirection::South => Direction::West\nDirection::West => Direction::North\n}\n}");
+}
+
+#[test]
+fn test_type_check_final_sprint_7() {
+    check_no_errors("fn f(x: number) -> Option<number> {\nmatch x {\n0 => None\n1 => Some(1)\n_ => Some(x)\n}\n}");
+}
+
+#[test]
+fn test_type_check_final_sprint_8() {
+    check_no_errors("fn f(x: number) -> Result<number, string> {\nmatch x {\n0 => Err(\"zero\")\nn => Ok(n)\n}\n}");
+}
+
+#[test]
+fn test_type_check_final_sprint_9() {
+    check_no_errors("struct Point { x: number, y: number }\nfn scale(p: Point, factor: number) -> Point {\nPoint { x: p.x * factor, y: p.y * factor }\n}");
+}
+
+#[test]
+fn test_type_check_final_sprint_10() {
+    check_no_errors("fn f(x: number) -> number {\nlet total = 0;\nfor i in 0..100 {\ntotal = total + i\n};\ntotal\n}");
+}
