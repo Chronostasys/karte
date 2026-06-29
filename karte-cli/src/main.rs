@@ -154,6 +154,24 @@ enum Commands {
         #[arg(long, default_value = "runtime")]
         gc: String,
     },
+
+    /// GPU 编译：将 kernel fn 编译为 PTX（NVIDIA GPU 汇编）
+    GpuCompile {
+        /// 输入文件
+        input: String,
+
+        /// 输出 PTX 文件名（不指定则打印到 stdout）
+        #[arg(short, long)]
+        output: Option<String>,
+
+        /// 解析模式 (script/project)
+        #[arg(long, value_enum)]
+        mode: Option<ModeArg>,
+
+        /// 目标 SM 版本 (如 sm_80, sm_90)
+        #[arg(long, default_value = "sm_80")]
+        target: String,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -169,6 +187,18 @@ impl From<ModeArg> for ParserMode {
             ModeArg::Project => ParserMode::Project,
         }
     }
+}
+
+/// 解析 SM 版本字符串 (如 "sm_80" → (8, 0))
+fn parse_sm_version(s: &str) -> (u32, u32) {
+    if let Some(num) = s.strip_prefix("sm_") {
+        if num.len() >= 2 {
+            let major = num[..1].parse::<u32>().unwrap_or(8);
+            let minor = num[1..2].parse::<u32>().unwrap_or(0);
+            return (major, minor);
+        }
+    }
+    (8, 0) // 默认 SM 8.0 (A100)
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -522,6 +552,20 @@ fn real_main() -> i32 {
             if let Err(e) = runner::aot_compile(&input, &output_path, optimization_level, mode, aot_mode_is_explicit, cli.verbose, aot_target, gc.as_str()) {
                 error!("AOT 编译失败: {}", e);
                 std::process::exit(1);
+            }
+        }
+        Some(Commands::GpuCompile { input, output, mode, target }) => {
+            let mode = mode.map(|m| m.into()).unwrap_or_else(|| {
+                if default_mode_is_explicit { default_mode } else { ParserMode::Script }
+            });
+            // 解析 SM 版本: "sm_80" → (8, 0)
+            let sm_version = parse_sm_version(&target);
+            match runner::gpu_compile(&input, output.as_deref(), optimization_level, mode, cli.verbose, sm_version) {
+                Ok(()) => {}
+                Err(e) => {
+                    error!("GPU 编译失败: {}", e);
+                    std::process::exit(1);
+                }
             }
         }
         None => {

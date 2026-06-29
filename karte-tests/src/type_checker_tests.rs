@@ -1307,8 +1307,8 @@ mod tests {
         let code = "fn main() -> number {\n    let x = 3.14;\n    0\n}";
         let tokens = Lexer::new(code).tokenize();
         let (_, diagnostics) = parse_with_type_check(&tokens, ParserMode::Script, None);
-        // 浮点数字面量应该报错
-        assert!(diagnostics.has_errors(), "Float literal should report error");
+        // 浮点数字面量现在被支持（存储为 f64::to_bits() 的 i64），不应报错
+        assert!(!diagnostics.has_errors(), "Float literal should be accepted without error");
     }
 
     #[test]

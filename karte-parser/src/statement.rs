@@ -7,7 +7,7 @@
 //! - 程序结构解析
 
 use karte_diagnostics::Span;
-use karte_hir::{Expr, IntKind, Statement, Type};
+use karte_hir::{Expr, FloatKind, IntKind, Statement, Type};
 use karte_lexer::Token;
 
 use crate::types::{ParseError, ParserMode};
@@ -18,7 +18,7 @@ impl<'a> Parser<'a> {
     pub(crate) fn starts_with_statement(&self) -> bool {
         if let Some(token) = self.peek() {
             if let Token::Identifier(name) = &token.token {
-                return matches!(name.as_str(), "let" | "enum" | "struct" | "fn");
+                return matches!(name.as_str(), "let" | "enum" | "struct" | "fn" | "kernel");
             }
             if matches!(token.token, Token::KwPub) {
                 // pub fn / pub struct / pub enum
@@ -43,7 +43,7 @@ impl<'a> Parser<'a> {
         while let Some(token) = self.peek() {
             // 检查是否为语句
             if let Token::Identifier(name) = &token.token {
-                if matches!(name.as_str(), "let" | "enum" | "struct" | "fn") {
+                if matches!(name.as_str(), "let" | "enum" | "struct" | "fn" | "kernel") {
                     statements.push(self.parse_statement()?);
                     continue;
                 }
@@ -160,6 +160,24 @@ impl<'a> Parser<'a> {
                     return self.parse_struct_statement(false);
                 } else if name == "fn" {
                     return self.parse_function_definition(false);
+                } else if name == "kernel" {
+                    // kernel fn → 消费 'kernel' 关键字后按普通函数解析
+                    self.advance(); // consume 'kernel'
+                    // 设置标志，让 parse_function_definition 知道这是 kernel
+                    self.parsing_kernel = true;
+                    // 期望 'fn'
+                    if let Some(next) = self.peek() {
+                        if let Token::Identifier(n) = &next.token {
+                            if n == "fn" {
+                                return self.parse_function_definition(false);
+                            }
+                        }
+                    }
+                    return Err(ParseError::UnexpectedToken {
+                        expected: "'fn' (在 'kernel' 之后)".to_string(),
+                        found: self.peek().map(|t| t.token.clone()).unwrap_or(Token::Identifier(String::new())),
+                        span: self.peek().map(|t| t.span).unwrap_or_default(),
+                    });
                 }
             }
             // pub 声明
@@ -675,6 +693,12 @@ impl<'a> Parser<'a> {
             });
         };
 
+        // 如果是从 kernel fn 解析路径来的，记录 kernel 函数名
+        if self.parsing_kernel {
+            self.kernel_functions.insert(name.clone());
+            self.parsing_kernel = false;
+        }
+
         // 解析参数列表 (...)
         if let Some(token) = self.peek() {
             if matches!(token.token, Token::LeftParen) {
@@ -821,7 +845,7 @@ impl<'a> Parser<'a> {
 
             // 检查是否为语句
             if let Token::Identifier(name) = &token.token {
-                if matches!(name.as_str(), "let" | "enum" | "struct" | "fn") {
+                if matches!(name.as_str(), "let" | "enum" | "struct" | "fn" | "kernel") {
                     statements.push(self.parse_statement()?);
                     continue;
                 }
@@ -1046,6 +1070,44 @@ impl<'a> Parser<'a> {
                                         Ok(Type::Unknown)
                                     }
                                 }
+                                "Tensor" => {
+                                    // Tensor<f32> 或 Tensor<f32, N> — N 是维度数
+                                    if generic_args.len() >= 1 {
+                                        let ndim = if generic_args.len() >= 2 {
+                                            // 尝试从第二个参数推断维度数（可能是 Number 常量）
+                                            0 // 保守使用 0=未知
+                                        } else { 1 };
+                                        Ok(Type::Tensor {
+                                            dtype: Box::new(generic_args[0].clone()),
+                                            ndim,
+                                        })
+                                    } else {
+                                        Ok(Type::Unknown)
+                                    }
+                                }
+                                "Tile" => {
+                                    // Tile<f32, rows, cols>
+                                    if generic_args.len() >= 1 {
+                                        Ok(Type::Tile {
+                                            dtype: Box::new(generic_args[0].clone()),
+                                            rows: if generic_args.len() >= 2 { 0 } else { 0 },
+                                            cols: if generic_args.len() >= 3 { 0 } else { 0 },
+                                        })
+                                    } else {
+                                        Ok(Type::Unknown)
+                                    }
+                                }
+                                "SharedMem" => {
+                                    // SharedMem<f32, len>
+                                    if generic_args.len() >= 1 {
+                                        Ok(Type::SharedMem {
+                                            dtype: Box::new(generic_args[0].clone()),
+                                            len: 0,
+                                        })
+                                    } else {
+                                        Ok(Type::Unknown)
+                                    }
+                                }
                                 _ => {
                                     // 用户自定义泛型类型，保留为 Type::Generic
                                     // 在类型检查阶段会被实例化为具体类型
@@ -1094,6 +1156,10 @@ impl<'a> Parser<'a> {
             "u32" => Type::Int(IntKind::U32),
             "u64" => Type::Int(IntKind::U64),
             "usize" => Type::Int(IntKind::USize),
+            "f16" => Type::Float(FloatKind::F16),
+            "bf16" => Type::Float(FloatKind::BF16),
+            "f32" => Type::Float(FloatKind::F32),
+            "f64" => Type::Float(FloatKind::F64),
             _ => {
                 // 自定义类型名（struct/enum），创建 Struct 骨架作为占位符
                 // type_checker 会在 process_struct_definitions 中替换为实际类型

@@ -59,6 +59,41 @@ pub enum IntKind {
     USize,
 }
 
+/// 浮点类型种类
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FloatKind {
+    /// 半精度浮点 (16-bit) — GPU 常用
+    F16,
+    /// 脑浮点 (16-bit, 8位指数) — AI 训练常用
+    BF16,
+    /// 单精度浮点 (32-bit)
+    F32,
+    /// 双精度浮点 (64-bit)
+    F64,
+}
+
+impl FloatKind {
+    /// 获取浮点类型的字节大小
+    pub fn size_in_bytes(&self) -> usize {
+        match self {
+            FloatKind::F16 | FloatKind::BF16 => 2,
+            FloatKind::F32 => 4,
+            FloatKind::F64 => 8,
+        }
+    }
+}
+
+impl fmt::Display for FloatKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FloatKind::F16 => write!(f, "f16"),
+            FloatKind::BF16 => write!(f, "bf16"),
+            FloatKind::F32 => write!(f, "f32"),
+            FloatKind::F64 => write!(f, "f64"),
+        }
+    }
+}
+
 impl IntKind {
     /// 获取整数类型的字节大小
     pub fn size_in_bytes(&self) -> usize {
@@ -114,6 +149,8 @@ pub enum Type {
     Number,
     /// 具体整数类型
     Int(IntKind),
+    /// 浮点类型
+    Float(FloatKind),
     /// 布尔类型（原生类型）
     Bool,
     /// 字符串类型
@@ -147,6 +184,22 @@ pub enum Type {
     /// 不可变引用类型
     Reference {
         inner: Box<Type>,
+    },
+    /// GPU 张量：多维数组，存储在 GPU 全局内存中
+    Tensor {
+        dtype: Box<Type>,
+        ndim: usize,
+    },
+    /// GPU Tile：固定大小的数据块，存储在寄存器/共享内存中
+    Tile {
+        dtype: Box<Type>,
+        rows: usize,
+        cols: usize,
+    },
+    /// GPU 共享内存引用
+    SharedMem {
+        dtype: Box<Type>,
+        len: usize,
     },
     /// 类型变量，用于类型推断
     Var(TypeVar),
@@ -203,6 +256,7 @@ impl Type {
         match (self, other) {
             (Type::Number, Type::Number) => true,
             (Type::Int(k1), Type::Int(k2)) => k1 == k2,
+            (Type::Float(k1), Type::Float(k2)) => k1 == k2,
             (Type::Bool, Type::Bool) => true,
             (Type::String, Type::String) => true,
             (Type::Unit, Type::Unit) => true,
@@ -286,6 +340,18 @@ impl Type {
                     && ts1.iter().zip(ts2.iter()).all(|(t1, t2)| t1.structural_eq(t2))
             }
             (Type::Reference { inner: i1 }, Type::Reference { inner: i2 }) => i1.structural_eq(i2),
+            (
+                Type::Tensor { dtype: d1, ndim: n1 },
+                Type::Tensor { dtype: d2, ndim: n2 },
+            ) => n1 == n2 && d1.structural_eq(d2),
+            (
+                Type::Tile { dtype: d1, rows: r1, cols: c1 },
+                Type::Tile { dtype: d2, rows: r2, cols: c2 },
+            ) => r1 == r2 && c1 == c2 && d1.structural_eq(d2),
+            (
+                Type::SharedMem { dtype: d1, len: l1 },
+                Type::SharedMem { dtype: d2, len: l2 },
+            ) => l1 == l2 && d1.structural_eq(d2),
             (Type::Var(_), Type::Var(_)) => true, // 类型变量之间总是兼容（由统一化处理）
             (
                 Type::Generic { name: n1, args: a1 },
@@ -306,6 +372,7 @@ impl fmt::Display for Type {
         match self {
             Type::Number => write!(f, "number"),
             Type::Int(kind) => write!(f, "{}", kind),
+            Type::Float(kind) => write!(f, "{}", kind),
             Type::Bool => write!(f, "bool"),
             Type::String => write!(f, "string"),
             Type::Unit => write!(f, "()"),
@@ -360,6 +427,15 @@ impl fmt::Display for Type {
             Type::Reference { inner } => {
                 write!(f, "&{}", inner)
             }
+            Type::Tensor { dtype, ndim } => {
+                write!(f, "Tensor<{}, {}>", dtype, ndim)
+            }
+            Type::Tile { dtype, rows, cols } => {
+                write!(f, "Tile<{}, {}, {}>", dtype, rows, cols)
+            }
+            Type::SharedMem { dtype, len } => {
+                write!(f, "SharedMem<{}, {}>", dtype, len)
+            }
             Type::Generic { name, args } => {
                 write!(f, "{}", name)?;
                 if !args.is_empty() {
@@ -401,7 +477,7 @@ impl Type {
 
     /// 检查是否为数值类型（Number 或具体整数类型）
     pub fn is_numeric(&self) -> bool {
-        matches!(self, Type::Number | Type::Int(_))
+        matches!(self, Type::Number | Type::Int(_) | Type::Float(_))
     }
 
     /// 获取整数类型的字节大小，非整数类型返回 None
@@ -409,6 +485,7 @@ impl Type {
         match self {
             Type::Number => Some(8), // Number 默认 8 字节（i64）
             Type::Int(kind) => Some(kind.size_in_bytes()),
+            Type::Float(kind) => Some(kind.size_in_bytes()),
             _ => None,
         }
     }
@@ -419,6 +496,7 @@ impl Type {
         match self {
             Type::Number => 8,
             Type::Int(kind) => kind.size_in_bytes(),
+            Type::Float(kind) => kind.size_in_bytes(),
             Type::Bool => 1,
             Type::String => 8, // 字符串是指针
             Type::Unit => 0,
@@ -432,6 +510,9 @@ impl Type {
             Type::Array { .. } => 8, // 数组是指针
             Type::Function { .. } | Type::Closure { .. } => 8, // 函数值是指针
             Type::Sum { .. } => 8, // Tagged union 是指针
+            Type::Tensor { .. } => 8, // GPU 张量是指针（设备地址）
+            Type::Tile { dtype, rows, cols } => dtype.byte_size() * rows * cols,
+            Type::SharedMem { dtype, len } => dtype.byte_size() * len,
             Type::Var(_) | Type::Unknown | Type::Generic { .. } => 8, // 保守估计
         }
     }
@@ -550,6 +631,7 @@ impl Type {
         match self {
             Type::Number => Type::Number,
             Type::Int(kind) => Type::Int(*kind),
+            Type::Float(kind) => Type::Float(*kind),
             Type::Bool => Type::Bool,
             Type::String => Type::String,
             Type::Unit => Type::Unit,
@@ -596,6 +678,19 @@ impl Type {
             Type::Reference { inner } => Type::Reference {
                 inner: Box::new(inner.substitute(subst)),
             },
+            Type::Tensor { dtype, ndim } => Type::Tensor {
+                dtype: Box::new(dtype.substitute(subst)),
+                ndim: *ndim,
+            },
+            Type::Tile { dtype, rows, cols } => Type::Tile {
+                dtype: Box::new(dtype.substitute(subst)),
+                rows: *rows,
+                cols: *cols,
+            },
+            Type::SharedMem { dtype, len } => Type::SharedMem {
+                dtype: Box::new(dtype.substitute(subst)),
+                len: *len,
+            },
             Type::Generic { name, args } => Type::Generic {
                 name: name.clone(),
                 args: args.iter().map(|t| t.substitute(subst)).collect(),
@@ -620,7 +715,7 @@ impl Type {
 
     fn contains_var_inner(&self, target: &TypeVar) -> bool {
         match self {
-            Type::Number | Type::Int(_) | Type::Bool | Type::String | Type::Unit | Type::Unknown => false,
+            Type::Number | Type::Int(_) | Type::Float(_) | Type::Bool | Type::String | Type::Unit | Type::Unknown => false,
             Type::Var(var) => var == target,
             Type::Function { params, return_type } => {
                 params.iter().any(|p| p.contains_var_inner(target))
@@ -643,6 +738,9 @@ impl Type {
             }
             Type::Array { element } => element.contains_var_inner(target),
             Type::Reference { inner } => inner.contains_var_inner(target),
+            Type::Tensor { dtype, .. } => dtype.contains_var_inner(target),
+            Type::Tile { dtype, .. } => dtype.contains_var_inner(target),
+            Type::SharedMem { dtype, .. } => dtype.contains_var_inner(target),
             Type::Generic { args, .. } => {
                 args.iter().any(|a| a.contains_var_inner(target))
             }
@@ -651,7 +749,7 @@ impl Type {
 
     fn free_vars_inner(&self) -> Vec<TypeVar> {
         match self {
-            Type::Number | Type::Int(_) | Type::Bool | Type::String | Type::Unit | Type::Unknown => vec![],
+            Type::Number | Type::Int(_) | Type::Float(_) | Type::Bool | Type::String | Type::Unit | Type::Unknown => vec![],
             Type::Function {
                 params,
                 return_type,
@@ -699,6 +797,9 @@ impl Type {
             }
             Type::Array { element } => element.free_vars(),
             Type::Reference { inner } => inner.free_vars(),
+            Type::Tensor { dtype, .. } => dtype.free_vars(),
+            Type::Tile { dtype, .. } => dtype.free_vars(),
+            Type::SharedMem { dtype, .. } => dtype.free_vars(),
             Type::Generic { args, .. } => {
                 let mut vars = Vec::new();
                 for arg in args {

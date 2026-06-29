@@ -7,7 +7,7 @@ mod types;
 use karte_diagnostics::{DiagnosticBag, Span};
 use karte_hir::type_checker::ExternalModuleInterface;
 use karte_lexer::{Token, TokenWithSpan};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 // 重新导出types模块的公共类型
 pub use types::{
@@ -29,6 +29,10 @@ pub struct Parser<'a> {
     module_decl: Option<ModuleDecl>,
     imports: Vec<ImportDecl>,
     prelude_parsed: bool,
+    /// GPU kernel 函数名集合（parse "kernel fn" 时记录）
+    pub kernel_functions: std::collections::HashSet<String>,
+    /// 当前是否正在解析 kernel 函数
+    parsing_kernel: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -41,6 +45,8 @@ impl<'a> Parser<'a> {
             module_decl: None,
             imports: Vec::new(),
             prelude_parsed: false,
+            kernel_functions: std::collections::HashSet::new(),
+            parsing_kernel: false,
         }
     }
 
@@ -244,6 +250,8 @@ pub struct ParseResult {
     pub module_context: ModuleContext,
     /// 表达式类型映射，用于从HIR传递类型信息到MIR
     pub expr_types: HashMap<usize, Type>,
+    /// GPU kernel 函数名集合（通过 "kernel fn" 语法声明）
+    pub kernel_functions: HashSet<String>,
 }
 
 impl ParseResult {
@@ -289,6 +297,7 @@ pub fn parse_with_type_check(
 ) -> (Option<ParseResult>, DiagnosticBag) {
     let mut parser = Parser::new(tokens).with_mode(mode);
     let program = parser.parse();
+    let kernel_functions = std::mem::take(&mut parser.kernel_functions);
     let mut diagnostics = parser.into_diagnostics();
 
     if let Some(program) = program {
@@ -321,6 +330,7 @@ pub fn parse_with_type_check(
                 result_type,
                 module_context,
                 expr_types,
+                kernel_functions,
             }),
             diagnostics,
         )

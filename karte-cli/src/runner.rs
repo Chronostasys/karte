@@ -858,6 +858,151 @@ pub fn aot_compile(
     Ok(())
 }
 
+/// GPU 编译：将 kernel fn 编译为 PTX 文本
+pub fn gpu_compile(
+    input: &str,
+    output: Option<&str>,
+    optimization_level: OptimizationLevel,
+    mode: ParserMode,
+    verbose: u8,
+    sm_version: (u32, u32),
+) -> Result<(), Box<dyn std::error::Error>> {
+    let source = if Path::new(input).exists() {
+        fs::read_to_string(input)?
+    } else {
+        input.to_string()
+    };
+
+    // 1. 解析源码提取 kernel 函数名
+    let (tokens, _lex_diag) = karte_lexer::tokenize(&source);
+    let (parse_result, _) = karte_parser::parse_with_type_check(&tokens, mode, None);
+    let kernel_functions = parse_result
+        .as_ref()
+        .map(|r| r.kernel_functions.clone())
+        .unwrap_or_default();
+
+    if kernel_functions.is_empty() {
+        return Err("未找到 GPU kernel 函数（使用 'kernel fn' 语法声明）".into());
+    }
+
+    if verbose > 0 {
+        eprintln!("GPU: 发现 {} 个 kernel: {:?}", kernel_functions.len(), kernel_functions);
+    }
+
+    // 2. 编译源码到 LIR
+    let mut lir_program = compile_to_lir(&source, "gpu", optimization_level, verbose > 0, mode)?;
+
+    // 3. 提取 kernel 函数并降级为 GIR
+    let mut gir_program = karte_gir::GirProgram::new();
+
+    // 构建 LabelId → 函数名 映射（用于检测 GPU 内建函数调用）
+    let label_to_name: HashMap<usize, String> = {
+        let mut map = HashMap::new();
+        for (name, func) in &lir_program.functions {
+            // 每个函数的第一条 Label 指令包含该函数的 LabelId
+            for instr in &func.instructions {
+                if let karte_lir::ir::Instruction::Label { id, .. } = instr {
+                    map.insert(id.0, name.clone());
+                    break;
+                }
+            }
+        }
+        // GPU 内建函数也注册到映射中（它们可能不在 LirProgram 的 functions 中）
+        for builtin in &[
+            "thread_global_id", "thread_local_id", "block_id", "block_id_2d",
+            "block_dim", "grid_dim", "sync_threads",
+            "tile_load", "tile_store", "tile_zeros", "tile_matmul",
+            "shared", "warp_shuffle", "warp_reduce",
+        ] {
+            // 内建函数在 LIR 中可能有不同的 LabelId
+            // 这里用函数名模式匹配，label_to_name 中的正确映射会在 Call 处理时使用
+        }
+        map
+    };
+
+    for (func_name, func) in &lir_program.functions {
+        // 匹配 kernel 函数名（支持模块前缀，如 "main::vec_add"）
+        let is_kernel = kernel_functions.iter().any(|kn| {
+            func_name == kn || func_name.ends_with(&format!("::{}", kn))
+        });
+
+        if is_kernel {
+            if verbose > 0 {
+                eprintln!("GPU: 降级 kernel '{}' → GIR", func_name);
+            }
+
+            let gir_params: Vec<karte_gir::GirParam> = func.parameter_registers.iter()
+                .enumerate()
+                .map(|(i, _)| karte_gir::GirParam {
+                    name: format!("arg{}", i),
+                    dtype: karte_gir::GirDType::I64,
+                    is_ptr: true,
+                })
+                .collect();
+
+            let kernel_info = karte_gir::lower::KernelInfo {
+                name: func_name.clone(),
+                params: gir_params,
+                default_dtype: karte_gir::GirDType::F32,
+            };
+
+            let mut gir_func = karte_gir::lower_lir_to_gir(func, &kernel_info, &label_to_name);
+
+            // 执行 tile 展开 pass
+            let block_size = karte_gir::estimate_block_size(gir_func.next_reg, gir_func.shared_mem_size);
+            if verbose > 0 {
+                eprintln!("GPU: tile 展开 (block_size={})", block_size);
+            }
+            karte_gir::tile_expansion::TileExpander::new(block_size).expand(&mut gir_func);
+            gir_func.block_dim = (block_size, 1, 1);
+
+            // 优化 pass 1: 向量化加载
+            if verbose > 0 {
+                eprintln!("GPU: 向量化加载 (v4.f32)");
+            }
+            karte_gir::VectorizePass::new().optimize(&mut gir_func);
+
+            // 优化 pass 2: 循环展开
+            if verbose > 0 {
+                eprintln!("GPU: 循环展开 (factor=4)");
+            }
+            karte_gir::LoopUnroller::new(4).unroll(&mut gir_func);
+
+            // 优化 pass 3: 软件流水线
+            if verbose > 0 {
+                eprintln!("GPU: 软件流水线");
+            }
+            karte_gir::SoftwarePipelinePass::new().optimize(&mut gir_func);
+
+            gir_program.add_kernel(gir_func);
+        }
+    }
+
+    if gir_program.kernels.is_empty() {
+        return Err(format!(
+            "kernel 函数 {:?} 在 LIR 中未找到（可能编译错误）", kernel_functions
+        ).into());
+    }
+
+    // 4. 编译 GIR → PTX
+    let (major, minor) = sm_version;
+    let mut ptx_compiler = karte_gpu::PtxCompiler::new().target(major, minor);
+    let ptx_text = ptx_compiler.compile(&gir_program);
+
+    // 5. 输出
+    match output {
+        Some(path) => {
+            fs::write(path, &ptx_text)?;
+            println!("PTX 已写入 {} ({} 字节, {} kernel)", path, ptx_text.len(), gir_program.kernels.len());
+        }
+        None => {
+            print!("{}", ptx_text);
+        }
+    }
+
+    Ok(())
+}
+
 
 pub fn process_expression(
     input: &str,

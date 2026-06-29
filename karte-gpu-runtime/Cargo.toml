@@ -1,0 +1,9 @@
+[package]
+name = "karte-gpu-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+libc = "0.2"
+karte-gir = { path = "../karte-gir" }

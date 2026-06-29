@@ -21,6 +21,9 @@ karte-codegen = { path = "../karte-codegen" }
 karte-mir = { path = "../karte-mir" }
 karte-hir = { path = "../karte-hir" }
 karte-lir = { path = "../karte-lir" }
+karte-gir = { path = "../karte-gir" }
+karte-gpu = { path = "../karte-gpu" }
+karte-gpu-runtime = { path = "../karte-gpu-runtime" }
 env_logger.workspace = true
 log.workspace = true
 clap = { version = "4.4", features = ["derive"] }

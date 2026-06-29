@@ -981,6 +981,9 @@ dependencies = [
  "karte-aot",
  "karte-codegen",
  "karte-diagnostics",
+ "karte-gir",
+ "karte-gpu",
+ "karte-gpu-runtime",
  "karte-hir",
  "karte-ir-codec",
  "karte-lexer",
@@ -1062,6 +1065,32 @@ dependencies = [
  "log",
  "parking_lot",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "karte-gir"
+version = "0.1.0"
+dependencies = [
+ "karte-common",
+ "karte-hir",
+ "karte-lir",
+]
+
+[[package]]
+name = "karte-gpu"
+version = "0.1.0"
+dependencies = [
+ "karte-gir",
+ "karte-hir",
+ "karte-lir",
+]
+
+[[package]]
+name = "karte-gpu-runtime"
+version = "0.1.0"
+dependencies = [
+ "karte-gir",
+ "libc",
 ]
 
 [[package]]

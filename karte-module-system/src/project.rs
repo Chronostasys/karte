@@ -294,6 +294,15 @@ pub fn compile_source_to_artifacts(
                     }
                 }
             }
+            // GPU 内建函数注册
+            for gpu_fn in &[
+                "thread_global_id", "thread_local_id", "block_id", "block_id_2d",
+                "block_dim", "grid_dim", "sync_threads",
+                "tile_load", "tile_store", "tile_zeros", "tile_matmul",
+                "shared", "warp_shuffle", "warp_reduce",
+            ] {
+                known.insert(gpu_fn.to_string());
+            }
             known
         },
         module_context: Some(module_context.clone()),

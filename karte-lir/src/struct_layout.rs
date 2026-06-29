@@ -134,9 +134,13 @@ impl StructLayoutManager {
             Type::Var(_) => Ok((8, 8)),       // 类型变量默认8字节
             Type::Unknown => Ok((8, 8)),      // 未知类型默认8字节
             Type::Int(_) => Ok((8, 8)),       // 整数类型默认8字节
+            Type::Float(_) => Ok((8, 8)),     // 浮点类型默认8字节（底层 i64 存储）
             Type::Bool => Ok((1, 1)),          // 布尔类型用1字节
             Type::String => Ok((8, 8)),        // 字符串类型用指针（8字节）
             Type::Generic { .. } => Ok((8, 8)), // 泛型类型引用在 LIR 层应已被实例化，保守估计8字节
+            Type::Tensor { .. } => Ok((8, 8)),   // GPU 张量是指针
+            Type::Tile { .. } => Ok((8, 8)),     // GPU tile 保守估计
+            Type::SharedMem { .. } => Ok((8, 8)), // 共享内存是指针
         }
     }
 

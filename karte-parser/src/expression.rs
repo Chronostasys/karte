@@ -978,6 +978,13 @@ impl<'a> Parser<'a> {
                     self.advance();
                     Ok(Expr::Number { value, span })
                 }
+                Token::FloatLiteral(bits) => {
+                    // 浮点字面量存储为 f64::to_bits() 的 i64 表示
+                    let value = *bits;
+                    let span = token.span;
+                    self.advance();
+                    Ok(Expr::Number { value, span })
+                }
                 Token::CharLiteral(value) => {
                     let value = *value;
                     let span = token.span;

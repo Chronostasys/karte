@@ -1,0 +1,10 @@
+[package]
+name = "karte-gpu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+karte-gir = { path = "../karte-gir" }
+karte-lir = { path = "../karte-lir" }
+karte-hir = { path = "../karte-hir" }

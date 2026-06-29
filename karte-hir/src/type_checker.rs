@@ -1719,14 +1719,52 @@ impl TypeChecker {
                                 let t1 = self.infer_expr(&args[0], env);
                                 let t2 = self.infer_expr(&args[1], env);
                                 let t3 = self.infer_expr(&args[2], env);
-                                self.add_constraint_with_context(Type::Number, t1.clone(), *span, 
+                                self.add_constraint_with_context(Type::Number, t1.clone(), *span,
                                     format!("clamp() 要求 number 类型参数, 第一个参数为 `{}`", t1));
-                                self.add_constraint_with_context(Type::Number, t2.clone(), *span, 
+                                self.add_constraint_with_context(Type::Number, t2.clone(), *span,
                                     format!("clamp() 要求 number 类型参数, 第二个参数为 `{}`", t2));
-                                self.add_constraint_with_context(Type::Number, t3.clone(), *span, 
+                                self.add_constraint_with_context(Type::Number, t3.clone(), *span,
                                     format!("clamp() 要求 number 类型参数, 第三个参数为 `{}`", t3));
                                 return Type::Number;
                             }
+                        }
+                        // —— GPU 内建函数 ——
+                        "thread_global_id" | "thread_local_id" | "block_id" |
+                        "block_dim" | "grid_dim" => {
+                            for arg in args.iter() {
+                                let _ = self.infer_expr(arg, env);
+                            }
+                            return Type::Number;
+                        }
+                        "block_id_2d" => {
+                            return Type::Number;
+                        }
+                        "sync_threads" => {
+                            return Type::Unit;
+                        }
+                        "tile_load" | "tile_zeros" | "tile_matmul" => {
+                            for arg in args.iter() {
+                                let _ = self.infer_expr(arg, env);
+                            }
+                            return Type::Number;
+                        }
+                        "tile_store" => {
+                            for arg in args.iter() {
+                                let _ = self.infer_expr(arg, env);
+                            }
+                            return Type::Unit;
+                        }
+                        "shared" => {
+                            for arg in args.iter() {
+                                let _ = self.infer_expr(arg, env);
+                            }
+                            return Type::Number;
+                        }
+                        "warp_shuffle" | "warp_reduce" => {
+                            for arg in args.iter() {
+                                let _ = self.infer_expr(arg, env);
+                            }
+                            return Type::Number;
                         }
                         _ => {}
                     }

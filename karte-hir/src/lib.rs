@@ -24,4 +24,4 @@ pub use type_checker::{
     type_check, type_check_for_lsp, type_check_with_context, type_check_with_context_and_maps,
     LspTypeInfo, ModuleContext, TypeChecker,
 };
-pub use types::{IntKind, Type, TypeVar};
+pub use types::{FloatKind, IntKind, Type, TypeVar};

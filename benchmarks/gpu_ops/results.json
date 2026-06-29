@@ -1,0 +1,38 @@
+{
+  "gpu": "NVIDIA GeForce RTX 5080",
+  "pytorch_version": "2.12.0+cu130",
+  "triton_version": "3.7.0",
+  "config": {
+    "num_envs": 4096,
+    "num_bodies": 14,
+    "num_dofs": 29
+  },
+  "results": {
+    "body_pos": {
+      "pytorch_us": 78.5004798322916,
+      "triton_us": 23.535360097885132,
+      "speedup": 3.3354271830047586,
+      "max_diff": 1.7881393432617188e-07,
+      "compiled_us": 40.34719988703728
+    },
+    "body_rot": {
+      "pytorch_us": 178.62879939377308,
+      "triton_us": 24.201280158013105,
+      "speedup": 7.380964900512861,
+      "max_diff": 0.11290769279003143,
+      "compiled_us": 39.32127986103296
+    },
+    "dof_pos": {
+      "pytorch_us": 16.982080033048987,
+      "triton_us": 17.077119862660766,
+      "speedup": 0.9944346687043181,
+      "max_diff": 7.450580596923828e-08
+    },
+    "full_step": {
+      "pytorch_us": 1104.9806413054466,
+      "triton_us": 225.10096043348312,
+      "speedup": 4.9088224198490975,
+      "num_rewards": 30
+    }
+  }
+}

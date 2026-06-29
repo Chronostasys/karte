@@ -44,9 +44,13 @@ fn process_string_escapes(s: &str) -> Result<String, String> {
 /// Token 类型定义
 #[derive(Logos, Debug, Clone, PartialEq)]
 pub enum Token {
-    // 浮点数字面量（不支持，提前捕获给出友好错误；必须在 Number 和 Dot 之前定义）
-    #[regex(r"[0-9]+\.[0-9]+")]
-    FloatLiteral,
+    // 浮点数字面量 — 存储 f64::to_bits() 的 i64 表示
+    // 必须在 Number 和 Dot 之前定义（Logos 最长匹配）
+    #[regex(r"[0-9]+\.[0-9]+", |lex| {
+        let s = lex.slice();
+        s.parse::<f64>().ok().map(|f| f.to_bits() as i64)
+    })]
+    FloatLiteral(i64),
 
     // 数字（十六进制和二进制必须在十进制之前，Logos 最长匹配）
     // 两步解析：先尝试 i64，失败后尝试 u64，仅接受 u64::MAX/2+1 (= i64::MIN 的位模式)
@@ -446,7 +450,7 @@ impl fmt::Display for Token {
             Token::KwBreak => write!(f, "break"),
             Token::KwContinue => write!(f, "continue"),
             Token::KwReturn => write!(f, "return"),
-            Token::FloatLiteral => write!(f, "<float literal>"),
+            Token::FloatLiteral(_) => write!(f, "<float literal>"),
             Token::Error => write!(f, "<error>"),
         }
     }
@@ -487,14 +491,8 @@ impl<'a> Lexer<'a> {
 
             match result {
                 Ok(token) => {
-                    if matches!(token, Token::FloatLiteral) {
-                        self.diagnostics.add_error(
-                            "不支持浮点数字面量".to_string(),
-                            span,
-                        );
-                    } else {
-                        tokens.push(TokenWithSpan::new(token, span));
-                    }
+                    // 浮点字面量现在被支持，正常传递给 parser
+                    tokens.push(TokenWithSpan::new(token, span));
                 }
                 Err(_) => {
                     let slice = self.lexer.slice();
