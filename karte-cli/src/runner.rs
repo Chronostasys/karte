@@ -974,6 +974,12 @@ pub fn gpu_compile(
             }
             karte_gir::SoftwarePipelinePass::new().optimize(&mut gir_func);
 
+            // 优化 pass 4: 公共子表达式消除
+            karte_gir::CsePass::new().optimize(&mut gir_func);
+
+            // 优化 pass 5: 死代码消除
+            karte_gir::DcePass::new().optimize(&mut gir_func);
+
             gir_program.add_kernel(gir_func);
         }
     }

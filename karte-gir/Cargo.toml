@@ -8,3 +8,5 @@ license.workspace = true
 karte-lir = { path = "../karte-lir" }
 karte-hir = { path = "../karte-hir" }
 karte-common = { path = "../karte-common" }
+serde = { workspace = true }
+serde_json = { workspace = true }

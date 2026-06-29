@@ -89,6 +89,14 @@ pub enum ShuffleOp {
     Xor,
 }
 
+/// Warp 级归约操作类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReduceOp {
+    Sum,
+    Max,
+    Min,
+}
+
 /// GIR 指令 — GPU 感知的中间表示
 #[derive(Debug, Clone, PartialEq)]
 pub enum GirInstruction {
@@ -180,6 +188,28 @@ pub enum GirInstruction {
     BlockDim { dst: usize, dim: ThreadDim },
     /// 获取网格维度: dst = gridDim.{dim}
     GridDim { dst: usize, dim: ThreadDim },
+
+    // —— 高级数学与条件操作 ——
+    /// 带掩码的全局内存加载: if mask != 0 { dst = [addr] } else { dst = default_val }
+    MaskedGlobalLoad { dst: usize, addr: GirOperand, mask: GirOperand, default_val: GirOperand, dtype: GirDType },
+    /// 带掩码的全局内存存储
+    MaskedGlobalStore { addr: GirOperand, src: GirOperand, mask: GirOperand, dtype: GirDType },
+    /// Warp 级归约: dst = reduce(src) across warp lanes
+    Reduce { dst: usize, src: GirOperand, op: ReduceOp, dtype: GirDType },
+    /// 条件选择: dst = cond != 0 ? then_val : else_val
+    Where { dst: usize, cond: GirOperand, then_val: GirOperand, else_val: GirOperand, dtype: GirDType },
+    /// 平方根: dst = sqrt(src)
+    Sqrt { dst: usize, src: GirOperand, dtype: GirDType },
+    /// 自然对数: dst = ln(src)
+    Log { dst: usize, src: GirOperand, dtype: GirDType },
+    /// 倒数平方根: dst = 1/sqrt(src)
+    Rsqrt { dst: usize, src: GirOperand, dtype: GirDType },
+    /// 绝对值: dst = |src|
+    Abs { dst: usize, src: GirOperand, dtype: GirDType },
+    /// 最大值: dst = max(src1, src2)
+    Max { dst: usize, src1: GirOperand, src2: GirOperand, dtype: GirDType },
+    /// 最小值: dst = min(src1, src2)
+    Min { dst: usize, src1: GirOperand, src2: GirOperand, dtype: GirDType },
 
     // —— 标签与控制流 ——
     Label { id: usize },

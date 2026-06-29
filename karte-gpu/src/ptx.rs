@@ -173,10 +173,29 @@ impl PtxCompiler {
                 }
             }
             GirInstruction::Div { dst, src1, src2, dtype } => {
-                let d = dtype.ptx_suffix();
-                let is_64 = *dtype == GirDType::I64 || *dtype == GirDType::F64;
-                let op = if d.starts_with('f') { "div.rn" } else { "div.full" };
-                self.emit(&format!("    {}.{} {}, {}, {};", op, d, reg(*dst, is_64), operand_to_str(src1, is_64), operand_to_str(src2, is_64)));
+                let is_f32 = *dtype == GirDType::F32;
+                if is_f32 {
+                    // f32 除法: 如果 src2 是立即数，用 rcp + mul（更高效且兼容 sm_12.0）
+                    // 否则用 div.rn.f32
+                    match src2 {
+                        GirOperand::Imm(val) => {
+                            // rcp.approx.f32 %tmp, imm; mul.f32 %dst, %src1, %tmp
+                            let rcp_reg = *dst + 5000;
+                            self.emit(&format!("    rcp.approx.f32 %f{}, 0f{:08X};", rcp_reg, *val as u32));
+                            self.emit(&format!("    mul.f32 %f{}, {}, %f{};", *dst, operand_to_str_f32(src1), rcp_reg));
+                        }
+                        _ => {
+                            self.emit(&format!("    div.rn.f32 %f{}, {}, {};", *dst, operand_to_str_f32(src1), operand_to_str_f32(src2)));
+                        }
+                    }
+                    self.track_reg(*dst, GirDType::F32);
+                } else {
+                    let d = dtype.ptx_suffix();
+                    let is_64 = *dtype == GirDType::I64 || *dtype == GirDType::F64;
+                    let op = if d.starts_with('f') { "div.rn" } else { "div.full" };
+                    self.emit(&format!("    {}.{} {}, {}, {};", op, d, reg(*dst, is_64), operand_to_str(src1, is_64), operand_to_str(src2, is_64)));
+                    self.track_reg(*dst, *dtype);
+                }
             }
             GirInstruction::Mod { dst, src1, src2, dtype } => {
                 let d = dtype.ptx_suffix();
@@ -369,6 +388,108 @@ impl PtxCompiler {
             }
             GirInstruction::TileMatmul { dst, a, b, m, k, n, .. } => {
                 self.emit(&format!("    // TileMatmul: {}×{}×{} (should be expanded)", m, k, n));
+            }
+
+            // —— 高级数学与条件操作 ——
+            GirInstruction::MaskedGlobalLoad { dst, addr, mask, default_val, dtype } => {
+                let is_f32 = *dtype == GirDType::F32;
+                let d = dtype.ptx_suffix();
+                let addr_s = self.i64_operand(addr);
+                if is_f32 {
+                    self.emit(&format!("    ld.global.f32 %f{}, [{}];", *dst, addr_s));
+                } else {
+                    self.emit(&format!("    ld.global.{} %r{}, [{}];", d, *dst, addr_s));
+                }
+                let mask_str = match mask {
+                    GirOperand::Reg(id) => format!("%f{}", id),
+                    GirOperand::Imm(v) => format!("0f{:08X}", *v as u32),
+                    _ => "0f00000000".to_string(),
+                };
+                let pred = *dst % 16;
+                self.emit(&format!("    setp.ne.f32 %p{}, {}, 0f00000000;", pred, mask_str));
+                let default_str = match default_val {
+                    GirOperand::Reg(id) => format!("%f{}", id),
+                    GirOperand::Imm(v) => format!("0f{:08X}", *v as u32),
+                    _ => "0f00000000".to_string(),
+                };
+                if is_f32 {
+                    self.emit(&format!("    selp.f32 %f{}, %f{}, {}, %p{};", *dst, *dst, default_str, pred));
+                } else {
+                    self.emit(&format!("    selp.{} %r{}, %r{}, {}, %p{};", d, *dst, *dst, default_str, pred));
+                }
+                self.track_reg(*dst, *dtype);
+            }
+            GirInstruction::MaskedGlobalStore { addr, src, mask, dtype } => {
+                let mask_str = match mask {
+                    GirOperand::Reg(id) => format!("%f{}", id),
+                    GirOperand::Imm(v) => format!("0f{:08X}", *v as u32),
+                    _ => "0f00000000".to_string(),
+                };
+                let pred = 15;
+                self.emit(&format!("    setp.ne.f32 %p{}, {}, 0f00000000;", pred, mask_str));
+                let addr_s = self.i64_operand(addr);
+                let d = dtype.ptx_suffix();
+                let src_str = operand_to_str_f32(src);
+                self.emit(&format!("    @%p{} st.global.{} [{}], {};", pred, d, addr_s, src_str));
+            }
+            GirInstruction::Reduce { dst, src, op, dtype } => {
+                let _ = dtype;
+                let src_str = operand_to_str_f32(src);
+                let mut prev_reg = *dst;
+                self.emit(&format!("    mov.f32 %f{}, {};", *dst, src_str));
+                for offset in [16u32, 8, 4, 2, 1] {
+                    let tmp = *dst + 100 + offset as usize;
+                    let ptx_op = match op {
+                        ReduceOp::Sum => "add.f32",
+                        ReduceOp::Max => "max.f32",
+                        ReduceOp::Min => "min.f32",
+                    };
+                    self.emit(&format!("    shfl.sync.down.b32 %f{}, %f{}, {}, 0x1f, 0x1f;", tmp, prev_reg, offset));
+                    self.emit(&format!("    {} %f{}, %f{}, %f{};", ptx_op, tmp, prev_reg, tmp));
+                    prev_reg = tmp;
+                }
+                self.emit(&format!("    shfl.sync.idx.b32 %f{}, %f{}, 0, 0x1f, 0x1f;", *dst, prev_reg));
+            }
+            GirInstruction::Where { dst, cond, then_val, else_val, dtype } => {
+                let _ = dtype;
+                let cond_str = operand_to_str_f32(cond);
+                let pred = *dst % 16;
+                self.emit(&format!("    setp.ne.f32 %p{}, {}, 0f00000000;", pred, cond_str));
+                let then_str = operand_to_str_f32(then_val);
+                let else_str = operand_to_str_f32(else_val);
+                self.emit(&format!("    selp.f32 %f{}, {}, {}, %p{};", *dst, then_str, else_str, pred));
+                self.track_reg(*dst, GirDType::F32);
+            }
+            GirInstruction::Sqrt { dst, src, dtype } => {
+                let _ = dtype;
+                self.emit(&format!("    sqrt.approx.f32 %f{}, {};", *dst, operand_to_str_f32(src)));
+                self.track_reg(*dst, GirDType::F32);
+            }
+            GirInstruction::Log { dst, src, dtype } => {
+                let _ = dtype;
+                self.emit(&format!("    lg2.approx.f32 %f{}, {};", *dst, operand_to_str_f32(src)));
+                self.emit(&format!("    mul.f32 %f{}, %f{}, 0f3F317218;", *dst, *dst));
+                self.track_reg(*dst, GirDType::F32);
+            }
+            GirInstruction::Rsqrt { dst, src, dtype } => {
+                let _ = dtype;
+                self.emit(&format!("    rsqrt.approx.f32 %f{}, {};", *dst, operand_to_str_f32(src)));
+                self.track_reg(*dst, GirDType::F32);
+            }
+            GirInstruction::Abs { dst, src, dtype } => {
+                let _ = dtype;
+                self.emit(&format!("    abs.f32 %f{}, {};", *dst, operand_to_str_f32(src)));
+                self.track_reg(*dst, GirDType::F32);
+            }
+            GirInstruction::Max { dst, src1, src2, dtype } => {
+                let _ = dtype;
+                self.emit(&format!("    max.f32 %f{}, {}, {};", *dst, operand_to_str_f32(src1), operand_to_str_f32(src2)));
+                self.track_reg(*dst, GirDType::F32);
+            }
+            GirInstruction::Min { dst, src1, src2, dtype } => {
+                let _ = dtype;
+                self.emit(&format!("    min.f32 %f{}, {}, {};", *dst, operand_to_str_f32(src1), operand_to_str_f32(src2)));
+                self.track_reg(*dst, GirDType::F32);
             }
         }
     }

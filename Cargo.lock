@@ -1074,6 +1074,8 @@ dependencies = [
  "karte-common",
  "karte-hir",
  "karte-lir",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

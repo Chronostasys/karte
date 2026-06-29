@@ -172,6 +172,21 @@ enum Commands {
         #[arg(long, default_value = "sm_80")]
         target: String,
     },
+
+    /// GPU JIT: 从 stdin 读取 GIR JSON，输出 PTX 到 stdout
+    GpuJit {
+        /// 目标 SM 版本 (如 sm_80, sm_90, sm_120)
+        #[arg(long, default_value = "sm_80")]
+        target: String,
+
+        /// block size (用于 autotuning 时的覆盖)
+        #[arg(long)]
+        block_size: Option<usize>,
+
+        /// 是否禁用优化 pass
+        #[arg(long)]
+        no_optimize: bool,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -189,12 +204,15 @@ impl From<ModeArg> for ParserMode {
     }
 }
 
-/// 解析 SM 版本字符串 (如 "sm_80" → (8, 0))
+/// 解析 SM 版本字符串 (如 "sm_80" → (8, 0), "sm_120" → (12, 0))
 fn parse_sm_version(s: &str) -> (u32, u32) {
     if let Some(num) = s.strip_prefix("sm_") {
         if num.len() >= 2 {
-            let major = num[..1].parse::<u32>().unwrap_or(8);
-            let minor = num[1..2].parse::<u32>().unwrap_or(0);
+            // 最后一位是 minor，其余是 major
+            // "80" → major=8, minor=0; "120" → major=12, minor=0; "89" → major=8, minor=9
+            let split = num.len() - 1;
+            let major = num[..split].parse::<u32>().unwrap_or(8);
+            let minor = num[split..].parse::<u32>().unwrap_or(0);
             return (major, minor);
         }
     }
@@ -567,6 +585,52 @@ fn real_main() -> i32 {
                     std::process::exit(1);
                 }
             }
+        }
+        Some(Commands::GpuJit { target, block_size, no_optimize }) => {
+            use std::io::Read;
+
+            // 从 stdin 读取 GIR JSON
+            let mut json_input = String::new();
+            if let Err(e) = std::io::stdin().read_to_string(&mut json_input) {
+                error!("读取 stdin 失败: {}", e);
+                std::process::exit(1);
+            }
+
+            // 反序列化 GIR
+            let mut gir_program = match karte_gir::json::deserialize_program(&json_input) {
+                Ok(p) => p,
+                Err(e) => {
+                    error!("GIR JSON 反序列化失败: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            let sm_version = parse_sm_version(&target);
+
+            // 应用优化 pass（除非禁用）
+            if !no_optimize {
+                for kernel in &mut gir_program.kernels {
+                    karte_gir::VectorizePass::new().optimize(kernel);
+                    karte_gir::LoopUnroller::new(4).unroll(kernel);
+                    karte_gir::SoftwarePipelinePass::new().optimize(kernel);
+                    karte_gir::CsePass::new().optimize(kernel);
+                    karte_gir::DcePass::new().optimize(kernel);
+                }
+            }
+
+            // 覆盖 block_size
+            if let Some(bs) = block_size {
+                for kernel in &mut gir_program.kernels {
+                    kernel.block_dim = (bs, 1, 1);
+                }
+            }
+
+            // 编译为 PTX
+            let mut ptx_compiler = karte_gpu::PtxCompiler::new().target(sm_version.0, sm_version.1);
+            let ptx_text = ptx_compiler.compile(&gir_program);
+
+            // 输出 PTX 到 stdout
+            print!("{}", ptx_text);
         }
         None => {
             if let Some(ref input) = cli.input {

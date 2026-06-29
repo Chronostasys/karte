@@ -7,11 +7,13 @@
 //! 4. 插入同步指令
 
 pub mod ir;
+pub mod json;
 pub mod lower;
 pub mod tile_expansion;
 pub mod optimization;
 
 pub use ir::*;
+pub use json::*;
 pub use lower::lower_lir_to_gir;
 pub use tile_expansion::expand_tiles;
-pub use optimization::{auto_config, estimate_block_size, VectorizePass, LoopUnroller, SoftwarePipelinePass};
+pub use optimization::{auto_config, estimate_block_size, VectorizePass, LoopUnroller, SoftwarePipelinePass, CsePass, DcePass};
