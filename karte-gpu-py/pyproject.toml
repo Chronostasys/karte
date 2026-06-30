@@ -25,3 +25,6 @@ dev = ["pytest", "black"]
 
 [tool.setuptools]
 packages = ["karte_gpu"]
+
+[tool.setuptools.package-data]
+karte_gpu = ["bin/*"]

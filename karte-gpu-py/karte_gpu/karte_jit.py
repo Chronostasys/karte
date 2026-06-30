@@ -119,22 +119,27 @@ def _get_sm_version_str():
 
 def _find_karte_binary():
     """查找 karte 二进制文件路径"""
+    # 1. 环境变量优先
     karte_bin = os.environ.get('KARTE_BIN')
     if karte_bin:
         return karte_bin
 
-    # 相对路径：从 benchmarks/gpu_ops/ 向上查找 target/debug/karte
+    # 2. pip 包内嵌二进制（karte_gpu/bin/karte）
     this_dir = os.path.dirname(os.path.abspath(__file__))
+    bundled = os.path.join(this_dir, 'bin', 'karte')
+    if os.path.exists(bundled):
+        return bundled
+
+    # 3. 源码仓库的 target 目录
     repo_root = os.path.normpath(os.path.join(this_dir, '..', '..'))
-    candidates = [
-        os.path.join(repo_root, 'target', 'debug', 'karte'),
+    for c in [
         os.path.join(repo_root, 'target', 'release', 'karte'),
-    ]
-    for c in candidates:
+        os.path.join(repo_root, 'target', 'debug', 'karte'),
+    ]:
         if os.path.exists(c):
             return c
 
-    # 回退：尝试直接运行 karte（如果在 PATH 中）
+    # 4. 回退：尝试 PATH 中的 karte
     return 'karte'
 
 

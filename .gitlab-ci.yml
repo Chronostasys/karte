@@ -1,0 +1,97 @@
+# ============================================================
+# Karte GitLab CI — 构建编译器二进制 + 发布 karte-gpu pip 包
+# ============================================================
+
+stages:
+  - build
+  - package
+  - release
+
+variables:
+  CARGO_TERM_COLOR: "always"
+  RUST_BACKTRACE: "1"
+
+# ============================================================
+# Stage 1: 构建 Rust 编译器（Linux x86_64）
+# ============================================================
+build-karte-linux:
+  stage: build
+  image: rust:1.75-bookworm
+  script:
+    - cargo build --release --bin karte
+    - strip -s target/release/karte
+    - mkdir -p artifacts
+    - cp target/release/karte artifacts/karte-linux-x86_64
+  artifacts:
+    paths:
+      - artifacts/karte-linux-x86_64
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# ============================================================
+# Stage 2: 打包 karte-gpu Python 包（内嵌编译器二进制）
+# ============================================================
+package-pip:
+  stage: package
+  image: python:3.12-slim
+  dependencies:
+    - build-karte-linux
+  script:
+    - pip install build twine
+    # 将编译器二进制放入 Python 包
+    - mkdir -p karte-gpu-py/karte_gpu/bin
+    - cp artifacts/karte-linux-x86_64 karte-gpu-py/karte_gpu/bin/karte
+    - chmod +x karte-gpu-py/karte_gpu/bin/karte
+    # 构建二进制包
+    - cd karte-gpu-py
+    - python -m build
+  artifacts:
+    paths:
+      - karte-gpu-py/dist/
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_TAG
+
+# ============================================================
+# Stage 3a: 发布到 GitLab Package Registry
+# ============================================================
+publish-gitlab:
+  stage: release
+  image: python:3.12-slim
+  dependencies:
+    - package-pip
+  script:
+    - pip install twine
+    - >
+      TWINE_PASSWORD=${CI_JOB_TOKEN}
+      TWINE_USERNAME=gitlab-ci-token
+      python -m twine upload
+      --repository-url
+      ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi
+      karte-gpu-py/dist/*
+  rules:
+    - if: $CI_COMMIT_TAG
+  only:
+    - tags
+
+# ============================================================
+# Stage 3b: 发布到 PyPI（可选，需配置 CI 变量）
+# ============================================================
+publish-pypi:
+  stage: release
+  image: python:3.12-slim
+  dependencies:
+    - package-pip
+  script:
+    - pip install twine
+    - >
+      TWINE_PASSWORD=${PYPI_API_TOKEN}
+      TWINE_USERNAME=__token__
+      python -m twine upload
+      karte-gpu-py/dist/*
+  rules:
+    - if: $CI_COMMIT_TAG && $PYPI_API_TOKEN
+  only:
+    - tags
