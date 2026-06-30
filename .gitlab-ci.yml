@@ -16,7 +16,7 @@ variables:
 # ============================================================
 build-karte-linux:
   stage: build
-  image: rust:1.75-bookworm
+  image: rust:1.85-bookworm
   script:
     - cargo build --release --bin karte
     - strip -s target/release/karte
