@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "karte-gpu"
+version = "0.1.0"
+description = "Karte GPU JIT Compiler — 用纯 Python 编写高性能 GPU 算子"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{name = "Karte Team"}]
+keywords = ["gpu", "cuda", "ptx", "jit", "kernel", "triton", "compiler"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.0",
+    "numpy>=1.20",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "black"]
+
+[tool.setuptools]
+packages = ["karte_gpu"]
