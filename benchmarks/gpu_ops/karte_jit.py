@@ -258,6 +258,37 @@ class _SymF32:
         })
         return _SymF32(r, self._builder)
 
+    def __lt__(self, other):
+        """比较运算: 返回 _SymF32 (0.0 或 1.0) 供 karte.where() 使用"""
+        r = self._builder.alloc_reg()
+        self._builder.emit_gir({
+            "op": "Cmp",
+            "dst": r,
+            "cmp_op": "lt",
+            "src1": _operand_to_json(self),
+            "src2": _operand_to_json(other),
+            "dtype": "f32"
+        })
+        return _SymF32(r, self._builder)
+
+    def __gt__(self, other):
+        r = self._builder.alloc_reg()
+        self._builder.emit_gir({"op": "Cmp", "dst": r, "cmp_op": "gt",
+            "src1": _operand_to_json(self), "src2": _operand_to_json(other), "dtype": "f32"})
+        return _SymF32(r, self._builder)
+
+    def __le__(self, other):
+        r = self._builder.alloc_reg()
+        self._builder.emit_gir({"op": "Cmp", "dst": r, "cmp_op": "le",
+            "src1": _operand_to_json(self), "src2": _operand_to_json(other), "dtype": "f32"})
+        return _SymF32(r, self._builder)
+
+    def __ge__(self, other):
+        r = self._builder.alloc_reg()
+        self._builder.emit_gir({"op": "Cmp", "dst": r, "cmp_op": "ge",
+            "src1": _operand_to_json(self), "src2": _operand_to_json(other), "dtype": "f32"})
+        return _SymF32(r, self._builder)
+
 
 class _SymTensor:
     """符号张量 — 索引操作自动生成 GPU 加载指令"""
@@ -645,6 +676,108 @@ def min_val(a, b):
         "dst": r,
         "src1": _operand_to_json(a),
         "src2": _operand_to_json(b),
+        "dtype": "f32"
+    })
+    return _SymF32(r, builder)
+
+
+def tanh(x):
+    """双曲正切"""
+    builder = _current_builder
+    r = builder.alloc_reg()
+    builder.emit_gir({"op": "Tanh", "dst": r, "src": _operand_to_json(x), "dtype": "f32"})
+    return _SymF32(r, builder)
+
+
+def cos(x):
+    """余弦"""
+    builder = _current_builder
+    r = builder.alloc_reg()
+    builder.emit_gir({"op": "Cos", "dst": r, "src": _operand_to_json(x), "dtype": "f32"})
+    return _SymF32(r, builder)
+
+
+def sin(x):
+    """正弦"""
+    builder = _current_builder
+    r = builder.alloc_reg()
+    builder.emit_gir({"op": "Sin", "dst": r, "src": _operand_to_json(x), "dtype": "f32"})
+    return _SymF32(r, builder)
+
+
+def clamp(x, lo, hi):
+    """将值限制在 [lo, hi] 范围内"""
+    builder = _current_builder
+    r = builder.alloc_reg()
+    builder.emit_gir({
+        "op": "Clamp", "dst": r,
+        "src": _operand_to_json(x),
+        "lo": _operand_to_json(lo),
+        "hi": _operand_to_json(hi),
+        "dtype": "f32"
+    })
+    return _SymF32(r, builder)
+
+
+def lerp(a, b, t):
+    """线性插值: a + t*(b-a)"""
+    builder = _current_builder
+    r = builder.alloc_reg()
+    builder.emit_gir({
+        "op": "Lerp", "dst": r,
+        "a": _operand_to_json(a),
+        "b": _operand_to_json(b),
+        "t": _operand_to_json(t),
+        "dtype": "f32"
+    })
+    return _SymF32(r, builder)
+
+
+def ceil(x):
+    """向上取整"""
+    builder = _current_builder
+    r = builder.alloc_reg()
+    builder.emit_gir({"op": "Ceil", "dst": r, "src": _operand_to_json(x), "dtype": "f32"})
+    return _SymF32(r, builder)
+
+
+def floor(x):
+    """向下取整"""
+    builder = _current_builder
+    r = builder.alloc_reg()
+    builder.emit_gir({"op": "Floor", "dst": r, "src": _operand_to_json(x), "dtype": "f32"})
+    return _SymF32(r, builder)
+
+
+def pow(base, exp):
+    """幂运算"""
+    builder = _current_builder
+    r = builder.alloc_reg()
+    builder.emit_gir({
+        "op": "Pow", "dst": r,
+        "base": _operand_to_json(base),
+        "exp": _operand_to_json(exp),
+        "dtype": "f32"
+    })
+    return _SymF32(r, builder)
+
+
+def abs_val(x):
+    """绝对值"""
+    builder = _current_builder
+    r = builder.alloc_reg()
+    builder.emit_gir({"op": "Abs", "dst": r, "src": _operand_to_json(x), "dtype": "f32"})
+    return _SymF32(r, builder)
+
+
+def reduce_max(x):
+    """Warp 级归约最大值"""
+    builder = _current_builder
+    r = builder.alloc_reg()
+    builder.emit_gir({
+        "op": "Reduce", "dst": r,
+        "src": _operand_to_json(x),
+        "reduce": "max",
         "dtype": "f32"
     })
     return _SymF32(r, builder)
@@ -1128,5 +1261,109 @@ def _interpret_kernel(fn, args, kwargs):
 # 公共 API
 # ============================================================
 
-__all__ = ['jit', 'Tensor', 'thread_id', 'f32', 'dot', 'exp', 'sqrt', 'rsqrt',
-           'log', 'unroll', 'where', 'reduce_sum', 'max_val', 'min_val']
+__all__ = ['jit', 'Tensor', 'thread_id', 'f32', 'dot', 'exp', 'sqrt', 'rsqrt', 'log',
+           'tanh', 'cos', 'sin', 'clamp', 'lerp', 'ceil', 'floor', 'pow',
+           'max_val', 'min_val', 'abs_val', 'where', 'reduce_sum', 'reduce_max',
+           'unroll', 'is_interpret_mode']
+
+
+# ============================================================
+# torch.autograd.Function 集成
+# ============================================================
+
+class KarteAutogradFunction(torch.autograd.Function):
+    """
+    将 @karte.jit kernel 包装为 torch.autograd.Function。
+
+    用法:
+        @karte.jit
+        def my_forward(x: karte.Tensor["N"], ...) -> karte.Tensor["N"]:
+            ...
+
+        @karte.jit
+        def my_backward(grad_out: karte.Tensor["N"], ...) -> karte.Tensor["N"]:
+            ...
+
+        # 包装为 autograd Function
+        MyOp = karte.autograd(my_forward, my_backward)
+
+        # 在训练中使用 — 支持 .backward()
+        result = MyOp.apply(x, y)
+        loss = result.sum()
+        loss.backward()  # 自动调用 my_backward
+    """
+
+    @staticmethod
+    def forward(ctx, forward_kernel, backward_kernel, *args):
+        ctx.forward_kernel = forward_kernel
+        ctx.backward_kernel = backward_kernel
+        ctx.save_for_backward(*[a for a in args if isinstance(a, torch.Tensor)])
+        result = forward_kernel(*args)
+        return result
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        saved = ctx.saved_tensors
+        if not grad_output.is_cuda:
+            grad_output = grad_output.cuda()
+
+        if ctx.backward_kernel is not None:
+            grads = ctx.backward_kernel(grad_output, *saved)
+            return (None, None, grad_output) + (None,) * len(saved)
+        else:
+            return (None, None) + tuple(torch.zeros_like(s) for s in saved)
+
+
+def autograd(forward_kernel, backward_kernel=None):
+    """
+    将 @karte.jit forward/backward kernel 包装为支持 autograd 的可调用对象。
+
+    参数:
+        forward_kernel: @karte.jit 装饰的前向 kernel
+        backward_kernel: @karte.jit 装饰的反向 kernel（可选）
+
+    返回:
+        一个类似 torch.autograd.Function 的对象，使用 .apply() 调用
+
+    示例:
+        @karte.jit
+        def relu_forward(x: karte.Tensor["N"]) -> karte.Tensor["N"]:
+            tid = karte.thread_id()
+            val = x[tid]
+            return karte.where(val < 0.0, 0.0, val)
+
+        @karte.jit
+        def relu_backward(grad: karte.Tensor["N"], x: karte.Tensor["N"]) -> karte.Tensor["N"]:
+            tid = karte.thread_id()
+            val = x[tid]
+            grad_val = grad[tid]
+            return karte.where(val < 0.0, 0.0, grad_val)
+
+        ReLU = karte.autograd(relu_forward, relu_backward)
+        x = torch.randn(4096, device='cuda', requires_grad=True)
+        y = ReLU.apply(x)
+        y.sum().backward()
+        print(x.grad)  # 非零梯度
+    """
+    class _WrappedFunction(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, *args):
+            ctx.save_for_backward(*[a for a in args if isinstance(a, torch.Tensor)])
+            result = forward_kernel(*args)
+            return result
+
+        @staticmethod
+        def backward(ctx, grad_output):
+            if not grad_output.is_cuda:
+                grad_output = grad_output.cuda()
+
+            if backward_kernel is not None:
+                saved_tensors = ctx.saved_tensors
+                grad_result = backward_kernel(grad_output, *saved_tensors)
+                n_saved = len(saved_tensors)
+                n_non_tensor = len(ctx.saved_tensors) - n_saved
+                return tuple([grad_result if i == 0 else None for i in range(len(ctx.saved_tensors))])
+            else:
+                return tuple(torch.zeros_like(s) for s in ctx.saved_tensors)
+
+    return _WrappedFunction

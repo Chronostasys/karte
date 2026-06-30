@@ -210,6 +210,22 @@ pub enum GirInstruction {
     Max { dst: usize, src1: GirOperand, src2: GirOperand, dtype: GirDType },
     /// 最小值: dst = min(src1, src2)
     Min { dst: usize, src1: GirOperand, src2: GirOperand, dtype: GirDType },
+    /// tanh: dst = tanh(src)
+    Tanh { dst: usize, src: GirOperand, dtype: GirDType },
+    /// cos: dst = cos(src)
+    Cos { dst: usize, src: GirOperand, dtype: GirDType },
+    /// sin: dst = sin(src)
+    Sin { dst: usize, src: GirOperand, dtype: GirDType },
+    /// clamp: dst = min(max(src, lo), hi)
+    Clamp { dst: usize, src: GirOperand, lo: GirOperand, hi: GirOperand, dtype: GirDType },
+    /// lerp: dst = a + t * (b - a)
+    Lerp { dst: usize, a: GirOperand, b: GirOperand, t: GirOperand, dtype: GirDType },
+    /// ceil: dst = ceil(src)
+    Ceil { dst: usize, src: GirOperand, dtype: GirDType },
+    /// floor: dst = floor(src)
+    Floor { dst: usize, src: GirOperand, dtype: GirDType },
+    /// pow: dst = base^exp (近似实现, pow = 2^(exp * log2(base)))
+    Pow { dst: usize, base: GirOperand, exp: GirOperand, dtype: GirDType },
 
     // —— 标签与控制流 ——
     Label { id: usize },

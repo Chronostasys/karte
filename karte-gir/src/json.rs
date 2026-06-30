@@ -399,6 +399,51 @@ pub enum GirInstructionJson {
         src2: GirOperandJson,
         dtype: String,
     },
+    Tanh {
+        dst: usize,
+        src: GirOperandJson,
+        dtype: String,
+    },
+    Cos {
+        dst: usize,
+        src: GirOperandJson,
+        dtype: String,
+    },
+    Sin {
+        dst: usize,
+        src: GirOperandJson,
+        dtype: String,
+    },
+    Clamp {
+        dst: usize,
+        src: GirOperandJson,
+        lo: GirOperandJson,
+        hi: GirOperandJson,
+        dtype: String,
+    },
+    Lerp {
+        dst: usize,
+        a: GirOperandJson,
+        b: GirOperandJson,
+        t: GirOperandJson,
+        dtype: String,
+    },
+    Ceil {
+        dst: usize,
+        src: GirOperandJson,
+        dtype: String,
+    },
+    Floor {
+        dst: usize,
+        src: GirOperandJson,
+        dtype: String,
+    },
+    Pow {
+        dst: usize,
+        base: GirOperandJson,
+        exp: GirOperandJson,
+        dtype: String,
+    },
 }
 
 impl From<&GirInstruction> for GirInstructionJson {
@@ -660,6 +705,51 @@ impl From<&GirInstruction> for GirInstructionJson {
                 src2: GirOperandJson::from(src2),
                 dtype: dtype_to_str(*dtype).to_string(),
             },
+            GirInstruction::Tanh { dst, src, dtype } => GirInstructionJson::Tanh {
+                dst: *dst,
+                src: GirOperandJson::from(src),
+                dtype: dtype_to_str(*dtype).to_string(),
+            },
+            GirInstruction::Cos { dst, src, dtype } => GirInstructionJson::Cos {
+                dst: *dst,
+                src: GirOperandJson::from(src),
+                dtype: dtype_to_str(*dtype).to_string(),
+            },
+            GirInstruction::Sin { dst, src, dtype } => GirInstructionJson::Sin {
+                dst: *dst,
+                src: GirOperandJson::from(src),
+                dtype: dtype_to_str(*dtype).to_string(),
+            },
+            GirInstruction::Clamp { dst, src, lo, hi, dtype } => GirInstructionJson::Clamp {
+                dst: *dst,
+                src: GirOperandJson::from(src),
+                lo: GirOperandJson::from(lo),
+                hi: GirOperandJson::from(hi),
+                dtype: dtype_to_str(*dtype).to_string(),
+            },
+            GirInstruction::Lerp { dst, a, b, t, dtype } => GirInstructionJson::Lerp {
+                dst: *dst,
+                a: GirOperandJson::from(a),
+                b: GirOperandJson::from(b),
+                t: GirOperandJson::from(t),
+                dtype: dtype_to_str(*dtype).to_string(),
+            },
+            GirInstruction::Ceil { dst, src, dtype } => GirInstructionJson::Ceil {
+                dst: *dst,
+                src: GirOperandJson::from(src),
+                dtype: dtype_to_str(*dtype).to_string(),
+            },
+            GirInstruction::Floor { dst, src, dtype } => GirInstructionJson::Floor {
+                dst: *dst,
+                src: GirOperandJson::from(src),
+                dtype: dtype_to_str(*dtype).to_string(),
+            },
+            GirInstruction::Pow { dst, base, exp, dtype } => GirInstructionJson::Pow {
+                dst: *dst,
+                base: GirOperandJson::from(base),
+                exp: GirOperandJson::from(exp),
+                dtype: dtype_to_str(*dtype).to_string(),
+            },
 
             // —— 标签与控制流 ——
             GirInstruction::Label { id } => GirInstructionJson::Label { id: *id },
@@ -915,6 +1005,51 @@ impl From<&GirInstructionJson> for GirInstruction {
                 dst: *dst,
                 src1: GirOperand::from(src1.clone()),
                 src2: GirOperand::from(src2.clone()),
+                dtype: str_to_dtype(dtype),
+            },
+            GirInstructionJson::Tanh { dst, src, dtype } => GirInstruction::Tanh {
+                dst: *dst,
+                src: GirOperand::from(src.clone()),
+                dtype: str_to_dtype(dtype),
+            },
+            GirInstructionJson::Cos { dst, src, dtype } => GirInstruction::Cos {
+                dst: *dst,
+                src: GirOperand::from(src.clone()),
+                dtype: str_to_dtype(dtype),
+            },
+            GirInstructionJson::Sin { dst, src, dtype } => GirInstruction::Sin {
+                dst: *dst,
+                src: GirOperand::from(src.clone()),
+                dtype: str_to_dtype(dtype),
+            },
+            GirInstructionJson::Clamp { dst, src, lo, hi, dtype } => GirInstruction::Clamp {
+                dst: *dst,
+                src: GirOperand::from(src.clone()),
+                lo: GirOperand::from(lo.clone()),
+                hi: GirOperand::from(hi.clone()),
+                dtype: str_to_dtype(dtype),
+            },
+            GirInstructionJson::Lerp { dst, a, b, t, dtype } => GirInstruction::Lerp {
+                dst: *dst,
+                a: GirOperand::from(a.clone()),
+                b: GirOperand::from(b.clone()),
+                t: GirOperand::from(t.clone()),
+                dtype: str_to_dtype(dtype),
+            },
+            GirInstructionJson::Ceil { dst, src, dtype } => GirInstruction::Ceil {
+                dst: *dst,
+                src: GirOperand::from(src.clone()),
+                dtype: str_to_dtype(dtype),
+            },
+            GirInstructionJson::Floor { dst, src, dtype } => GirInstruction::Floor {
+                dst: *dst,
+                src: GirOperand::from(src.clone()),
+                dtype: str_to_dtype(dtype),
+            },
+            GirInstructionJson::Pow { dst, base, exp, dtype } => GirInstruction::Pow {
+                dst: *dst,
+                base: GirOperand::from(base.clone()),
+                exp: GirOperand::from(exp.clone()),
                 dtype: str_to_dtype(dtype),
             },
 

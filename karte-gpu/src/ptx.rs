@@ -185,7 +185,8 @@ impl PtxCompiler {
                             self.emit(&format!("    mul.f32 %f{}, {}, %f{};", *dst, operand_to_str_f32(src1), rcp_reg));
                         }
                         _ => {
-                            self.emit(&format!("    div.rn.f32 %f{}, {}, {};", *dst, operand_to_str_f32(src1), operand_to_str_f32(src2)));
+                            // 使用 div.full.f32（兼容 sm_12_0，div.rn.f32 被 ptxas 拒绝）
+                            self.emit(&format!("    div.full.f32 %f{}, {}, {};", *dst, operand_to_str_f32(src1), operand_to_str_f32(src2)));
                         }
                     }
                     self.track_reg(*dst, GirDType::F32);
@@ -335,10 +336,28 @@ impl PtxCompiler {
             }
 
             // —— Tensor Core MMA ——
-            GirInstruction::Mma { dst, a, b, m, k, n, dtype_c, .. } => {
-                let d = dtype_c.ptx_suffix();
-                self.emit(&format!("    // MMA m={}=n={}=k={} dtype={}", m, n, k, d));
-                self.emit(&format!("    // mma.m{}n{}k{}.row.col.{} {{...}}, {}, {}, {{...}};", m, n, k, d, operand_to_str(a, false), operand_to_str(b, false)));
+            GirInstruction::Mma { dst, a, b, m, k, n, dtype_a, dtype_b, dtype_c } => {
+                let dc = dtype_c.ptx_suffix();
+                let da = dtype_a.ptx_suffix();
+                let db = dtype_b.ptx_suffix();
+                let a_id = match a { GirOperand::Reg(id) => *id, _ => 0 };
+                let b_id = match b { GirOperand::Reg(id) => *id, _ => 0 };
+                // MMA 指令生成 — 当前输出为 PTX mma.sync 指令格式
+                // 注意：实际 MMA 需要 ldmatrix 指令配合加载，此处仅生成计算指令
+                if (*m == 16 || *m == 8) && (*n == 8) && (*k == 16 || *k == 4) {
+                    let mma_asm = format!(
+                        "    mma.sync.aligned.m{}n{}k{}.row.col.{}.{}.{}.{} {{%f{}, %f{}, %f{}, %f{}}}, {{%r{}, %r{}}}, {{%r{}, %r{}}}, {{%f{}, %f{}, %f{}, %f{}}};",
+                        m, n, k, dc, da, db, dc,
+                        *dst, *dst+1, *dst+2, *dst+3,
+                        a_id, a_id+1,
+                        b_id, b_id+1,
+                        *dst, *dst+1, *dst+2, *dst+3
+                    );
+                    self.emit(&mma_asm);
+                } else {
+                    self.emit(&format!("    // MMA m={}=n={}=k={} dtype={}/{}→{} (expanded by tile pass)", m, n, k, da, db, dc));
+                }
+                self.track_reg(*dst, *dtype_c);
             }
 
             // —— 线程索引 ——
@@ -489,6 +508,99 @@ impl PtxCompiler {
             GirInstruction::Min { dst, src1, src2, dtype } => {
                 let _ = dtype;
                 self.emit(&format!("    min.f32 %f{}, {}, {};", *dst, operand_to_str_f32(src1), operand_to_str_f32(src2)));
+                self.track_reg(*dst, GirDType::F32);
+            }
+
+            // —— 扩展数学函数 ——
+            GirInstruction::Tanh { dst, src, dtype } => {
+                let _ = dtype;
+                // tanh(x) = 2/(1+2^(-x*2*log2(e))) - 1 = 2*sigmoid(2x) - 1
+                // 使用 ex2 近似: scaled = x * (-2 * log2(e)); sigmoid(2x) = 1/(1+2^scaled)
+                // -2*log2(e) ≈ -2.88539 = 0xC038AA3B (单精度)
+                let scaled = *dst + 200;
+                self.emit(&format!("    mul.f32 %f{}, {}, 0fC038AA3B;", scaled, operand_to_str_f32(src)));
+                self.emit(&format!("    ex2.approx.f32 %f{}, %f{};", scaled, scaled));
+                let one_plus = *dst + 201;
+                self.emit(&format!("    add.f32 %f{}, %f{}, 0f3F800000;", one_plus, scaled));
+                self.emit(&format!("    rcp.approx.f32 %f{}, %f{};", *dst, one_plus));
+                self.emit(&format!("    mul.f32 %f{}, %f{}, 0f40000000;", *dst, *dst));
+                self.emit(&format!("    sub.f32 %f{}, %f{}, 0f3F800000;", *dst, *dst));
+                self.track_reg(*dst, GirDType::F32);
+            }
+
+            GirInstruction::Cos { dst, src, dtype } => {
+                let _ = dtype;
+                // cos(x) ≈ 1 - x^2/2 + x^4/24 (泰勒展开前3项)
+                let x2 = *dst + 200;
+                self.emit(&format!("    mul.f32 %f{}, {}, {};", x2, operand_to_str_f32(src), operand_to_str_f32(src)));
+                let half_x2 = *dst + 201;
+                self.emit(&format!("    mul.f32 %f{}, %f{}, 0f3F000000;", half_x2, x2));
+                let x4_24 = *dst + 202;
+                self.emit(&format!("    mul.f32 %f{}, %f{}, %f{};", x4_24, x2, x2));
+                self.emit(&format!("    mul.f32 %f{}, %f{}, 0f3D2AAAAB;", x4_24, x4_24));
+                self.emit(&format!("    sub.f32 %f{}, 0f3F800000, %f{};", *dst, half_x2));
+                self.emit(&format!("    add.f32 %f{}, %f{}, %f{};", *dst, *dst, x4_24));
+                self.track_reg(*dst, GirDType::F32);
+            }
+
+            GirInstruction::Sin { dst, src, dtype } => {
+                let _ = dtype;
+                // sin(x) ≈ x - x^3/6 + x^5/120 (泰勒展开前3项)
+                let x2 = *dst + 200;
+                self.emit(&format!("    mul.f32 %f{}, {}, {};", x2, operand_to_str_f32(src), operand_to_str_f32(src)));
+                let x3_6 = *dst + 201;
+                self.emit(&format!("    mul.f32 %f{}, %f{}, {};", x3_6, x2, operand_to_str_f32(src)));
+                self.emit(&format!("    mul.f32 %f{}, %f{}, 0f3E2AAAAB;", x3_6, x3_6));
+                let x5_120 = *dst + 202;
+                self.emit(&format!("    mul.f32 %f{}, %f{}, %f{};", x5_120, x2, x2));
+                self.emit(&format!("    mul.f32 %f{}, %f{}, {};", x5_120, x5_120, operand_to_str_f32(src)));
+                self.emit(&format!("    mul.f32 %f{}, %f{}, 0f3C088889;", x5_120, x5_120));
+                self.emit(&format!("    sub.f32 %f{}, {}, %f{};", *dst, operand_to_str_f32(src), x3_6));
+                self.emit(&format!("    add.f32 %f{}, %f{}, %f{};", *dst, *dst, x5_120));
+                self.track_reg(*dst, GirDType::F32);
+            }
+
+            GirInstruction::Clamp { dst, src, lo, hi, dtype } => {
+                let _ = dtype;
+                // clamp(x, lo, hi) = min(max(x, lo), hi)
+                let max_val = *dst + 200;
+                self.emit(&format!("    max.f32 %f{}, {}, {};", max_val, operand_to_str_f32(src), operand_to_str_f32(lo)));
+                self.emit(&format!("    min.f32 %f{}, %f{}, {};", *dst, max_val, operand_to_str_f32(hi)));
+                self.track_reg(*dst, GirDType::F32);
+            }
+
+            GirInstruction::Lerp { dst, a, b, t, dtype } => {
+                let _ = dtype;
+                // lerp(a, b, t) = a + t * (b - a)
+                let diff = *dst + 200;
+                self.emit(&format!("    sub.f32 %f{}, {}, {};", diff, operand_to_str_f32(b), operand_to_str_f32(a)));
+                self.emit(&format!("    mul.f32 %f{}, %f{}, {};", diff, diff, operand_to_str_f32(t)));
+                self.emit(&format!("    add.f32 %f{}, {}, %f{};", *dst, operand_to_str_f32(a), diff));
+                self.track_reg(*dst, GirDType::F32);
+            }
+
+            GirInstruction::Ceil { dst, src, dtype } => {
+                let _ = dtype;
+                // PTX: cvt.rpi = round toward positive infinity (ceil)
+                self.emit(&format!("    cvt.rpi.f32.f32 %f{}, {};", *dst, operand_to_str_f32(src)));
+                self.track_reg(*dst, GirDType::F32);
+            }
+
+            GirInstruction::Floor { dst, src, dtype } => {
+                let _ = dtype;
+                // PTX: cvt.rmi = round toward minus infinity (floor)
+                self.emit(&format!("    cvt.rmi.f32.f32 %f{}, {};", *dst, operand_to_str_f32(src)));
+                self.track_reg(*dst, GirDType::F32);
+            }
+
+            GirInstruction::Pow { dst, base, exp, dtype } => {
+                let _ = dtype;
+                // pow(base, exp) = 2^(exp * log2(base))
+                let log_val = *dst + 200;
+                self.emit(&format!("    lg2.approx.f32 %f{}, {};", log_val, operand_to_str_f32(base)));
+                let scaled = *dst + 201;
+                self.emit(&format!("    mul.f32 %f{}, %f{}, {};", scaled, log_val, operand_to_str_f32(exp)));
+                self.emit(&format!("    ex2.approx.f32 %f{}, %f{};", *dst, scaled));
                 self.track_reg(*dst, GirDType::F32);
             }
         }

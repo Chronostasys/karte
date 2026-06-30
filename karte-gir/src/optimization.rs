@@ -530,6 +530,14 @@ impl CsePass {
             GirInstruction::Abs { dst, .. } => Some(*dst),
             GirInstruction::Max { dst, .. } => Some(*dst),
             GirInstruction::Min { dst, .. } => Some(*dst),
+            GirInstruction::Tanh { dst, .. } => Some(*dst),
+            GirInstruction::Cos { dst, .. } => Some(*dst),
+            GirInstruction::Sin { dst, .. } => Some(*dst),
+            GirInstruction::Clamp { dst, .. } => Some(*dst),
+            GirInstruction::Lerp { dst, .. } => Some(*dst),
+            GirInstruction::Ceil { dst, .. } => Some(*dst),
+            GirInstruction::Floor { dst, .. } => Some(*dst),
+            GirInstruction::Pow { dst, .. } => Some(*dst),
             _ => None,
         }
     }
@@ -668,6 +676,30 @@ impl CsePass {
             }
             GirInstruction::Min { dst, src1, src2, .. } => {
                 remap_op(src1, remap); remap_op(src2, remap);
+            }
+            GirInstruction::Tanh { dst, src, .. } => {
+                remap_op(src, remap);
+            }
+            GirInstruction::Cos { dst, src, .. } => {
+                remap_op(src, remap);
+            }
+            GirInstruction::Sin { dst, src, .. } => {
+                remap_op(src, remap);
+            }
+            GirInstruction::Clamp { dst, src, lo, hi, .. } => {
+                remap_op(src, remap); remap_op(lo, remap); remap_op(hi, remap);
+            }
+            GirInstruction::Lerp { dst, a, b, t, .. } => {
+                remap_op(a, remap); remap_op(b, remap); remap_op(t, remap);
+            }
+            GirInstruction::Ceil { dst, src, .. } => {
+                remap_op(src, remap);
+            }
+            GirInstruction::Floor { dst, src, .. } => {
+                remap_op(src, remap);
+            }
+            GirInstruction::Pow { dst, base, exp, .. } => {
+                remap_op(base, remap); remap_op(exp, remap);
             }
             // 无寄存器引用的指令：不处理
             GirInstruction::Label { .. } | GirInstruction::Jump { .. }
@@ -828,6 +860,25 @@ impl DcePass {
                 if let GirOperand::Reg(id) = src1 { set.insert(*id); }
                 if let GirOperand::Reg(id) = src2 { set.insert(*id); }
             }
+            GirInstruction::Tanh { src, .. } => { if let GirOperand::Reg(id) = src { set.insert(*id); } }
+            GirInstruction::Cos { src, .. } => { if let GirOperand::Reg(id) = src { set.insert(*id); } }
+            GirInstruction::Sin { src, .. } => { if let GirOperand::Reg(id) = src { set.insert(*id); } }
+            GirInstruction::Clamp { src, lo, hi, .. } => {
+                if let GirOperand::Reg(id) = src { set.insert(*id); }
+                if let GirOperand::Reg(id) = lo { set.insert(*id); }
+                if let GirOperand::Reg(id) = hi { set.insert(*id); }
+            }
+            GirInstruction::Lerp { a, b, t, .. } => {
+                if let GirOperand::Reg(id) = a { set.insert(*id); }
+                if let GirOperand::Reg(id) = b { set.insert(*id); }
+                if let GirOperand::Reg(id) = t { set.insert(*id); }
+            }
+            GirInstruction::Ceil { src, .. } => { if let GirOperand::Reg(id) = src { set.insert(*id); } }
+            GirInstruction::Floor { src, .. } => { if let GirOperand::Reg(id) = src { set.insert(*id); } }
+            GirInstruction::Pow { base, exp, .. } => {
+                if let GirOperand::Reg(id) = base { set.insert(*id); }
+                if let GirOperand::Reg(id) = exp { set.insert(*id); }
+            }
             // 无源寄存器的指令
             GirInstruction::Label { .. } | GirInstruction::Jump { .. }
             | GirInstruction::Barrier | GirInstruction::Return
@@ -873,6 +924,14 @@ impl DcePass {
             GirInstruction::Abs { dst, .. } => Some(*dst),
             GirInstruction::Max { dst, .. } => Some(*dst),
             GirInstruction::Min { dst, .. } => Some(*dst),
+            GirInstruction::Tanh { dst, .. } => Some(*dst),
+            GirInstruction::Cos { dst, .. } => Some(*dst),
+            GirInstruction::Sin { dst, .. } => Some(*dst),
+            GirInstruction::Clamp { dst, .. } => Some(*dst),
+            GirInstruction::Lerp { dst, .. } => Some(*dst),
+            GirInstruction::Ceil { dst, .. } => Some(*dst),
+            GirInstruction::Floor { dst, .. } => Some(*dst),
+            GirInstruction::Pow { dst, .. } => Some(*dst),
             _ => None,
         }
     }
