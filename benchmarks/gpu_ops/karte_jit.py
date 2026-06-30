@@ -279,7 +279,7 @@ class _SymF32:
         self._builder.emit_gir({
             "op": "Cmp",
             "dst": r,
-            "cmp_op": "lt",
+            "cmp": "lt",
             "src1": _operand_to_json(self),
             "src2": _operand_to_json(other),
             "dtype": "f32"
@@ -288,19 +288,19 @@ class _SymF32:
 
     def __gt__(self, other):
         r = self._builder.alloc_reg()
-        self._builder.emit_gir({"op": "Cmp", "dst": r, "cmp_op": "gt",
+        self._builder.emit_gir({"op": "Cmp", "dst": r, "cmp": "gt",
             "src1": _operand_to_json(self), "src2": _operand_to_json(other), "dtype": "f32"})
         return _SymF32(r, self._builder)
 
     def __le__(self, other):
         r = self._builder.alloc_reg()
-        self._builder.emit_gir({"op": "Cmp", "dst": r, "cmp_op": "le",
+        self._builder.emit_gir({"op": "Cmp", "dst": r, "cmp": "le",
             "src1": _operand_to_json(self), "src2": _operand_to_json(other), "dtype": "f32"})
         return _SymF32(r, self._builder)
 
     def __ge__(self, other):
         r = self._builder.alloc_reg()
-        self._builder.emit_gir({"op": "Cmp", "dst": r, "cmp_op": "ge",
+        self._builder.emit_gir({"op": "Cmp", "dst": r, "cmp": "ge",
             "src1": _operand_to_json(self), "src2": _operand_to_json(other), "dtype": "f32"})
         return _SymF32(r, self._builder)
 
