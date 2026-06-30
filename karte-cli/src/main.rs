@@ -173,11 +173,19 @@ enum Commands {
         target: String,
     },
 
-    /// GPU JIT: 从 stdin 读取 GIR JSON，输出 PTX 到 stdout
+    /// GPU JIT: 从 stdin 读取 GIR JSON，输出目标代码到 stdout
     GpuJit {
-        /// 目标 SM 版本 (如 sm_80, sm_90, sm_120)
-        #[arg(long, default_value = "sm_80")]
-        target: String,
+        /// GPU 后端: nvidia (PTX) / opencl (OpenCL C) / auto (自动检测)
+        #[arg(long, default_value = "auto")]
+        backend: String,
+
+        /// 目标 (NVIDIA: sm_80, sm_90, sm_120; AMD: gfx906, gfx1030, gfx1100; auto: 自动检测)
+        #[arg(long)]
+        target: Option<String>,
+
+        /// 输出格式: text (PTX/OpenCL C 源码文本)
+        #[arg(long, default_value = "text")]
+        output_format: String,
 
         /// block size (用于 autotuning 时的覆盖)
         #[arg(long)]
@@ -586,7 +594,7 @@ fn real_main() -> i32 {
                 }
             }
         }
-        Some(Commands::GpuJit { target, block_size, no_optimize }) => {
+        Some(Commands::GpuJit { backend, target, output_format, block_size, no_optimize }) => {
             use std::io::Read;
 
             // 从 stdin 读取 GIR JSON
@@ -604,8 +612,6 @@ fn real_main() -> i32 {
                     std::process::exit(1);
                 }
             };
-
-            let sm_version = parse_sm_version(&target);
 
             // 应用优化 pass（除非禁用）
             if !no_optimize {
@@ -625,12 +631,43 @@ fn real_main() -> i32 {
                 }
             }
 
-            // 编译为 PTX
-            let mut ptx_compiler = karte_gpu::PtxCompiler::new().target(sm_version.0, sm_version.1);
-            let ptx_text = ptx_compiler.compile(&gir_program);
+            // 后端选择
+            let resolved_backend = if backend == "auto" {
+                // 自动检测可用后端
+                match karte_gpu_runtime::auto_select_backend() {
+                    Some(b) => b.to_string(),
+                    None => {
+                        // 无可用 GPU — 默认输出 PTX (兼容旧行为)
+                        "nvidia".to_string()
+                    }
+                }
+            } else {
+                backend.clone()
+            };
 
-            // 输出 PTX 到 stdout
-            print!("{}", ptx_text);
+            match resolved_backend.as_str() {
+                "nvidia" | "cuda" | "ptx" => {
+                    // NVIDIA PTX 后端
+                    let target_str = target.as_deref().unwrap_or("sm_80");
+                    let sm_version = parse_sm_version(target_str);
+
+                    let mut ptx_compiler = karte_gpu::PtxCompiler::new().target(sm_version.0, sm_version.1);
+                    let ptx_text = ptx_compiler.compile(&gir_program);
+                    print!("{}", ptx_text);
+                }
+                "opencl" | "amd" | "spirv" => {
+                    // OpenCL C 后端 (AMD / Intel / NVIDIA 跨厂商)
+                    let mut ocl_compiler = karte_gpu::OpenClCompiler::new();
+                    let ocl_source = ocl_compiler.compile(&gir_program);
+                    print!("{}", ocl_source);
+                }
+                _ => {
+                    error!("未知后端: {} (支持: nvidia, opencl, auto)", backend);
+                    std::process::exit(1);
+                }
+            }
+
+            let _ = output_format; // text 是当前唯一格式
         }
         None => {
             if let Some(ref input) = cli.input {

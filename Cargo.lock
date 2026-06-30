@@ -1083,6 +1083,7 @@ name = "karte-gpu"
 version = "0.1.0"
 dependencies = [
  "karte-gir",
+ "karte-gpu-runtime",
  "karte-hir",
  "karte-lir",
 ]

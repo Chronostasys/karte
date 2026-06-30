@@ -1,8 +1,9 @@
 """
 karte_gpu — 用纯 Python 编写高性能 GPU 算子
 
-@karte.jit 装饰器将 Python 函数自动编译为 NVIDIA PTX，
+@karte.jit 装饰器将 Python 函数自动编译为 GPU 代码，
 通过 Rust 编译器管线优化后直接在 GPU 上执行。
+支持 NVIDIA (PTX/CUDA) 和 AMD (OpenCL C) GPU。
 
 快速上手:
     import karte_gpu as karte
@@ -16,13 +17,16 @@ karte_gpu — 用纯 Python 编写高性能 GPU 算子
         return a + b
 
     result = my_kernel(x_tensor, y_tensor)
+
+后端检测:
+    karte.get_backend()  → 'cuda' / 'opencl' / 'cpu'
 """
 
 from .karte_jit import (
     jit, Tensor, thread_id, f32, dot, exp, sqrt, rsqrt, log,
     tanh, cos, sin, clamp, lerp, ceil, floor, pow,
     max_val, min_val, abs_val, where, reduce_sum, reduce_max,
-    unroll, is_interpret_mode, autograd,
+    unroll, is_interpret_mode, autograd, get_backend,
 )
 
 __version__ = "0.1.0"
@@ -39,5 +43,5 @@ __all__ = [
     # 条件与归约
     'where', 'reduce_sum', 'reduce_max',
     # 工具
-    'is_interpret_mode',
+    'is_interpret_mode', 'get_backend',
 ]

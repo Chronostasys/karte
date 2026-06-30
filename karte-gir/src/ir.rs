@@ -37,7 +37,7 @@ impl GirDType {
         }
     }
 
-    /// PTX 类型后缀
+    /// PTX 类型后缀 — NVIDIA 后端使用
     pub fn ptx_suffix(&self) -> &'static str {
         match self {
             GirDType::I32 => "s32",
@@ -46,6 +46,48 @@ impl GirDType {
             GirDType::F32 => "f32",
             GirDType::F64 => "f64",
         }
+    }
+
+    /// SPIR-V 类型名称 — AMD/Intel/OpenCL 后端使用
+    pub fn spirv_suffix(&self) -> &'static str {
+        match self {
+            GirDType::I32 => "i32",
+            GirDType::I64 => "i64",
+            GirDType::F16 => "f16",
+            GirDType::F32 => "f32",
+            GirDType::F64 => "f64",
+        }
+    }
+
+    /// 是否为浮点类型
+    pub fn is_float(&self) -> bool {
+        matches!(self, GirDType::F16 | GirDType::F32 | GirDType::F64)
+    }
+
+    /// 是否为 64 位类型
+    pub fn is_64bit(&self) -> bool {
+        matches!(self, GirDType::I64 | GirDType::F64)
+    }
+}
+
+/// 后端类型映射 trait — 每个后端实现自己的类型命名
+pub trait TypeMapper {
+    fn map(&self, dtype: GirDType) -> &'static str;
+}
+
+/// PTX 后端类型映射器
+pub struct PtxTypeMapper;
+impl TypeMapper for PtxTypeMapper {
+    fn map(&self, dtype: GirDType) -> &'static str {
+        dtype.ptx_suffix()
+    }
+}
+
+/// SPIR-V 后端类型映射器
+pub struct SpirvTypeMapper;
+impl TypeMapper for SpirvTypeMapper {
+    fn map(&self, dtype: GirDType) -> &'static str {
+        dtype.spirv_suffix()
     }
 }
 

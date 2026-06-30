@@ -61,6 +61,39 @@ def is_interpret_mode():
     return _interpret_mode
 
 # ============================================================
+# GPU 后端检测与初始化
+# ============================================================
+
+_backend = None
+
+def _detect_backend():
+    """自动检测可用 GPU 后端: cuda / opencl / cpu"""
+    global _backend
+    if _backend is not None:
+        return _backend
+    # 1. 尝试 CUDA (NVIDIA)
+    try:
+        if ctypes.util.find_library('cuda'):
+            torch.cuda.device_count()  # 确认可用
+            _backend = 'cuda'
+            return _backend
+    except Exception:
+        pass
+    # 2. 尝试 OpenCL (AMD / Intel)
+    if ctypes.util.find_library('OpenCL') or os.path.exists('/opt/rocm/opencl/lib/libOpenCL.so'):
+        _backend = 'opencl'
+        return _backend
+    # 3. 回退 CPU
+    _backend = 'cpu'
+    return _backend
+
+def get_backend():
+    """获取当前 GPU 后端"""
+    if _backend is None:
+        return _detect_backend()
+    return _backend
+
+# ============================================================
 # CUDA Driver 初始化
 # ============================================================
 
@@ -89,8 +122,163 @@ def _ensure_cuda():
 
 
 # ============================================================
-# 辅助函数
+# OpenCL 初始化 (AMD / Intel GPU)
 # ============================================================
+
+_opencl = None
+
+def _ensure_opencl():
+    """初始化 OpenCL 运行时，返回 (cl_lib, platform, device, context, queue)"""
+    global _opencl
+    if _opencl is not None:
+        return _opencl
+
+    # 尝试加载 OpenCL 库
+    cl_lib = None
+    for path in ['OpenCL', 'libOpenCL.so.1', 'libOpenCL.so',
+                 '/opt/rocm/opencl/lib/libOpenCL.so']:
+        try:
+            cl_lib = ctypes.CDLL(path)
+            break
+        except OSError:
+            continue
+    if cl_lib is None:
+        raise RuntimeError("OpenCL 库未找到 — 请安装 ROCm (AMD) 或 Intel OpenCL runtime")
+
+    # OpenCL API 签名设置
+    cl_lib.clGetPlatformIDs.argtypes = [
+        ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_uint)
+    ]
+    cl_lib.clGetPlatformIDs.restype = ctypes.c_int
+
+    cl_lib.clGetDeviceIDs.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint,
+        ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_uint)
+    ]
+    cl_lib.clGetDeviceIDs.restype = ctypes.c_int
+
+    cl_lib.clCreateContext.argtypes = [
+        ctypes.POINTER(ctypes.c_void_p), ctypes.c_uint,
+        ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p, ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_int)
+    ]
+    cl_lib.clCreateContext.restype = ctypes.c_void_p
+
+    cl_lib.clCreateCommandQueueWithProperties.argtypes = [
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)
+    ]
+    cl_lib.clCreateCommandQueueWithProperties.restype = ctypes.c_void_p
+
+    cl_lib.clCreateBuffer.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_int)
+    ]
+    cl_lib.clCreateBuffer.restype = ctypes.c_void_p
+
+    cl_lib.clEnqueueWriteBuffer.argtypes = [
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t,
+        ctypes.c_size_t, ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p
+    ]
+    cl_lib.clEnqueueWriteBuffer.restype = ctypes.c_int
+
+    cl_lib.clEnqueueReadBuffer.argtypes = [
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t,
+        ctypes.c_size_t, ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p
+    ]
+    cl_lib.clEnqueueReadBuffer.restype = ctypes.c_int
+
+    cl_lib.clCreateProgramWithSource.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint,
+        ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_size_t),
+        ctypes.POINTER(ctypes.c_int)
+    ]
+    cl_lib.clCreateProgramWithSource.restype = ctypes.c_void_p
+
+    cl_lib.clBuildProgram.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p),
+        ctypes.c_char_p, ctypes.c_void_p, ctypes.c_void_p
+    ]
+    cl_lib.clBuildProgram.restype = ctypes.c_int
+
+    cl_lib.clCreateKernel.argtypes = [
+        ctypes.c_void_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_int)
+    ]
+    cl_lib.clCreateKernel.restype = ctypes.c_void_p
+
+    cl_lib.clSetKernelArg.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_void_p
+    ]
+    cl_lib.clSetKernelArg.restype = ctypes.c_int
+
+    cl_lib.clEnqueueNDRangeKernel.argtypes = [
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint,
+        ctypes.POINTER(ctypes.c_size_t), ctypes.POINTER(ctypes.c_size_t),
+        ctypes.POINTER(ctypes.c_size_t), ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p
+    ]
+    cl_lib.clEnqueueNDRangeKernel.restype = ctypes.c_int
+
+    cl_lib.clFinish.argtypes = [ctypes.c_void_p]
+    cl_lib.clFinish.restype = ctypes.c_int
+
+    cl_lib.clReleaseMemObject.argtypes = [ctypes.c_void_p]
+    cl_lib.clReleaseMemObject.restype = ctypes.c_int
+
+    cl_lib.clGetProgramBuildInfo.argtypes = [
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t,
+        ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t)
+    ]
+    cl_lib.clGetProgramBuildInfo.restype = ctypes.c_int
+
+    # 获取平台和设备
+    num_platforms = ctypes.c_uint(0)
+    ret = cl_lib.clGetPlatformIDs(0, None, ctypes.byref(num_platforms))
+    if ret != 0 or num_platforms.value == 0:
+        raise RuntimeError(f"未找到 OpenCL 平台 (err={ret})")
+
+    platforms = (ctypes.c_void_p * num_platforms.value)()
+    cl_lib.clGetPlatformIDs(num_platforms.value, platforms, None)
+
+    # 优先选择 GPU 设备
+    CL_DEVICE_TYPE_GPU = 1 << 2
+    platform = None
+    device = None
+
+    for p in platforms:
+        num_devices = ctypes.c_uint(0)
+        ret = cl_lib.clGetDeviceIDs(
+            p, CL_DEVICE_TYPE_GPU, 0, None, ctypes.byref(num_devices))
+        if ret == 0 and num_devices.value > 0:
+            devices = (ctypes.c_void_p * num_devices.value)()
+            cl_lib.clGetDeviceIDs(
+                p, CL_DEVICE_TYPE_GPU, num_devices.value, devices, None)
+            platform = p
+            device = devices[0]
+            break
+
+    if platform is None or device is None:
+        raise RuntimeError("未找到 OpenCL GPU 设备")
+
+    # 创建上下文
+    err = ctypes.c_int(0)
+    context = cl_lib.clCreateContext(None, 1, ctypes.byref(ctypes.c_void_p(device)),
+                                     None, None, ctypes.byref(err))
+    if err.value != 0:
+        raise RuntimeError(f"clCreateContext 失败 (err={err.value})")
+
+    # 创建命令队列
+    queue = cl_lib.clCreateCommandQueueWithProperties(
+        context, device, None, ctypes.byref(err))
+    if err.value != 0:
+        raise RuntimeError(f"clCreateCommandQueueWithProperties 失败 (err={err.value})")
+
+    _opencl = {
+        'lib': cl_lib,
+        'platform': platform,
+        'device': device,
+        'context': context,
+        'queue': queue,
+    }
+    return _opencl
 
 def _operand_to_json(val):
     """将 Python 值转换为 GIR operand JSON"""
@@ -1060,30 +1248,96 @@ def _compile(fn, call_args, block_size=256):
     # 生成 GIR JSON
     gir_json = _build_gir_json(builder, fn.__name__, block_size)
 
-    # 调用 Rust 编译器
+    # 检测后端
+    backend = _detect_backend()
+
     karte_bin = _find_karte_binary()
-    sm_target = f'sm_{_get_sm_version_str()}'
-    ptx = subprocess.run(
-        [karte_bin, 'gpu-jit', '--target', sm_target,
-         '--block-size', str(block_size)],
-        input=json.dumps(gir_json),
-        capture_output=True, text=True,
-        timeout=60
-    )
-    if ptx.returncode != 0:
-        raise RuntimeError(f"Karte Rust 编译失败:\nSTDERR:\n{ptx.stderr}\nSTDOUT:\n{ptx.stdout}")
 
-    # 加载 PTX
-    cuda = _ensure_cuda()
-    module = ctypes.c_void_p()
-    ret = cuda.cuModuleLoadData(ctypes.byref(module), ptx.stdout.strip().encode() + b'\x00')
-    if ret != 0:
-        raise RuntimeError(f"PTX 加载失败 (code={ret})\nPTX:\n{ptx.stdout}")
+    if backend == 'cuda':
+        # NVIDIA PTX 路线
+        sm_target = f'sm_{_get_sm_version_str()}'
+        result = subprocess.run(
+            [karte_bin, 'gpu-jit', '--backend', 'nvidia',
+             '--target', sm_target,
+             '--block-size', str(block_size)],
+            input=json.dumps(gir_json),
+            capture_output=True, text=True,
+            timeout=60
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Karte Rust 编译失败:\nSTDERR:\n{result.stderr}\nSTDOUT:\n{result.stdout}")
 
-    func_handle = ctypes.c_void_p()
-    cuda.cuModuleGetFunction(ctypes.byref(func_handle), module, fn.__name__.encode())
+        # 加载 PTX
+        cuda = _ensure_cuda()
+        module = ctypes.c_void_p()
+        ret = cuda.cuModuleLoadData(ctypes.byref(module), result.stdout.strip().encode() + b'\x00')
+        if ret != 0:
+            raise RuntimeError(f"PTX 加载失败 (code={ret})\nPTX:\n{result.stdout}")
 
-    return _create_kernel_wrapper(func_handle, builder, fn.__name__, block_size, fn)
+        func_handle = ctypes.c_void_p()
+        cuda.cuModuleGetFunction(ctypes.byref(func_handle), module, fn.__name__.encode())
+
+        return _create_kernel_wrapper(func_handle, builder, fn.__name__, block_size, fn)
+
+    elif backend == 'opencl':
+        # OpenCL C 路线 (AMD / Intel)
+        result = subprocess.run(
+            [karte_bin, 'gpu-jit', '--backend', 'opencl',
+             '--block-size', str(block_size)],
+            input=json.dumps(gir_json),
+            capture_output=True, text=True,
+            timeout=60
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Karte Rust 编译失败:\nSTDERR:\n{result.stderr}\nSTDOUT:\n{result.stdout}")
+
+        ocl_source = result.stdout
+
+        # 编译 OpenCL C 源码
+        cl = _ensure_opencl()
+        cl_lib = cl['lib']
+        context = cl['context']
+        device = cl['device']
+
+        # clCreateProgramWithSource
+        source_bytes = ocl_source.encode('utf-8')
+        source_ptr = ctypes.c_char_p(source_bytes)
+        source_len = ctypes.c_size_t(len(source_bytes))
+        err = ctypes.c_int(0)
+        program = cl_lib.clCreateProgramWithSource(
+            context, 1, ctypes.byref(source_ptr),
+            ctypes.byref(source_len), ctypes.byref(err))
+        if err.value != 0:
+            raise RuntimeError(f"clCreateProgramWithSource 失败 (err={err.value})")
+
+        # clBuildProgram — 启用子组扩展
+        build_options = b"-cl-std=CL2.0 -cl-fast-relaxed-math"
+        ret = cl_lib.clBuildProgram(
+            program, 1, ctypes.byref(ctypes.c_void_p(device)),
+            build_options, None, None)
+        if ret != 0:
+            # 获取编译错误日志
+            log_size = ctypes.c_size_t(0)
+            cl_lib.clGetProgramBuildInfo(
+                program, device, 0x1084, 0, None, ctypes.byref(log_size))
+            log_buf = ctypes.create_string_buffer(log_size.value)
+            cl_lib.clGetProgramBuildInfo(
+                program, device, 0x1084, log_size.value, log_buf, None)
+            raise RuntimeError(
+                f"OpenCL 编译失败 (err={ret}):\n{log_buf.value.decode('utf-8', errors='replace')}\n"
+                f"源码:\n{ocl_source[:2000]}")
+
+        # clCreateKernel
+        kernel = cl_lib.clCreateKernel(
+            program, fn.__name__.encode(), ctypes.byref(err))
+        if err.value != 0:
+            raise RuntimeError(f"clCreateKernel 失败 (err={err.value})")
+
+        return _create_opencl_kernel_wrapper(
+            kernel, cl, builder, fn.__name__, block_size, fn)
+
+    else:
+        raise RuntimeError(f"无可用 GPU 后端 (backend={backend})")
 
 
 def _emit_return_store(builder):
@@ -1228,6 +1482,135 @@ def _create_kernel_wrapper(func_handle, builder, name, block_size=256, fn=None):
     return wrapper
 
 
+def _create_opencl_kernel_wrapper(kernel, cl_state, builder, name, block_size=256, fn=None):
+    """创建 OpenCL kernel 的 Python 可调用包装器"""
+
+    cl_lib = cl_state['lib']
+    context = cl_state['context']
+    queue = cl_state['queue']
+    out_param_idx = builder.output_param_idx
+    cl_buffers = []  # 持有 cl_mem 引用防止 GC
+
+    def wrapper(*args, **kwargs):
+        if _interpret_mode and fn is not None:
+            return _interpret_kernel(fn, args, kwargs)
+
+        num_user_params = len(args)
+        total_params = len(builder.params)
+        has_hidden_output = (out_param_idx is not None and out_param_idx >= num_user_params)
+
+        # 准备参数
+        cl_buffers.clear()
+        arg_values = []
+        batch_size = 1
+        out_tensor = None
+
+        for i, arg in enumerate(args):
+            pname, ptype, is_ptr, shape = builder.params[i]
+
+            if is_ptr:
+                if isinstance(arg, torch.Tensor):
+                    # 对于 OpenCL，需要创建 cl_mem 或使用 PyTorch CUDA tensor 的指针
+                    # AMD GPU 上 PyTorch 可能使用 ROCm/HIP，数据已在 GPU 上
+                    if not arg.is_cuda:
+                        arg = arg.cuda()
+                    if not arg.is_contiguous():
+                        arg = arg.contiguous()
+
+                    # 在 OpenCL 中创建 buffer 并写入数据
+                    CL_MEM_READ_WRITE = 1
+                    CL_MEM_COPY_HOST_PTR = 1 << 5
+                    nbytes = arg.numel() * arg.element_size()
+
+                    # 尝试使用 PyTorch tensor 的_data_ptr 作为 OpenCL buffer
+                    # ROCm 的 OpenCL 实现可以直接访问 HIP 分配的内存
+                    err = ctypes.c_int(0)
+                    cl_mem = cl_lib.clCreateBuffer(
+                        context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
+                        nbytes, arg.data_ptr(), ctypes.byref(err))
+                    if err.value != 0:
+                        # 回退: 创建空 buffer 并手动拷贝
+                        cl_mem = cl_lib.clCreateBuffer(
+                            context, CL_MEM_READ_WRITE, nbytes, None, ctypes.byref(err))
+                        if err.value != 0:
+                            raise RuntimeError(f"clCreateBuffer 失败 (err={err.value})")
+                        cl_lib.clEnqueueWriteBuffer(
+                            queue, cl_mem, 1, 0, nbytes,
+                            arg.data_ptr(), 0, None, None)
+
+                    cl_buffers.append(cl_mem)
+                    arg_values.append(cl_mem)
+
+                    if shape and len(arg.shape) >= 1 and i != out_param_idx:
+                        candidate = arg.shape[0]
+                        if candidate > batch_size:
+                            batch_size = candidate
+                else:
+                    arg_values.append(arg)
+            else:
+                if ptype == 'f32':
+                    fval = np.float32(arg)
+                    arg_values.append(int(fval.view(np.uint32)))
+                else:
+                    arg_values.append(int(arg))
+
+        # 为隐藏的输出参数分配张量和 buffer
+        if has_hidden_output and out_param_idx is not None:
+            out_tensor = torch.empty(batch_size, device='cuda', dtype=torch.float32)
+            while len(arg_values) < out_param_idx:
+                arg_values.append(0)
+            CL_MEM_READ_WRITE = 1
+            nbytes = out_tensor.numel() * out_tensor.element_size()
+            err = ctypes.c_int(0)
+            out_cl_mem = cl_lib.clCreateBuffer(
+                context, CL_MEM_READ_WRITE, nbytes, None, ctypes.byref(err))
+            cl_buffers.append(out_cl_mem)
+            arg_values.append(out_cl_mem)
+        elif out_param_idx is not None and out_param_idx < len(args):
+            out_tensor = args[out_param_idx]
+            if isinstance(out_tensor, torch.Tensor):
+                if not out_tensor.is_cuda:
+                    out_tensor = out_tensor.cuda()
+                if not out_tensor.is_contiguous():
+                    out_tensor = out_tensor.contiguous()
+
+        # 设置 kernel 参数
+        for i, val in enumerate(arg_values):
+            if isinstance(val, ctypes.c_void_p) or isinstance(val, int):
+                # cl_mem 参数 — 传递指针值
+                buf_val = ctypes.c_uint64(ctypes.cast(val, ctypes.c_void_p).value if isinstance(val, ctypes.c_void_p) else val)
+                cl_lib.clSetKernelArg(kernel, i, 8, ctypes.byref(buf_val))
+            else:
+                buf_val = ctypes.c_int(int(val))
+                cl_lib.clSetKernelArg(kernel, i, 4, ctypes.byref(buf_val))
+
+        # 启动 kernel
+        grid = (batch_size + block_size - 1) // block_size
+        global_work_size = (ctypes.c_size_t * 3)(grid * block_size, 1, 1)
+        local_work_size = (ctypes.c_size_t * 3)(block_size, 1, 1)
+
+        ret = cl_lib.clEnqueueNDRangeKernel(
+            queue, kernel, 1, None,
+            global_work_size, local_work_size,
+            0, None, None)
+        if ret != 0:
+            raise RuntimeError(f"clEnqueueNDRangeKernel 失败 (err={ret})")
+
+        cl_lib.clFinish(queue)
+
+        # 读取输出数据回 PyTorch tensor
+        if out_tensor is not None and len(cl_buffers) > 0:
+            out_cl_mem = cl_buffers[-1]  # 最后一个 buffer 是输出
+            nbytes = out_tensor.numel() * out_tensor.element_size()
+            cl_lib.clEnqueueReadBuffer(
+                queue, out_cl_mem, 1, 0, nbytes,
+                out_tensor.data_ptr(), 0, None, None)
+
+        return out_tensor
+
+    return wrapper
+
+
 # ============================================================
 # Autotuning
 # ============================================================
@@ -1247,7 +1630,11 @@ def _autotune(fn, args, default_compiled):
     3. 对每个配置 benchmark 10 次调用
     4. 选择最快的
     """
-    cuda = _ensure_cuda()
+    backend = _detect_backend()
+    if backend == 'cuda':
+        _ensure_cuda()
+    elif backend == 'opencl':
+        _ensure_opencl()
 
     results = {}
 
