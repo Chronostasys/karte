@@ -104,6 +104,7 @@ const OP_CONVERT_F_TO_S: u32 = 110;
 const OP_CONVERT_F_TO_U: u32 = 109;
 const OP_BITCAST: u32 = 124;
 const OP_CONVERT_U_TO_PTR: u32 = 120;
+const OP_CONVERT_PTR_TO_U: u32 = 122;
 
 // Group operations
 const OP_GROUP_F_ADD: u32 = 265;
@@ -114,7 +115,7 @@ const OP_GROUP_S_MAX: u32 = 270;
 
 // Capabilities
 const CAP_KERNEL: u32 = 6;
-const CAP_ADDRESSES: u32 = 5;
+const CAP_ADDRESSES: u32 = 4;
 const CAP_FLOAT16: u32 = 9;
 const CAP_FLOAT64: u32 = 10;
 const CAP_GROUPS: u32 = 57;
@@ -186,6 +187,12 @@ const OCL_SMIN: u32 = 158;
 /// SPIR-V 二进制编译器 — 将 GIR 程序编译为 SPIR-V word 序列
 pub struct SpirvCompiler {
     words: Vec<u32>,
+    /// 延迟发射的类型/常量/全局变量声明（entry point 之后插入）
+    decl_words: Vec<u32>,
+    /// 函数体指令缓冲（编译完成后追加到 words 末尾）
+    func_words: Vec<u32>,
+    /// 是否正在编译函数体（控制 instr 目标缓冲）
+    in_function: bool,
     next_id: u32,
 
     // 类型缓存
@@ -231,6 +238,7 @@ pub struct SpirvCompiler {
     label_map: HashMap<usize, u32>,  // GIR 标签 → SPIR-V label ID
     param_ids: Vec<u32>,             // 函数参数 SPIR-V ID
     param_ptr_types: Vec<u32>,       // 指针参数的类型 ID
+    param_is_ptr: Vec<bool>,         // 参数是否为指针
 
     // 当前 kernel 基本信息
     kernel_name: String,
@@ -248,6 +256,9 @@ impl SpirvCompiler {
     pub fn new() -> Self {
         let mut c = Self {
             words: Vec::new(),
+            decl_words: Vec::new(),
+            func_words: Vec::new(),
+            in_function: false,
             next_id: 1,
             type_void: 0,
             type_bool: 0,
@@ -281,6 +292,7 @@ impl SpirvCompiler {
             label_map: HashMap::new(),
             param_ids: Vec::new(),
             param_ptr_types: Vec::new(),
+            param_is_ptr: Vec::new(),
             kernel_name: String::new(),
             kernel_func_id: 0,
             kernel_func_type_id: 0,
@@ -293,8 +305,12 @@ impl SpirvCompiler {
         c.emit_capabilities();
         c.emit_extensions();
         c.emit_memory_model();
+        // 发射类型/常量/全局变量声明，保存到 decl_words（编译时在 entry point 之后插入）
+        let header_end = c.words.len();
         c.emit_types_and_constants();
-        c.emit_builtins();
+        c.emit_builtin_vars();  // 只发射 OpVariable + OpTypePointer，不发射 OpDecorate
+        c.decl_words = c.words[header_end..].to_vec();
+        c.words.truncate(header_end);
         c
     }
 
@@ -306,9 +322,28 @@ impl SpirvCompiler {
 
     /// 编译 GIR 程序为 SPIR-V 二进制
     pub fn compile(&mut self, gir: &GirProgram) -> Vec<u32> {
+        // 预分配 kernel 函数 ID 并发射 entry points
+        let mut func_ids: Vec<u32> = Vec::new();
         for kernel in &gir.kernels {
-            self.compile_kernel(kernel);
+            let fid = self.alloc_id();
+            func_ids.push(fid);
+            self.emit_entry_point(kernel, fid);
         }
+
+        // 发射 built-in 装饰（OpDecorate — 在 entry points 之后、types 之前）
+        self.emit_builtin_decorations();
+
+        // 发射全局声明（types + constants + builtins — 在装饰之后）
+        self.words.extend_from_slice(&self.decl_words);
+
+        // 发射函数体（OpTypeFunction + OpFunction + instructions + OpFunctionEnd）
+        for (i, kernel) in gir.kernels.iter().enumerate() {
+            self.compile_kernel_body(kernel, func_ids[i]);
+        }
+
+        // 将函数体追加到主缓冲（全局声明之后）
+        self.words.append(&mut self.func_words);
+
         self.fixup_header_bound();
         self.words.clone()
     }
@@ -317,6 +352,14 @@ impl SpirvCompiler {
 
     fn instr(&mut self, opcode: u32, operands: &[u32]) {
         let word_count = 1 + operands.len() as u32;
+        let target = if self.in_function { &mut self.func_words } else { &mut self.words };
+        target.push((word_count << 16) | opcode);
+        target.extend_from_slice(operands);
+    }
+
+    /// 全局指令（始终发射到 words，即使处于函数体内）— 用于 OpConstant/OpType*
+    fn instr_global(&mut self, opcode: u32, operands: &[u32]) {
+        let word_count = 1 + operands.len() as u32;
         self.words.push((word_count << 16) | opcode);
         self.words.extend_from_slice(operands);
     }
@@ -324,10 +367,11 @@ impl SpirvCompiler {
     fn instr_with_result(&mut self, opcode: u32, result_type: u32, operands: &[u32]) -> u32 {
         let result_id = self.alloc_id();
         let word_count = 1 + 2 + operands.len() as u32;
-        self.words.push((word_count << 16) | opcode);
-        self.words.push(result_type);
-        self.words.push(result_id);
-        self.words.extend_from_slice(operands);
+        let target = if self.in_function { &mut self.func_words } else { &mut self.words };
+        target.push((word_count << 16) | opcode);
+        target.push(result_type);
+        target.push(result_id);
+        target.extend_from_slice(operands);
         result_id
     }
 
@@ -364,6 +408,10 @@ impl SpirvCompiler {
     fn emit_capabilities(&mut self) {
         self.instr(OP_CAPABILITY, &[CAP_KERNEL]);
         self.instr(OP_CAPABILITY, &[CAP_ADDRESSES]);
+        // Int64 — 用于 OpTypeInt 64
+        self.instr(OP_CAPABILITY, &[11]);
+        // Float64 — 用于 OpTypeFloat 64
+        self.instr(OP_CAPABILITY, &[10]);
     }
 
     fn emit_extensions(&mut self) {
@@ -401,13 +449,13 @@ impl SpirvCompiler {
         self.type_bool = self.alloc_id();
         self.instr(OP_TYPE_BOOL, &[self.type_bool]);
 
-        // OpTypeInt 32 signed
+        // OpTypeInt 32 — Kernel 模式下必须为无符号 (Signedness=0)
         self.type_i32 = self.alloc_id();
-        self.instr(OP_TYPE_INT, &[self.type_i32, 32, 1]);
+        self.instr(OP_TYPE_INT, &[self.type_i32, 32, 0]);
 
-        // OpTypeInt 64 signed
+        // OpTypeInt 64 — Kernel 模式下必须为无符号 (Signedness=0)
         self.type_i64 = self.alloc_id();
-        self.instr(OP_TYPE_INT, &[self.type_i64, 64, 1]);
+        self.instr(OP_TYPE_INT, &[self.type_i64, 64, 0]);
 
         // OpTypeFloat 32
         self.type_f32 = self.alloc_id();
@@ -419,29 +467,29 @@ impl SpirvCompiler {
 
         // vec3<i32> for built-in IDs
         self.type_v3_i32 = self.alloc_id();
-        self.instr(OP_TYPE_VECTOR, &[self.type_v3_i32, self.type_i32, 3]);
+        self.instr_global(OP_TYPE_VECTOR, &[self.type_v3_i32, self.type_i32, 3]);
 
         // 指针类型
         self.type_ptr_crossworkgroup_f32 = self.alloc_id();
-        self.instr(OP_TYPE_POINTER, &[self.type_ptr_crossworkgroup_f32, SC_CROSS_WORKGROUP, self.type_f32]);
+        self.instr_global(OP_TYPE_POINTER, &[self.type_ptr_crossworkgroup_f32, SC_CROSS_WORKGROUP, self.type_f32]);
         self.type_ptr_crossworkgroup_i32 = self.alloc_id();
-        self.instr(OP_TYPE_POINTER, &[self.type_ptr_crossworkgroup_i32, SC_CROSS_WORKGROUP, self.type_i32]);
+        self.instr_global(OP_TYPE_POINTER, &[self.type_ptr_crossworkgroup_i32, SC_CROSS_WORKGROUP, self.type_i32]);
         self.type_ptr_crossworkgroup_i64 = self.alloc_id();
-        self.instr(OP_TYPE_POINTER, &[self.type_ptr_crossworkgroup_i64, SC_CROSS_WORKGROUP, self.type_i64]);
+        self.instr_global(OP_TYPE_POINTER, &[self.type_ptr_crossworkgroup_i64, SC_CROSS_WORKGROUP, self.type_i64]);
 
         self.type_ptr_workgroup_f32 = self.alloc_id();
-        self.instr(OP_TYPE_POINTER, &[self.type_ptr_workgroup_f32, SC_WORKGROUP, self.type_f32]);
+        self.instr_global(OP_TYPE_POINTER, &[self.type_ptr_workgroup_f32, SC_WORKGROUP, self.type_f32]);
         self.type_ptr_workgroup_i32 = self.alloc_id();
-        self.instr(OP_TYPE_POINTER, &[self.type_ptr_workgroup_i32, SC_WORKGROUP, self.type_i32]);
+        self.instr_global(OP_TYPE_POINTER, &[self.type_ptr_workgroup_i32, SC_WORKGROUP, self.type_i32]);
         self.type_ptr_workgroup_i64 = self.alloc_id();
-        self.instr(OP_TYPE_POINTER, &[self.type_ptr_workgroup_i64, SC_WORKGROUP, self.type_i64]);
+        self.instr_global(OP_TYPE_POINTER, &[self.type_ptr_workgroup_i64, SC_WORKGROUP, self.type_i64]);
 
         self.type_ptr_function_f32 = self.alloc_id();
-        self.instr(OP_TYPE_POINTER, &[self.type_ptr_function_f32, SC_FUNCTION, self.type_f32]);
+        self.instr_global(OP_TYPE_POINTER, &[self.type_ptr_function_f32, SC_FUNCTION, self.type_f32]);
         self.type_ptr_function_i32 = self.alloc_id();
-        self.instr(OP_TYPE_POINTER, &[self.type_ptr_function_i32, SC_FUNCTION, self.type_i32]);
+        self.instr_global(OP_TYPE_POINTER, &[self.type_ptr_function_i32, SC_FUNCTION, self.type_i32]);
         self.type_ptr_function_i64 = self.alloc_id();
-        self.instr(OP_TYPE_POINTER, &[self.type_ptr_function_i64, SC_FUNCTION, self.type_i64]);
+        self.instr_global(OP_TYPE_POINTER, &[self.type_ptr_function_i64, SC_FUNCTION, self.type_i64]);
 
         // 常量: zero values
         self.const_zero_i32 = self.emit_const_i32(0);
@@ -459,11 +507,8 @@ impl SpirvCompiler {
             return id;
         }
         let id = self.alloc_id();
-        let word_count = 3u32 + 1; // opcode + type + result + value
-        self.words.push((word_count << 16) | OP_CONSTANT);
-        self.words.push(self.type_i32);
-        self.words.push(id);
-        self.words.push(val as u32);
+        let word_count = 3u32 + 1;
+        self.instr_global(OP_CONSTANT, &[self.type_i32, id, val as u32]);
         self.i32_const_cache.insert(val, id);
         id
     }
@@ -473,14 +518,9 @@ impl SpirvCompiler {
             return id;
         }
         let id = self.alloc_id();
-        let word_count = 3u32 + 2; // opcode + type + result + 2 value words
-        self.words.push((word_count << 16) | OP_CONSTANT);
-        self.words.push(self.type_i64);
-        self.words.push(id);
         let lo = val as u32;
         let hi = (val >> 32) as u32;
-        self.words.push(lo);
-        self.words.push(hi);
+        self.instr_global(OP_CONSTANT, &[self.type_i64, id, lo, hi]);
         self.i64_const_cache.insert(val, id);
         id
     }
@@ -491,38 +531,37 @@ impl SpirvCompiler {
             return id;
         }
         let id = self.alloc_id();
-        let word_count = 3u32 + 1;
-        self.words.push((word_count << 16) | OP_CONSTANT);
-        self.words.push(self.type_f32);
-        self.words.push(id);
-        self.words.push(bits);
+        self.instr_global(OP_CONSTANT, &[self.type_f32, id, bits]);
         self.f32_const_cache.insert(bits, id);
         id
     }
 
     // —— Built-in 变量 ——
 
-    fn emit_builtins(&mut self) {
-        // LocalInvocationId — vec3<i32>, Input storage
-        self.builtin_local_invocation_id = self.alloc_id();
-        let ptr_type = self.alloc_id();
-        self.instr(OP_TYPE_POINTER, &[ptr_type, SC_INPUT, self.type_v3_i32]);
+    /// 发射 built-in 的 OpDecorate（在 entry point 之后、types 之前）
+    fn emit_builtin_decorations(&mut self) {
         self.instr(OP_DECORATE, &[self.builtin_local_invocation_id, DEC_BUILT_IN, BUILTIN_LOCAL_INVOCATION_ID]);
-        self.instr(OP_VARIABLE, &[ptr_type, self.builtin_local_invocation_id, SC_INPUT]);
-
-        // WorkgroupId — vec3<i32>, Input
-        self.builtin_workgroup_id = self.alloc_id();
         self.instr(OP_DECORATE, &[self.builtin_workgroup_id, DEC_BUILT_IN, BUILTIN_WORKGROUP_ID]);
-        self.instr(OP_VARIABLE, &[ptr_type, self.builtin_workgroup_id, SC_INPUT]);
-
-        // WorkgroupSize — vec3<i32>, Input (constant)
-        self.builtin_workgroup_size = self.alloc_id();
         self.instr(OP_DECORATE, &[self.builtin_workgroup_size, DEC_BUILT_IN, BUILTIN_WORKGROUP_SIZE]);
-        self.instr(OP_VARIABLE, &[ptr_type, self.builtin_workgroup_size, SC_INPUT]);
-
-        // NumWorkgroups — vec3<i32>, Input
-        self.builtin_num_workgroups = self.alloc_id();
         self.instr(OP_DECORATE, &[self.builtin_num_workgroups, DEC_BUILT_IN, BUILTIN_NUM_WORKGROUPS]);
+    }
+
+    /// 发射 built-in 的 OpVariable + OpTypePointer（在 types 之后，functions 之前）
+    fn emit_builtin_vars(&mut self) {
+        // 分配 built-in 变量 ID
+        self.builtin_local_invocation_id = self.alloc_id();
+        self.builtin_workgroup_id = self.alloc_id();
+        self.builtin_workgroup_size = self.alloc_id();
+        self.builtin_num_workgroups = self.alloc_id();
+
+        // Input 指针类型: ptr<Input, vec3<i32>>
+        let ptr_type = self.alloc_id();
+        self.instr_global(OP_TYPE_POINTER, &[ptr_type, SC_INPUT, self.type_v3_i32]);
+
+        // 发射 OpVariable（不发射 OpDecorate — 装饰在 emit_builtin_decorations 中）
+        self.instr(OP_VARIABLE, &[ptr_type, self.builtin_local_invocation_id, SC_INPUT]);
+        self.instr(OP_VARIABLE, &[ptr_type, self.builtin_workgroup_id, SC_INPUT]);
+        self.instr(OP_VARIABLE, &[ptr_type, self.builtin_workgroup_size, SC_INPUT]);
         self.instr(OP_VARIABLE, &[ptr_type, self.builtin_num_workgroups, SC_INPUT]);
     }
 
@@ -582,12 +621,40 @@ impl SpirvCompiler {
 
     // —— Kernel 编译 ——
 
-    fn compile_kernel(&mut self, func: &GirFunction) {
+    /// 发射 OpEntryPoint + OpExecutionMode（在 entry point section）
+    fn emit_entry_point(&mut self, func: &GirFunction, func_id: u32) {
+        // OpEntryPoint Kernel %func_id "name" %builtin...
+        let name_bytes = func.name.as_bytes();
+        let str_words = (name_bytes.len() + 1 + 3) / 4;
+        let total_words = 1 + 2 + str_words + 4; // header + model + id + string + 4 builtins
+        self.words.push((total_words as u32) << 16 | OP_ENTRY_POINT);
+        self.words.push(EXEC_KERNEL);
+        self.words.push(func_id);
+        let mut name_padded: Vec<u8> = name_bytes.to_vec();
+        name_padded.push(0);
+        while name_padded.len() % 4 != 0 { name_padded.push(0); }
+        for chunk in name_padded.chunks_exact(4) {
+            self.words.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+        }
+        self.words.push(self.builtin_local_invocation_id);
+        self.words.push(self.builtin_workgroup_id);
+        self.words.push(self.builtin_workgroup_size);
+        self.words.push(self.builtin_num_workgroups);
+
+        // OpExecutionMode LocalSize x y z
+        self.instr(OP_EXECUTION_MODE, &[
+            func_id, EXEC_MODE_LOCAL_SIZE,
+            func.block_dim.0 as u32, func.block_dim.1 as u32, func.block_dim.2 as u32,
+        ]);
+    }
+
+    fn compile_kernel_body(&mut self, func: &GirFunction, func_id: u32) {
         self.reg_map.clear();
         self.reg_types.clear();
         self.label_map.clear();
         self.param_ids.clear();
         self.param_ptr_types.clear();
+        self.param_is_ptr.clear();
         self.kernel_name = func.name.clone();
         self.kernel_block_dim = func.block_dim;
 
@@ -606,15 +673,15 @@ impl SpirvCompiler {
         let mut param_types: Vec<u32> = Vec::new();
         for param in &func.params {
             let ptype = if param.is_ptr {
-                // 指针参数: ptr<CrossWorkgroup, dtype>
-                // 为每个参数创建专用指针类型
                 let pt = self.alloc_id();
-                self.instr(OP_TYPE_POINTER, &[pt, SC_CROSS_WORKGROUP, self.type_id(param.dtype)]);
+                self.instr_global(OP_TYPE_POINTER, &[pt, SC_CROSS_WORKGROUP, self.type_id(param.dtype)]);
                 param_types.push(pt);
                 self.param_ptr_types.push(pt);
+                self.param_is_ptr.push(true);
                 pt
             } else {
                 param_types.push(self.type_id(param.dtype));
+                self.param_is_ptr.push(false);
                 self.type_id(param.dtype)
             };
             let _ = ptype;
@@ -628,36 +695,11 @@ impl SpirvCompiler {
         self.words.push(wc | OP_TYPE_FUNCTION);
         self.words.extend_from_slice(&func_type_operands);
 
-        // OpEntryPoint Kernel %func "name" %builtin...
-        self.kernel_func_id = self.alloc_id();
-        let entry_operands: Vec<u32> = vec![
-            EXEC_KERNEL, self.kernel_func_id,
-        ];
-        // 编码: opcode + execution_model + func_id + string + interface vars
-        let name_bytes = func.name.as_bytes();
-        let str_words = (name_bytes.len() + 1 + 3) / 4; // null + padding
-        let total_words = 1 + 2 + str_words + 4; // opcode + model + id + string + 4 builtins
-        self.words.push((total_words as u32) << 16 | OP_ENTRY_POINT);
-        self.words.push(EXEC_KERNEL);
-        self.words.push(self.kernel_func_id);
-        // 编码 name 字符串
-        let mut name_padded: Vec<u8> = name_bytes.to_vec();
-        name_padded.push(0);
-        while name_padded.len() % 4 != 0 { name_padded.push(0); }
-        for chunk in name_padded.chunks_exact(4) {
-            self.words.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
-        }
-        // Interface: built-in variables
-        self.words.push(self.builtin_local_invocation_id);
-        self.words.push(self.builtin_workgroup_id);
-        self.words.push(self.builtin_workgroup_size);
-        self.words.push(self.builtin_num_workgroups);
+        // 使用预分配的 func_id
+        self.kernel_func_id = func_id;
 
-        // OpExecutionMode LocalSize x y z
-        self.instr(OP_EXECUTION_MODE, &[
-            self.kernel_func_id, EXEC_MODE_LOCAL_SIZE,
-            func.block_dim.0 as u32, func.block_dim.1 as u32, func.block_dim.2 as u32,
-        ]);
+        // 进入函数体模式 — 后续指令发射到 func_words
+        self.in_function = true;
 
         // OpFunction void %func_id None %func_type
         let func_control = 0u32; // None
@@ -711,6 +753,9 @@ impl SpirvCompiler {
         // OpReturn + OpFunctionEnd
         self.instr(OP_RETURN, &[]);
         self.instr(OP_FUNCTION_END, &[]);
+
+        // 退出函数体模式
+        self.in_function = false;
     }
 
     fn collect_result_regs(&self, instr: &GirInstruction, regs: &mut std::collections::BTreeSet<usize>) {
@@ -977,27 +1022,42 @@ impl SpirvCompiler {
 
             // —— GPU 内存 ——
             GirInstruction::GlobalLoad { dst, addr, dtype } => {
-                let addr_id = self.operand_id(addr, GirDType::I64);
-                // 将 i64 地址转换为指针
-                let ptr_type = self.ptr_type_id(*dtype, SC_CROSS_WORKGROUP);
-                let ptr_id = self.instr_with_result(OP_CONVERT_U_TO_PTR, ptr_type, &[addr_id]);
+                let ptr_id = match addr {
+                    GirOperand::Param(id) if *id < self.param_is_ptr.len() && self.param_is_ptr[*id] => {
+                        // 指针参数本身就是指针 — 直接用于 OpLoad
+                        self.param_ids[*id]
+                    }
+                    _ => {
+                        // 整数地址 — 需要转换为指针
+                        let addr_id = self.operand_id(addr, GirDType::I64);
+                        let ptr_type = self.ptr_type_id(*dtype, SC_CROSS_WORKGROUP);
+                        self.instr_with_result(OP_CONVERT_U_TO_PTR, ptr_type, &[addr_id])
+                    }
+                };
                 let r = self.instr_with_result(OP_LOAD, self.type_id(*dtype), &[ptr_id]);
                 self.reg_map.insert(*dst, r);
             }
             GirInstruction::GlobalStore { addr, src, dtype } => {
-                let addr_id = self.operand_id(addr, GirDType::I64);
                 let val_id = self.operand_id(src, *dtype);
-                let ptr_type = self.ptr_type_id(*dtype, SC_CROSS_WORKGROUP);
-                let ptr_id = self.instr_with_result(OP_CONVERT_U_TO_PTR, ptr_type, &[addr_id]);
+                let ptr_id = match addr {
+                    GirOperand::Param(id) if *id < self.param_is_ptr.len() && self.param_is_ptr[*id] => {
+                        self.param_ids[*id]
+                    }
+                    _ => {
+                        let addr_id = self.operand_id(addr, GirDType::I64);
+                        let ptr_type = self.ptr_type_id(*dtype, SC_CROSS_WORKGROUP);
+                        self.instr_with_result(OP_CONVERT_U_TO_PTR, ptr_type, &[addr_id])
+                    }
+                };
                 self.instr(OP_STORE, &[ptr_id, val_id]);
             }
             GirInstruction::GlobalLoadV4 { dst_base, addr, .. } => {
                 let addr_id = self.operand_id(addr, GirDType::I64);
                 // ptr<CrossWorkgroup, vec4<f32>>
                 let vec4_type = self.alloc_id();
-                self.instr(OP_TYPE_VECTOR, &[vec4_type, self.type_f32, 4]);
+                self.instr_global(OP_TYPE_VECTOR, &[vec4_type, self.type_f32, 4]);
                 let ptr_vec4 = self.alloc_id();
-                self.instr(OP_TYPE_POINTER, &[ptr_vec4, SC_CROSS_WORKGROUP, vec4_type]);
+                self.instr_global(OP_TYPE_POINTER, &[ptr_vec4, SC_CROSS_WORKGROUP, vec4_type]);
                 let ptr_id = self.instr_with_result(OP_CONVERT_U_TO_PTR, ptr_vec4, &[addr_id]);
                 let vec_id = self.instr_with_result(OP_LOAD, vec4_type, &[ptr_id]);
                 // 解包 4 个分量
@@ -1013,19 +1073,19 @@ impl SpirvCompiler {
                 let v2 = self.operand_id(&GirOperand::Reg(*src_base + 2), GirDType::F32);
                 let v3 = self.operand_id(&GirOperand::Reg(*src_base + 3), GirDType::F32);
                 let vec4_type = self.alloc_id();
-                self.instr(OP_TYPE_VECTOR, &[vec4_type, self.type_f32, 4]);
+                self.instr_global(OP_TYPE_VECTOR, &[vec4_type, self.type_f32, 4]);
                 let vec_id = self.instr_with_result(OP_COMPOSITE_CONSTRUCT, vec4_type, &[v0, v1, v2, v3]);
                 let ptr_vec4 = self.alloc_id();
-                self.instr(OP_TYPE_POINTER, &[ptr_vec4, SC_CROSS_WORKGROUP, vec4_type]);
+                self.instr_global(OP_TYPE_POINTER, &[ptr_vec4, SC_CROSS_WORKGROUP, vec4_type]);
                 let ptr_id = self.instr_with_result(OP_CONVERT_U_TO_PTR, ptr_vec4, &[addr_id]);
                 self.instr(OP_STORE, &[ptr_id, vec_id]);
             }
             GirInstruction::GlobalLoadV2 { dst_base, addr, .. } => {
                 let addr_id = self.operand_id(addr, GirDType::I64);
                 let vec2_type = self.alloc_id();
-                self.instr(OP_TYPE_VECTOR, &[vec2_type, self.type_f32, 2]);
+                self.instr_global(OP_TYPE_VECTOR, &[vec2_type, self.type_f32, 2]);
                 let ptr_vec2 = self.alloc_id();
-                self.instr(OP_TYPE_POINTER, &[ptr_vec2, SC_CROSS_WORKGROUP, vec2_type]);
+                self.instr_global(OP_TYPE_POINTER, &[ptr_vec2, SC_CROSS_WORKGROUP, vec2_type]);
                 let ptr_id = self.instr_with_result(OP_CONVERT_U_TO_PTR, ptr_vec2, &[addr_id]);
                 let vec_id = self.instr_with_result(OP_LOAD, vec2_type, &[ptr_id]);
                 for i in 0..2 {
@@ -1038,10 +1098,10 @@ impl SpirvCompiler {
                 let v0 = self.operand_id(&GirOperand::Reg(*src_base), GirDType::F32);
                 let v1 = self.operand_id(&GirOperand::Reg(*src_base + 1), GirDType::F32);
                 let vec2_type = self.alloc_id();
-                self.instr(OP_TYPE_VECTOR, &[vec2_type, self.type_f32, 2]);
+                self.instr_global(OP_TYPE_VECTOR, &[vec2_type, self.type_f32, 2]);
                 let vec_id = self.instr_with_result(OP_COMPOSITE_CONSTRUCT, vec2_type, &[v0, v1]);
                 let ptr_vec2 = self.alloc_id();
-                self.instr(OP_TYPE_POINTER, &[ptr_vec2, SC_CROSS_WORKGROUP, vec2_type]);
+                self.instr_global(OP_TYPE_POINTER, &[ptr_vec2, SC_CROSS_WORKGROUP, vec2_type]);
                 let ptr_id = self.instr_with_result(OP_CONVERT_U_TO_PTR, ptr_vec2, &[addr_id]);
                 self.instr(OP_STORE, &[ptr_id, vec_id]);
             }

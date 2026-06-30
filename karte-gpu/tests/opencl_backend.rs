@@ -584,7 +584,9 @@ fn test_global_load() {
         GirInstruction::Return,
     ]);
     assert_has_op(&w, OP_LOAD, "OpLoad");
-    assert_has_op(&w, OP_CONVERT_U_TO_PTR, "OpConvertUToPtr");
+    // 指针参数直接用于 OpLoad，不需要 OpConvertUToPtr
+    let has_convert = w.iter().any(|word| (*word & 0xFFFF) == 120); // OpConvertUToPtr = 120
+    assert!(!has_convert, "指针参数不应有 OpConvertUToPtr");
 }
 
 #[test]
@@ -594,7 +596,9 @@ fn test_global_store() {
         GirInstruction::Return,
     ]);
     assert_has_op(&w, OP_STORE, "OpStore");
-    assert_has_op(&w, OP_CONVERT_U_TO_PTR, "OpConvertUToPtr");
+    // 指针参数直接用于 OpStore，不需要 OpConvertUToPtr
+    let has_convert = w.iter().any(|word| (*word & 0xFFFF) == 120);
+    assert!(!has_convert, "指针参数不应有 OpConvertUToPtr");
 }
 
 #[test]
