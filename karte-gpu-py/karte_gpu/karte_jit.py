@@ -1280,38 +1280,46 @@ def _compile(fn, call_args, block_size=256):
         return _create_kernel_wrapper(func_handle, builder, fn.__name__, block_size, fn)
 
     elif backend == 'opencl':
-        # OpenCL C 路线 (AMD / Intel)
+        # SPIR-V 二进制路线 (AMD / Intel / NVIDIA 跨厂商)
         result = subprocess.run(
-            [karte_bin, 'gpu-jit', '--backend', 'opencl',
+            [karte_bin, 'gpu-jit', '--backend', 'spirv',
              '--block-size', str(block_size)],
             input=json.dumps(gir_json),
-            capture_output=True, text=True,
+            capture_output=True,  # binary output
             timeout=60
         )
         if result.returncode != 0:
-            raise RuntimeError(f"Karte Rust 编译失败:\nSTDERR:\n{result.stderr}\nSTDOUT:\n{result.stdout}")
+            raise RuntimeError(f"Karte Rust 编译失败:\nSTDERR:\n{result.stderr.decode('utf-8', errors='replace')}")
 
-        ocl_source = result.stdout
+        spirv_binary = result.stdout  # raw SPIR-V bytes (little-endian u32 sequence)
 
-        # 编译 OpenCL C 源码
+        # 加载 SPIR-V 二进制到 OpenCL
         cl = _ensure_opencl()
         cl_lib = cl['lib']
         context = cl['context']
         device = cl['device']
 
-        # clCreateProgramWithSource
-        source_bytes = ocl_source.encode('utf-8')
-        source_ptr = ctypes.c_char_p(source_bytes)
-        source_len = ctypes.c_size_t(len(source_bytes))
-        err = ctypes.c_int(0)
-        program = cl_lib.clCreateProgramWithSource(
-            context, 1, ctypes.byref(source_ptr),
-            ctypes.byref(source_len), ctypes.byref(err))
-        if err.value != 0:
-            raise RuntimeError(f"clCreateProgramWithSource 失败 (err={err.value})")
+        # clCreateProgramWithIL (OpenCL 2.1+) — 直接加载 SPIR-V 二进制
+        if not hasattr(cl_lib, 'clCreateProgramWithIL'):
+            raise RuntimeError("OpenCL 运行时不支持 clCreateProgramWithIL — 需要 OpenCL 2.1+ (ROCm 4.0+ 或 Intel runtime)")
 
-        # clBuildProgram — 启用子组扩展
-        build_options = b"-cl-std=CL2.0 -cl-fast-relaxed-math"
+        cl_lib.clCreateProgramWithIL.argtypes = [
+            ctypes.c_void_p,  # context
+            ctypes.c_void_p,  # il (SPIR-V binary)
+            ctypes.c_size_t,  # length
+            ctypes.POINTER(ctypes.c_int)  # errcode_ret
+        ]
+        cl_lib.clCreateProgramWithIL.restype = ctypes.c_void_p
+
+        spirv_buf = ctypes.create_string_buffer(spirv_binary)
+        err = ctypes.c_int(0)
+        program = cl_lib.clCreateProgramWithIL(
+            context, spirv_buf, len(spirv_binary), ctypes.byref(err))
+        if err.value != 0:
+            raise RuntimeError(f"clCreateProgramWithIL 失败 (err={err.value})")
+
+        # clBuildProgram — SPIR-V 只需链接，不需要源码编译
+        build_options = b"-x spir -spir-std=1.0"
         ret = cl_lib.clBuildProgram(
             program, 1, ctypes.byref(ctypes.c_void_p(device)),
             build_options, None, None)
@@ -1324,8 +1332,7 @@ def _compile(fn, call_args, block_size=256):
             cl_lib.clGetProgramBuildInfo(
                 program, device, 0x1084, log_size.value, log_buf, None)
             raise RuntimeError(
-                f"OpenCL 编译失败 (err={ret}):\n{log_buf.value.decode('utf-8', errors='replace')}\n"
-                f"源码:\n{ocl_source[:2000]}")
+                f"SPIR-V 链接失败 (err={ret}):\n{log_buf.value.decode('utf-8', errors='replace')}")
 
         # clCreateKernel
         kernel = cl_lib.clCreateKernel(

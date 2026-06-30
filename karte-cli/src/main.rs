@@ -655,14 +655,18 @@ fn real_main() -> i32 {
                     let ptx_text = ptx_compiler.compile(&gir_program);
                     print!("{}", ptx_text);
                 }
-                "opencl" | "amd" | "spirv" => {
-                    // OpenCL C 后端 (AMD / Intel / NVIDIA 跨厂商)
-                    let mut ocl_compiler = karte_gpu::OpenClCompiler::new();
-                    let ocl_source = ocl_compiler.compile(&gir_program);
-                    print!("{}", ocl_source);
+                "amd" | "opencl" | "spirv" => {
+                    // SPIR-V 二进制后端 (AMD / Intel / NVIDIA 跨厂商)
+                    let mut spirv_compiler = karte_gpu::SpirvCompiler::new();
+                    let spirv_words = spirv_compiler.compile(&gir_program);
+                    // 输出 SPIR-V 二进制到 stdout
+                    let bytes: Vec<u8> = spirv_words.iter()
+                        .flat_map(|w| w.to_le_bytes())
+                        .collect();
+                    let _ = std::io::Write::write_all(&mut std::io::stdout(), &bytes);
                 }
                 _ => {
-                    error!("未知后端: {} (支持: nvidia, opencl, auto)", backend);
+                    error!("未知后端: {} (支持: nvidia, amd/opencl/spirv, auto)", backend);
                     std::process::exit(1);
                 }
             }

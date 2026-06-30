@@ -1,14 +1,14 @@
 //! # karte-gpu — GPU 后端代码生成
 //!
-//! 将 GIR 编译为 GPU 目标代码（PTX / OpenCL C）。
+//! 将 GIR 编译为 GPU 目标代码（PTX / SPIR-V）。
 //! - PTX 后端: NVIDIA GPU
-//! - OpenCL C 后端: AMD / Intel / NVIDIA GPU（跨厂商）
+//! - SPIR-V 后端: AMD / Intel / NVIDIA GPU（跨厂商，低级虚拟 ISA）
 
 pub mod ptx;
 pub mod spirv;
 
 pub use ptx::PtxCompiler;
-pub use spirv::OpenClCompiler;
+pub use spirv::SpirvCompiler;
 
 /// GPU 后端 trait
 pub trait GpuBackend {
