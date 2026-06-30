@@ -40,11 +40,9 @@ package-pip:
     - build-karte-linux
   script:
     - pip install build twine
-    # 将编译器二进制放入 Python 包
     - mkdir -p karte-gpu-py/karte_gpu/bin
     - cp artifacts/karte-linux-x86_64 karte-gpu-py/karte_gpu/bin/karte
     - chmod +x karte-gpu-py/karte_gpu/bin/karte
-    # 构建二进制包
     - cd karte-gpu-py
     - python -m build
   artifacts:
@@ -73,11 +71,9 @@ publish-gitlab:
       karte-gpu-py/dist/*
   rules:
     - if: $CI_COMMIT_TAG
-  only:
-    - tags
 
 # ============================================================
-# Stage 3b: 发布到 PyPI（可选，需配置 CI 变量）
+# Stage 3b: 发布到 PyPI（可选，需配置 CI 变量 PYPI_API_TOKEN）
 # ============================================================
 publish-pypi:
   stage: release
@@ -93,5 +89,3 @@ publish-pypi:
       karte-gpu-py/dist/*
   rules:
     - if: $CI_COMMIT_TAG && $PYPI_API_TOKEN
-  only:
-    - tags
