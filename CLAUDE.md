@@ -394,6 +394,16 @@ let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering
 ## Notable Recent Changes
 
 Recent work includes:
+- **SPIR-V 后端真实 AMD GPU 验证 (2026-06-30)** — 6 项关键修复 + 11/11 端到端测试通过:
+  - 在本机 AMD iGPU (Rusticl/Mesa OpenCL) 上通过 `clCreateProgramWithIL` + `clBuildProgram` + `clEnqueueNDRangeKernel` 成功加载并执行 SPIR-V kernel
+  - **CAP_ADDRESSES 修复**: Addresses capability = 4（原误写为 5=Linkage）
+  - **SPIR-V 布局顺序修复**: 严格遵循规范顺序 Capabilities→Extensions→MemoryModel→EntryPoint→ExecutionMode→Decorate→Types→Variables→Functions。引入 `decl_words`/`func_words` 双缓冲 + `in_function` 标志分离全局声明和函数体指令
+  - **OpConstant 全局区修复**: OpConstant 必须在全局声明区。添加 `instr_global()` 方法，常量在函数体内编译时仍发射到全局区
+  - **OpTypeInt Signedness 修复**: Kernel 模式下必须 Signedness=0（无符号）
+  - **缺失 Capability 修复**: 添加 Int64(11) 和 Float64(10) capability
+  - **指针参数 OpConvertUToPtr 移除**: GlobalLoad/GlobalStore 对指针参数直接用 OpLoad/OpStore，跳过多余的 OpConvertUToPtr
+  - **端到端测试** (`karte-gpu-py/test_amd_spirv.py`): 11 个测试全部通过 — 标量加减乘除、运算链、exp/sqrt/log/sin/cos/tanh/ceil/floor、FMA、Clamp、条件操作(Cmp+Where)、ThreadId
+  - 单元测试 121/121 通过，全工作区 3584/3584 通过
 - **AMD GPU 支持 (2026-06-30)** — SPIR-V 二进制后端 + 多后端运行时抽象：
   - **SPIR-V 二进制代码生成后端** (`karte-gpu/src/spirv.rs`): `SpirvCompiler` 将 GIR 编译为 SPIR-V 二进制 word 序列 (`Vec<u32>`)，与 PTX 后端对等的低级虚拟 ISA。从官方 `spirv.core.grammar.json` 获取精确 opcode 值。覆盖全部 60+ GIR 指令（标量算术 OpFAdd/OpFMul/OpIAdd、数学函数 OpenCL.std Exp/Sqrt/Log/Sin/Cos/Tanh/Pow/FClamp/FMix/Fma、GPU 内存层次 OpLoad/OpStore + OpConvertUToPtr、同步 OpControlBarrier、线程索引 Built-in LocalInvocationId/WorkgroupId + OpCompositeExtract、向量化 OpTypeVector/OpCompositeConstruct/OpCompositeExtract、条件操作 OpSelect、归约 OpGroupFAdd/FMin/FMax）。完整 SPIR-V 模块编码：header(magic 0x07230203)/capabilities(Kernel+Addresses)/memory model(Physical64+OpenCL)/OpenCL.std扩展导入/entry points/execution modes/types/constants/built-ins/functions。实现 `GpuBackend` trait，输出 `Vec<u32>`
   - **多后端运行时抽象** (`karte-gpu-runtime/src/runtime.rs`): `GpuRuntime` trait 统一 CUDA/OpenCL 接口（alloc/free/h2d/d2h/load_module/launch/synchronize），`detect_available_backends()` 自动检测可用后端，`auto_select_backend()` 自动选择最佳后端
