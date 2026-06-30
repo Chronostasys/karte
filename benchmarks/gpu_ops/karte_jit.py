@@ -236,6 +236,21 @@ class _SymF32:
     def __rmul__(self, other):
         return self.__mul__(other)
 
+    def __rtruediv__(self, other):
+        """other / self"""
+        r = self._builder.alloc_reg()
+        self._builder.emit_gir({
+            "op": "Div",
+            "dst": r,
+            "src1": _operand_to_json(other),
+            "src2": _operand_to_json(self),
+            "dtype": "f32"
+        })
+        return _SymF32(r, self._builder)
+
+    def __radd__(self, other):
+        return self.__add__(other)
+
     def __neg__(self):
         r = self._builder.alloc_reg()
         self._builder.emit_gir({
