@@ -394,17 +394,17 @@ let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering
 ## Notable Recent Changes
 
 Recent work includes:
-- **AMD GPU 支持 (2026-06-30)** — OpenCL C 后端 + 多后端运行时抽象：
-  - **OpenCL C 代码生成后端** (`karte-gpu/src/spirv.rs`): `OpenClCompiler` 将 GIR 编译为 OpenCL C 1.2 源码，覆盖全部 60+ GIR 指令（标量算术、数学函数、GPU 内存层次 global/shared/v4/v2 向量化、同步 barrier/warp shuffle、线程索引、Tensor Core MMA、Tile 操作、条件操作 where/masked load-store/reduce）。实现 `GpuBackend` trait
+- **AMD GPU 支持 (2026-06-30)** — SPIR-V 二进制后端 + 多后端运行时抽象：
+  - **SPIR-V 二进制代码生成后端** (`karte-gpu/src/spirv.rs`): `SpirvCompiler` 将 GIR 编译为 SPIR-V 二进制 word 序列 (`Vec<u32>`)，与 PTX 后端对等的低级虚拟 ISA。从官方 `spirv.core.grammar.json` 获取精确 opcode 值。覆盖全部 60+ GIR 指令（标量算术 OpFAdd/OpFMul/OpIAdd、数学函数 OpenCL.std Exp/Sqrt/Log/Sin/Cos/Tanh/Pow/FClamp/FMix/Fma、GPU 内存层次 OpLoad/OpStore + OpConvertUToPtr、同步 OpControlBarrier、线程索引 Built-in LocalInvocationId/WorkgroupId + OpCompositeExtract、向量化 OpTypeVector/OpCompositeConstruct/OpCompositeExtract、条件操作 OpSelect、归约 OpGroupFAdd/FMin/FMax）。完整 SPIR-V 模块编码：header(magic 0x07230203)/capabilities(Kernel+Addresses)/memory model(Physical64+OpenCL)/OpenCL.std扩展导入/entry points/execution modes/types/constants/built-ins/functions。实现 `GpuBackend` trait，输出 `Vec<u32>`
   - **多后端运行时抽象** (`karte-gpu-runtime/src/runtime.rs`): `GpuRuntime` trait 统一 CUDA/OpenCL 接口（alloc/free/h2d/d2h/load_module/launch/synchronize），`detect_available_backends()` 自动检测可用后端，`auto_select_backend()` 自动选择最佳后端
   - **OpenCL 运行时** (`karte-gpu-runtime/src/opencl/`): `OpenClRuntime` 实现 `GpuRuntime` trait，`ffi.rs` 动态加载 `libOpenCL.so`（支持 ROCm AMD / Intel / NVIDIA OpenCL），类型定义和常量覆盖 OpenCL 2.0 API 子集
   - **CUDA 运行时重构** (`karte-gpu-runtime/src/cuda_runtime.rs`): `CudaRuntime` 实现 `GpuRuntime` trait，与 `OpenClRuntime` 对称
   - **GirDType 去耦合** (`karte-gir/src/ir.rs`): 新增 `spirv_suffix()`/`is_float()`/`is_64bit()` 方法 + `TypeMapper` trait + `PtxTypeMapper`/`SpirvTypeMapper` 实现
-  - **CLI 多后端支持** (`karte-cli/src/main.rs`): `gpu-jit` 新增 `--backend` (nvidia/opencl/auto)、`--target`、`--output-format` 参数，`auto` 自动检测 GPU 后端
-  - **Python JIT 后端路由** (`karte-gpu-py/karte_gpu/karte_jit.py`): `_detect_backend()` 自动检测 CUDA/OpenCL/CPU，`_ensure_opencl()` OpenCL ctypes 绑定（clCreateContext/clBuildProgram/clEnqueueNDRangeKernel 等），`_create_opencl_kernel_wrapper()` OpenCL kernel 启动和内存管理，`_compile()` 后端路由到 PTX 或 OpenCL C
-  - **用户 API 零改动**: `@karte.jit` 装饰器自动检测后端，NVIDIA GPU → PTX/CUDA，AMD/Intel GPU → OpenCL C
-  - **12 个 OpenCL 后端单元测试**: 基本编译、算术、数学函数、线程索引、内存操作、向量化 V4、条件操作 + 运行时检测测试
-  - **设计文档**: `docs/agent/amd-gpu-support-design.md` — 完整技术方案、GIR→OpenCL C 指令映射表、多后端架构设计
+  - **CLI 多后端支持** (`karte-cli/src/main.rs`): `gpu-jit` 新增 `--backend` (nvidia/spirv/auto)、`--target`、`--output-format` 参数，`auto` 自动检测 GPU 后端，SPIR-V 输出 raw bytes 到 stdout
+  - **Python JIT 后端路由** (`karte-gpu-py/karte_gpu/karte_jit.py`): `_detect_backend()` 自动检测 CUDA/OpenCL/CPU，`_ensure_opencl()` OpenCL ctypes 绑定（clCreateContext/clCreateProgramWithIL/clBuildProgram/clEnqueueNDRangeKernel 等），`_create_opencl_kernel_wrapper()` OpenCL kernel 启动和内存管理，`_compile()` 后端路由到 PTX 或 SPIR-V，SPIR-V 通过 `clCreateProgramWithIL` (OpenCL 2.1+) 加载，仅链接不重新编译
+  - **用户 API 零改动**: `@karte.jit` 装饰器自动检测后端，NVIDIA GPU → PTX/CUDA，AMD/Intel GPU → SPIR-V/OpenCL
+  - **15 个 SPIR-V 后端单元测试**: header 验证、capabilities、entry point、算术 (FAdd/IAdd/SDiv)、数学函数 (OpenCL.std)、线程索引、内存操作 (OpLoad/OpStore/OpConvertUToPtr)、barrier (OpControlBarrier)、向量化 V4 (OpTypeVector/OpCompositeExtract)、条件操作 (OpSelect/FClamp)、运行时检测
+  - **设计文档**: `docs/agent/amd-gpu-support-design.md` — 完整技术方案、GIR→SPIR-V 指令映射表、多后端架构设计
 - **karte-gpu Python 包修复 (2026-06-30)** — CUDA context 兼容性:
   - `karte_jit.py` 不再调用 `cuDevicePrimaryCtxRetain` 抢占 context，避免与 Isaac Gym context 冲突导致 SIGSEGV
   - `requires-python` 从 >=3.9 降至 >=3.8
