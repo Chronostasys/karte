@@ -44,9 +44,16 @@ impl PtxCompiler {
 
     /// 输出 PTX 头部
     fn emit_header(&mut self) {
-        // PTX ISA 版本固定为 8.0（广泛兼容），SM 版本单独设置
-        self.output.push_str(".version 8.0\n");
         let (major, minor) = self.sm_version;
+        // sm_12.0+ (Blackwell) 需要 PTX ISA 8.7 来支持 shfl.sync 等指令
+        let ptx_version = if major >= 12 {
+            (8, 7)
+        } else if major >= 9 {
+            (8, 5)
+        } else {
+            (8, 0)
+        };
+        self.output.push_str(&format!(".version {}.{}\n", ptx_version.0, ptx_version.1));
         self.output.push_str(&format!(".target sm_{}_{}\n", major, minor));
         self.output.push_str(".address_size 64\n");
     }
@@ -231,6 +238,7 @@ impl PtxCompiler {
             // —— 比较 ——
             GirInstruction::Cmp { dst, op, src1, src2, dtype } => {
                 let d = dtype.ptx_suffix();
+                let is_f32 = *dtype == GirDType::F32;
                 let is_64 = *dtype == GirDType::I64 || *dtype == GirDType::F64;
                 let ptx_op = match op {
                     CmpOp::Eq => "eq",
@@ -240,7 +248,13 @@ impl PtxCompiler {
                     CmpOp::Gt => "gt",
                     CmpOp::Ge => "ge",
                 };
-                self.emit(&format!("    setp.{}.{} %p{}, {}, {};", ptx_op, d, *dst % 16, operand_to_str(src1, is_64), operand_to_str(src2, is_64)));
+                if is_f32 {
+                    let src1_str = operand_to_str_f32(src1);
+                    let src2_str = operand_to_str_f32(src2);
+                    self.emit(&format!("    setp.{}.{} %p{}, {}, {};", ptx_op, d, *dst % 16, src1_str, src2_str));
+                } else {
+                    self.emit(&format!("    setp.{}.{} %p{}, {}, {};", ptx_op, d, *dst % 16, operand_to_str(src1, is_64), operand_to_str(src2, is_64)));
+                }
             }
 
             // —— 分支 ——

@@ -377,19 +377,39 @@ class _SymTensor:
         tid_reg = builder._tid_reg
 
         if len(indices) == 1:
-            # tensor[tid] — 简单情况
+            # tensor[tid] 或 tensor[k] — 单维索引
+            idx = indices[0]
             stride = 1
             for d in shape[1:]:
-                stride *= d
+                if isinstance(d, (int, float)):
+                    stride *= int(d)
             byte_stride = stride * 4
-            # addr = param_ptr + tid * byte_stride
+            # addr = param_ptr + idx * byte_stride
             addr = builder.alloc_reg()
-            builder.emit_gir({
-                "op": "Mul", "dst": addr,
-                "src1": {"kind": "Reg", "id": tid_reg},
-                "src2": {"kind": "Imm", "val": byte_stride},
-                "dtype": "i64"
-            })
+            if isinstance(idx, _RegRef):
+                # 索引是 tid 寄存器引用
+                builder.emit_gir({
+                    "op": "Mul", "dst": addr,
+                    "src1": {"kind": "Reg", "id": idx.reg},
+                    "src2": {"kind": "Imm", "val": byte_stride},
+                    "dtype": "i64"
+                })
+            elif isinstance(idx, int):
+                # 索引是字面常量（如循环变量 k=0, k=1 等）
+                byte_offset = idx * stride * 4
+                builder.emit_gir({
+                    "op": "Mul", "dst": addr,
+                    "src1": {"kind": "Imm", "val": byte_offset},
+                    "src2": {"kind": "Imm", "val": 1},
+                    "dtype": "i64"
+                })
+            else:
+                builder.emit_gir({
+                    "op": "Mul", "dst": addr,
+                    "src1": {"kind": "Reg", "id": tid_reg},
+                    "src2": {"kind": "Imm", "val": byte_stride},
+                    "dtype": "i64"
+                })
             builder.emit_gir({
                 "op": "Add", "dst": addr,
                 "src1": {"kind": "Reg", "id": addr},
@@ -540,7 +560,14 @@ def thread_id():
         "dtype": "i32"
     })
     builder._tid_reg = tid
-    return tid
+    return _RegRef(tid)
+
+
+class _RegRef:
+    """寄存器引用 — 包装一个寄存器 ID，与字面 int 区分"""
+    __slots__ = ['reg']
+    def __init__(self, reg):
+        self.reg = reg
 
 
 def f32(val):
@@ -922,7 +949,7 @@ def _compile(fn, call_args, block_size=256):
         shape = None
         if isinstance(ann, Tensor):
             is_tensor = True
-            shape = [int(x) if isinstance(x, (int, float)) else 0 for x in ann.shape]
+            shape = [int(x) if isinstance(x, (int, float)) else x for x in ann.shape]
         elif isinstance(ann, str) and 'Tensor' in ann:
             is_tensor = True
             nums = re.findall(r'\d+', ann)
@@ -932,8 +959,15 @@ def _compile(fn, call_args, block_size=256):
             shape = [1]
 
         if is_tensor:
-            builder.params.append((param.name, 'u64', True, shape))
-            sym_args.append(_SymTensor(builder, i, param.name, shape))
+            # 用实际张量形状解析动态维度（字符串 → int）
+            resolved_shape = list(shape)
+            if i < len(call_args) and isinstance(call_args[i], torch.Tensor):
+                actual_shape = call_args[i].shape
+                for d_idx in range(min(len(resolved_shape), len(actual_shape))):
+                    if not isinstance(resolved_shape[d_idx], (int, float)):
+                        resolved_shape[d_idx] = actual_shape[d_idx]
+            builder.params.append((param.name, 'u64', True, resolved_shape))
+            sym_args.append(_SymTensor(builder, i, param.name, resolved_shape))
         elif ann is float or (isinstance(ann, str) and 'float' in ann.lower()):
             builder.params.append((param.name, 'f32', False, None))
             sym_args.append(_SymF32(i, builder))
@@ -1137,8 +1171,11 @@ def _create_kernel_wrapper(func_handle, builder, name, block_size=256, fn=None):
                         arg = arg.contiguous()
                     raw_args.append(arg.data_ptr())
 
-                    if shape and len(arg.shape) >= 1 and (i != out_param_idx or has_hidden_output):
-                        batch_size = arg.shape[0]
+                    # 推断 batch_size：取最大的第一维（跳过输出参数）
+                    if shape and len(arg.shape) >= 1 and i != out_param_idx:
+                        candidate = arg.shape[0]
+                        if candidate > batch_size:
+                            batch_size = candidate
                 else:
                     raw_args.append(arg)
             else:
