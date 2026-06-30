@@ -7,7 +7,7 @@ License: MIT
 Keywords: gpu,cuda,ptx,jit,kernel,triton,compiler
 Classifier: Programming Language :: Python :: 3
 Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
-Requires-Python: >=3.9
+Requires-Python: >=3.8
 Description-Content-Type: text/markdown
 Requires-Dist: torch>=2.0
 Requires-Dist: numpy>=1.20

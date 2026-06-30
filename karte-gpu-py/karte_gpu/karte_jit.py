@@ -82,11 +82,9 @@ def _ensure_cuda():
         [ctypes.c_void_p] + [ctypes.c_uint] * 7 + [ctypes.c_void_p] * 3
     )
     _cuda.cuLaunchKernel.restype = ctypes.c_int
-    # 绑定到 PyTorch 的 CUDA context
-    _ = torch.cuda.device_count()
-    ctx = ctypes.c_void_p()
-    _cuda.cuDevicePrimaryCtxRetain(ctypes.byref(ctx), 0)
-    _cuda.cuCtxSetCurrent(ctx)
+    # 不抢 context — 使用 PyTorch/Isaac Gym 已创建的 current context
+    # cuDevicePrimaryCtxRetain 会抢占 Isaac Gym 的 context 导致 SIGSEGV
+    _ = torch.cuda.device_count()  # 确保 PyTorch CUDA 已初始化
     return _cuda
 
 

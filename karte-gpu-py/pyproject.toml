@@ -7,7 +7,7 @@ name = "karte-gpu"
 version = "0.1.0"
 description = "Karte GPU JIT Compiler — 用纯 Python 编写高性能 GPU 算子"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [{name = "Karte Team"}]
 keywords = ["gpu", "cuda", "ptx", "jit", "kernel", "triton", "compiler"]
