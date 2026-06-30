@@ -369,12 +369,11 @@ impl SpirvCompiler {
     fn emit_extensions(&mut self) {
         // 导入 OpenCL.std 扩展指令集
         self.ext_inst_set = self.alloc_id();
-        let word_count = 2u32; // opcode + result_id, 加上字符串
         let name = "OpenCL.std";
-        // 手动编码: (count << 16) | opcode, result_id, string_words...
         let str_bytes = name.as_bytes();
-        let str_words = (str_bytes.len() + 3) / 4 + 1; // 字符串 word 数 + null
-        let total_count = 1 + 1 + str_words as u32; // opcode word + result_id + string
+        // 字符串 word 数: (bytes + null) 向上取整到 4 字节
+        let str_words = (str_bytes.len() + 1 + 3) / 4;
+        let total_count = 1 + 1 + str_words as u32; // header + result_id + string
         self.words.push((total_count << 16) | OP_EXT_INST_IMPORT);
         self.words.push(self.ext_inst_set);
         let mut padded: Vec<u8> = str_bytes.to_vec();
