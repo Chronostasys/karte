@@ -5,7 +5,7 @@
 //! 支持 AMD / Intel / NVIDIA GPU。
 
 use karte_gir::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 // ============================================================
 // SPIR-V 常量 — 来自官方 spirv.core.grammar.json
@@ -80,6 +80,9 @@ const OP_U_LESS_THAN_EQUAL: u32 = 178;
 const OP_S_LESS_THAN_EQUAL: u32 = 179;
 const OP_F_ORD_EQUAL: u32 = 180;
 const OP_F_ORD_NOT_EQUAL: u32 = 182;
+
+// 指针运算 — 替代 ConvertPtrToU + IAdd + ConvertUToPtr 三步转换
+const OP_PTR_ACCESS_CHAIN: u32 = 67;
 const OP_F_ORD_LESS_THAN: u32 = 184;
 const OP_F_ORD_GREATER_THAN: u32 = 186;
 const OP_F_ORD_LESS_THAN_EQUAL: u32 = 188;
@@ -149,7 +152,7 @@ const BUILTIN_NUM_WORKGROUPS: u32 = 24;
 const BUILTIN_WORKGROUP_SIZE: u32 = 25;
 const BUILTIN_WORKGROUP_ID: u32 = 26;
 const BUILTIN_LOCAL_INVOCATION_ID: u32 = 27;
-const BUILTIN_GLOBAL_INVOCATION_ID: u32 = 28;
+const BUILTIN_GLOBAL_INVOCATION_ID: u32 = 28; // 纯 VGPR — 替代 BlockId*BlockDim+ThreadId
 
 // Execution Mode
 const EXEC_MODE_LOCAL_SIZE: u32 = 17;
@@ -237,6 +240,22 @@ pub struct SpirvCompiler {
     builtin_workgroup_id: u32,
     builtin_workgroup_size: u32,
     builtin_num_workgroups: u32,
+    builtin_global_invocation_id: u32,
+    /// 标记哪些 built-in 实际被使用（避免声明未使用的 SGPR built-in 导致 AMD LLVM 问题）
+    need_local_invocation_id: bool,
+    need_workgroup_id: bool,
+    need_workgroup_size: bool,
+    need_num_workgroups: bool,
+    need_global_invocation_id: bool,
+    /// 全局线程 ID 模式优化: 检测到 Add(Mul(BlockId,BlockDim),ThreadId) 模式时
+    /// 用 GlobalInvocationId 替代 — 避免 SGPR built-in 导致 AMD VGPR/SGPR copy 错误
+    /// 映射: 原始全局 tid reg → GlobalInvocationId.x 的 SPIR-V ID
+    global_tid_remap: HashMap<usize, u32>,
+    /// 延迟加载的 GlobalInvocationId 目标 reg（等待 OpVariable 发射后再加载）
+    pending_global_tid_dst: Option<usize>,
+    /// 标记 decl_words 是否已初始化（new() 完成后为 true）
+    /// instr_global 在 new() 阶段写 words，compile() 阶段写 decl_words
+    decl_words_ready: bool,
 
     // 运行时映射
     reg_map: HashMap<usize, u32>,    // GIR 寄存器 → SPIR-V ID
@@ -247,9 +266,25 @@ pub struct SpirvCompiler {
     param_is_ptr: Vec<bool>,         // 参数是否为指针
     branch_merge_map: HashMap<usize, usize>, // BranchIf 指令索引 → merge label
     current_instr_idx: usize,        // 当前编译的指令索引
-    branch_then_block: u32,         // 最近 BranchIf 的 then block SPIR-V ID (用于 OpPhi)
+    branch_then_block: u32,         // 最近 BranchIf 的 then block SPIR-V ID
     branch_else_block: u32,         // 最近 BranchIf 的 else block SPIR-V ID
-    at_merge_point: bool,           // 当前是否在合并点（Where 应使用 OpPhi）
+    at_merge_point: bool,           // 当前是否在合并点
+    /// 合并点的 Where 指令索引 → Function 局部变量 ID（替代 OpPhi）
+    merge_var_map: HashMap<usize, u32>,
+    /// Jump 指令索引 → 需要在跳转前存储的 (temp_var_id, value_operand) 列表
+    jump_store_map: HashMap<usize, Vec<(u32, GirOperand)>>,
+    /// 所有需要声明的 Function 局部变量 ID
+    temp_func_vars: Vec<u32>,
+    /// Function 存储 class 的 f32 指针类型 ID
+    func_f32_ptr_type: u32,
+    /// 地址模式：Add(offset, Param(ptr)) 的 dst reg → (param_id, offset_operand)
+    /// 用于 GlobalLoad/GlobalStore 时用 OpPtrAccessChain 替代 ConvertPtrToU+IAdd+ConvertUToPtr
+    addr_pattern_map: HashMap<usize, (u32, GirOperand)>,
+    /// 需要跳过的指令索引（地址计算 Add 已合并到 GlobalLoad/GlobalStore）
+    skip_instrs: HashSet<usize>,
+    /// i8 类型和 byte 指针类型（用于 OpPtrAccessChain + OpBitcast）
+    type_i8: u32,
+    ptr_byte_cw_type: u32,  // ptr<CrossWorkgroup, i8>
 
     // 当前 kernel 基本信息
     kernel_name: String,
@@ -298,6 +333,15 @@ impl SpirvCompiler {
             builtin_workgroup_id: 0,
             builtin_workgroup_size: 0,
             builtin_num_workgroups: 0,
+            builtin_global_invocation_id: 0,
+            need_local_invocation_id: false,
+            need_workgroup_id: false,
+            need_workgroup_size: false,
+            need_num_workgroups: false,
+            need_global_invocation_id: false,
+            global_tid_remap: HashMap::new(),
+            pending_global_tid_dst: None,
+            decl_words_ready: false,
             reg_map: HashMap::new(),
             reg_types: HashMap::new(),
             label_map: HashMap::new(),
@@ -309,6 +353,14 @@ impl SpirvCompiler {
             branch_then_block: 0,
             branch_else_block: 0,
             at_merge_point: false,
+            merge_var_map: HashMap::new(),
+            jump_store_map: HashMap::new(),
+            temp_func_vars: Vec::new(),
+            func_f32_ptr_type: 0,
+            addr_pattern_map: HashMap::new(),
+            skip_instrs: HashSet::new(),
+            type_i8: 0,
+            ptr_byte_cw_type: 0,
             kernel_name: String::new(),
             kernel_func_id: 0,
             kernel_func_type_id: 0,
@@ -324,9 +376,15 @@ impl SpirvCompiler {
         // 发射类型/常量/全局变量声明，保存到 decl_words（编译时在 entry point 之后插入）
         let header_end = c.words.len();
         c.emit_types_and_constants();
-        c.emit_builtin_vars();  // 只发射 OpVariable + OpTypePointer，不发射 OpDecorate
+        // 只分配 built-in 变量 ID，不发射 OpVariable（等 compile() 扫描后再决定发射哪些）
+        c.builtin_local_invocation_id = c.alloc_id();
+        c.builtin_workgroup_id = c.alloc_id();
+        c.builtin_workgroup_size = c.alloc_id();
+        c.builtin_num_workgroups = c.alloc_id();
+        c.builtin_global_invocation_id = c.alloc_id();
         c.decl_words = c.words[header_end..].to_vec();
         c.words.truncate(header_end);
+        c.decl_words_ready = true;
         c
     }
 
@@ -338,6 +396,12 @@ impl SpirvCompiler {
 
     /// 编译 GIR 程序为 SPIR-V 二进制
     pub fn compile(&mut self, gir: &GirProgram) -> Vec<u32> {
+        // 预扫描: 确定哪些 built-in 被使用
+        self.scan_builtins(gir);
+
+        // 发射实际使用的 built-in OpVariable
+        self.emit_used_builtin_vars();
+
         // 预分配 kernel 函数 ID 并发射 entry points
         let mut func_ids: Vec<u32> = Vec::new();
         for kernel in &gir.kernels {
@@ -349,13 +413,15 @@ impl SpirvCompiler {
         // 发射 built-in 装饰（OpDecorate — 在 entry points 之后、types 之前）
         self.emit_builtin_decorations();
 
-        // 发射全局声明（types + constants + builtins — 在装饰之后）
-        self.words.extend_from_slice(&self.decl_words);
-
         // 发射函数体（OpTypeFunction + OpFunction + instructions + OpFunctionEnd）
+        // 注意: compile_kernel_body 可能向 decl_words 添加类型（如 FuncVariable 指针类型）
+        // 所以 decl_words 的批量追加必须在函数体编译之后
         for (i, kernel) in gir.kernels.iter().enumerate() {
             self.compile_kernel_body(kernel, func_ids[i]);
         }
+
+        // 发射全局声明（types + constants + builtins + 函数体中添加的类型 — 在装饰之后、函数体之前）
+        self.words.extend_from_slice(&self.decl_words);
 
         // 将函数体追加到主缓冲（全局声明之后）
         self.words.append(&mut self.func_words);
@@ -373,11 +439,17 @@ impl SpirvCompiler {
         target.extend_from_slice(operands);
     }
 
-    /// 全局指令（始终发射到 words，即使处于函数体内）— 用于 OpConstant/OpType*
+    /// 全局指令（类型/常量声明）— 根据 decl_words_ready 标志决定写入目标
+    /// new() 阶段写入 words（随后会被保存到 decl_words），compile() 阶段直接写入 decl_words
     fn instr_global(&mut self, opcode: u32, operands: &[u32]) {
         let word_count = 1 + operands.len() as u32;
-        self.words.push((word_count << 16) | opcode);
-        self.words.extend_from_slice(operands);
+        if self.decl_words_ready {
+            self.decl_words.push((word_count << 16) | opcode);
+            self.decl_words.extend_from_slice(operands);
+        } else {
+            self.words.push((word_count << 16) | opcode);
+            self.words.extend_from_slice(operands);
+        }
     }
 
     fn instr_with_result(&mut self, opcode: u32, result_type: u32, operands: &[u32]) -> u32 {
@@ -556,29 +628,127 @@ impl SpirvCompiler {
 
     /// 发射 built-in 的 OpDecorate（在 entry point 之后、types 之前）
     fn emit_builtin_decorations(&mut self) {
-        self.instr(OP_DECORATE, &[self.builtin_local_invocation_id, DEC_BUILT_IN, BUILTIN_LOCAL_INVOCATION_ID]);
-        self.instr(OP_DECORATE, &[self.builtin_workgroup_id, DEC_BUILT_IN, BUILTIN_WORKGROUP_ID]);
-        self.instr(OP_DECORATE, &[self.builtin_workgroup_size, DEC_BUILT_IN, BUILTIN_WORKGROUP_SIZE]);
-        self.instr(OP_DECORATE, &[self.builtin_num_workgroups, DEC_BUILT_IN, BUILTIN_NUM_WORKGROUPS]);
+        if self.need_local_invocation_id {
+            self.instr(OP_DECORATE, &[self.builtin_local_invocation_id, DEC_BUILT_IN, BUILTIN_LOCAL_INVOCATION_ID]);
+        }
+        if self.need_workgroup_id {
+            self.instr(OP_DECORATE, &[self.builtin_workgroup_id, DEC_BUILT_IN, BUILTIN_WORKGROUP_ID]);
+        }
+        if self.need_workgroup_size {
+            self.instr(OP_DECORATE, &[self.builtin_workgroup_size, DEC_BUILT_IN, BUILTIN_WORKGROUP_SIZE]);
+        }
+        if self.need_num_workgroups {
+            self.instr(OP_DECORATE, &[self.builtin_num_workgroups, DEC_BUILT_IN, BUILTIN_NUM_WORKGROUPS]);
+        }
+        if self.need_global_invocation_id {
+            self.instr(OP_DECORATE, &[self.builtin_global_invocation_id, DEC_BUILT_IN, BUILTIN_GLOBAL_INVOCATION_ID]);
+        }
     }
 
-    /// 发射 built-in 的 OpVariable + OpTypePointer（在 types 之后，functions 之前）
-    fn emit_builtin_vars(&mut self) {
-        // 分配 built-in 变量 ID
-        self.builtin_local_invocation_id = self.alloc_id();
-        self.builtin_workgroup_id = self.alloc_id();
-        self.builtin_workgroup_size = self.alloc_id();
-        self.builtin_num_workgroups = self.alloc_id();
-
-        // Input 指针类型: ptr<Input, vec3<i32>>
+    /// 发射实际使用的 built-in 的 OpVariable + OpTypePointer
+    fn emit_used_builtin_vars(&mut self) {
+        // Input 指针类型: ptr<Input, vec3<i32>> — 写入 decl_words（在类型声明之后）
         let ptr_type = self.alloc_id();
-        self.instr_global(OP_TYPE_POINTER, &[ptr_type, SC_INPUT, self.type_v3_i32]);
+        let wc = 4u32;
+        self.decl_words.push((wc << 16) | OP_TYPE_POINTER);
+        self.decl_words.push(ptr_type);
+        self.decl_words.push(SC_INPUT);
+        self.decl_words.push(self.type_v3_i32);
 
-        // 发射 OpVariable（不发射 OpDecorate — 装饰在 emit_builtin_decorations 中）
-        self.instr(OP_VARIABLE, &[ptr_type, self.builtin_local_invocation_id, SC_INPUT]);
-        self.instr(OP_VARIABLE, &[ptr_type, self.builtin_workgroup_id, SC_INPUT]);
-        self.instr(OP_VARIABLE, &[ptr_type, self.builtin_workgroup_size, SC_INPUT]);
-        self.instr(OP_VARIABLE, &[ptr_type, self.builtin_num_workgroups, SC_INPUT]);
+        let emit_var = |dw: &mut Vec<u32>, pt: u32, vid: u32| {
+            dw.push((4u32 << 16) | OP_VARIABLE);
+            dw.push(pt);
+            dw.push(vid);
+            dw.push(SC_INPUT);
+        };
+        if self.need_local_invocation_id { emit_var(&mut self.decl_words, ptr_type, self.builtin_local_invocation_id); }
+        if self.need_workgroup_id { emit_var(&mut self.decl_words, ptr_type, self.builtin_workgroup_id); }
+        if self.need_workgroup_size { emit_var(&mut self.decl_words, ptr_type, self.builtin_workgroup_size); }
+        if self.need_num_workgroups { emit_var(&mut self.decl_words, ptr_type, self.builtin_num_workgroups); }
+        if self.need_global_invocation_id { emit_var(&mut self.decl_words, ptr_type, self.builtin_global_invocation_id); }
+    }
+
+    /// 扫描所有 kernel 指令，标记哪些 built-in 被使用
+    fn scan_builtins(&mut self, gir: &GirProgram) {
+        for kernel in &gir.kernels {
+            // 预检测: BlockId*BlockDim+ThreadId 模式 → 用 GlobalInvocationId 替代
+            // 收集所有 BlockId/BlockDim/ThreadId 的 dst reg
+            let mut blockid_regs: Vec<(usize, usize)> = Vec::new(); // (instr_idx, dst_reg)
+            let mut blockdim_regs: Vec<(usize, usize)> = Vec::new();
+            let mut threadid_regs: Vec<(usize, usize)> = Vec::new();
+            for (i, instr) in kernel.instructions.iter().enumerate() {
+                match instr {
+                    GirInstruction::BlockId { dst, .. } => blockid_regs.push((i, *dst)),
+                    GirInstruction::BlockDim { dst, .. } => blockdim_regs.push((i, *dst)),
+                    GirInstruction::ThreadId { dst, .. } => threadid_regs.push((i, *dst)),
+                    _ => {}
+                }
+            }
+            // 检测 Add(Mul(BlockId, BlockDim), ThreadId) 模式
+            let mut found_pattern = false;
+            for &(bi_idx, bi_reg) in &blockid_regs {
+                for &(bd_idx, bd_reg) in &blockdim_regs {
+                    for &(ti_idx, ti_reg) in &threadid_regs {
+                        // 寻找 Mul(bi_reg, bd_reg) 或 Mul(bd_reg, bi_reg)
+                        for (mi, instr) in kernel.instructions.iter().enumerate() {
+                            if let GirInstruction::Mul { dst: mul_dst, src1, src2, .. } = instr {
+                                let is_match = (matches!(src1, GirOperand::Reg(r) if *r == bi_reg) && matches!(src2, GirOperand::Reg(r) if *r == bd_reg))
+                                            || (matches!(src1, GirOperand::Reg(r) if *r == bd_reg) && matches!(src2, GirOperand::Reg(r) if *r == bi_reg));
+                                if is_match {
+                                    // 寻找 Add(mul_dst, ti_reg) 或 Add(ti_reg, mul_dst)
+                                    for (ai, ainstr) in kernel.instructions.iter().enumerate() {
+                                        if let GirInstruction::Add { dst: add_dst, src1, src2, .. } = ainstr {
+                                            let is_add = (matches!(src1, GirOperand::Reg(r) if *r == *mul_dst) && matches!(src2, GirOperand::Reg(r) if *r == ti_reg))
+                                                       || (matches!(src1, GirOperand::Reg(r) if *r == ti_reg) && matches!(src2, GirOperand::Reg(r) if *r == *mul_dst));
+                                            if is_add {
+                                                // 检查 bi_reg, bd_reg, ti_reg, mul_dst 是否只在此模式中使用
+                                                let mut all_only = true;
+                                                for (ci, cinstr) in kernel.instructions.iter().enumerate() {
+                                                    if ci == bi_idx || ci == bd_idx || ci == ti_idx || ci == mi || ci == ai {
+                                                        continue; // 来源指令本身
+                                                    }
+                                                    let (br, dr, tr2) = (bi_reg, bd_reg, ti_reg);
+                                                    let refs = |op: &GirOperand| -> bool {
+                                                        matches!(op, GirOperand::Reg(r) if *r == br || *r == dr || *r == tr2)
+                                                    };
+                                                    let uses = match cinstr {
+                                                        GirInstruction::Mul { src1, src2, .. } => refs(src1) || refs(src2),
+                                                        GirInstruction::Add { src1, src2, .. } => refs(src1) || refs(src2),
+                                                        _ => false, // 其他指令不检查（简化：假设只在 Mul/Add 中引用）
+                                                    };
+                                                    if uses { all_only = false; break; }
+                                                }
+                                                if all_only {
+                                                    self.need_global_invocation_id = true;
+                                                    found_pattern = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if found_pattern { break; }
+                        }
+                        if found_pattern { break; }
+                    }
+                    if found_pattern { break; }
+                }
+                if found_pattern { break; }
+            }
+            // 如果检测到全局 ID 模式，不设置单独的 BlockId/BlockDim/ThreadId 标志
+            if found_pattern { continue; }
+            // 否则: 设置单独的 built-in 标志
+            for instr in &kernel.instructions {
+                match instr {
+                    GirInstruction::ThreadId { .. } => self.need_local_invocation_id = true,
+                    GirInstruction::BlockId { .. } => self.need_workgroup_id = true,
+                    GirInstruction::BlockDim { .. } => self.need_workgroup_size = true,
+                    GirInstruction::GridDim { .. } => self.need_num_workgroups = true,
+                    _ => {}
+                }
+            }
+        }
     }
 
     // —— 类型辅助 ——
@@ -615,6 +785,15 @@ impl SpirvCompiler {
     fn operand_id(&mut self, op: &GirOperand, dtype: GirDType) -> u32 {
         match op {
             GirOperand::Reg(id) => {
+                // 全局线程 ID 优化: 如果此 reg 被重映射到 GlobalInvocationId
+                if let Some(&gid) = self.global_tid_remap.get(id) {
+                    // 检查类型是否匹配
+                    if dtype != GirDType::I32 {
+                        let target_type = self.type_id(dtype);
+                        return self.instr_with_result(OP_S_CONVERT, target_type, &[gid]);
+                    }
+                    return gid;
+                }
                 let raw = *self.reg_map.get(id).unwrap_or(&self.const_zero_i32);
                 // 检查是否需要类型转换
                 if let Some(&reg_dtype) = self.reg_types.get(id) {
@@ -656,10 +835,17 @@ impl SpirvCompiler {
 
     /// 发射 OpEntryPoint + OpExecutionMode（在 entry point section）
     fn emit_entry_point(&mut self, func: &GirFunction, func_id: u32) {
-        // OpEntryPoint Kernel %func_id "name" %builtin...
+        // 只包含实际使用的 built-in 在 OpEntryPoint 接口列表中
+        let mut iface_ids: Vec<u32> = Vec::new();
+        if self.need_local_invocation_id { iface_ids.push(self.builtin_local_invocation_id); }
+        if self.need_workgroup_id { iface_ids.push(self.builtin_workgroup_id); }
+        if self.need_workgroup_size { iface_ids.push(self.builtin_workgroup_size); }
+        if self.need_num_workgroups { iface_ids.push(self.builtin_num_workgroups); }
+        if self.need_global_invocation_id { iface_ids.push(self.builtin_global_invocation_id); }
+
         let name_bytes = func.name.as_bytes();
         let str_words = (name_bytes.len() + 1 + 3) / 4;
-        let total_words = 1 + 2 + str_words + 4; // header + model + id + string + 4 builtins
+        let total_words = 1 + 2 + str_words + iface_ids.len();
         self.words.push((total_words as u32) << 16 | OP_ENTRY_POINT);
         self.words.push(EXEC_KERNEL);
         self.words.push(func_id);
@@ -669,16 +855,12 @@ impl SpirvCompiler {
         for chunk in name_padded.chunks_exact(4) {
             self.words.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
         }
-        self.words.push(self.builtin_local_invocation_id);
-        self.words.push(self.builtin_workgroup_id);
-        self.words.push(self.builtin_workgroup_size);
-        self.words.push(self.builtin_num_workgroups);
+        for id in &iface_ids { self.words.push(*id); }
 
-        // OpExecutionMode LocalSize x y z
-        self.instr(OP_EXECUTION_MODE, &[
-            func_id, EXEC_MODE_LOCAL_SIZE,
-            func.block_dim.0 as u32, func.block_dim.1 as u32, func.block_dim.2 as u32,
-        ]);
+        // 不发射 OpExecutionMode LocalSize — 让 OpenCL 运行时根据
+        // clEnqueueNDRangeKernel 的 local_work_size 参数自行决定 workgroup 大小。
+        // 若发射了 LocalSize，则运行时 local_work_size 必须与之精确匹配，
+        // 否则报 CL_INVALID_WORK_GROUP_SIZE (-54)。
     }
 
     fn compile_kernel_body(&mut self, func: &GirFunction, func_id: u32) {
@@ -725,8 +907,8 @@ impl SpirvCompiler {
         let mut func_type_operands = vec![self.kernel_func_type_id, self.type_void];
         func_type_operands.extend(&param_types);
         let wc = (1 + func_type_operands.len() as u32) << 16;
-        self.words.push(wc | OP_TYPE_FUNCTION);
-        self.words.extend_from_slice(&func_type_operands);
+        self.decl_words.push(wc | OP_TYPE_FUNCTION);
+        self.decl_words.extend_from_slice(&func_type_operands);
 
         // 使用预分配的 func_id
         self.kernel_func_id = func_id;
@@ -776,6 +958,74 @@ impl SpirvCompiler {
 
         // 预扫描: 为每个 BranchIf 找到 merge label（其后第一个 Jump 的目标）
         self.branch_merge_map.clear();
+        self.merge_var_map.clear();
+        self.jump_store_map.clear();
+        self.temp_func_vars.clear();
+        self.addr_pattern_map.clear();
+        self.skip_instrs.clear();
+        self.global_tid_remap.clear();
+
+        // 预扫描: 地址计算模式 — Mul(tid, sizeof) + Add(offset, Param(ptr))
+        // 检测此模式后用 OpPtrAccessChain(param, tid) 替代 ConvertPtrToU+IAdd+ConvertUToPtr
+        // tid 直接作为元素偏移（不需要 byte pointer / i8 类型）
+        for i in 0..end {
+            if let GirInstruction::Add { dst, src1, src2, dtype: GirDType::I64 } = &instrs[i] {
+                // 检查 src2 是否是指针 Param
+                if let GirOperand::Param(pid) = src2 {
+                    if *pid < func.params.len() && func.params[*pid].is_ptr {
+                        // 检查 src1 (offset) 是否来自 Mul(tid, sizeof)
+                        if let GirOperand::Reg(offset_reg) = src1 {
+                            for j in 0..i {
+                                if let GirInstruction::Mul { dst: mdst, src1: msrc1, src2: msrc2, dtype } = &instrs[j] {
+                                    if *mdst == *offset_reg {
+                                        // 找到 Mul — 用 tid (src1 或 src2 中非 sizeof 的那个) 作为元素偏移
+                                        let tid_op = if matches!(msrc2, GirOperand::Imm(_)) { msrc1.clone() }
+                                                     else if matches!(msrc1, GirOperand::Imm(_)) { msrc2.clone() }
+                                                     else { src1.clone() };
+                                        let elem_dtype = if dtype.is_float() { GirDType::I32 } else { *dtype };
+                                        self.addr_pattern_map.insert(*dst, (self.param_ids[*pid], tid_op));
+                                        self.skip_instrs.insert(i);
+                                        self.skip_instrs.insert(j);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if !self.skip_instrs.contains(&i) {
+                            // 没找到 Mul — 直接用 offset 作为元素偏移
+                            self.addr_pattern_map.insert(*dst, (self.param_ids[*pid], src1.clone()));
+                            self.skip_instrs.insert(i);
+                        }
+                        continue;
+                    }
+                }
+                // 检查 src1 是否是指针 Param
+                if let GirOperand::Param(pid) = src1 {
+                    if *pid < func.params.len() && func.params[*pid].is_ptr {
+                        if let GirOperand::Reg(offset_reg) = src2 {
+                            for j in 0..i {
+                                if let GirInstruction::Mul { dst: mdst, src1: msrc1, src2: msrc2, dtype } = &instrs[j] {
+                                    if *mdst == *offset_reg {
+                                        let tid_op = if matches!(msrc2, GirOperand::Imm(_)) { msrc1.clone() }
+                                                     else if matches!(msrc1, GirOperand::Imm(_)) { msrc2.clone() }
+                                                     else { src2.clone() };
+                                        self.addr_pattern_map.insert(*dst, (self.param_ids[*pid], tid_op));
+                                        self.skip_instrs.insert(i);
+                                        self.skip_instrs.insert(j);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if !self.skip_instrs.contains(&i) {
+                            self.addr_pattern_map.insert(*dst, (self.param_ids[*pid], src2.clone()));
+                            self.skip_instrs.insert(i);
+                        }
+                        continue;
+                    }
+                }
+            }
+        }
         for i in 0..end {
             if matches!(instrs[i], GirInstruction::BranchIf { .. }) {
                 for j in (i + 1)..end {
@@ -787,7 +1037,141 @@ impl SpirvCompiler {
             }
         }
 
+        // 预扫描: 为每个 BranchIf 的 merge 点 Where 分配 Function 局部变量
+        // 并记录每个 Jump 需要在跳转前存储的值
+        for (bi_idx, &merge_label) in &self.branch_merge_map.clone() {
+            if let GirInstruction::BranchIf { then_label, else_label, .. } = &instrs[*bi_idx] {
+                let then_lbl = *then_label;
+                let else_lbl = *else_label;
+
+                // 找到 then block 和 else block 中的 Jump 指令索引
+                let mut then_jump_idx: Option<usize> = None;
+                let mut else_jump_idx: Option<usize> = None;
+                let mut current_block = 0u64; // 0=before, 1=then, 2=else, 3=merge
+
+                for k in (*bi_idx + 1)..end {
+                    match &instrs[k] {
+                        GirInstruction::Label { id } => {
+                            if *id == then_lbl { current_block = 1; }
+                            else if *id == else_lbl { current_block = 2; }
+                            else if *id == merge_label { current_block = 3; }
+                        }
+                        GirInstruction::Jump { .. } => {
+                            if current_block == 1 { then_jump_idx = Some(k); }
+                            else if current_block == 2 { else_jump_idx = Some(k); }
+                        }
+                        _ => {}
+                    }
+                }
+
+                // 在 merge block 中找所有 Where 指令
+                let mut current_block = 0u64;
+                for k in (*bi_idx + 1)..end {
+                    match &instrs[k] {
+                        GirInstruction::Label { id } => {
+                            if *id == merge_label { current_block = 3; }
+                            else if *id == then_lbl { current_block = 1; }
+                            else if *id == else_lbl { current_block = 2; }
+                        }
+                        GirInstruction::Where { dst, then_val, else_val, .. } if current_block == 3 => {
+                            // 分配 Function 局部变量
+                            let temp_var = self.alloc_id();
+                            self.temp_func_vars.push(temp_var);
+                            self.merge_var_map.insert(k, temp_var);
+
+                            // 记录 then block Jump 需要存储 then_val
+                            if let Some(ji) = then_jump_idx {
+                                self.jump_store_map.entry(ji).or_default()
+                                    .push((temp_var, then_val.clone()));
+                            }
+                            // 记录 else block Jump 需要存储 else_val
+                            if let Some(ji) = else_jump_idx {
+                                self.jump_store_map.entry(ji).or_default()
+                                    .push((temp_var, else_val.clone()));
+                            }
+                            let _ = dst;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        // 预扫描: 全局线程 ID 模式 — Add(Mul(BlockId,BlockDim),ThreadId) → GlobalInvocationId
+        if self.need_global_invocation_id {
+            let mut blockid_reg: Option<usize> = None;
+            let mut blockdim_reg: Option<usize> = None;
+            let mut threadid_reg: Option<usize> = None;
+            let mut blockid_idx: Option<usize> = None;
+            let mut blockdim_idx: Option<usize> = None;
+            let mut threadid_idx: Option<usize> = None;
+            let mut mul_idx: Option<usize> = None;
+            let mut mul_dst: Option<usize> = None;
+            let mut add_idx: Option<usize> = None;
+            let mut add_dst: Option<usize> = None;
+            for (i, instr) in instrs[..end].iter().enumerate() {
+                match instr {
+                    GirInstruction::BlockId { dst, .. } => { blockid_reg = Some(*dst); blockid_idx = Some(i); }
+                    GirInstruction::BlockDim { dst, .. } => { blockdim_reg = Some(*dst); blockdim_idx = Some(i); }
+                    GirInstruction::ThreadId { dst, .. } => { threadid_reg = Some(*dst); threadid_idx = Some(i); }
+                    GirInstruction::Mul { dst, src1, src2, .. } => {
+                        if let (Some(br), Some(dr)) = (blockid_reg, blockdim_reg) {
+                            let m1 = matches!(src1, GirOperand::Reg(r) if *r == br) && matches!(src2, GirOperand::Reg(r) if *r == dr);
+                            let m2 = matches!(src1, GirOperand::Reg(r) if *r == dr) && matches!(src2, GirOperand::Reg(r) if *r == br);
+                            if m1 || m2 { mul_idx = Some(i); mul_dst = Some(*dst); }
+                        }
+                    }
+                    GirInstruction::Add { dst, src1, src2, .. } => {
+                        if let (Some(md), Some(tr)) = (mul_dst, threadid_reg) {
+                            let m1 = matches!(src1, GirOperand::Reg(r) if *r == md) && matches!(src2, GirOperand::Reg(r) if *r == tr);
+                            let m2 = matches!(src1, GirOperand::Reg(r) if *r == tr) && matches!(src2, GirOperand::Reg(r) if *r == md);
+                            if m1 || m2 { add_idx = Some(i); add_dst = Some(*dst); }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // 跳过原指令（GlobalInvocationId 加载延后到 FuncVariable 之后）
+            if let Some(ai) = add_idx {
+                for idx in [blockid_idx, blockdim_idx, threadid_idx, mul_idx, Some(ai)] {
+                    if let Some(x) = idx { self.skip_instrs.insert(x); }
+                }
+                // 记录 add_dst 用于后续加载（延后到 FuncVariable 之后执行）
+                if let Some(dst) = add_dst {
+                    self.pending_global_tid_dst = Some(dst);
+                }
+            }
+        }
+
+        // 发射 Function 局部变量（用于 if/else merge 替代 OpPhi）
+        // OpVariable 必须是函数第一个基本块的最前指令
+        if !self.temp_func_vars.is_empty() {
+            self.func_f32_ptr_type = self.alloc_id();
+            // 指针类型写入 decl_words（全局声明区）
+            self.decl_words.push((4u32 << 16) | OP_TYPE_POINTER);
+            self.decl_words.push(self.func_f32_ptr_type);
+            self.decl_words.push(SC_FUNCTION);
+            self.decl_words.push(self.type_f32);
+            // OpVariable 写入 func_words（函数体）
+            for &vid in &self.temp_func_vars.clone() {
+                self.func_words.push((4u32 << 16) | OP_VARIABLE);
+                self.func_words.push(self.func_f32_ptr_type);
+                self.func_words.push(vid);
+                self.func_words.push(SC_FUNCTION);
+            }
+        }
+
+        // 加载 GlobalInvocationId（在 OpVariable 之后，确保 SPIR-V 布局正确）
+        if let Some(dst) = self.pending_global_tid_dst.take() {
+            let gid_vec = self.instr_with_result(OP_LOAD, self.type_v3_i32, &[self.builtin_global_invocation_id]);
+            let gid_x = self.instr_with_result(OP_COMPOSITE_EXTRACT, self.type_i32, &[gid_vec, 0]);
+            self.global_tid_remap.insert(dst, gid_x);
+        }
+
         for (i, instr) in instrs[..end].iter().enumerate() {
+            if self.skip_instrs.contains(&i) {
+                continue;
+            }
             self.current_instr_idx = i;
             self.compile_instruction(instr);
         }
@@ -1073,6 +1457,13 @@ impl SpirvCompiler {
                 self.instr(OP_BRANCH_CONDITIONAL, &[cond_id, then_id, else_id]);
             }
             GirInstruction::Jump { target } => {
+                // 如果此 Jump 是 if/else 分支的出口，先存储 merge 值到局部变量
+                if let Some(stores) = self.jump_store_map.get(&self.current_instr_idx).cloned() {
+                    for (temp_var, val) in &stores {
+                        let val_id = self.operand_id(val, GirDType::F32);
+                        self.instr(OP_STORE, &[*temp_var, val_id]);
+                    }
+                }
                 let tid = *self.label_map.get(target).unwrap_or(&self.const_zero_i32);
                 self.instr(OP_BRANCH, &[tid]);
             }
@@ -1090,11 +1481,16 @@ impl SpirvCompiler {
             GirInstruction::GlobalLoad { dst, addr, dtype } => {
                 let ptr_id = match addr {
                     GirOperand::Param(id) if *id < self.param_is_ptr.len() && self.param_is_ptr[*id] => {
-                        // 指针参数本身就是指针 — 直接用于 OpLoad
                         self.param_ids[*id]
                     }
+                    GirOperand::Reg(rid) if self.addr_pattern_map.contains_key(rid) => {
+                        // 地址模式: Add(tid*sz, Param(ptr)) — 用 OpPtrAccessChain(param, tid) 替代
+                        let (param_id, offset_op) = self.addr_pattern_map[rid].clone();
+                        let offset_id = self.operand_id(&offset_op, GirDType::I32);
+                        let float_ptr_type = self.ptr_type_id(*dtype, SC_CROSS_WORKGROUP);
+                        self.instr_with_result(OP_PTR_ACCESS_CHAIN, float_ptr_type, &[param_id, offset_id])
+                    }
                     _ => {
-                        // 整数地址 — 需要转换为指针
                         let addr_id = self.operand_id(addr, GirDType::I64);
                         let ptr_type = self.ptr_type_id(*dtype, SC_CROSS_WORKGROUP);
                         self.instr_with_result(OP_CONVERT_U_TO_PTR, ptr_type, &[addr_id])
@@ -1108,6 +1504,12 @@ impl SpirvCompiler {
                 let ptr_id = match addr {
                     GirOperand::Param(id) if *id < self.param_is_ptr.len() && self.param_is_ptr[*id] => {
                         self.param_ids[*id]
+                    }
+                    GirOperand::Reg(rid) if self.addr_pattern_map.contains_key(rid) => {
+                        let (param_id, offset_op) = self.addr_pattern_map[rid].clone();
+                        let offset_id = self.operand_id(&offset_op, GirDType::I32);
+                        let float_ptr_type = self.ptr_type_id(*dtype, SC_CROSS_WORKGROUP);
+                        self.instr_with_result(OP_PTR_ACCESS_CHAIN, float_ptr_type, &[param_id, offset_id])
                     }
                     _ => {
                         let addr_id = self.operand_id(addr, GirDType::I64);
@@ -1249,14 +1651,20 @@ impl SpirvCompiler {
             // —— 条件操作 ——
             GirInstruction::Where { dst, cond, then_val, else_val, .. } => {
                 if self.at_merge_point {
-                    // 合并点: 使用 OpPhi 合并来自 then/else block 的值
-                    let t = self.operand_id(then_val, GirDType::F32);
-                    let e = self.operand_id(else_val, GirDType::F32);
-                    let r = self.instr_with_result(OP_PHI, self.type_f32, &[
-                        t, self.branch_then_block,
-                        e, self.branch_else_block,
-                    ]);
-                    self.reg_map.insert(*dst, r);
+                    // 合并点: 从 Function 局部变量加载（替代 OpPhi，避免 AMD VGPR/SGPR 问题）
+                    if let Some(&temp_var) = self.merge_var_map.get(&self.current_instr_idx) {
+                        let r = self.instr_with_result(OP_LOAD, self.type_f32, &[temp_var]);
+                        self.reg_map.insert(*dst, r);
+                    } else {
+                        // 回退到 OpPhi（不应发生，但保持安全）
+                        let t = self.operand_id(then_val, GirDType::F32);
+                        let e = self.operand_id(else_val, GirDType::F32);
+                        let r = self.instr_with_result(OP_PHI, self.type_f32, &[
+                            t, self.branch_then_block,
+                            e, self.branch_else_block,
+                        ]);
+                        self.reg_map.insert(*dst, r);
+                    }
                 } else {
                     // 非合并点: 使用 OpSelect（predicated select）
                     let c = self.operand_id(cond, GirDType::F32);

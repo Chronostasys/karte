@@ -188,26 +188,10 @@ fn test_struct_entry_point() {
 }
 
 #[test]
-fn test_struct_execution_mode_local_size() {
+fn test_struct_execution_mode_not_emitted() {
+    // OpExecutionMode 不再发射 — 让 OpenCL 运行时根据 local_work_size 参数决定
     let w = compile(vec![]);
-    assert_has_op(&w, OP_EXECUTION_MODE, "OpExecutionMode");
-    // EXEC_MODE_LOCAL_SIZE = 17, block_dim = (256, 1, 1)
-    // 查找 ExecutionMode 指令中的 256
-    let ops = instruction_opcodes(&w);
-    for i in 0..ops.len() {
-        if ops[i] == OP_EXECUTION_MODE {
-            // word_count 在高 16 位
-            let wc = (w[i] >> 16) as usize;
-            // 指令: [header, func_id, mode, x, y, z]
-            if wc >= 6 {
-                assert_eq!(w[i + 2], 17, "应为 LocalSize 模式");
-                assert_eq!(w[i + 3], 256, "local_size_x = 256");
-                assert_eq!(w[i + 4], 1, "local_size_y = 1");
-                assert_eq!(w[i + 5], 1, "local_size_z = 1");
-            }
-            break;
-        }
-    }
+    assert_no_op(&w, OP_EXECUTION_MODE, "OpExecutionMode 不应被发射");
 }
 
 #[test]
@@ -238,13 +222,18 @@ fn test_struct_function() {
 
 #[test]
 fn test_struct_builtins() {
-    let w = compile(vec![]);
+    // 添加 ThreadId 指令以触发 built-in 变量声明
+    let w = compile(vec![
+        GirInstruction::ThreadId { dst: 10, dim: ThreadDim::X },
+        GirInstruction::Return,
+    ]);
     assert_has_op(&w, OP_DECORATE, "OpDecorate");
     assert_has_op(&w, OP_VARIABLE, "OpVariable");
 }
 
 #[test]
-fn test_struct_custom_block_dim() {
+fn test_struct_custom_block_dim_not_emitted() {
+    // block_dim 仍在 GIR 中保留（供 PTX 后端使用），但 SPIR-V 不发射 OpExecutionMode
     let mut func = GirFunction::new("custom".to_string());
     func.params = vec![
         GirParam { name: "x".to_string(), dtype: GirDType::F32, is_ptr: true },
@@ -258,18 +247,7 @@ fn test_struct_custom_block_dim() {
 
     let mut c = SpirvCompiler::new();
     let w = c.compile(&prog);
-    let ops = instruction_opcodes(&w);
-    for i in 0..ops.len() {
-        if ops[i] == OP_EXECUTION_MODE {
-            let wc = (w[i] >> 16) as usize;
-            if wc >= 6 {
-                assert_eq!(w[i + 3], 128, "local_size_x = 128");
-                assert_eq!(w[i + 4], 2, "local_size_y = 2");
-                assert_eq!(w[i + 5], 4, "local_size_z = 4");
-            }
-            break;
-        }
-    }
+    assert_no_op(&w, OP_EXECUTION_MODE, "OpExecutionMode 不应被发射");
 }
 
 // ============================================================
@@ -1323,26 +1301,20 @@ fn test_scalar_parameter() {
 
 #[test]
 fn test_end_to_end_sigmoid_kernel() {
+    // 使用 ThreadId (LocalInvocationId) — 与 Python 前端一致，避免 SGPR built-in
     let w = compile(vec![
         GirInstruction::ThreadId { dst: 10, dim: ThreadDim::X },
-        GirInstruction::BlockDim { dst: 11, dim: ThreadDim::X },
-        GirInstruction::BlockId { dst: 12, dim: ThreadDim::X },
-        // global_id = block_id * block_dim + thread_id
-        GirInstruction::Mul { dst: 13, src1: GirOperand::Reg(12), src2: GirOperand::Reg(11), dtype: GirDType::I32 },
-        GirInstruction::Add { dst: 14, src1: GirOperand::Reg(13), src2: GirOperand::Reg(10), dtype: GirDType::I32 },
-        // x = input[global_id]
-        GirInstruction::GlobalLoad { dst: 15, addr: GirOperand::Reg(14), dtype: GirDType::F32 },
+        // x = input[tid]
+        GirInstruction::GlobalLoad { dst: 15, addr: GirOperand::Reg(10), dtype: GirDType::F32 },
         // sigmoid = 1 / (1 + exp(-x))
         GirInstruction::Recip { dst: 16, src: GirOperand::Reg(15), dtype: GirDType::F32 },
-        // output[global_id] = sigmoid
+        // output[tid] = sigmoid
         GirInstruction::GlobalStore { addr: GirOperand::Param(1), src: GirOperand::Reg(16), dtype: GirDType::F32 },
         GirInstruction::Return,
     ]);
     validate_header(&w);
-    assert_has_op(&w, OP_I_MUL, "OpIMul");
-    assert_has_op(&w, OP_I_ADD, "OpIAdd");
-    assert_has_op(&w, OP_F_DIV, "OpFDiv (Recip)");
     assert_has_op(&w, OP_LOAD, "OpLoad");
+    assert_has_op(&w, OP_F_DIV, "OpFDiv (Recip)");
     assert_has_op(&w, OP_STORE, "OpStore");
 }
 

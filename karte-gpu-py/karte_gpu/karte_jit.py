@@ -769,27 +769,16 @@ class _SymTensor:
 # ============================================================
 
 def thread_id():
-    """获取当前线程的全局 ID"""
+    """获取当前线程的全局 ID
+    
+    AMD GPU 兼容性: 只使用 LocalInvocationId (纯 VGPR)，
+    避免 WorkgroupId/WorkgroupSize (SGPR) 导致 VGPR→SGPR copy 错误。
+    kernel 启动时使用 global_size = local_size (1 workgroup)，
+    使 LocalInvocationId 即全局线程 ID。
+    """
     builder = _current_builder
-    bid = builder.alloc_reg()
-    bdim = builder.alloc_reg()
-    tlid = builder.alloc_reg()
-    builder.emit_gir({"op": "BlockId", "dst": bid, "dim": "x"})
-    builder.emit_gir({"op": "BlockDim", "dst": bdim, "dim": "x"})
-    builder.emit_gir({"op": "ThreadId", "dst": tlid, "dim": "x"})
     tid = builder.alloc_reg()
-    builder.emit_gir({
-        "op": "Mul", "dst": tid,
-        "src1": {"kind": "Reg", "id": bid},
-        "src2": {"kind": "Reg", "id": bdim},
-        "dtype": "i32"
-    })
-    builder.emit_gir({
-        "op": "Add", "dst": tid,
-        "src1": {"kind": "Reg", "id": tid},
-        "src2": {"kind": "Reg", "id": tlid},
-        "dtype": "i32"
-    })
+    builder.emit_gir({"op": "ThreadId", "dst": tid, "dim": "x"})
     builder._tid_reg = tid
     return _RegRef(tid)
 
@@ -1994,10 +1983,10 @@ def _create_opencl_kernel_wrapper(kernel, cl_state, builder, name, block_size=25
                 buf_val = ctypes.c_int(int(val))
                 cl_lib.clSetKernelArg(kernel, i, 4, ctypes.byref(buf_val))
 
-        # 启动 kernel
-        grid = (batch_size + block_size - 1) // block_size
-        global_work_size = (ctypes.c_size_t * 3)(grid * block_size, 1, 1)
-        local_work_size = (ctypes.c_size_t * 3)(block_size, 1, 1)
+        # 启动 kernel — AMD 兼容: global = local = N (1 workgroup)
+        # thread_id() 使用 LocalInvocationId (纯 VGPR)，避免 SGPR built-in 导致 VGPR→SGPR 错误
+        global_work_size = (ctypes.c_size_t * 3)(batch_size, 1, 1)
+        local_work_size = (ctypes.c_size_t * 3)(batch_size, 1, 1)
 
         ret = cl_lib.clEnqueueNDRangeKernel(
             queue, kernel, 1, None,

@@ -351,9 +351,10 @@ def test_amd_gpu_if_else():
         arg_val = ctypes.c_uint64(ctypes.cast(buf, ctypes.c_void_p).value)
         cl_lib.clSetKernelArg(kernel, i, 8, ctypes.byref(arg_val))
 
-    # block_dim 是 [1,1,1]，所以 global = N, local = 1
+    # thread_id() 使用 LocalInvocationId，所以 local 必须等于 N
+    # 单个 workgroup 覆盖所有元素：LocalInvocationId.x 从 0 到 N-1
     global_ws = (ctypes.c_size_t * 3)(N, 1, 1)
-    local_ws = (ctypes.c_size_t * 3)(1, 1, 1)
+    local_ws = (ctypes.c_size_t * 3)(N, 1, 1)
     ret = cl_lib.clEnqueueNDRangeKernel(queue, kernel, 1, None, global_ws, local_ws, 0, None, None)
     if ret != 0:
         print(f"  ❌ clEnqueueNDRangeKernel failed: {ret}")
