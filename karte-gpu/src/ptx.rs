@@ -76,9 +76,9 @@ impl PtxCompiler {
         }
         self.output.push_str(") {\n");
 
-        // 寄存器声明 — 包含 cvt 临时寄存器空间（i64_operand 使用 id+8000）
+        // 寄存器声明 — 包含 cvt 临时寄存器空间（id+8000）和 param 寄存器空间（id+9000）
         let num_regs = func.next_reg.max(1);
-        let total_regs = num_regs + 8100; // 预留空间给 cvt 临时寄存器
+        let total_regs = (num_regs + 8100).max(9100 + func.params.len());
         self.output.push_str(&format!("    .reg .s32 %r<{}>;\n", total_regs));
         self.output.push_str(&format!("    .reg .s64 %rd<{}>;\n", total_regs));
         self.output.push_str(&format!("    .reg .f32 %f<{}>;\n", total_regs));
@@ -89,17 +89,19 @@ impl PtxCompiler {
             self.output.push_str(&format!("    .shared .align 16 .b8 smem[{}];\n", func.shared_mem_size));
         }
 
-        // 加载参数到寄存器 — 根据参数类型选择正确的寄存器前缀
+        // 加载参数到专用寄存器 — 使用 9000+ 偏移避免与计算寄存器冲突
+        // param 寄存器范围: 9000 ~ 9000+num_params, 不会与 Reg(id) 或 cvt(id+8000) 冲突
         for (i, param) in func.params.iter().enumerate() {
+            let param_reg = 9000 + i;
             if param.is_ptr {
-                self.output.push_str(&format!("    ld.param.u64 %rd{}, [%param_{}];\n", i, i));
-                self.track_reg(i, GirDType::I64);
+                self.output.push_str(&format!("    ld.param.u64 %rd{}, [%param_{}];\n", param_reg, i));
+                self.track_reg(param_reg, GirDType::I64);
             } else if param.dtype == GirDType::F32 {
-                self.output.push_str(&format!("    ld.param.f32 %f{}, [%param_{}];\n", i, i));
-                self.track_reg(i, GirDType::F32);
+                self.output.push_str(&format!("    ld.param.f32 %f{}, [%param_{}];\n", param_reg, i));
+                self.track_reg(param_reg, GirDType::F32);
             } else {
-                self.output.push_str(&format!("    ld.param.s32 %r{}, [%param_{}];\n", i, i));
-                self.track_reg(i, GirDType::I32);
+                self.output.push_str(&format!("    ld.param.s32 %r{}, [%param_{}];\n", param_reg, i));
+                self.track_reg(param_reg, GirDType::I32);
             }
         }
 
@@ -213,13 +215,15 @@ impl PtxCompiler {
             GirInstruction::Fma { dst, src1, src2, src3, dtype } => {
                 let is_f32 = *dtype == GirDType::F32;
                 if is_f32 {
-                    // sm_12.0 不支持 fma.rn.f32，展开为 mul + add
-                    self.emit(&format!("    mul.f32 %f{}, {}, {};", *dst, operand_to_str_f32(src1), operand_to_str_f32(src2)));
-                    self.emit(&format!("    add.f32 %f{}, %f{}, {};", *dst, *dst, operand_to_str_f32(src3)));
+                    // 展开为 mul + add, 使用临时寄存器避免 dst==src3 时覆写
+                    let temp = *dst + 4000;
+                    self.emit(&format!("    mul.f32 %f{}, {}, {};", temp, operand_to_str_f32(src1), operand_to_str_f32(src2)));
+                    self.emit(&format!("    add.f32 %f{}, %f{}, {};", *dst, temp, operand_to_str_f32(src3)));
                 } else {
                     let is_64 = *dtype == GirDType::I64 || *dtype == GirDType::F64;
-                    self.emit(&format!("    mul.{} {}, {}, {};", dtype.ptx_suffix(), reg(*dst, is_64), operand_to_str(src1, is_64), operand_to_str(src2, is_64)));
-                    self.emit(&format!("    add.{} {}, {}, {};", dtype.ptx_suffix(), reg(*dst, is_64), reg(*dst, is_64), operand_to_str(src3, is_64)));
+                    let temp = *dst + 4000;
+                    self.emit(&format!("    mul.{} {}, {}, {};", dtype.ptx_suffix(), reg(temp, is_64), operand_to_str(src1, is_64), operand_to_str(src2, is_64)));
+                    self.emit(&format!("    add.{} {}, {}, {};", dtype.ptx_suffix(), reg(*dst, is_64), reg(temp, is_64), operand_to_str(src3, is_64)));
                 }
             }
             // Exp(x) = 2^(x * log2(e)) — 展开为 mul + ex2.approx
@@ -642,7 +646,7 @@ impl PtxCompiler {
                 }
             }
             GirOperand::Imm(v) => format!("{}", v),
-            GirOperand::Param(id) => format!("%rd{}", id),
+            GirOperand::Param(id) => format!("%rd{}", 9000 + id),
             _ => "0".to_string(),
         }
     }
@@ -687,7 +691,7 @@ fn operand_to_str(op: &GirOperand, is_64: bool) -> String {
         }
         GirOperand::Label(id) => format!("LABEL_{}", id),
         GirOperand::Param(id) => {
-            if is_64 { format!("%rd{}", id) } else { format!("%r{}", id) }
+            if is_64 { format!("%rd{}", 9000 + id) } else { format!("%r{}", 9000 + id) }
         }
     }
 }
@@ -702,7 +706,7 @@ fn operand_to_str_f32(op: &GirOperand) -> String {
             format!("0f{:08X}", *val as u32)
         }
         GirOperand::Label(id) => format!("LABEL_{}", id),
-        GirOperand::Param(id) => format!("%f{}", id),  // f32 参数在 %f 寄存器中
+        GirOperand::Param(id) => format!("%f{}", 9000 + id),  // f32 参数在 %f{9000+id} 寄存器中
     }
 }
 
