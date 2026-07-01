@@ -394,6 +394,15 @@ let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering
 ## Notable Recent Changes
 
 Recent work includes:
+- **GPU if/else 控制流完整支持 (2026-07-01)** — Python AST 解释器 + SPIR-V OpPhi 合并:
+  - Python 前端新增 `_AstInterpreter` 类，替代 `exec()` 方式执行函数体，支持 if/elif/else 嵌套控制流
+  - 比较运算符 (==, !=, <, >, <=, >=)、布尔运算符 (and/or/not)、增强赋值 (+=/-=/*=//=)
+  - 分支合并：对 then/else 中不同变量用 Where 生成 Phi 选择
+  - SPIR-V 后端：Where 在合并点用 `OpPhi` (opcode 245) 替代 `OpSelect`；BranchIf 发射 `OpSelectionMerge` (opcode 247)
+  - 修复 4 个 SPIR-V opcode 错误：OpSConvert=114 (原75)、OpFConvert=115 (原103)、OpConvertPtrToU=117 (原122)、OpSelectionMerge=247 (原251)
+  - Move 指令类型推断：从源操作数推断 dtype（Imm→F32, Reg→继承, Param→参数类型）
+  - AMD GPU 端到端验证：if/else kernel 在 Rusticl/Mesa 上成功执行
+  - 全工作区 3584/3584 通过
 - **SPIR-V 后端真实 AMD GPU 验证 (2026-06-30)** — 6 项关键修复 + 11/11 端到端测试通过:
   - 在本机 AMD iGPU (Rusticl/Mesa OpenCL) 上通过 `clCreateProgramWithIL` + `clBuildProgram` + `clEnqueueNDRangeKernel` 成功加载并执行 SPIR-V kernel
   - **CAP_ADDRESSES 修复**: Addresses capability = 4（原误写为 5=Linkage）
