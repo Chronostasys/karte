@@ -1484,9 +1484,17 @@ impl SpirvCompiler {
                         self.param_ids[*id]
                     }
                     GirOperand::Reg(rid) if self.addr_pattern_map.contains_key(rid) => {
-                        // 地址模式: Add(tid*sz, Param(ptr)) — 用 OpPtrAccessChain(param, tid) 替代
+                        // 地址模式: Add(offset, Param(ptr)) — 用 OpPtrAccessChain(param, elem_index) 替代
                         let (param_id, offset_op) = self.addr_pattern_map[rid].clone();
-                        let offset_id = self.operand_id(&offset_op, GirDType::I32);
+                        // offset_op 来自 Mul(tid, sizeof) 时是 Reg(tid)，元素索引正确
+                        // offset_op 来自 Imm(字节偏移) 时需转换为元素索引 (除以 sizeof)
+                        let offset_id = match &offset_op {
+                            GirOperand::Imm(byte_off) => {
+                                let elem_size = dtype.size_in_bytes() as i64;
+                                self.emit_const_i32((*byte_off / elem_size) as i32)
+                            }
+                            _ => self.operand_id(&offset_op, GirDType::I32),
+                        };
                         let float_ptr_type = self.ptr_type_id(*dtype, SC_CROSS_WORKGROUP);
                         self.instr_with_result(OP_PTR_ACCESS_CHAIN, float_ptr_type, &[param_id, offset_id])
                     }
@@ -1507,7 +1515,14 @@ impl SpirvCompiler {
                     }
                     GirOperand::Reg(rid) if self.addr_pattern_map.contains_key(rid) => {
                         let (param_id, offset_op) = self.addr_pattern_map[rid].clone();
-                        let offset_id = self.operand_id(&offset_op, GirDType::I32);
+                        // Imm 字节偏移需转换为元素索引
+                        let offset_id = match &offset_op {
+                            GirOperand::Imm(byte_off) => {
+                                let elem_size = dtype.size_in_bytes() as i64;
+                                self.emit_const_i32((*byte_off / elem_size) as i32)
+                            }
+                            _ => self.operand_id(&offset_op, GirDType::I32),
+                        };
                         let float_ptr_type = self.ptr_type_id(*dtype, SC_CROSS_WORKGROUP);
                         self.instr_with_result(OP_PTR_ACCESS_CHAIN, float_ptr_type, &[param_id, offset_id])
                     }

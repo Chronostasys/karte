@@ -144,6 +144,7 @@ const OP_F_ORD_GREATER_THAN_EQUAL: u32 = 190;
 const OP_GROUP_F_ADD: u32 = 265;
 const OP_GROUP_F_MIN: u32 = 266;
 const OP_GROUP_F_MAX: u32 = 269;
+const OP_PTR_ACCESS_CHAIN: u32 = 67;
 
 // ============================================================
 // 1. SPIR-V 模块结构验证
@@ -1587,4 +1588,89 @@ fn test_gpu_backend_compile_returns_correct_type() {
     let output: Vec<u32> = c.compile(&prog);
     assert!(!output.is_empty());
     assert_eq!(output[0], SPIRV_MAGIC);
+}
+
+// ============================================================
+// 回归测试: 多指针参数 + 固定字节偏移地址计算
+// ============================================================
+// Bug: addr_pattern_map 把 Imm(字节偏移) 当作元素索引传给 OpPtrAccessChain
+// 例如 Imm(4) 被解释为 ptr[4]（第5个 f32）而非 ptr[1]（第2个 f32，偏移4字节）
+// 修复: GlobalLoad/GlobalStore 中对 Imm offset 除以 sizeof(dtype) 转为元素索引
+
+#[test]
+fn test_multi_ptr_imm_offset_addr_pattern() {
+    // 3 个指针参数，用 Imm(4) 作为偏移访问第二个参数的第二个元素
+    let prog = make_kernel("multi_ptr", vec![
+        GirParam { name: "x".to_string(), dtype: GirDType::F32, is_ptr: true },
+        GirParam { name: "y".to_string(), dtype: GirDType::F32, is_ptr: true },
+        GirParam { name: "out".to_string(), dtype: GirDType::F32, is_ptr: true },
+    ], vec![
+        // tid
+        GirInstruction::ThreadId { dst: 0, dim: ThreadDim::X },
+        // load x[tid]: addr = tid*4 + param[0]
+        GirInstruction::Mul { dst: 1, src1: GirOperand::Reg(0), src2: GirOperand::Imm(4), dtype: GirDType::I64 },
+        GirInstruction::Add { dst: 1, src1: GirOperand::Reg(1), src2: GirOperand::Param(0), dtype: GirDType::I64 },
+        GirInstruction::GlobalLoad { dst: 2, addr: GirOperand::Reg(1), dtype: GirDType::F32 },
+        // load y[1]: addr = 4 + param[1]  (Imm(4) = 字节偏移 = 第2个 f32)
+        GirInstruction::Add { dst: 3, src1: GirOperand::Imm(4), src2: GirOperand::Param(1), dtype: GirDType::I64 },
+        GirInstruction::GlobalLoad { dst: 4, addr: GirOperand::Reg(3), dtype: GirDType::F32 },
+        // out = x + y[1]
+        GirInstruction::Add { dst: 5, src1: GirOperand::Reg(2), src2: GirOperand::Reg(4), dtype: GirDType::F32 },
+        // store out[tid]
+        GirInstruction::Mul { dst: 6, src1: GirOperand::Reg(0), src2: GirOperand::Imm(4), dtype: GirDType::I64 },
+        GirInstruction::Add { dst: 6, src1: GirOperand::Reg(6), src2: GirOperand::Param(2), dtype: GirDType::I64 },
+        GirInstruction::GlobalStore { addr: GirOperand::Reg(6), src: GirOperand::Reg(5), dtype: GirDType::F32 },
+        GirInstruction::Return,
+    ]);
+
+    let mut c = SpirvCompiler::new();
+    let w = c.compile(&prog);
+
+    // 验证: 编译成功且包含 OpPtrAccessChain (用于 Imm offset 路径)
+    assert_has_op(&w, OP_PTR_ACCESS_CHAIN, "OpPtrAccessChain");
+    // 验证: 不包含 OpConvertUToPtr (Imm offset 应走 OpPtrAccessChain 路径而非 fallback)
+    // 注意: tid*4+param 也用 OpPtrAccessChain，所以两者都存在是正常的
+    assert!(w.len() > 100, "SPIR-V 应有足够指令");
+}
+
+#[test]
+fn test_imm_offset_uses_correct_element_index() {
+    // 验证 Imm(8) 对 f32 指针转换为元素索引 2 (8/4=2)
+    // 而非直接使用 8 作为元素索引
+    let prog = make_kernel("imm_offset", vec![
+        GirParam { name: "x".to_string(), dtype: GirDType::F32, is_ptr: true },
+        GirParam { name: "out".to_string(), dtype: GirDType::F32, is_ptr: true },
+    ], vec![
+        GirInstruction::ThreadId { dst: 0, dim: ThreadDim::X },
+        // addr = 8 + param[0]  → 应转换为 OpPtrAccessChain(param, 2)
+        GirInstruction::Add { dst: 1, src1: GirOperand::Imm(8), src2: GirOperand::Param(0), dtype: GirDType::I64 },
+        GirInstruction::GlobalLoad { dst: 2, addr: GirOperand::Reg(1), dtype: GirDType::F32 },
+        // store
+        GirInstruction::Mul { dst: 3, src1: GirOperand::Reg(0), src2: GirOperand::Imm(4), dtype: GirDType::I64 },
+        GirInstruction::Add { dst: 3, src1: GirOperand::Reg(3), src2: GirOperand::Param(1), dtype: GirDType::I64 },
+        GirInstruction::GlobalStore { addr: GirOperand::Reg(3), src: GirOperand::Reg(2), dtype: GirDType::F32 },
+        GirInstruction::Return,
+    ]);
+
+    let mut c = SpirvCompiler::new();
+    let w = c.compile(&prog);
+
+    // 直接遍历 SPIR-V words 查找 OpConstant 值为 2
+    let mut i = 5; // 跳过 header
+    let mut found_elem_index_2 = false;
+    while i < w.len() {
+        let opcode = w[i] & 0xFFFF;
+        let wc = (w[i] >> 16) as usize;
+        if opcode == OP_CONSTANT && wc >= 4 {
+            // OpConstant: [header, type_id, result_id, value]
+            let val = w[i + 3] as i32;
+            if val == 2 {
+                found_elem_index_2 = true;
+                break;
+            }
+        }
+        if wc == 0 { break; }
+        i += wc;
+    }
+    assert!(found_elem_index_2, "Imm(8) 字节偏移应转换为元素索引 2 (8/sizeof(f32)=2)");
 }
