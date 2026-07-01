@@ -751,3 +751,68 @@ Karte 的 GPU 架构有**极好的后端无关基础**——GIR 指令集完全�
 4. **后端自动检测与路由**—— Python JIT 和 CLI 层透明切换
 
 Phase 1 (SPIR-V + OpenCL) 预计 ~17 天，实现后 Karte 将同时支持 NVIDIA (PTX/CUDA) 和 AMD (SPIR-V/OpenCL) GPU，用户代码零改动。
+
+## 九、if/else 控制流支持 (2026-07-01)
+
+### Python 前端: _AstInterpreter
+
+替代 `exec()` 方式执行 Python 函数体，通过 AST 遍历支持 if/elif/else 嵌套控制流:
+
+- 遍历 AST 节点，对 If 节点生成 `Cmp` + `BranchIf` + `Label` + `Jump` 指令
+- 分支合并：then/else 中对同名变量的不同赋值，用 `Where` 指令在合并点生成 Phi 选择
+- 支持: 比较运算符 (==,!=,<,>,<=,>=)、布尔运算符 (and/or/not)、增强赋值 (+=/-=/*=//=)
+
+### SPIR-V 后端: AMD GPU 兼容关键设计
+
+AMD GPU (Rusticl/Mesa/LLVM) 对 SPIR-V 寄存器类型极其敏感，以下设计决策是 if/else 功能在 AMD GPU 上能运行的关键:
+
+#### Function 局部变量替代 OpPhi
+
+```
+// ❌ OpPhi 方案 — AMD LLVM 崩溃
+// OpPhi 合并 VGPR (then分支值) 与 SGPR (else分支值)，跨寄存器类合并不支持
+%result = OpPhi %float %then_val %then_label %else_val %else_label
+
+// ✅ Function 局部变量方案 — 各分支 Store，合并点 Load
+%var = OpVariable %ptr_float Function
+// then 分支:
+OpStore %var %then_val
+OpBranch %merge
+// else 分支:
+OpStore %var %else_val
+OpBranch %merge
+// 合并点:
+%result = OpLoad %float %var
+```
+
+#### OpPtrAccessChain 替代 OpConvertPtrToU+IAdd
+
+```
+// ❌ OpConvertPtrToU 方案 — SGPR 指针参数转 i64 触发非法 VGPR→SGPR 拷贝
+%int_ptr = OpConvertUToPtr %ulong %ptr_param
+%offset = OpIAdd %ulong %int_ptr %byte_offset
+%elem_ptr = OpConvertUToPtr %ptr_float %offset
+
+// ✅ OpPtrAccessChain 方案 — 直接指针运算，不经过整数转换
+%elem_ptr = OpPtrAccessChain %ptr_float %ptr_param %index
+```
+
+#### 惰性 Built-in 发射
+
+`scan_builtins()` 在编译前遍历所有 GIR 指令，检测实际使用了哪些 built-in (如 LocalInvocationId)。仅对使用中的 built-in 发射 `OpEntryPoint` interface、`OpDecorate`、`OpVariable`。未使用的 SGPR built-in 也会导致 AMD LLVM 寄存器分配错误。
+
+#### 移除 OpExecutionMode LocalSize
+
+SPIR-V 中的 `OpExecutionMode LocalSize x y z` 会强制 OpenCL 运行时的 `local_work_size` 必须精确匹配，否则报 `CL_INVALID_WORK_GROUP_SIZE (-54)`。移除后让运行时根据 `clEnqueueNDRangeKernel` 的 `local_work_size` 参数自行决定。
+
+### thread_id() 简化
+
+`thread_id()` 仅发射 `ThreadId` (LocalInvocationId)，移除了 BlockId*BlockDim+ThreadId 的组合方案。GlobalInvocationId 虽然在语义上更正确，但在 AMD 上也会触发 VGPR/SGPR 错误。
+
+OpenCL 运行时启动方式: `global_work_size = local_work_size = (N, 1, 1)` — 单个 workgroup 覆盖所有元素，使 LocalInvocationId.x 从 0 到 N-1。
+
+### 测试验证
+
+- `test_if_else.py`: 4 个测试 (GIR 生成、边界检查、嵌套 if/elif/else、AMD GPU 端到端) 全部通过
+- AMD GPU (Rusticl/Mesa) 端到端: if/else kernel 正确执行，8 个测试数据全部正确
+- 全工作区 3584/3584 通过，Rust 单元测试 121/121 通过，AMD GPU 测试 11/11 通过

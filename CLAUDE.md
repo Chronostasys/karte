@@ -394,15 +394,22 @@ let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering
 ## Notable Recent Changes
 
 Recent work includes:
-- **GPU if/else 控制流完整支持 (2026-07-01)** — Python AST 解释器 + SPIR-V OpPhi 合并:
+- **GPU if/else 控制流完整支持 (2026-07-01)** — Python AST 解释器 + SPIR-V Function 局部变量合并:
   - Python 前端新增 `_AstInterpreter` 类，替代 `exec()` 方式执行函数体，支持 if/elif/else 嵌套控制流
   - 比较运算符 (==, !=, <, >, <=, >=)、布尔运算符 (and/or/not)、增强赋值 (+=/-=/*=//=)
   - 分支合并：对 then/else 中不同变量用 Where 生成 Phi 选择
-  - SPIR-V 后端：Where 在合并点用 `OpPhi` (opcode 245) 替代 `OpSelect`；BranchIf 发射 `OpSelectionMerge` (opcode 247)
+  - SPIR-V 后端关键设计决策（AMD GPU 兼容）:
+    - **Function 局部变量替代 OpPhi**: OpPhi 合并 VGPR(then分支)与 SGPR(else分支)值导致 AMD LLVM 崩溃。改为各分支 Store 到 Function 变量，合并点 Load
+    - **OpPtrAccessChain 替代 OpConvertPtrToU+IAdd+ConvertUToPtr**: OpConvertPtrToU 将 SGPR 指针参数转 i64，触发非法 VGPR→SGPR 拷贝
+    - **Float 指针直接使用**: ptr<CrossWorkgroup, float> + OpPtrAccessChain，避免 Int8 capability (spirv-val Vulkan 模式不支持)
+    - **GlobalInvocationId 拒绝**: 同样触发 VGPR/SGPR 错误，仅 LocalInvocationId 安全
+    - **惰性 built-in 发射**: scan_builtins() 检测实际使用的 built-in，仅声明使用者。未使用的 SGPR built-in 导致 AMD LLVM 寄存器分配错误
+    - **移除 OpExecutionMode LocalSize**: 让 OpenCL 运行时根据 local_work_size 参数决定 workgroup 大小，避免 CL_INVALID_WORK_GROUP_SIZE (-54)
+  - thread_id() 简化: 仅发射 ThreadId (LocalInvocationId)，OpenCL launch 用 global = local = N (单 workgroup 覆盖所有元素)
   - 修复 4 个 SPIR-V opcode 错误：OpSConvert=114 (原75)、OpFConvert=115 (原103)、OpConvertPtrToU=117 (原122)、OpSelectionMerge=247 (原251)
-  - Move 指令类型推断：从源操作数推断 dtype（Imm→F32, Reg→继承, Param→参数类型）
-  - AMD GPU 端到端验证：if/else kernel 在 Rusticl/Mesa 上成功执行
-  - 全工作区 3584/3584 通过
+  - AMD GPU 端到端验证：if/else kernel 在 Rusticl/Mesa 上成功执行，8 个测试数据全部正确
+  - test_if_else.py: 4 个测试 (GIR 生成、边界检查、嵌套 if/elif/else、AMD GPU 端到端) 全部通过
+  - 全工作区 3584/3584 通过，Rust 单元测试 121/121 通过，AMD GPU 测试 11/11 通过
 - **SPIR-V 后端真实 AMD GPU 验证 (2026-06-30)** — 6 项关键修复 + 11/11 端到端测试通过:
   - 在本机 AMD iGPU (Rusticl/Mesa OpenCL) 上通过 `clCreateProgramWithIL` + `clBuildProgram` + `clEnqueueNDRangeKernel` 成功加载并执行 SPIR-V kernel
   - **CAP_ADDRESSES 修复**: Addresses capability = 4（原误写为 5=Linkage）
@@ -801,6 +808,8 @@ Store { target = %10000, value = %2 }
 - **TEST_CC FUNC_CALL vs ASSIGN GOTCHA**: `do_block_braced` 的 `_ =>` 分支中需要区分标识符后的 token 类型：`Sym(6)`=`(` → 函数调用；`Sym(32)`=`[` → 数组下标；`Sym(10)`=`=` → 赋值；其他 → 普通表达式。错误处理会导致 `increment()` 被当作全局变量写入（`movq %rax, increment(%rip)` 覆盖函数代码→SIGSEGV）。
 - **TEST_CC VAR_OFF FALLTHROUGH GOTCHA**: `var_off(v, name)` 返回 -1 时表示变量未找到（可能是全局变量或未定义变量）。`store_var`/`load_var` 辅助函数自动降级为 `name(%rip)` (RIP-relative) 访问，这要求全局变量已在 `.data` 段声明。未声明全局变量被引用时会导致链接错误而非编译错误。
 - **INCREMENT_BLOCK MIR BLOCK ORDER GOTCHA**: ForIn 和 ForArray 的 `increment_block` 在 MIR 中按创建顺序（HashMap key 排序）排在 loop body blocks 之前。LIR 按 MIR block 顺序生成代码。**绝不能在 `increment_block` 中添加引用 loop body 变量的语句**（HeapAlloc/Store/Dereference），因为第一次迭代时这些变量未初始化。这适用于所有三种场景：**（1）`actual_backedge_values` 的 HeapAlloc/Store**：使用 `wrapped_normal_values`（在 normal_end_block 中预创建）代替。**（2）Phi 的 `normal_value`**：使用 `wrapped_normal_values` 中的 shared_var。**（3）Phi 的 `cont_value`**：使用 `wrapped_continue_values`（在每个 continue 源块中预创建）代替。相关修复见 `karte-mir/src/lower/expr.rs` 搜索 "关键修复"。
+- **AMD SPIR-V VGPR/SGPR GOTCHA**: AMD GPU (Rusticl/Mesa/LLVM) 对寄存器类型极其敏感。以下操作均会触发 `illegal VGPR to SGPR copy` 导致 kernel 崩溃: (1) **OpPhi 跨寄存器类合并** — then 分支值在 VGPR、else 分支值在 SGPR 时，OpPhi 无法合并。**修复**: 用 Function 局部变量（各分支 Store + 合并点 Load）替代 OpPhi。(2) **OpConvertPtrToU 转换 SGPR 指针参数** — 指针参数在 SGPR，转 i64 后在 VGPR，触发非法拷贝。**修复**: 用 OpPtrAccessChain 直接进行指针运算。(3) **GlobalInvocationId** — 该 built-in 在某些情况下落入 SGPR，触发同样错误。**修复**: 仅使用 LocalInvocationId（纯 VGPR），runtime 用 global = local = N 单 workgroup 覆盖所有元素。(4) **未使用的 SGPR built-in** — 即使声明了但未实际使用的 SGPR built-in 也会导致 AMD LLVM 寄存器分配错误。**修复**: scan_builtins() 惰性检测，仅发射实际使用的 built-in。
+- **AMD SPIR-V OpExecutionMode GOTCHA**: 若 SPIR-V 中发射了 `OpExecutionMode LocalSize x y z`，则 OpenCL `clEnqueueNDRangeKernel` 的 `local_work_size` 必须与之精确匹配，否则报 `CL_INVALID_WORK_GROUP_SIZE (-54)`。**修复**: 移除 OpExecutionMode 发射，让 OpenCL 运行时根据 local_work_size 参数自行决定 workgroup 大小。
 - **🔴 绝对禁止 HACKS：永远禁止任何 hack、workaround、取巧绕过、治标不治本的修复。必须找到并修复问题的根因。翻转 bool / unwrap_or 改默认值 / 加条件跳过分析 等绕过手段 = 不可接受。** 🔴
 - **🔴 绝对禁止 HACKS：永远禁止任何 hack、workaround、取巧绕过、治标不治本的修复。必须找到并修复问题的根因。翻转 bool / unwrap_or 改默认值 / 加条件跳过分析 等绕过手段 = 不可接受。** 🔴
 - **🔴 绝对禁止 HACKS：永远禁止任何 hack、workaround、取巧绕过、治标不治本的修复。必须找到并修复问题的根因。翻转 bool / unwrap_or 改默认值 / 加条件跳过分析 等绕过手段 = 不可接受。** 🔴
