@@ -95,6 +95,8 @@ const OP_CONTROL_BARRIER: u32 = 224;
 const OP_LABEL: u32 = 248;
 const OP_BRANCH: u32 = 249;
 const OP_BRANCH_CONDITIONAL: u32 = 250;
+const OP_SELECTION_MERGE: u32 = 247;
+const OP_PHI: u32 = 245;
 const OP_RETURN: u32 = 253;
 
 const OP_EXT_INST: u32 = 12;
@@ -104,7 +106,11 @@ const OP_CONVERT_F_TO_S: u32 = 110;
 const OP_CONVERT_F_TO_U: u32 = 109;
 const OP_BITCAST: u32 = 124;
 const OP_CONVERT_U_TO_PTR: u32 = 120;
-const OP_CONVERT_PTR_TO_U: u32 = 122;
+const OP_CONVERT_PTR_TO_U: u32 = 117;
+
+// 类型转换
+const OP_S_CONVERT: u32 = 114;  // OpSConvert — 整数扩展/截断
+const OP_F_CONVERT: u32 = 115;  // OpFConvert — 浮点转换
 
 // Group operations
 const OP_GROUP_F_ADD: u32 = 265;
@@ -239,6 +245,11 @@ pub struct SpirvCompiler {
     param_ids: Vec<u32>,             // 函数参数 SPIR-V ID
     param_ptr_types: Vec<u32>,       // 指针参数的类型 ID
     param_is_ptr: Vec<bool>,         // 参数是否为指针
+    branch_merge_map: HashMap<usize, usize>, // BranchIf 指令索引 → merge label
+    current_instr_idx: usize,        // 当前编译的指令索引
+    branch_then_block: u32,         // 最近 BranchIf 的 then block SPIR-V ID (用于 OpPhi)
+    branch_else_block: u32,         // 最近 BranchIf 的 else block SPIR-V ID
+    at_merge_point: bool,           // 当前是否在合并点（Where 应使用 OpPhi）
 
     // 当前 kernel 基本信息
     kernel_name: String,
@@ -293,6 +304,11 @@ impl SpirvCompiler {
             param_ids: Vec::new(),
             param_ptr_types: Vec::new(),
             param_is_ptr: Vec::new(),
+            branch_merge_map: HashMap::new(),
+            current_instr_idx: 0,
+            branch_then_block: 0,
+            branch_else_block: 0,
+            at_merge_point: false,
             kernel_name: String::new(),
             kernel_func_id: 0,
             kernel_func_type_id: 0,
@@ -599,7 +615,17 @@ impl SpirvCompiler {
     fn operand_id(&mut self, op: &GirOperand, dtype: GirDType) -> u32 {
         match op {
             GirOperand::Reg(id) => {
-                *self.reg_map.get(id).unwrap_or(&self.const_zero_i32)
+                let raw = *self.reg_map.get(id).unwrap_or(&self.const_zero_i32);
+                // 检查是否需要类型转换
+                if let Some(&reg_dtype) = self.reg_types.get(id) {
+                    if reg_dtype != dtype && !reg_dtype.is_float() == !dtype.is_float() {
+                        // 同类类型（int→int 或 float→float）但宽度不同 — 发射转换
+                        let target_type = self.type_id(dtype);
+                        let conv_op = if dtype.is_float() { OP_F_CONVERT } else { OP_S_CONVERT };
+                        return self.instr_with_result(conv_op, target_type, &[raw]);
+                    }
+                }
+                raw
             }
             GirOperand::Imm(val) => {
                 if dtype.is_float() {
@@ -614,7 +640,14 @@ impl SpirvCompiler {
                 *self.label_map.get(id).unwrap_or(&self.const_zero_i32)
             }
             GirOperand::Param(id) => {
-                self.param_ids.get(*id).copied().unwrap_or(self.const_zero_i32)
+                let param_id = self.param_ids.get(*id).copied().unwrap_or(self.const_zero_i32);
+                // 指针参数在整数运算中需要先转换为 i64
+                if *id < self.param_is_ptr.len() && self.param_is_ptr[*id] && !dtype.is_float() {
+                    let ptr_to_u = self.instr_with_result(OP_CONVERT_PTR_TO_U, self.type_i64, &[param_id]);
+                    ptr_to_u
+                } else {
+                    param_id
+                }
             }
         }
     }
@@ -716,13 +749,8 @@ impl SpirvCompiler {
             self.reg_map.insert(i, pid);
         }
 
-        // 第一个基本块必须以 OpLabel 开始
-        // 在函数参数之后立即开始第一个基本块
-        let entry_label = if self.label_map.contains_key(&0) {
-            self.label_map[&0]
-        } else {
-            self.alloc_id()
-        };
+        // 第一个基本块必须以 OpLabel 开始 — 分配独立的入口 label ID
+        let entry_label = self.alloc_id();
         self.instr(OP_LABEL, &[entry_label]);
 
         // 声明局部变量（对每个非参数寄存器创建 OpVariable Function）
@@ -746,7 +774,21 @@ impl SpirvCompiler {
         let last_is_ret = instrs.last().map(|i| matches!(i, GirInstruction::Return)).unwrap_or(false);
         let end = if last_is_ret { instrs.len() - 1 } else { instrs.len() };
 
-        for instr in &instrs[..end] {
+        // 预扫描: 为每个 BranchIf 找到 merge label（其后第一个 Jump 的目标）
+        self.branch_merge_map.clear();
+        for i in 0..end {
+            if matches!(instrs[i], GirInstruction::BranchIf { .. }) {
+                for j in (i + 1)..end {
+                    if let GirInstruction::Jump { target } = &instrs[j] {
+                        self.branch_merge_map.insert(i, *target);
+                        break;
+                    }
+                }
+            }
+        }
+
+        for (i, instr) in instrs[..end].iter().enumerate() {
+            self.current_instr_idx = i;
             self.compile_instruction(instr);
         }
 
@@ -811,8 +853,7 @@ impl SpirvCompiler {
             self.reg_types.insert(i, param.dtype);
         }
         for instr in &func.instructions {
-            match instr {
-                GirInstruction::Add { dst, dtype, .. }
+            match instr {                GirInstruction::Add { dst, dtype, .. }
                 | GirInstruction::Sub { dst, dtype, .. }
                 | GirInstruction::Mul { dst, dtype, .. }
                 | GirInstruction::Div { dst, dtype, .. }
@@ -851,6 +892,21 @@ impl SpirvCompiler {
                     for i in 0..2 { self.reg_types.insert(*dst_base + i, GirDType::F32); }
                 }
                 _ => {}
+            }
+        }
+        // Move 指令：从源操作数推断类型
+        for instr in &func.instructions {
+            if let GirInstruction::Move { dst, src } = instr {
+                if self.reg_types.contains_key(dst) {
+                    continue;
+                }
+                let inferred = match src {
+                    GirOperand::Reg(id) => self.reg_types.get(id).copied().unwrap_or(GirDType::F32),
+                    GirOperand::Imm(_) => GirDType::F32,  // Python tracer 中 Move+Imm 总是 float
+                    GirOperand::Param(id) => func.params.get(*id).map(|p| p.dtype).unwrap_or(GirDType::F32),
+                    GirOperand::Label(_) => GirDType::I32,
+                };
+                self.reg_types.insert(*dst, inferred);
             }
         }
     }
@@ -1006,6 +1062,14 @@ impl SpirvCompiler {
                 };
                 let then_id = *self.label_map.get(then_label).unwrap_or(&self.const_zero_i32);
                 let else_id = *self.label_map.get(else_label).unwrap_or(&self.const_zero_i32);
+                // 记录 then/else block IDs 用于后续 OpPhi
+                self.branch_then_block = then_id;
+                self.branch_else_block = else_id;
+                // 发射 OpSelectionMerge（SPIR-V 结构化控制流要求）
+                if let Some(&merge_target) = self.branch_merge_map.get(&self.current_instr_idx) {
+                    let merge_id = *self.label_map.get(&merge_target).unwrap_or(&self.const_zero_i32);
+                    self.instr(OP_SELECTION_MERGE, &[merge_id, 0]); // None selection control
+                }
                 self.instr(OP_BRANCH_CONDITIONAL, &[cond_id, then_id, else_id]);
             }
             GirInstruction::Jump { target } => {
@@ -1015,6 +1079,8 @@ impl SpirvCompiler {
             GirInstruction::Label { id } => {
                 let lid = *self.label_map.get(id).unwrap_or(&self.const_zero_i32);
                 self.instr(OP_LABEL, &[lid]);
+                // 检测是否是合并点（BranchIf 的 merge target）
+                self.at_merge_point = self.branch_merge_map.values().any(|&v| v == *id);
             }
             GirInstruction::Return => {
                 self.instr(OP_RETURN, &[]);
@@ -1182,13 +1248,25 @@ impl SpirvCompiler {
 
             // —— 条件操作 ——
             GirInstruction::Where { dst, cond, then_val, else_val, .. } => {
-                let c = self.operand_id(cond, GirDType::F32);
-                let zero = self.emit_const_f32(0.0);
-                let bool_id = self.instr_with_result(OP_F_ORD_NOT_EQUAL, self.type_bool, &[c, zero]);
-                let t = self.operand_id(then_val, GirDType::F32);
-                let e = self.operand_id(else_val, GirDType::F32);
-                let r = self.instr_with_result(OP_SELECT, self.type_f32, &[bool_id, t, e]);
-                self.reg_map.insert(*dst, r);
+                if self.at_merge_point {
+                    // 合并点: 使用 OpPhi 合并来自 then/else block 的值
+                    let t = self.operand_id(then_val, GirDType::F32);
+                    let e = self.operand_id(else_val, GirDType::F32);
+                    let r = self.instr_with_result(OP_PHI, self.type_f32, &[
+                        t, self.branch_then_block,
+                        e, self.branch_else_block,
+                    ]);
+                    self.reg_map.insert(*dst, r);
+                } else {
+                    // 非合并点: 使用 OpSelect（predicated select）
+                    let c = self.operand_id(cond, GirDType::F32);
+                    let zero = self.emit_const_f32(0.0);
+                    let bool_id = self.instr_with_result(OP_F_ORD_NOT_EQUAL, self.type_bool, &[c, zero]);
+                    let t = self.operand_id(then_val, GirDType::F32);
+                    let e = self.operand_id(else_val, GirDType::F32);
+                    let r = self.instr_with_result(OP_SELECT, self.type_f32, &[bool_id, t, e]);
+                    self.reg_map.insert(*dst, r);
+                }
             }
             GirInstruction::MaskedGlobalLoad { dst, addr, mask, default_val, dtype } => {
                 let addr_id = self.operand_id(addr, GirDType::I64);

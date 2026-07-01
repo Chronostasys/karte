@@ -495,6 +495,21 @@ class _SymF32:
             "src1": _operand_to_json(self), "src2": _operand_to_json(other), "dtype": "f32"})
         return _SymF32(r, self._builder)
 
+    def __eq__(self, other):
+        r = self._builder.alloc_reg()
+        self._builder.emit_gir({"op": "Cmp", "dst": r, "cmp": "eq",
+            "src1": _operand_to_json(self), "src2": _operand_to_json(other), "dtype": "f32"})
+        return _SymF32(r, self._builder)
+
+    def __ne__(self, other):
+        r = self._builder.alloc_reg()
+        self._builder.emit_gir({"op": "Cmp", "dst": r, "cmp": "ne",
+            "src1": _operand_to_json(self), "src2": _operand_to_json(other), "dtype": "f32"})
+        return _SymF32(r, self._builder)
+
+    def __hash__(self):
+        return hash(self.reg)
+
 
 class _SymTensor:
     """符号张量 — 索引操作自动生成 GPU 加载指令"""
@@ -722,6 +737,31 @@ class _SymTensor:
             return addr
 
         raise NotImplementedError(f"索引维度 {len(indices)} 暂不支持")
+
+    def __setitem__(self, indices, value):
+        """张量存储 — output[tid] = value → GlobalStore 指令"""
+        if not isinstance(indices, tuple):
+            indices = (indices,)
+
+        builder = self._builder
+        addr_reg = self._compute_addr(indices)
+
+        if isinstance(value, _SymF32):
+            src = {"kind": "Reg", "id": value.reg}
+        elif isinstance(value, (int, float)):
+            r = builder.alloc_reg()
+            bits = int(np.float32(value).view(np.uint32))
+            builder.emit_gir({"op": "Move", "dst": r, "src": {"kind": "Imm", "val": bits}})
+            src = {"kind": "Reg", "id": r}
+        else:
+            src = _operand_to_json(value)
+
+        builder.emit_gir({
+            "op": "GlobalStore",
+            "addr": {"kind": "Reg", "id": addr_reg},
+            "src": src,
+            "dtype": "f32"
+        })
 
 
 # ============================================================
@@ -1112,6 +1152,392 @@ def jit(fn):
     return wrapper
 
 
+# ============================================================
+# AST 解释器 — 支持 if/else 控制流
+# ============================================================
+
+import ast as _ast
+
+class _AstInterpreter:
+    """AST 级别解释器 — 支持 if/else 控制流，生成 BranchIf/Jump/Label GIR 指令"""
+
+    def __init__(self, builder, fn_globals, param_names, sym_args):
+        self.builder = builder
+        self.fn_globals = fn_globals
+        self.env = {}
+        self.return_regs = None
+        self.returned = False
+        for name, val in zip(param_names, sym_args):
+            self.env[name] = val
+
+    def run(self, func_body):
+        for stmt in func_body:
+            self._stmt(stmt)
+            if self.returned:
+                break
+
+    # —— 语句处理 ——
+
+    def _stmt(self, node):
+        if isinstance(node, _ast.Assign):
+            val = self._expr(node.value)
+            for tgt in node.targets:
+                self._assign(tgt, val)
+        elif isinstance(node, _ast.AugAssign):
+            self._aug_assign(node)
+        elif isinstance(node, _ast.Return):
+            self._return(node)
+        elif isinstance(node, _ast.If):
+            self._if(node)
+        elif isinstance(node, _ast.Expr):
+            self._expr(node.value)
+        elif isinstance(node, _ast.AnnAssign):
+            if node.value is not None:
+                self._assign(node.target, self._expr(node.value))
+        elif isinstance(node, _ast.Pass):
+            pass
+        else:
+            raise NotImplementedError(f"不支持的语句: {type(node).__name__}")
+
+    def _assign(self, target, value):
+        if isinstance(target, _ast.Name):
+            self.env[target.id] = value
+        elif isinstance(target, _ast.Subscript):
+            obj = self._expr(target.value)
+            idx = self._index(target)
+            if isinstance(obj, _SymTensor):
+                obj[idx] = value
+            else:
+                raise NotImplementedError("不支持对非张量进行索引赋值")
+
+    def _aug_assign(self, node):
+        old_val = self._expr(node.target)
+        new_val = self._expr(node.value)
+        op = type(node.op)
+        if op == _ast.Add: result = old_val + new_val
+        elif op == _ast.Sub: result = old_val - new_val
+        elif op == _ast.Mult: result = old_val * new_val
+        elif op == _ast.Div: result = old_val / new_val
+        else: raise NotImplementedError(f"不支持增强赋值: {op.__name__}")
+        self._assign(node.target, result)
+
+    def _return(self, node):
+        if node.value is not None:
+            result = self._expr(node.value)
+            if isinstance(result, _SymF32):
+                self.return_regs = [result.reg]
+            elif result is None:
+                self.return_regs = []
+            elif isinstance(result, (int, float)):
+                r = self.builder.alloc_reg()
+                bits = int(np.float32(result).view(np.uint32))
+                self.builder.emit_gir({"op": "Move", "dst": r, "src": {"kind": "Imm", "val": bits}})
+                self.return_regs = [r]
+        else:
+            self.return_regs = []
+        self.returned = True
+
+    def _if(self, node):
+        # 评估条件
+        cond = self._expr(node.test)
+
+        # 静态条件（Python 字面量）— 直接走对应分支
+        if isinstance(cond, (int, float, bool)):
+            body = node.body if cond else node.orelse
+            for s in body:
+                self._stmt(s)
+                if self.returned:
+                    return
+            return
+
+        if not isinstance(cond, (_SymF32, _RegRef)):
+            raise TypeError(f"if 条件必须是符号值，得到 {type(cond)}")
+
+        cond_reg = cond.reg
+        then_lbl = self.builder.alloc_label()
+        else_lbl = self.builder.alloc_label()
+        end_lbl = self.builder.alloc_label()
+
+        # 发射 BranchIf
+        self.builder.emit_gir({
+            "op": "BranchIf",
+            "cond": {"kind": "Reg", "id": cond_reg},
+            "then_label": then_lbl,
+            "else_label": else_lbl,
+        })
+
+        pre_env = dict(self.env)
+
+        # —— then 分支 ——
+        self.builder.emit_gir({"op": "Label", "id": then_lbl})
+        self.returned = False
+        then_ret = False
+        for s in node.body:
+            self._stmt(s)
+            if self.returned:
+                then_ret = True
+                break
+        then_env = dict(self.env)
+        if not then_ret:
+            self.builder.emit_gir({"op": "Jump", "target": end_lbl})
+
+        # —— else 分支 ——
+        self.builder.emit_gir({"op": "Label", "id": else_lbl})
+        self.env = dict(pre_env)
+        self.returned = False
+        else_ret = False
+        for s in node.orelse:
+            self._stmt(s)
+            if self.returned:
+                else_ret = True
+                break
+        else_env = dict(self.env)
+
+        # else 分支如果没有 return，补发 Jump 到 end_lbl（确保 SPIR-V block 以分支结束）
+        if not else_ret:
+            self.builder.emit_gir({"op": "Jump", "target": end_lbl})
+
+        # —— 合并 ——
+        if then_ret and else_ret:
+            self.returned = True
+            return
+
+        if then_ret and not else_ret:
+            # then return, else 已 Jump 到 end
+            self.builder.emit_gir({"op": "Label", "id": end_lbl})
+            self.env = else_env
+            self.returned = False
+            return
+
+        if else_ret and not then_ret:
+            # then 已 Jump 到 end, else return
+            self.builder.emit_gir({"op": "Label", "id": end_lbl})
+            self.env = then_env
+            self.returned = False
+            return
+
+        # 两个分支都没 return — 在 end_lbl 合并
+        self.builder.emit_gir({"op": "Label", "id": end_lbl})
+
+        # 合并变量: 对在 then/else 中值不同的 _SymF32，用 Where 选择
+        all_names = set(then_env.keys()) | set(else_env.keys())
+        for name in all_names:
+            tv = then_env.get(name, pre_env.get(name))
+            ev = else_env.get(name, pre_env.get(name))
+            if isinstance(tv, _SymF32) and isinstance(ev, _SymF32):
+                if tv.reg != ev.reg:
+                    mr = self.builder.alloc_reg()
+                    self.builder.emit_gir({
+                        "op": "Where", "dst": mr,
+                        "cond": {"kind": "Reg", "id": cond_reg},
+                        "then_val": {"kind": "Reg", "id": tv.reg},
+                        "else_val": {"kind": "Reg", "id": ev.reg},
+                        "dtype": "f32",
+                    })
+                    self.env[name] = _SymF32(mr, self.builder)
+                else:
+                    self.env[name] = tv
+            elif tv is not None:
+                self.env[name] = tv
+            elif ev is not None:
+                self.env[name] = ev
+        self.returned = False
+
+    # —— 表达式求值 ——
+
+    def _expr(self, node):
+        if isinstance(node, _ast.Name):
+            if node.id in self.env:
+                return self.env[node.id]
+            if node.id in self.fn_globals:
+                return self.fn_globals[node.id]
+            raise NameError(f"未定义变量: {node.id}")
+
+        if isinstance(node, _ast.Constant):
+            return node.value
+
+        if isinstance(node, _ast.BinOp):
+            left = self._expr(node.left)
+            right = self._expr(node.right)
+            op = type(node.op)
+            if op == _ast.Add: return left + right
+            if op == _ast.Sub: return left - right
+            if op == _ast.Mult: return left * right
+            if op == _ast.Div:
+                if isinstance(left, _SymF32): return left / right if hasattr(left, '__truediv__') else left * (1.0 / right)
+                return left / right
+            if op == _ast.Mod: return operator_mod(left, right)
+            raise NotImplementedError(f"不支持二元操作: {op.__name__}")
+
+        if isinstance(node, _ast.UnaryOp):
+            operand = self._expr(node.operand)
+            if isinstance(node.op, _ast.USub):
+                if isinstance(operand, _SymF32):
+                    return operand * np.float32(-1.0)
+                return -operand
+            if isinstance(node.op, _ast.UAdd):
+                return operand
+            if isinstance(node.op, _ast.Not):
+                if isinstance(operand, _SymF32):
+                    r = self.builder.alloc_reg()
+                    self.builder.emit_gir({"op": "Cmp", "dst": r, "cmp": "eq",
+                        "src1": {"kind": "Reg", "id": operand.reg},
+                        "src2": {"kind": "Imm", "val": 0}, "dtype": "f32"})
+                    return _SymF32(r, self.builder)
+                return not operand
+            raise NotImplementedError(f"不支持一元操作: {type(node.op).__name__}")
+
+        if isinstance(node, _ast.Compare):
+            return self._compare(node)
+
+        if isinstance(node, _ast.BoolOp):
+            return self._bool_op(node)
+
+        if isinstance(node, _ast.Call):
+            func = self._expr(node.func)
+            args = [self._expr(a) for a in node.args]
+            kwargs = {kw.arg: self._expr(kw.value) for kw in node.keywords if kw.arg}
+            return func(*args, **kwargs)
+
+        if isinstance(node, _ast.Subscript):
+            obj = self._expr(node.value)
+            idx = self._index(node)
+            if isinstance(obj, _SymTensor):
+                return obj[idx]
+            raise NotImplementedError("不支持的索引目标")
+
+        if isinstance(node, _ast.Attribute):
+            obj = self._expr(node.value)
+            if hasattr(obj, node.attr):
+                return getattr(obj, node.attr)
+            raise AttributeError(f"{type(obj)} 没有属性 {node.attr}")
+
+        raise NotImplementedError(f"不支持的表达式: {type(node).__name__}")
+
+    def _compare(self, node):
+        """处理比较表达式"""
+        left = self._expr(node.left)
+        results = []
+        for op, comp_node in zip(node.ops, node.comparators):
+            right = self._expr(comp_node)
+            cmp_str = {_ast.Gt: "gt", _ast.Lt: "lt", _ast.GtE: "ge",
+                       _ast.LtE: "le", _ast.Eq: "eq", _ast.NotEq: "ne"}.get(type(op))
+            if cmp_str is None:
+                raise NotImplementedError(f"不支持比较: {type(op).__name__}")
+
+            if isinstance(left, _SymF32):
+                results.append(left._compare(cmp_str, right))
+            elif isinstance(left, _RegRef):
+                # 整数比较 — 使用 i32 dtype
+                r = self.builder.alloc_reg()
+                if isinstance(right, (int, float)):
+                    rj = {"kind": "Imm", "val": int(right)}
+                elif isinstance(right, _SymF32):
+                    rj = {"kind": "Reg", "id": right.reg}
+                elif isinstance(right, _RegRef):
+                    rj = {"kind": "Reg", "id": right.reg}
+                else:
+                    rj = _operand_to_json(right)
+                self.builder.emit_gir({"op": "Cmp", "dst": r, "cmp": cmp_str,
+                    "src1": {"kind": "Reg", "id": left.reg},
+                    "src2": rj, "dtype": "i32"})
+                results.append(_SymF32(r, self.builder))
+            else:
+                # Python 原生比较
+                import operator as _opmod
+                py_fn = {_ast.Gt: _opmod.gt, _ast.Lt: _opmod.lt, _ast.GtE: _opmod.ge,
+                         _ast.LtE: _opmod.le, _ast.Eq: _opmod.eq, _ast.NotEq: _opmod.ne}.get(type(op))
+                results.append(py_fn(left, right))
+            left = right
+
+        if len(results) == 1:
+            return results[0]
+        # 多重比较 (a < b < c) — AND 合并
+        result = results[0]
+        for r in results[1:]:
+            if isinstance(result, _SymF32) and isinstance(r, _SymF32):
+                mr = self.builder.alloc_reg()
+                self.builder.emit_gir({"op": "Where", "dst": mr,
+                    "cond": {"kind": "Reg", "id": result.reg},
+                    "then_val": {"kind": "Reg", "id": r.reg},
+                    "else_val": {"kind": "Imm", "val": 0}, "dtype": "f32"})
+                result = _SymF32(mr, self.builder)
+            else:
+                result = result and r
+        return result
+
+    def _bool_op(self, node):
+        """处理 and / or"""
+        if isinstance(node.op, _ast.And):
+            result = self._expr(node.values[0])
+            for vn in node.values[1:]:
+                nxt = self._expr(vn)
+                if isinstance(result, _SymF32) and isinstance(nxt, _SymF32):
+                    mr = self.builder.alloc_reg()
+                    self.builder.emit_gir({"op": "Where", "dst": mr,
+                        "cond": {"kind": "Reg", "id": result.reg},
+                        "then_val": {"kind": "Reg", "id": nxt.reg},
+                        "else_val": {"kind": "Imm", "val": 0}, "dtype": "f32"})
+                    result = _SymF32(mr, self.builder)
+                else:
+                    result = result and nxt
+            return result
+        elif isinstance(node.op, _ast.Or):
+            result = self._expr(node.values[0])
+            for vn in node.values[1:]:
+                nxt = self._expr(vn)
+                if isinstance(result, _SymF32) and isinstance(nxt, _SymF32):
+                    mr = self.builder.alloc_reg()
+                    self.builder.emit_gir({"op": "Where", "dst": mr,
+                        "cond": {"kind": "Reg", "id": result.reg},
+                        "then_val": {"kind": "Reg", "id": result.reg},
+                        "else_val": {"kind": "Reg", "id": nxt.reg}, "dtype": "f32"})
+                    result = _SymF32(mr, self.builder)
+                else:
+                    result = result or nxt
+            return result
+
+    def _index(self, subscript_node):
+        """从 Subscript 节点提取索引"""
+        sl = subscript_node.slice
+        if hasattr(_ast, 'Index') and isinstance(sl, _ast.Index):
+            sl = sl.value
+        if isinstance(sl, _ast.Tuple):
+            return tuple(self._expr(e) for e in sl.elts)
+        return self._expr(sl)
+
+
+# _SymF32 的比较辅助方法
+def _sym_compare(self, cmp_str, other):
+    r = self._builder.alloc_reg()
+    self._builder.emit_gir({"op": "Cmp", "dst": r, "cmp": cmp_str,
+        "src1": _operand_to_json(self), "src2": _operand_to_json(other), "dtype": "f32"})
+    return _SymF32(r, self._builder)
+_SymF32._compare = _sym_compare
+
+
+def operator_mod(a, b):
+    """取模辅助"""
+    if isinstance(a, _SymF32):
+        r = a._builder.alloc_reg()
+        # 通过 f32 除法 + floor + 乘法 + 减法实现 mod
+        # a % b = a - floor(a/b) * b
+        quotient = a / b
+        # floor — 使用 Cmp + Where 模拟: if quotient < 0 then ceil else floor
+        # 简化: 直接用 f32 除法然后向下取整
+        # 实际上 GIR 没有 floor，用 math 函数代替
+        a._builder.emit_gir({"op": "Floor", "dst": r, "src": _operand_to_json(quotient), "dtype": "f32"})
+        floored = _SymF32(r, a._builder)
+        result = a._builder.alloc_reg()
+        a._builder.emit_gir({"op": "Mul", "dst": result,
+            "src1": _operand_to_json(floored), "src2": _operand_to_json(b), "dtype": "f32"})
+        final = a._builder.alloc_reg()
+        a._builder.emit_gir({"op": "Sub", "dst": final,
+            "src1": _operand_to_json(a), "src2": {"kind": "Reg", "id": result}, "dtype": "f32"})
+        return _SymF32(final, a._builder)
+    return a % b
+
+
 def _compile(fn, call_args, block_size=256):
     """
     编译一个 @karte.jit 函数
@@ -1203,44 +1629,21 @@ def _compile(fn, call_args, block_size=256):
     fn_globals['min_val'] = min_val
     fn_globals['unroll'] = unroll
 
-    # 创建临时函数执行 — 用 AST 精确移除类型标注和装饰器
+    # AST 级别符号执行 — 支持 if/else 控制流
     import ast
     source_tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+    func_def = None
     for node in ast.walk(source_tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            node.decorator_list = []  # 移除装饰器
-            for arg in node.args.args + node.args.kwonlyargs:
-                arg.annotation = None
-            if node.args.vararg:
-                node.args.vararg.annotation = None
-            if node.args.kwarg:
-                node.args.kwarg.annotation = None
-            node.returns = None
-    exec_code = ast.unparse(source_tree)
+            node.decorator_list = []
+            func_def = node
+            break
 
-    # 编译并执行
-    local_ns = {}
-    temp_fn_code = exec_code.replace(f'def {fn.__name__}', 'def __karte_kernel__')
-    exec(temp_fn_code, fn_globals, local_ns)
-    kernel_fn = local_ns['__karte_kernel__']
-
-    # 使用符号参数执行
-    result = kernel_fn(*sym_args)
-
-    # 处理返回值
-    if isinstance(result, _SymF32):
-        builder.return_regs = [result.reg]
-    elif result is None:
-        builder.return_regs = []
-    elif isinstance(result, (int, float)):
-        r = builder.alloc_reg()
-        bits = np.float32(result).view(np.uint32)
-        builder.emit_gir({
-            "op": "Move",
-            "dst": r,
-            "src": {"kind": "Imm", "val": int(bits)}
-        })
-        builder.return_regs = [r]
+    # 使用 AST 解释器执行函数体（支持 if/else）
+    param_names = [p.name for p in params]
+    interpreter = _AstInterpreter(builder, fn_globals, param_names, sym_args)
+    interpreter.run(func_def.body)
+    builder.return_regs = interpreter.return_regs if interpreter.return_regs is not None else []
 
     # 为返回值生成 store 指令：写入输出张量的 tid 位置
     _emit_return_store(builder)
