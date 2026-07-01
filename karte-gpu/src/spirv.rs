@@ -26,6 +26,7 @@ const OP_DECORATE: u32 = 71;
 const OP_TYPE_VOID: u32 = 19;
 const OP_TYPE_BOOL: u32 = 20;
 const OP_TYPE_INT: u32 = 21;
+const OP_TYPE_ARRAY: u32 = 28;
 const OP_TYPE_FLOAT: u32 = 22;
 const OP_TYPE_VECTOR: u32 = 23;
 const OP_TYPE_STRUCT: u32 = 30;
@@ -162,10 +163,13 @@ const SCOPE_DEVICE: u32 = 1;
 const SCOPE_WORKGROUP: u32 = 2;
 const SCOPE_SUBGROUP: u32 = 3;
 
-// Memory Semantics
+// Memory Semantics (SPIR-V 规范值)
 const MEM_SEM_NONE: u32 = 0;
-const MEM_SEM_ACQUIRE_RELEASE: u32 = 0x8 | 0x4; // Acquire(2) | Release(4)
+const MEM_SEM_ACQUIRE: u32 = 0x2;
+const MEM_SEM_RELEASE: u32 = 0x4;
+const MEM_SEM_ACQUIRE_RELEASE: u32 = 0x8;
 const MEM_SEM_SEQ_CST: u32 = 0x10;
+const MEM_SEM_WORKGROUP_MEMORY: u32 = 0x20;
 
 // OpenCL.std extended instruction numbers
 const OCL_EXP: u32 = 19;
@@ -231,6 +235,11 @@ pub struct SpirvCompiler {
     // Scope/semantics 常量
     const_scope_workgroup: u32,
     const_mem_sem_release: u32,
+
+    // Shared memory (Workgroup) 变量
+    shared_mem_var: u32,
+    shared_mem_type: u32,  // OpTypeArray (array of f32)
+    shared_mem_ptr_type: u32, // OpTypePointer Workgroup f32_array
 
     // OpenCL.std 扩展指令集 ID
     ext_inst_set: u32,
@@ -328,6 +337,9 @@ impl SpirvCompiler {
             const_one_i32: 0,
             const_scope_workgroup: 0,
             const_mem_sem_release: 0,
+            shared_mem_var: 0,
+            shared_mem_type: 0,
+            shared_mem_ptr_type: 0,
             ext_inst_set: 0,
             builtin_local_invocation_id: 0,
             builtin_workgroup_id: 0,
@@ -586,8 +598,21 @@ impl SpirvCompiler {
         self.const_one_i32 = self.emit_const_i32(1);
 
         // Scope 和 Memory Semantics 常量
+        // Barrier 使用 AcquireRelease + WorkgroupMemory 确保共享内存可见性
         self.const_scope_workgroup = self.emit_const_i32(SCOPE_WORKGROUP as i32);
-        self.const_mem_sem_release = self.emit_const_i32((MEM_SEM_ACQUIRE_RELEASE | MEM_SEM_SEQ_CST) as i32);
+        self.const_mem_sem_release = self.emit_const_i32((MEM_SEM_ACQUIRE_RELEASE | MEM_SEM_WORKGROUP_MEMORY) as i32);
+
+        // Shared memory: 发射 Workgroup storage class 的数组变量
+        // 最大 4096 个 f32 = 16KB shared memory
+        let shared_mem_size = 4096u32;
+        let const_size = self.emit_const_i32(shared_mem_size as i32);
+        self.shared_mem_type = self.alloc_id();
+        self.instr_global(OP_TYPE_ARRAY, &[self.shared_mem_type, self.type_f32, const_size]);
+        self.shared_mem_ptr_type = self.alloc_id();
+        self.instr_global(OP_TYPE_POINTER, &[self.shared_mem_ptr_type, SC_WORKGROUP, self.shared_mem_type]);
+        // OpVariable Workgroup (在全局声明区)
+        self.shared_mem_var = self.alloc_id();
+        self.instr_global(OP_VARIABLE, &[self.shared_mem_ptr_type, self.shared_mem_var, SC_WORKGROUP]);
     }
 
     fn emit_const_i32(&mut self, val: i32) -> u32 {
@@ -1589,18 +1614,27 @@ impl SpirvCompiler {
                 self.instr(OP_STORE, &[ptr_id, vec_id]);
             }
             GirInstruction::SharedLoad { dst, addr, dtype } => {
-                let addr_id = self.operand_id(addr, GirDType::I64);
-                let ptr_type = self.ptr_type_id(*dtype, SC_WORKGROUP);
-                let ptr_id = self.instr_with_result(OP_CONVERT_U_TO_PTR, ptr_type, &[addr_id]);
-                let r = self.instr_with_result(OP_LOAD, self.type_id(*dtype), &[ptr_id]);
+                let byte_offset_id = self.operand_id(addr, GirDType::I64);
+                let elem_size = dtype.size_in_bytes() as i64;
+                let elem_size_const = self.emit_const_i64(elem_size);
+                let elem_index_id = self.instr_with_result(OP_S_DIV, self.type_i64,
+                    &[byte_offset_id, elem_size_const]);
+                // 用 OpAccessChain (而非 OpPtrAccessChain) 索引数组元素
+                let elem_ptr = self.instr_with_result(OP_ACCESS_CHAIN, self.ptr_type_id(GirDType::F32, SC_WORKGROUP),
+                    &[self.shared_mem_var, elem_index_id]);
+                let r = self.instr_with_result(OP_LOAD, self.type_f32, &[elem_ptr]);
                 self.reg_map.insert(*dst, r);
             }
             GirInstruction::SharedStore { addr, src, dtype } => {
-                let addr_id = self.operand_id(addr, GirDType::I64);
+                let byte_offset_id = self.operand_id(addr, GirDType::I64);
                 let val_id = self.operand_id(src, *dtype);
-                let ptr_type = self.ptr_type_id(*dtype, SC_WORKGROUP);
-                let ptr_id = self.instr_with_result(OP_CONVERT_U_TO_PTR, ptr_type, &[addr_id]);
-                self.instr(OP_STORE, &[ptr_id, val_id]);
+                let elem_size = dtype.size_in_bytes() as i64;
+                let elem_size_const = self.emit_const_i64(elem_size);
+                let elem_index_id = self.instr_with_result(OP_S_DIV, self.type_i64,
+                    &[byte_offset_id, elem_size_const]);
+                let elem_ptr = self.instr_with_result(OP_ACCESS_CHAIN, self.ptr_type_id(GirDType::F32, SC_WORKGROUP),
+                    &[self.shared_mem_var, elem_index_id]);
+                self.instr(OP_STORE, &[elem_ptr, val_id]);
             }
             GirInstruction::SharedAlloc { dst, .. } => {
                 // 共享内存分配 — 在 SPIR-V 中用 Workgroup 变量

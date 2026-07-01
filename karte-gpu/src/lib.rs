@@ -6,9 +6,15 @@
 
 pub mod ptx;
 pub mod spirv;
+pub mod tile_expansion;
+pub mod operator_fusion;
+pub mod auto_tuning;
 
 pub use ptx::PtxCompiler;
 pub use spirv::SpirvCompiler;
+pub use tile_expansion::{TileExpander, TileConfig};
+pub use operator_fusion::{OperatorFusion, FusionPattern};
+pub use auto_tuning::{AutoTuner, TuningResult, TuningConfig, CompilePipeline};
 
 /// GPU 后端 trait
 pub trait GpuBackend {

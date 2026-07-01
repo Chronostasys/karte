@@ -394,6 +394,16 @@ let mut mir = lower_expr_to_mir_with_options(&ast, options).expect("MIR lowering
 ## Notable Recent Changes
 
 Recent work includes:
+- **GPU 算子优化三件套 (2026-07-01)** — tile_expansion + auto_tuning + operator_fusion:
+  - **tile_expansion pass** (`karte-gpu/src/tile_expansion.rs`): 将高层 TileLoad/TileStore/TileMatmul/TileZeros 指令展开为底层指令序列。TileZeros → 寄存器零初始化; TileLoad → GlobalLoad + SharedStore + Barrier (协作加载到 shared memory); TileMatmul → SharedLoad + FMA 嵌套循环 (从 shared memory 读, 累加到寄存器); TileStore → GlobalStore (从寄存器直接写回全局内存)
+  - **auto_tuning** (`karte-gpu/src/auto_tuning.rs`): 为同一 kernel 生成多个 tile size 变体 (8×8, 16×16, 32×32 等), 在 GPU 上基准测试, 选最优配置。CompilePipeline 集成: 算子融合 + tile 展开 + auto-tuning
+  - **operator_fusion** (`karte-gpu/src/operator_fusion.rs`): 自动分析 GIR 程序中连续 element-wise kernel 的数据流, 将 kernel A 的输出直接传给 kernel B 的输入 (中间结果不落显存)。融合条件: 两个 kernel 都是 element-wise、block_dim 相同、输出/输入参数匹配
+  - **SPIR-V Shared Memory 修复**: SharedLoad/SharedStore 从 OpConvertUToPtr (无效, 无实际 workgroup 内存) 改为 OpAccessChain + OpVariable Workgroup (正确的 shared memory 分配)
+  - **SPIR-V Barrier Memory Semantics 修复**: MEM_SEM_ACQUIRE_RELEASE 从 0xC (Release+AcquireRelease 互斥冲突) 修正为 0x8 (仅 AcquireRelease), 加 WorkgroupMemory (0x20) 确保 shared memory 可见性
+  - **OpTypeArray opcode 修复**: opcode 从 20 (误用 OpTypeBool) 修正为 28 (正确的 OpTypeArray)
+  - CLI 集成: `gpu-jit` 命令自动调用 tile_expansion + operator_fusion pass
+  - AMD GPU 端到端验证: Tiled GEMM (4×4 矩阵乘法) 在 Rusticl/Mesa 上成功执行, 16 个输出全部正确
+  - 全工作区 3594/3594 通过，AMD GPU 11/11 通过, if/else 4/4 通过, LLM 教程 5/5 通过
 - **GPU if/else 控制流完整支持 (2026-07-01)** — Python AST 解释器 + SPIR-V Function 局部变量合并:
   - Python 前端新增 `_AstInterpreter` 类，替代 `exec()` 方式执行函数体，支持 if/elif/else 嵌套控制流
   - 比较运算符 (==, !=, <, >, <=, >=)、布尔运算符 (and/or/not)、增强赋值 (+=/-=/*=//=)

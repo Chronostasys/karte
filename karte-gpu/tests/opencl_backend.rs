@@ -125,6 +125,7 @@ const OP_EXT_INST: u32 = 12;
 const OP_LOAD: u32 = 61;
 const OP_STORE: u32 = 62;
 const OP_CONVERT_U_TO_PTR: u32 = 120;
+const OP_ACCESS_CHAIN: u32 = 65;
 const OP_COMPOSITE_EXTRACT: u32 = 81;
 const OP_COMPOSITE_CONSTRUCT: u32 = 80;
 const OP_CONTROL_BARRIER: u32 = 224;
@@ -632,7 +633,7 @@ fn test_shared_load() {
         GirInstruction::Return,
     ]);
     assert_has_op(&w, OP_LOAD, "OpLoad");
-    assert_has_op(&w, OP_CONVERT_U_TO_PTR, "OpConvertUToPtr");
+    assert_has_op(&w, OP_ACCESS_CHAIN, "OpAccessChain");
 }
 
 #[test]
@@ -643,7 +644,7 @@ fn test_shared_store() {
         GirInstruction::Return,
     ]);
     assert_has_op(&w, OP_STORE, "OpStore");
-    assert_has_op(&w, OP_CONVERT_U_TO_PTR, "OpConvertUToPtr");
+    assert_has_op(&w, OP_ACCESS_CHAIN, "OpAccessChain");
 }
 
 #[test]
@@ -1673,4 +1674,270 @@ fn test_imm_offset_uses_correct_element_index() {
         i += wc;
     }
     assert!(found_elem_index_2, "Imm(8) 字节偏移应转换为元素索引 2 (8/sizeof(f32)=2)");
+}
+
+// ============================================================
+// tile_expansion pass 测试
+// ============================================================
+
+#[test]
+fn test_tile_expansion_tile_zeros() {
+    use karte_gpu::tile_expansion::TileExpander;
+
+    let mut func = GirFunction::new("test".to_string());
+    func.emit(GirInstruction::TileZeros { dst: 10, tile_rows: 4, tile_cols: 4, dtype: GirDType::F32 });
+    func.emit(GirInstruction::Return);
+
+    let mut prog = GirProgram::new();
+    prog.add_kernel(func);
+
+    let expander = TileExpander::with_default();
+    let expanded = expander.expand_program(&prog);
+
+    let kernel = &expanded.kernels[0];
+    // TileZeros 展开后应为 Move(dst, 0) + Return
+    assert!(kernel.instructions.iter().any(|i| matches!(i,
+        GirInstruction::Move { dst: 10, src: GirOperand::Imm(0) }
+    )), "TileZeros 应展开为 Move 零值");
+    // 不应包含 TileZeros 指令
+    assert!(!kernel.instructions.iter().any(|i| matches!(i,
+        GirInstruction::TileZeros { .. }
+    )), "不应有未展开的 TileZeros");
+}
+
+#[test]
+fn test_tile_expansion_tile_load_generates_shared_store_and_barrier() {
+    use karte_gpu::tile_expansion::TileExpander;
+
+    let mut func = GirFunction::new("test".to_string());
+    func.params = vec![GirParam { name: "A".to_string(), dtype: GirDType::F32, is_ptr: true }];
+    func.emit(GirInstruction::TileLoad {
+        dst: 10, base: GirOperand::Param(0), row: GirOperand::Imm(0), col: GirOperand::Imm(0),
+        tile_rows: 4, tile_cols: 4, stride: GirOperand::Imm(4), dtype: GirDType::F32,
+    });
+    func.emit(GirInstruction::Return);
+
+    let mut prog = GirProgram::new();
+    prog.add_kernel(func);
+
+    let expander = TileExpander::with_default();
+    let expanded = expander.expand_program(&prog);
+
+    let kernel = &expanded.kernels[0];
+    // 应包含 GlobalLoad, SharedStore, Barrier
+    assert!(kernel.instructions.iter().any(|i| matches!(i, GirInstruction::GlobalLoad { .. })),
+        "TileLoad 应展开为含 GlobalLoad");
+    assert!(kernel.instructions.iter().any(|i| matches!(i, GirInstruction::SharedStore { .. })),
+        "TileLoad 应展开为含 SharedStore");
+    assert!(kernel.instructions.iter().any(|i| matches!(i, GirInstruction::Barrier)),
+        "TileLoad 应展开为含 Barrier");
+    // 不应有未展开的 TileLoad
+    assert!(!kernel.instructions.iter().any(|i| matches!(i, GirInstruction::TileLoad { .. })),
+        "不应有未展开的 TileLoad");
+}
+
+#[test]
+fn test_tile_expansion_tile_matmul_generates_fma_loop() {
+    use karte_gpu::tile_expansion::TileExpander;
+
+    let m = 2; let k = 3; let n = 2;
+    let mut func = GirFunction::new("test".to_string());
+    func.emit(GirInstruction::TileZeros { dst: 0, tile_rows: m, tile_cols: n, dtype: GirDType::F32 });
+    func.emit(GirInstruction::TileLoad {
+        dst: 1, base: GirOperand::Param(0), row: GirOperand::Imm(0), col: GirOperand::Imm(0),
+        tile_rows: m, tile_cols: k, stride: GirOperand::Imm(k as i64), dtype: GirDType::F32,
+    });
+    func.emit(GirInstruction::TileLoad {
+        dst: 2, base: GirOperand::Param(1), row: GirOperand::Imm(0), col: GirOperand::Imm(0),
+        tile_rows: k, tile_cols: n, stride: GirOperand::Imm(n as i64), dtype: GirDType::F32,
+    });
+    func.emit(GirInstruction::TileMatmul {
+        dst: 0, a: 1, b: 2, m, k, n,
+        dtype_a: GirDType::F32, dtype_b: GirDType::F32, dtype_c: GirDType::F32,
+    });
+    func.emit(GirInstruction::Return);
+    func.params = vec![
+        GirParam { name: "A".to_string(), dtype: GirDType::F32, is_ptr: true },
+        GirParam { name: "B".to_string(), dtype: GirDType::F32, is_ptr: true },
+    ];
+
+    let mut prog = GirProgram::new();
+    prog.add_kernel(func);
+
+    let expander = TileExpander::with_default();
+    let expanded = expander.expand_program(&prog);
+
+    let kernel = &expanded.kernels[0];
+    // 应包含 SharedLoad 和 Fma (从 shared memory 读数据并累加)
+    assert!(kernel.instructions.iter().any(|i| matches!(i, GirInstruction::SharedLoad { .. })),
+        "TileMatmul 应展开为含 SharedLoad");
+    assert!(kernel.instructions.iter().any(|i| matches!(i, GirInstruction::Fma { .. })),
+        "TileMatmul 应展开为含 Fma");
+    // Fma 指令数量应为 k 次 (内层循环)
+    let fma_count = kernel.instructions.iter().filter(|i| matches!(i, GirInstruction::Fma { .. })).count();
+    assert_eq!(fma_count, k, "TileMatmul 应展开为 k={} 次 Fma", k);
+    // 不应有未展开的 TileMatmul
+    assert!(!kernel.instructions.iter().any(|i| matches!(i, GirInstruction::TileMatmul { .. })),
+        "不应有未展开的 TileMatmul");
+}
+
+#[test]
+fn test_tile_expansion_compiles_to_spirv() {
+    use karte_gpu::tile_expansion::TileExpander;
+
+    // 构建一个简单的 tiled kernel: load tile, matmul, store tile
+    let mut func = GirFunction::new("tiled_gemm".to_string());
+    func.params = vec![
+        GirParam { name: "A".to_string(), dtype: GirDType::F32, is_ptr: true },
+        GirParam { name: "B".to_string(), dtype: GirDType::F32, is_ptr: true },
+        GirParam { name: "C".to_string(), dtype: GirDType::F32, is_ptr: true },
+    ];
+
+    let m = 4; let k = 4; let n = 4;
+
+    func.emit(GirInstruction::TileZeros { dst: 0, tile_rows: m, tile_cols: n, dtype: GirDType::F32 });
+    func.emit(GirInstruction::TileLoad {
+        dst: 1, base: GirOperand::Param(0), row: GirOperand::Imm(0), col: GirOperand::Imm(0),
+        tile_rows: m, tile_cols: k, stride: GirOperand::Imm(k as i64), dtype: GirDType::F32,
+    });
+    func.emit(GirInstruction::TileLoad {
+        dst: 2, base: GirOperand::Param(1), row: GirOperand::Imm(0), col: GirOperand::Imm(0),
+        tile_rows: k, tile_cols: n, stride: GirOperand::Imm(n as i64), dtype: GirDType::F32,
+    });
+    func.emit(GirInstruction::TileMatmul {
+        dst: 0, a: 1, b: 2, m, k, n,
+        dtype_a: GirDType::F32, dtype_b: GirDType::F32, dtype_c: GirDType::F32,
+    });
+    func.emit(GirInstruction::TileStore {
+        base: GirOperand::Param(2), row: GirOperand::Imm(0), col: GirOperand::Imm(0),
+        src: 0, tile_rows: m, tile_cols: n, stride: GirOperand::Imm(n as i64), dtype: GirDType::F32,
+    });
+    func.emit(GirInstruction::Return);
+
+    let mut prog = GirProgram::new();
+    prog.add_kernel(func);
+
+    // 展开 tile 指令
+    let expander = TileExpander::with_default();
+    let expanded = expander.expand_program(&prog);
+
+    // 编译为 SPIR-V (验证展开后的指令可以被 SPIR-V 后端接受)
+    let mut c = SpirvCompiler::new();
+    let w = c.compile(&expanded);
+
+    assert!(!w.is_empty(), "SPIR-V 应成功生成");
+    assert_eq!(w[0], SPIRV_MAGIC, "SPIR-V magic 正确");
+    assert_has_op(&w, OP_CONTROL_BARRIER, "应有 Barrier (OpControlBarrier)");
+    assert!(w.len() > 200, "tiled GEMM SPIR-V 应有足够指令");
+}
+
+// ============================================================
+// operator_fusion 测试
+// ============================================================
+
+#[test]
+fn test_operator_fusion_elementwise_chain() {
+    use karte_gpu::operator_fusion::{OperatorFusion, FusionPattern};
+
+    // kernel1: out[tid] = x[tid] + 1.0
+    let mut k1 = GirFunction::new("add_one".to_string());
+    k1.params = vec![
+        GirParam { name: "x".to_string(), dtype: GirDType::F32, is_ptr: true },
+        GirParam { name: "out".to_string(), dtype: GirDType::F32, is_ptr: true },
+    ];
+    k1.block_dim = (64, 1, 1);
+    k1.emit(GirInstruction::ThreadId { dst: 0, dim: ThreadDim::X });
+    k1.emit(GirInstruction::Mul { dst: 1, src1: GirOperand::Reg(0), src2: GirOperand::Imm(4), dtype: GirDType::I64 });
+    k1.emit(GirInstruction::Add { dst: 1, src1: GirOperand::Reg(1), src2: GirOperand::Param(0), dtype: GirDType::I64 });
+    k1.emit(GirInstruction::GlobalLoad { dst: 2, addr: GirOperand::Reg(1), dtype: GirDType::F32 });
+    k1.emit(GirInstruction::Add { dst: 3, src1: GirOperand::Reg(2), src2: GirOperand::Imm(0x3F800000), dtype: GirDType::F32 });
+    // store to out[tid]
+    k1.emit(GirInstruction::Mul { dst: 4, src1: GirOperand::Reg(0), src2: GirOperand::Imm(4), dtype: GirDType::I64 });
+    k1.emit(GirInstruction::Add { dst: 4, src1: GirOperand::Reg(4), src2: GirOperand::Param(1), dtype: GirDType::I64 });
+    k1.emit(GirInstruction::GlobalStore { addr: GirOperand::Reg(4), src: GirOperand::Reg(3), dtype: GirDType::F32 });
+    k1.emit(GirInstruction::Return);
+
+    let pat = OperatorFusion::analyze_kernel(&k1);
+    assert_eq!(pat, FusionPattern::ElementWiseChain, "纯 element-wise kernel 应可融合");
+}
+
+#[test]
+fn test_operator_fusion_detects_reduction_as_not_fusable() {
+    use karte_gpu::operator_fusion::{OperatorFusion, FusionPattern};
+
+    let mut k = GirFunction::new("reduce_sum".to_string());
+    k.emit(GirInstruction::Reduce { dst: 0, src: GirOperand::Reg(1), op: ReduceOp::Sum, dtype: GirDType::F32 });
+    k.emit(GirInstruction::Return);
+
+    let pat = OperatorFusion::analyze_kernel(&k);
+    assert_eq!(pat, FusionPattern::NotFusable, "含 Reduction 的 kernel 不可融合");
+}
+
+// ============================================================
+// auto_tuning 测试
+// ============================================================
+
+#[test]
+fn test_auto_tuner_generates_variants() {
+    use karte_gpu::auto_tuning::{AutoTuner, TuningConfig};
+
+    let config = TuningConfig {
+        tile_sizes: vec![(8, 8, 8), (16, 16, 16), (32, 32, 16)],
+        num_runs: 1,
+        warmup: false,
+    };
+    let tuner = AutoTuner::new(config);
+
+    let mut func = GirFunction::new("gemm".to_string());
+    func.emit(GirInstruction::TileLoad {
+        dst: 0, base: GirOperand::Param(0), row: GirOperand::Imm(0), col: GirOperand::Imm(0),
+        tile_rows: 16, tile_cols: 16, stride: GirOperand::Imm(16), dtype: GirDType::F32,
+    });
+    func.emit(GirInstruction::Return);
+    func.params = vec![GirParam { name: "A".to_string(), dtype: GirDType::F32, is_ptr: true }];
+
+    let mut prog = GirProgram::new();
+    prog.add_kernel(func);
+
+    let variants = tuner.generate_variants(&prog);
+    assert_eq!(variants.len(), 3, "应生成 3 个变体");
+
+    // 验证每个变体的 tile 大小不同
+    let sizes: Vec<(usize, usize, usize)> = variants.iter().map(|(t, _)| *t).collect();
+    assert!(sizes.contains(&(8, 8, 8)), "应包含 8×8×8 变体");
+    assert!(sizes.contains(&(16, 16, 16)), "应包含 16×16×16 变体");
+    assert!(sizes.contains(&(32, 32, 16)), "应包含 32×32×16 变体");
+}
+
+#[test]
+fn test_compile_pipeline_optimize() {
+    use karte_gpu::CompilePipeline;
+
+    let mut func = GirFunction::new("simple".to_string());
+    func.params = vec![
+        GirParam { name: "x".to_string(), dtype: GirDType::F32, is_ptr: true },
+        GirParam { name: "out".to_string(), dtype: GirDType::F32, is_ptr: true },
+    ];
+    func.emit(GirInstruction::ThreadId { dst: 0, dim: ThreadDim::X });
+    func.emit(GirInstruction::Mul { dst: 1, src1: GirOperand::Reg(0), src2: GirOperand::Imm(4), dtype: GirDType::I64 });
+    func.emit(GirInstruction::Add { dst: 1, src1: GirOperand::Reg(1), src2: GirOperand::Param(0), dtype: GirDType::I64 });
+    func.emit(GirInstruction::GlobalLoad { dst: 2, addr: GirOperand::Reg(1), dtype: GirDType::F32 });
+    func.emit(GirInstruction::Mul { dst: 1, src1: GirOperand::Reg(0), src2: GirOperand::Imm(4), dtype: GirDType::I64 });
+    func.emit(GirInstruction::Add { dst: 1, src1: GirOperand::Reg(1), src2: GirOperand::Param(1), dtype: GirDType::I64 });
+    func.emit(GirInstruction::GlobalStore { addr: GirOperand::Reg(1), src: GirOperand::Reg(2), dtype: GirDType::F32 });
+    func.emit(GirInstruction::Return);
+
+    let mut prog = GirProgram::new();
+    prog.add_kernel(func);
+
+    let pipeline = CompilePipeline::default();
+    let optimized = pipeline.optimize(&prog);
+
+    assert!(!optimized.kernels.is_empty(), "优化后应有 kernel");
+    // 验证没有未展开的 Tile 指令
+    for k in &optimized.kernels {
+        assert!(!k.instructions.iter().any(|i| matches!(i,
+            GirInstruction::TileLoad { .. } | GirInstruction::TileMatmul { .. }
+        )), "不应有未展开的 Tile 指令");
+    }
 }

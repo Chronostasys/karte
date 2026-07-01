@@ -615,6 +615,18 @@ fn real_main() -> i32 {
 
             // 应用优化 pass（除非禁用）
             if !no_optimize {
+                // Tile 展开 pass: 将 TileLoad/TileMatmul/TileStore/TileZeros
+                // 展开为 SharedLoad/SharedStore + Barrier + FMA 循环
+                let tile_expander = karte_gpu::TileExpander::with_default();
+                for kernel in &mut gir_program.kernels {
+                    let expanded = tile_expander.expand_kernel(kernel);
+                    *kernel = expanded;
+                }
+
+                // 算子融合 pass: 合并连续 element-wise kernel
+                let fusion = karte_gpu::OperatorFusion::new();
+                gir_program = fusion.fuse(&gir_program);
+
                 for kernel in &mut gir_program.kernels {
                     karte_gir::VectorizePass::new().optimize(kernel);
                     karte_gir::LoopUnroller::new(4).unroll(kernel);
